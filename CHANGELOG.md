@@ -8,6 +8,13 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
 ## [Unreleased]
 
 ### Added
+- M4 (in progress): `examples/viewer`. Vulkan 1.4 device bring-up (volk, optional validation layer),
+  the example `kiln::Adapter` (dedicated transfer queue, timeline-semaphore tokens, host-coherent
+  staging ring with `Busy` back-pressure, bindless slots with placeholder-then-publish, deferred
+  destroy by frames in flight, per-format `static_assert`s against `VkFormat`), and `kiln-vk-smoke`,
+  which loads cooked assets through the adapter with no window. Dependencies, examples only:
+  Vulkan-Headers, volk and GLFW through pinned FetchContent (`docs/design/viewer.md`,
+  `third_party/README.md`). `KILN_BUILD_VIEWER=ON` in every preset; CI compiles the viewer targets.
 - `tools/cli.h`: a small option-table argument parser shared by `kiln-cook`, `kiln-info` and
   `kiln-headless` (not installed, no allocation, no exceptions). Options are declared once with
   designated initializers; `--help` prints usage generated from the same table; values accept
