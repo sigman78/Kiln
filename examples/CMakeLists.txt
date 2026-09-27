@@ -16,3 +16,7 @@ if(KILN_BUILD_TESTS)
              COMMAND kiln-headless --store ${CMAKE_SOURCE_DIR}/tests/golden --slow 200 --latency 5
                      mesh/Box.mesh mesh/BoxTextured.mesh ktx2/color_srgb.ktx2 ktx2/normal.ktx2)
 endif()
+
+if(KILN_BUILD_VIEWER)
+    add_subdirectory(viewer)
+endif()

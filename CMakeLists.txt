@@ -27,7 +27,7 @@ option(KILN_BUILD_TOOLS           "Build kiln-cook / kiln-info CLI tools"       
 option(KILN_HOT_RELOAD            "Compile hot-reload support into kiln_runtime"     ON)
 option(KILN_BUILD_TESTS           "Build unit tests"                                 ${KILN_IS_TOP_LEVEL})
 option(KILN_BUILD_EXAMPLES        "Build examples (null adapter, ...)"               OFF)
-option(KILN_BUILD_VIEWER          "Build the Vulkan example viewer (needs Vulkan SDK)" OFF)
+option(KILN_BUILD_VIEWER          "Build the Vulkan example viewer (headers fetched; no SDK)" OFF)
 option(KILN_WARNINGS_AS_ERRORS    "Treat warnings as errors"                         ${KILN_IS_TOP_LEVEL})
 option(KILN_INSTALL               "Generate install rules"                           ${KILN_IS_TOP_LEVEL})
 

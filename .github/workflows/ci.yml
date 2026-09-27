@@ -97,7 +97,7 @@ jobs:
       - name: Install Ninja
         run: |
           sudo apt-get update
-          sudo apt-get install -y ninja-build
+          sudo apt-get install -y ninja-build libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libxkbcommon-dev libgl-dev
 
       - name: Install KTX tools (ktx validate for writer output)
         run: |
@@ -141,7 +141,7 @@ jobs:
         name: Install Ninja
         run: |
           sudo apt-get update
-          sudo apt-get install -y ninja-build
+          sudo apt-get install -y ninja-build libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libxkbcommon-dev libgl-dev
 
       - name: Configure
         run: cmake --preset ${{ matrix.preset }}
@@ -180,7 +180,7 @@ jobs:
       - name: Install Ninja
         run: |
           sudo apt-get update
-          sudo apt-get install -y ninja-build
+          sudo apt-get install -y ninja-build libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libxkbcommon-dev libgl-dev
 
       - name: Configure
         run: cmake --preset linux-clang-release

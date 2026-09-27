@@ -22,7 +22,8 @@ lands in the milestone that first needs it (M1 or M2), with a row in `third_part
 | Config parsing | deferred (v0.6), lean TOML, decision open | to be chosen | cook only | to be chosen | v0.6 |
 | File watching | **own** polling watcher | n/a | runtime (dev builds, `KILN_HOT_RELOAD`) | in-tree `src/io/` | M5 |
 | Tests | **own** runner `tests/kiln_test.h` | n/a | tests | in-tree, already in place | M0 |
-| Viewer GPU API | raw **Vulkan 1.4** (SDK headers) + **volk** | Apache-2.0 / MIT (headers); MIT (volk) | example viewer only | Vulkan SDK via `find_package(Vulkan)`; volk via FetchContent, commit hash | M4 |
+| Viewer GPU API | raw **Vulkan 1.4** (Vulkan-Headers) + **volk** | Apache-2.0 / MIT (headers); MIT (volk) | example viewer only | both via FetchContent, commit hash (no SDK) | M4 |
+| Viewer window | **GLFW** 3.5.1 | zlib | example viewer only | FetchContent, commit hash; X11 only on Linux | M4 |
 
 `kiln_runtime` has **zero** third-party dependencies in v0.5. Everything third-party is either
 cook-only or example-only. The `.mesh` blob decode loop (mesh-format-spec §5.9) ships in v0.5 with
@@ -99,7 +100,10 @@ codec `None` only, which needs no library. Neither zstd nor meshoptimizer is add
   overhead. It is example-only; the library never sees it.
 - Alternative: build the viewer on a thin NoGraphicsAPI-style layer (fewer lines, more modern
   bindless style). Proposed to decide at M4, see `docs/open-questions.md` A8.
-- Window and input: to be decided at M4 (GLFW or SDL3, both zlib). Not part of this sign-off.
+- Window and input: **GLFW** (decided at M4, 2026-09-27). Small, zlib, creates the Vulkan surface
+  itself; the offscreen mode never initializes it. SDL3 was the alternative.
+- Headers come from Vulkan-Headers through FetchContent rather than the LunarG SDK (decided at
+  M4), so no machine or runner needs an SDK install; SPIR-V is committed next to the GLSL.
 
 ## Rules
 
@@ -162,7 +166,9 @@ contract in `shipping-split.md` (M1.5).
   smallest mips first.
 - When supercompression lands, the reader gains a supercompression dispatch; the level index
   already carries `byteLength` and `uncompressedByteLength`, so the file layout does not change.
-- CI needs no Vulkan SDK unless `KILN_BUILD_VIEWER=ON`.
+- CI needs no Vulkan SDK at all; `KILN_BUILD_VIEWER=ON` fetches headers and compiles the viewer
+  but never runs it (owner decision at M4). Linux runners need the X11 development packages GLFW
+  builds against.
 - When `.mesh` compression lands, `kiln_runtime` gains its first third-party code. Each codec
   should be behind a CMake option so a project that ships only uncompressed payloads keeps a
   dependency-free runtime.
@@ -172,5 +178,4 @@ contract in `shipping-split.md` (M1.5).
 - Lets go with cgltf
 - Use wuffs as first choice for PNG
 - Confirm "own KTX2 reader and writer" for v0.5.
-- Defer: viewer uses raw Vulkan 1.4 + volk
-- Defer: Window library for the viewer (GLFW vs SDL3)
+- Resolved at M4: raw Vulkan 1.4 + volk, Vulkan-Headers via FetchContent, GLFW for the window.

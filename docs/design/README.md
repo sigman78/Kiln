@@ -19,6 +19,7 @@ mesh-format-spec draft v0.3 (magic `KMSH`, namespace `kiln::mesh`, exact-minor v
 | [settings.md](settings.md) | v0.5 cook settings structs, resolution layers, settings hashing and store key |
 | [threading-and-io.md](threading-and-io.md) | std threading in `.cpp` files, `JobSystem`, `IoBackend`, `pump()` as the only surface |
 | [mesh-cook.md](mesh-cook.md) | The glTF to `.mesh` cooker stage order and its determinism rules |
+| [viewer.md](viewer.md) | The example Vulkan 1.4 adapter (transfer queue, timeline semaphore, bindless slots, deferred destroy) and viewer (M4), its dependencies and offscreen mode |
 | [cook-kernels.md](cook-kernels.md) | Kernel contract for the cooker's hot paths, SIMD rules, row and item splitting, `CookEnv`, rollout order |
 | [shipping-split.md](shipping-split.md) | The read-only shipping contract (M1.5): the `kiln_runtime` / `kiln_cook` boundary, the `include/kiln/cook/` header split, install components, shipping presets and the shipping CI job |
 
