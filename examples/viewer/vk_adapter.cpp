@@ -1,0 +1,1052 @@
+// examples/viewer/vk_adapter.cpp — the example kiln::Adapter on raw Vulkan 1.4
+// (docs/design/viewer.md, "Adapter design"). Keep it readable: this file is the reference
+// for adapters written outside kiln.
+#include "vk_adapter.h"
+
+#include <kiln/containers.h>
+#include <kiln/log.h>
+
+#include <atomic>
+#include <mutex>
+
+// kiln::Format values equal VkFormat (docs/design/adapter.md); this is the check that says so.
+#define KILN_VK_SAME(name) static_assert(::kiln::u32(::kiln::Format::name) == VK_FORMAT_##name)
+#define KILN_VK_BLOCK(name) static_assert(::kiln::u32(::kiln::Format::name) == VK_FORMAT_##name##_BLOCK)
+static_assert(::kiln::u32(::kiln::Format::Undefined) == VK_FORMAT_UNDEFINED);
+KILN_VK_SAME(R8_UNORM);
+KILN_VK_SAME(R8_SNORM);
+KILN_VK_SAME(R8G8_UNORM);
+KILN_VK_SAME(R8G8_SNORM);
+KILN_VK_SAME(R8G8B8_UNORM);
+KILN_VK_SAME(R8G8B8_SRGB);
+KILN_VK_SAME(R8G8B8A8_UNORM);
+KILN_VK_SAME(R8G8B8A8_SNORM);
+KILN_VK_SAME(R8G8B8A8_SRGB);
+KILN_VK_SAME(R16_UNORM);
+KILN_VK_SAME(R16_SNORM);
+KILN_VK_SAME(R16_SFLOAT);
+KILN_VK_SAME(R16G16_UNORM);
+KILN_VK_SAME(R16G16_SNORM);
+KILN_VK_SAME(R16G16_SFLOAT);
+KILN_VK_SAME(R16G16B16A16_UNORM);
+KILN_VK_SAME(R16G16B16A16_SNORM);
+KILN_VK_SAME(R16G16B16A16_SFLOAT);
+KILN_VK_SAME(R32_SFLOAT);
+KILN_VK_SAME(R32G32_SFLOAT);
+KILN_VK_SAME(R32G32B32_SFLOAT);
+KILN_VK_SAME(R32G32B32A32_SFLOAT);
+KILN_VK_BLOCK(BC1_RGB_UNORM);
+KILN_VK_BLOCK(BC1_RGB_SRGB);
+KILN_VK_BLOCK(BC1_RGBA_UNORM);
+KILN_VK_BLOCK(BC1_RGBA_SRGB);
+KILN_VK_BLOCK(BC2_UNORM);
+KILN_VK_BLOCK(BC2_SRGB);
+KILN_VK_BLOCK(BC3_UNORM);
+KILN_VK_BLOCK(BC3_SRGB);
+KILN_VK_BLOCK(BC4_UNORM);
+KILN_VK_BLOCK(BC4_SNORM);
+KILN_VK_BLOCK(BC5_UNORM);
+KILN_VK_BLOCK(BC5_SNORM);
+KILN_VK_BLOCK(BC6H_UFLOAT);
+KILN_VK_BLOCK(BC6H_SFLOAT);
+KILN_VK_BLOCK(BC7_UNORM);
+KILN_VK_BLOCK(BC7_SRGB);
+KILN_VK_BLOCK(ETC2_R8G8B8_UNORM);
+KILN_VK_BLOCK(ETC2_R8G8B8_SRGB);
+KILN_VK_BLOCK(ETC2_R8G8B8A1_UNORM);
+KILN_VK_BLOCK(ETC2_R8G8B8A1_SRGB);
+KILN_VK_BLOCK(ETC2_R8G8B8A8_UNORM);
+KILN_VK_BLOCK(ETC2_R8G8B8A8_SRGB);
+KILN_VK_BLOCK(EAC_R11_UNORM);
+KILN_VK_BLOCK(EAC_R11_SNORM);
+KILN_VK_BLOCK(EAC_R11G11_UNORM);
+KILN_VK_BLOCK(EAC_R11G11_SNORM);
+KILN_VK_BLOCK(ASTC_4x4_UNORM);
+KILN_VK_BLOCK(ASTC_4x4_SRGB);
+KILN_VK_BLOCK(ASTC_5x4_UNORM);
+KILN_VK_BLOCK(ASTC_5x4_SRGB);
+KILN_VK_BLOCK(ASTC_5x5_UNORM);
+KILN_VK_BLOCK(ASTC_5x5_SRGB);
+KILN_VK_BLOCK(ASTC_6x5_UNORM);
+KILN_VK_BLOCK(ASTC_6x5_SRGB);
+KILN_VK_BLOCK(ASTC_6x6_UNORM);
+KILN_VK_BLOCK(ASTC_6x6_SRGB);
+KILN_VK_BLOCK(ASTC_8x5_UNORM);
+KILN_VK_BLOCK(ASTC_8x5_SRGB);
+KILN_VK_BLOCK(ASTC_8x6_UNORM);
+KILN_VK_BLOCK(ASTC_8x6_SRGB);
+KILN_VK_BLOCK(ASTC_8x8_UNORM);
+KILN_VK_BLOCK(ASTC_8x8_SRGB);
+KILN_VK_BLOCK(ASTC_10x5_UNORM);
+KILN_VK_BLOCK(ASTC_10x5_SRGB);
+KILN_VK_BLOCK(ASTC_10x6_UNORM);
+KILN_VK_BLOCK(ASTC_10x6_SRGB);
+KILN_VK_BLOCK(ASTC_10x8_UNORM);
+KILN_VK_BLOCK(ASTC_10x8_SRGB);
+KILN_VK_BLOCK(ASTC_10x10_UNORM);
+KILN_VK_BLOCK(ASTC_10x10_SRGB);
+KILN_VK_BLOCK(ASTC_12x10_UNORM);
+KILN_VK_BLOCK(ASTC_12x10_SRGB);
+KILN_VK_BLOCK(ASTC_12x12_UNORM);
+KILN_VK_BLOCK(ASTC_12x12_SRGB);
+#undef KILN_VK_SAME
+#undef KILN_VK_BLOCK
+
+namespace kiln::vkx {
+
+namespace {
+
+constexpr u64 kRowPitchAlign     = 1;
+constexpr u64 kOffsetAlign       = 16;
+constexpr u64 kBufferOffsetAlign = 256;
+constexpr u32 kMaxLevels         = 32;
+constexpr u32 kMaxSubmitBatch    = 16;
+
+enum class ObjectState : u8 {
+    Free,      ///< on the free list
+    Begun,     ///< begin_upload returned it; kiln is writing the staging bytes
+    Recorded,  ///< commit_upload recorded its command buffer; waiting for earlier values to submit
+    Submitted, ///< on the transfer queue; complete once the timeline reaches `value`
+};
+
+/// One image (+ view) or buffer. GpuObject::native is its 1-based index in VkAdapter::objects.
+struct Object {
+    VkImage image           = VK_NULL_HANDLE;
+    VkImageView view        = VK_NULL_HANDLE;
+    VkBuffer buffer         = VK_NULL_HANDLE;
+    VkDeviceMemory memory   = VK_NULL_HANDLE;
+    VkDeviceSize size       = 0; ///< bytes kiln wrote (the mesh payload size for buffers)
+    VkDeviceAddress address = 0;
+    u64 value               = 0; ///< timeline value (== upload token) that completes it
+    u64 stagingOffset       = 0;
+    VkCommandBuffer cmd     = VK_NULL_HANDLE; ///< recorded, not yet submitted
+    TextureDesc texture{};                    ///< copy of the upload's TextureDesc
+    UploadKind kind   = UploadKind::MeshPayload;
+    ObjectState state = ObjectState::Free;
+    bool deferred     = false; ///< destroy_deferred received it
+};
+
+/// A staging ring reservation, released when the timeline reaches `value`.
+struct RingEntry {
+    u64 value = 0;
+    u64 end   = 0; ///< ring head after this reservation
+};
+
+struct CmdEntry {
+    VkCommandBuffer cmd = VK_NULL_HANDLE;
+    u64 value           = 0;
+};
+
+struct DeferredObject {
+    u32 index = 0;
+    u64 frame = 0;
+};
+
+struct SlotRelease {
+    u32 slot  = 0;
+    u64 frame = 0;
+};
+
+/// A fixed-capacity FIFO over a Vec that is sized once at create.
+template <class T> struct Fifo {
+    Vec<T> items;
+    usize head  = 0;
+    usize count = 0;
+
+    void init(Allocator const* a, usize cap) {
+        items.init(a, Tag::Payload);
+        items.resize(cap);
+    }
+    [[nodiscard]] bool empty() const noexcept { return count == 0; }
+    [[nodiscard]] T& front() noexcept { return items[head]; }
+    void push(T const& v) noexcept {
+        KILN_VERIFY(count < items.size());
+        items[(head + count) % items.size()] = v;
+        ++count;
+    }
+    void pop() noexcept {
+        head = (head + 1) % items.size();
+        --count;
+    }
+};
+
+} // namespace
+
+// One mutex guards the ring, the command pool, the object and slot tables and the
+// descriptor set. is_upload_complete reads the timeline without it.
+struct VkAdapter {
+    AdapterDesc desc{};
+    Allocator const* alloc = nullptr;
+    Device const* dev      = nullptr;
+    VkDevice device        = VK_NULL_HANDLE;
+    bool concurrent        = false; ///< the graphics and transfer families differ
+    /// The transfer queue is the graphics queue: submit on the pump thread (inside
+    /// is_upload_complete), which is the render thread, so the queue is never used by two threads.
+    bool submitOnPoll        = false;
+    bool transferHasGraphics = false; ///< vertex-input stages are legal in transfer barriers
+
+    std::mutex mutex;
+
+    // Staging ring: one host-visible, host-coherent buffer, mapped for its lifetime.
+    VkBuffer staging          = VK_NULL_HANDLE;
+    VkDeviceMemory stagingMem = VK_NULL_HANDLE;
+    u8* mapped                = nullptr;
+    u64 ringSize              = 0;
+    u64 ringHead              = 0;
+    u64 ringTail              = 0;
+    Fifo<RingEntry> ring;
+
+    // Transfer submission: values are handed out in begin_upload and submitted in order.
+    VkSemaphore timeline = VK_NULL_HANDLE;
+    VkCommandPool pool   = VK_NULL_HANDLE;
+    u64 lastValue        = 0; ///< last value handed out
+    std::atomic<u64> submittedValue{0};
+    Vec<u32> byValue; ///< object index for value v at [v % maxObjects]
+    Fifo<CmdEntry> cmdsInFlight;
+    Vec<VkCommandBuffer> freeCmds;
+
+    // Objects.
+    Vec<Object> objects;
+    Vec<u32> freeObjects;
+    Vec<DeferredObject> deferred;
+    u32 liveObjects = 0;
+
+    // Bindless.
+    VkDescriptorSetLayout setLayout = VK_NULL_HANDLE;
+    VkDescriptorPool descPool       = VK_NULL_HANDLE;
+    VkDescriptorSet set             = VK_NULL_HANDLE;
+    VkSampler sampler               = VK_NULL_HANDLE;
+    HashMap<AssetId, u32> assetSlots;
+    Vec<u32> freeSlots;
+    Vec<SlotRelease> slotReleases;
+    GpuObject placeholders[kLastPlaceholderId + 1] = {}; ///< by placeholder id
+
+    u64 frame = 0; ///< the last completed frame given to adapter_retire
+    std::atomic<u64> watermark{0};
+    u32 busyReturned  = 0;
+    u64 bytesUploaded = 0;
+};
+
+namespace {
+
+[[nodiscard]] VkAdapter* self(void* user) noexcept { return static_cast<VkAdapter*>(user); }
+
+[[nodiscard]] u64 timeline_value(VkAdapter* a) noexcept {
+    u64 v = 0;
+    VKX_CHECK(vkGetSemaphoreCounterValue(a->device, a->timeline, &v));
+    return v;
+}
+
+[[nodiscard]] Object* object_of(VkAdapter* a, GpuObject obj) noexcept {
+    if (obj.native == 0 || obj.native > a->objects.size()) return nullptr;
+    Object& o = a->objects[usize(obj.native - 1)];
+    return o.state == ObjectState::Free ? nullptr : &o;
+}
+
+// --- Staging ring -----------------------------------------------------------------------------
+
+/// Releases every reservation whose upload has completed. Caller holds the mutex.
+void ring_reclaim(VkAdapter* a, u64 completed) noexcept {
+    while (!a->ring.empty() && a->ring.front().value <= completed) {
+        a->ringTail = a->ring.front().end;
+        a->ring.pop();
+    }
+    if (a->ring.empty()) a->ringHead = a->ringTail = 0;
+}
+
+/// Finds `n` bytes at `align`; false when the ring cannot fit them now. Caller holds the mutex.
+bool ring_find(VkAdapter const* a, u64 n, u64 align, u64* start) noexcept {
+    u64 const s = align_up(a->ringHead, align);
+    // With live reservations and head <= tail the free space is [head, tail); otherwise it
+    // is [head, size) followed by [0, tail).
+    bool const wrapped = !a->ring.empty() && a->ringHead <= a->ringTail;
+    if (wrapped) {
+        if (s + n > a->ringTail) return false;
+        *start = s;
+        return true;
+    }
+    if (s + n <= a->ringSize) {
+        *start = s;
+        return true;
+    }
+    if (n > a->ringTail) return false;
+    *start = 0;
+    return true;
+}
+
+[[nodiscard]] u64 ring_used(VkAdapter const* a) noexcept {
+    if (a->ring.empty()) return 0;
+    return a->ringHead > a->ringTail ? a->ringHead - a->ringTail : a->ringSize - a->ringTail + a->ringHead;
+}
+
+// --- Command buffers and submission -----------------------------------------------------------
+
+void cmds_reclaim(VkAdapter* a, u64 completed) noexcept {
+    while (!a->cmdsInFlight.empty() && a->cmdsInFlight.front().value <= completed) {
+        a->freeCmds.push_back(a->cmdsInFlight.front().cmd);
+        a->cmdsInFlight.pop();
+    }
+}
+
+VkCommandBuffer cmd_get(VkAdapter* a) noexcept {
+    if (!a->freeCmds.empty()) {
+        VkCommandBuffer const c = a->freeCmds.back();
+        a->freeCmds.pop_back();
+        return c;
+    }
+    VkCommandBufferAllocateInfo info{};
+    info.sType              = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    info.commandPool        = a->pool;
+    info.level              = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    info.commandBufferCount = 1;
+    VkCommandBuffer c       = VK_NULL_HANDLE;
+    VKX_CHECK(vkAllocateCommandBuffers(a->device, &info, &c));
+    return c;
+}
+
+/// Submits every recorded upload whose value is next in line, in value order, because a
+/// timeline semaphore only accepts increasing signal values. Caller holds the mutex.
+void submit_ready(VkAdapter* a) noexcept {
+    u64 next = a->submittedValue.load(std::memory_order_relaxed) + 1;
+    while (next <= a->lastValue) {
+        VkCommandBufferSubmitInfo cmds[kMaxSubmitBatch];
+        VkSemaphoreSubmitInfo signals[kMaxSubmitBatch];
+        VkSubmitInfo2 submits[kMaxSubmitBatch];
+        u32 n = 0;
+        for (; n < kMaxSubmitBatch && next <= a->lastValue; ++n, ++next) {
+            Object& o = a->objects[a->byValue[usize(next % a->byValue.size())]];
+            if (o.state != ObjectState::Recorded || o.value != next) break;
+            cmds[n]                             = VkCommandBufferSubmitInfo{};
+            cmds[n].sType                       = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO;
+            cmds[n].commandBuffer               = o.cmd;
+            signals[n]                          = VkSemaphoreSubmitInfo{};
+            signals[n].sType                    = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
+            signals[n].semaphore                = a->timeline;
+            signals[n].value                    = next;
+            signals[n].stageMask                = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+            submits[n]                          = VkSubmitInfo2{};
+            submits[n].sType                    = VK_STRUCTURE_TYPE_SUBMIT_INFO_2;
+            submits[n].commandBufferInfoCount   = 1;
+            submits[n].pCommandBufferInfos      = &cmds[n];
+            submits[n].signalSemaphoreInfoCount = 1;
+            submits[n].pSignalSemaphoreInfos    = &signals[n];
+            a->cmdsInFlight.push(CmdEntry{.cmd = o.cmd, .value = next});
+            o.cmd   = VK_NULL_HANDLE;
+            o.state = ObjectState::Submitted;
+        }
+        if (n == 0) return;
+        VKX_CHECK(vkQueueSubmit2(a->dev->transferQueue, n, submits, VK_NULL_HANDLE));
+        a->submittedValue.store(next - 1, std::memory_order_release);
+    }
+}
+
+// --- Objects ----------------------------------------------------------------------------------
+
+void object_free(VkAdapter* a, u32 index) noexcept {
+    Object& o = a->objects[index];
+    if (o.view) vkDestroyImageView(a->device, o.view, nullptr);
+    if (o.image) vkDestroyImage(a->device, o.image, nullptr);
+    if (o.buffer) vkDestroyBuffer(a->device, o.buffer, nullptr);
+    if (o.memory) vkFreeMemory(a->device, o.memory, nullptr);
+    o = Object{};
+    a->freeObjects.push_back(index);
+    --a->liveObjects;
+}
+
+Status allocate_memory(VkAdapter* a, VkMemoryRequirements const& req, bool deviceAddress,
+                       VkDeviceMemory* out) noexcept {
+    u32 const type = find_memory_type(*a->dev, req.memoryTypeBits, 0, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    if (type == kInvalid) return make_status(Code::Unsupported);
+    VkMemoryAllocateFlagsInfo flags{};
+    flags.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO;
+    flags.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
+    VkMemoryAllocateInfo info{};
+    info.sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    info.pNext           = deviceAddress ? &flags : nullptr;
+    info.allocationSize  = req.size;
+    info.memoryTypeIndex = type;
+    VkResult const r     = vkAllocateMemory(a->device, &info, nullptr, out);
+    if (r != VK_SUCCESS) {
+        KILN_WARN("vk-adapter", "vkAllocateMemory(%llu bytes) failed: %s",
+                  static_cast<unsigned long long>(req.size), result_name(r));
+        return make_status(r == VK_ERROR_OUT_OF_DEVICE_MEMORY || r == VK_ERROR_OUT_OF_HOST_MEMORY
+                               ? Code::OutOfMemory
+                               : Code::Internal);
+    }
+    return kOk;
+}
+
+/// The sharing mode every buffer and image uses: concurrent over both families when they differ.
+struct Sharing {
+    VkSharingMode mode = VK_SHARING_MODE_EXCLUSIVE;
+    u32 count          = 0;
+    u32 families[2]    = {};
+};
+
+Sharing sharing(VkAdapter const* a) noexcept {
+    Sharing s;
+    if (a->concurrent) {
+        s.mode        = VK_SHARING_MODE_CONCURRENT;
+        s.count       = 2;
+        s.families[0] = a->dev->graphicsFamily;
+        s.families[1] = a->dev->transferFamily;
+    }
+    return s;
+}
+
+Status create_buffer(VkAdapter* a, Object& o, u64 size) noexcept {
+    Sharing const sh = sharing(a);
+    VkBufferCreateInfo info{};
+    info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    info.size  = size;
+    info.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT |
+                 VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+    info.sharingMode           = sh.mode;
+    info.queueFamilyIndexCount = sh.count;
+    info.pQueueFamilyIndices   = sh.families;
+    VkResult r                 = vkCreateBuffer(a->device, &info, nullptr, &o.buffer);
+    if (r != VK_SUCCESS) {
+        KILN_WARN("vk-adapter", "vkCreateBuffer failed: %s", result_name(r));
+        return make_status(Code::Internal);
+    }
+    VkMemoryRequirements req;
+    vkGetBufferMemoryRequirements(a->device, o.buffer, &req);
+    KILN_TRY(allocate_memory(a, req, true, &o.memory));
+    VKX_CHECK(vkBindBufferMemory(a->device, o.buffer, o.memory, 0));
+    VkBufferDeviceAddressInfo addr{};
+    addr.sType  = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO;
+    addr.buffer = o.buffer;
+    o.address   = vkGetBufferDeviceAddress(a->device, &addr);
+    return kOk;
+}
+
+Status create_image(VkAdapter* a, Object& o, TextureDesc const& t) noexcept {
+    Sharing const sh = sharing(a);
+    bool const is3d  = t.depth > 1;
+    VkImageCreateInfo info{};
+    info.sType                 = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    info.imageType             = is3d ? VK_IMAGE_TYPE_3D : VK_IMAGE_TYPE_2D;
+    info.format                = static_cast<VkFormat>(t.format);
+    info.extent                = {t.width, t.height, t.depth};
+    info.mipLevels             = t.levels;
+    info.arrayLayers           = t.layers;
+    info.samples               = VK_SAMPLE_COUNT_1_BIT;
+    info.tiling                = VK_IMAGE_TILING_OPTIMAL;
+    info.usage                 = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    info.sharingMode           = sh.mode;
+    info.queueFamilyIndexCount = sh.count;
+    info.pQueueFamilyIndices   = sh.families;
+    info.initialLayout         = VK_IMAGE_LAYOUT_UNDEFINED;
+    VkResult r                 = vkCreateImage(a->device, &info, nullptr, &o.image);
+    if (r != VK_SUCCESS) {
+        KILN_WARN("vk-adapter", "vkCreateImage(%s %ux%ux%u, %u levels, %u layers) failed: %s",
+                  format_name(t.format), t.width, t.height, t.depth, t.levels, t.layers, result_name(r));
+        return make_status(Code::Unsupported);
+    }
+    VkMemoryRequirements req;
+    vkGetImageMemoryRequirements(a->device, o.image, &req);
+    KILN_TRY(allocate_memory(a, req, false, &o.memory));
+    VKX_CHECK(vkBindImageMemory(a->device, o.image, o.memory, 0));
+    VkImageViewCreateInfo view{};
+    view.sType            = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    view.image            = o.image;
+    view.viewType         = is3d           ? VK_IMAGE_VIEW_TYPE_3D
+                            : t.layers > 1 ? VK_IMAGE_VIEW_TYPE_2D_ARRAY
+                                           : VK_IMAGE_VIEW_TYPE_2D;
+    view.format           = info.format;
+    view.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, t.levels, 0, t.layers};
+    r                     = vkCreateImageView(a->device, &view, nullptr, &o.view);
+    if (r != VK_SUCCESS) {
+        KILN_WARN("vk-adapter", "vkCreateImageView failed: %s", result_name(r));
+        return make_status(Code::Internal);
+    }
+    return kOk;
+}
+
+/// Level offsets and row pitches exactly as src/runtime/loader.cpp (texture_layout) computes
+/// them with this adapter's copy constraints; cube faces arrive folded into `layers`.
+u64 texture_layout(TextureDesc const& t, u64* offsets, u64* pitches) noexcept {
+    FormatInfo const* fi = format_info(t.format);
+    if (!fi) return 0;
+    u64 cur = 0;
+    for (u32 i = 0; i < t.levels; ++i) {
+        u32 const w     = max(t.width >> i, 1u);
+        u32 const h     = max(t.height >> i, 1u);
+        u32 const z     = max(t.depth >> i, 1u);
+        u64 const pitch = align_up(format_row_bytes(t.format, w), kRowPitchAlign);
+        u64 const rows  = (u64(h) + fi->blockHeight - 1) / fi->blockHeight * z * t.layers;
+        cur             = align_up(cur, kOffsetAlign);
+        offsets[i]      = cur;
+        pitches[i]      = pitch;
+        cur += pitch * rows;
+    }
+    return cur;
+}
+
+void write_slot(VkAdapter* a, u32 slot, VkImageView view) noexcept {
+    VkDescriptorImageInfo image{};
+    image.sampler     = a->sampler;
+    image.imageView   = view;
+    image.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    VkWriteDescriptorSet write{};
+    write.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    write.dstSet          = a->set;
+    write.dstBinding      = 0;
+    write.dstArrayElement = slot;
+    write.descriptorCount = 1;
+    write.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    write.pImageInfo      = &image;
+    vkUpdateDescriptorSets(a->device, 1, &write, 0, nullptr);
+}
+
+void record_texture(VkAdapter* a, VkCommandBuffer cmd, Object const& o) noexcept {
+    TextureDesc const& t = o.texture;
+    FormatInfo const* fi = format_info(t.format);
+    u64 offsets[kMaxLevels];
+    u64 pitches[kMaxLevels];
+    texture_layout(t, offsets, pitches);
+
+    VkImageSubresourceRange const all{VK_IMAGE_ASPECT_COLOR_BIT, 0, t.levels, 0, t.layers};
+    VkImageMemoryBarrier2 toDst{};
+    toDst.sType            = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
+    toDst.srcStageMask     = VK_PIPELINE_STAGE_2_NONE;
+    toDst.srcAccessMask    = VK_ACCESS_2_NONE;
+    toDst.dstStageMask     = VK_PIPELINE_STAGE_2_COPY_BIT;
+    toDst.dstAccessMask    = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+    toDst.oldLayout        = VK_IMAGE_LAYOUT_UNDEFINED;
+    toDst.newLayout        = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    toDst.image            = o.image;
+    toDst.subresourceRange = all;
+    VkDependencyInfo dep{};
+    dep.sType                   = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+    dep.imageMemoryBarrierCount = 1;
+    dep.pImageMemoryBarriers    = &toDst;
+    vkCmdPipelineBarrier2(cmd, &dep);
+
+    VkBufferImageCopy2 regions[kMaxLevels];
+    for (u32 i = 0; i < t.levels; ++i) {
+        u32 const w        = max(t.width >> i, 1u);
+        u64 const rowBytes = format_row_bytes(t.format, w);
+        // bufferRowLength is in texels; 0 means tightly packed, which is the case at pitch align 1.
+        u32 const rowLength =
+            pitches[i] == rowBytes ? 0u : u32(pitches[i] / fi->bytesPerBlock * fi->blockWidth);
+        VkBufferImageCopy2& r = regions[i];
+        r                     = VkBufferImageCopy2{};
+        r.sType               = VK_STRUCTURE_TYPE_BUFFER_IMAGE_COPY_2;
+        r.bufferOffset        = o.stagingOffset + offsets[i];
+        r.bufferRowLength     = rowLength;
+        r.imageSubresource    = {VK_IMAGE_ASPECT_COLOR_BIT, i, 0, t.layers};
+        r.imageExtent         = {w, max(t.height >> i, 1u), max(t.depth >> i, 1u)};
+    }
+    VkCopyBufferToImageInfo2 copy{};
+    copy.sType          = VK_STRUCTURE_TYPE_COPY_BUFFER_TO_IMAGE_INFO_2;
+    copy.srcBuffer      = a->staging;
+    copy.dstImage       = o.image;
+    copy.dstImageLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    copy.regionCount    = t.levels;
+    copy.pRegions       = regions;
+    vkCmdCopyBufferToImage2(cmd, &copy);
+
+    // The graphics queue waits on the timeline semaphore before sampling, which orders
+    // everything here; the barrier only has to make the copy available and change the layout.
+    VkImageMemoryBarrier2 toRead = toDst;
+    toRead.srcStageMask          = VK_PIPELINE_STAGE_2_COPY_BIT;
+    toRead.srcAccessMask         = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+    toRead.dstStageMask          = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+    toRead.dstAccessMask         = VK_ACCESS_2_NONE;
+    toRead.oldLayout             = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    toRead.newLayout             = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    dep.pImageMemoryBarriers     = &toRead;
+    vkCmdPipelineBarrier2(cmd, &dep);
+}
+
+void record_mesh(VkAdapter* a, VkCommandBuffer cmd, Object const& o) noexcept {
+    VkBufferCopy2 region{};
+    region.sType     = VK_STRUCTURE_TYPE_BUFFER_COPY_2;
+    region.srcOffset = o.stagingOffset;
+    region.dstOffset = 0;
+    region.size      = o.size;
+    VkCopyBufferInfo2 copy{};
+    copy.sType       = VK_STRUCTURE_TYPE_COPY_BUFFER_INFO_2;
+    copy.srcBuffer   = a->staging;
+    copy.dstBuffer   = o.buffer;
+    copy.regionCount = 1;
+    copy.pRegions    = &region;
+    vkCmdCopyBuffer2(cmd, &copy);
+    // Vertex-input stages exist only on graphics-capable families; a dedicated transfer
+    // queue uses ALL_COMMANDS and relies on the semaphore wait on the graphics side.
+    bool const gfx = a->transferHasGraphics;
+    VkBufferMemoryBarrier2 barrier{};
+    barrier.sType         = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2;
+    barrier.srcStageMask  = VK_PIPELINE_STAGE_2_COPY_BIT;
+    barrier.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+    barrier.dstStageMask =
+        gfx ? VK_PIPELINE_STAGE_2_VERTEX_ATTRIBUTE_INPUT_BIT | VK_PIPELINE_STAGE_2_INDEX_INPUT_BIT
+            : VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+    barrier.dstAccessMask =
+        gfx ? VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_2_INDEX_READ_BIT : VK_ACCESS_2_NONE;
+    barrier.buffer = o.buffer;
+    barrier.offset = 0;
+    barrier.size   = VK_WHOLE_SIZE;
+    VkDependencyInfo dep{};
+    dep.sType                    = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+    dep.bufferMemoryBarrierCount = 1;
+    dep.pBufferMemoryBarriers    = &barrier;
+    vkCmdPipelineBarrier2(cmd, &dep);
+}
+
+// --- The adapter entry points -----------------------------------------------------------------
+
+bool vk_supports_format(void* user, Format f, FormatUsage usage) noexcept {
+    VkAdapter* a         = self(user);
+    FormatInfo const* fi = format_info(f);
+    if (!fi) return false;
+    VkFormatProperties props;
+    vkGetPhysicalDeviceFormatProperties(a->dev->physical, static_cast<VkFormat>(f), &props);
+    if (usage == FormatUsage::VertexBuffer)
+        return (props.bufferFeatures & VK_FORMAT_FEATURE_VERTEX_BUFFER_BIT) != 0;
+    // Copy offsets are multiples of kOffsetAlign, which must also be a multiple of the block size.
+    if (kOffsetAlign % fi->bytesPerBlock != 0) return false;
+    VkFormatFeatureFlags const need =
+        VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
+    return (props.optimalTilingFeatures & need) == need;
+}
+
+void vk_copy_constraints(void* /*user*/, CopyConstraints* out) noexcept {
+    out->optimalRowPitchAlign = kRowPitchAlign;
+    out->optimalOffsetAlign   = kOffsetAlign;
+    out->bufferOffsetAlign    = kBufferOffsetAlign;
+}
+
+Status vk_acquire(void* user, AssetId id, UploadKind kind, TextureKind texKind, GpuObject* out) noexcept {
+    *out = GpuObject{};
+    if (kind != UploadKind::TextureLevels) return kOk; // meshes have no slot
+    VkAdapter* a = self(user);
+    std::lock_guard<std::mutex> lock(a->mutex);
+    u32 slot = kInvalid;
+    if (u32 const* found = a->assetSlots.find(id)) {
+        slot = *found;
+    } else {
+        if (a->freeSlots.empty()) {
+            KILN_WARN("vk-adapter", "all %u bindless slots are in use", a->desc.maxSlots);
+            return make_status(Code::OutOfMemory);
+        }
+        slot = a->freeSlots.back();
+        a->freeSlots.pop_back();
+        a->assetSlots.insert(id, slot);
+    }
+    // The kind placeholder, or the BaseColor one while that kind's is not published yet.
+    u32 const kindId = u32(kFirstPlaceholderId) + u32(texKind);
+    Object const* ph = object_of(a, a->placeholders[kindId]);
+    if (!ph) ph = object_of(a, a->placeholders[kFirstPlaceholderId]);
+    if (ph && ph->view) write_slot(a, slot, ph->view);
+    *out = GpuObject{.native = 0, .slot = slot, .kind = u32(kind)};
+    return kOk;
+}
+
+Status vk_begin_upload(void* user, UploadDesc const& desc, UploadTarget* out) noexcept {
+    VkAdapter* a         = self(user);
+    bool const isTexture = desc.kind == UploadKind::TextureLevels;
+    if (isTexture ? !desc.texture : !desc.mesh) return make_status(Code::InvalidArgument);
+    u64 const n     = desc.size ? desc.size : 1;
+    u64 const align = max<u64>(desc.alignment, kOffsetAlign);
+    if (n > a->ringSize) {
+        KILN_WARN("vk-adapter", "upload of %llu bytes exceeds the %llu-byte staging ring",
+                  static_cast<unsigned long long>(n), static_cast<unsigned long long>(a->ringSize));
+        return make_status(Code::Unsupported);
+    }
+    if (isTexture) {
+        TextureDesc const& t = *desc.texture;
+        u64 offsets[kMaxLevels];
+        u64 pitches[kMaxLevels];
+        if (t.levels == 0 || t.levels > kMaxLevels || t.layers == 0 || (t.depth > 1 && t.layers > 1) ||
+            texture_layout(t, offsets, pitches) > desc.size) {
+            KILN_WARN("vk-adapter", "texture %016llx: unsupported shape or layout",
+                      static_cast<unsigned long long>(desc.id));
+            return make_status(Code::Unsupported);
+        }
+    }
+
+    std::lock_guard<std::mutex> lock(a->mutex);
+    u64 const completed = timeline_value(a);
+    ring_reclaim(a, completed);
+    cmds_reclaim(a, completed);
+
+    u64 start = 0;
+    if (!ring_find(a, n, align, &start)) {
+        ++a->busyReturned;
+        return make_status(Code::Busy);
+    }
+    if (a->freeObjects.empty()) {
+        KILN_WARN("vk-adapter", "all %u objects are in use", a->desc.maxObjects);
+        return make_status(Code::OutOfMemory);
+    }
+    u32 const index = a->freeObjects.back();
+    Object& o       = a->objects[index];
+    o               = Object{};
+    o.kind          = desc.kind;
+    o.state         = ObjectState::Begun;
+    o.size          = desc.size;
+    o.stagingOffset = start;
+    a->freeObjects.pop_back();
+    ++a->liveObjects;
+
+    Status st;
+    if (isTexture) {
+        o.texture = *desc.texture;
+        st        = create_image(a, o, o.texture);
+    } else {
+        st = create_buffer(a, o, desc.mesh->payloadDecodedSize);
+    }
+    if (st.failed()) {
+        object_free(a, index);
+        return st;
+    }
+
+    o.value                                        = ++a->lastValue;
+    a->byValue[usize(o.value % a->byValue.size())] = index;
+    a->ring.push(RingEntry{.value = o.value, .end = start + n});
+    a->ringHead = start + n;
+
+    u32 slot = kInvalid;
+    if (isTexture)
+        if (u32 const* s = a->assetSlots.find(desc.id)) slot = *s;
+    out->dst           = a->mapped + start;
+    out->rowPitchAlign = kRowPitchAlign;
+    out->token         = o.value;
+    out->object        = GpuObject{.native = u64(index) + 1, .slot = slot, .kind = u32(desc.kind)};
+    return kOk;
+}
+
+void vk_commit_upload(void* user, u64 token) noexcept {
+    VkAdapter* a = self(user);
+    std::lock_guard<std::mutex> lock(a->mutex);
+    KILN_VERIFY(token != 0 && token <= a->lastValue);
+    Object& o = a->objects[a->byValue[usize(token % a->byValue.size())]];
+    KILN_VERIFY(o.value == token && o.state == ObjectState::Begun);
+
+    VkCommandBuffer const cmd = cmd_get(a);
+    VkCommandBufferBeginInfo begin{};
+    begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    VKX_CHECK(vkBeginCommandBuffer(cmd, &begin));
+    if (o.kind == UploadKind::TextureLevels)
+        record_texture(a, cmd, o);
+    else
+        record_mesh(a, cmd, o);
+    VKX_CHECK(vkEndCommandBuffer(cmd));
+    o.cmd   = cmd;
+    o.state = ObjectState::Recorded;
+    a->bytesUploaded += o.size;
+    if (!a->submitOnPoll) submit_ready(a);
+}
+
+bool vk_is_upload_complete(void* user, u64 token) noexcept {
+    VkAdapter* a = self(user);
+    if (a->submitOnPoll && token > a->submittedValue.load(std::memory_order_acquire)) {
+        std::lock_guard<std::mutex> lock(a->mutex);
+        submit_ready(a);
+    }
+    return timeline_value(a) >= token;
+}
+
+void vk_publish(void* user, AssetId id, GpuObject obj, u32 /*version*/) noexcept {
+    VkAdapter* a = self(user);
+    std::lock_guard<std::mutex> lock(a->mutex);
+    Object const* o = object_of(a, obj);
+    if (o && o->value > a->watermark.load(std::memory_order_relaxed))
+        a->watermark.store(o->value, std::memory_order_relaxed);
+    if (id >= kFirstPlaceholderId && id <= kLastPlaceholderId) {
+        a->placeholders[id] = obj; // a null object at destroy() clears it
+        return;
+    }
+    u32 const* found = a->assetSlots.find(id);
+    if (!found) return; // meshes, and textures whose acquire failed
+    u32 const slot = *found;
+    if (obj.is_null()) {
+        // Unload: frames in flight may still sample the slot, so it is reused only later.
+        a->assetSlots.erase(id);
+        a->slotReleases.push_back(SlotRelease{.slot = slot, .frame = a->frame});
+        return;
+    }
+    if (o && o->view) write_slot(a, slot, o->view);
+}
+
+void vk_destroy_deferred(void* user, GpuObject obj) noexcept {
+    VkAdapter* a = self(user);
+    std::lock_guard<std::mutex> lock(a->mutex);
+    Object* o = object_of(a, obj);
+    if (!o || o->deferred) return;
+    o->deferred = true;
+    a->deferred.push_back(DeferredObject{.index = u32(obj.native - 1), .frame = a->frame});
+}
+
+} // namespace
+
+// --- Creation and teardown --------------------------------------------------------------------
+
+namespace {
+
+Status create_vulkan_objects(VkAdapter* a) noexcept {
+    Device const& d = *a->dev;
+    VkResult r;
+
+    // Staging ring.
+    VkBufferCreateInfo sbi{};
+    sbi.sType       = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    sbi.size        = a->ringSize;
+    sbi.usage       = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+    sbi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    if ((r = vkCreateBuffer(a->device, &sbi, nullptr, &a->staging)) != VK_SUCCESS)
+        return make_status(Code::Internal);
+    VkMemoryRequirements req;
+    vkGetBufferMemoryRequirements(a->device, a->staging, &req);
+    VkMemoryPropertyFlags const hostFlags =
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+    u32 const type = find_memory_type(d, req.memoryTypeBits, hostFlags);
+    if (type == kInvalid) return make_status(Code::Unsupported);
+    VkMemoryAllocateInfo smi{};
+    smi.sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    smi.allocationSize  = req.size;
+    smi.memoryTypeIndex = type;
+    if ((r = vkAllocateMemory(a->device, &smi, nullptr, &a->stagingMem)) != VK_SUCCESS)
+        return make_status(Code::OutOfMemory);
+    VKX_CHECK(vkBindBufferMemory(a->device, a->staging, a->stagingMem, 0));
+    void* mapped = nullptr;
+    VKX_CHECK(vkMapMemory(a->device, a->stagingMem, 0, VK_WHOLE_SIZE, 0, &mapped));
+    a->mapped = static_cast<u8*>(mapped);
+
+    // Timeline semaphore and the transfer command pool.
+    VkSemaphoreTypeCreateInfo type2{};
+    type2.sType         = VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO;
+    type2.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE;
+    type2.initialValue  = 0;
+    VkSemaphoreCreateInfo sci{};
+    sci.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+    sci.pNext = &type2;
+    VKX_CHECK(vkCreateSemaphore(a->device, &sci, nullptr, &a->timeline));
+    VkCommandPoolCreateInfo pci{};
+    pci.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+    pci.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT | VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
+    pci.queueFamilyIndex = d.transferFamily;
+    VKX_CHECK(vkCreateCommandPool(a->device, &pci, nullptr, &a->pool));
+
+    // Bindless set: binding 0 = sampler2D[maxSlots], partially bound, update after bind.
+    VkDescriptorSetLayoutBinding binding{};
+    binding.binding                             = 0;
+    binding.descriptorType                      = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    binding.descriptorCount                     = a->desc.maxSlots;
+    binding.stageFlags                          = VK_SHADER_STAGE_ALL_GRAPHICS;
+    VkDescriptorBindingFlags const bindingFlags = VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT |
+                                                  VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT |
+                                                  VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT;
+    VkDescriptorSetLayoutBindingFlagsCreateInfo flagsInfo{};
+    flagsInfo.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO;
+    flagsInfo.bindingCount  = 1;
+    flagsInfo.pBindingFlags = &bindingFlags;
+    VkDescriptorSetLayoutCreateInfo lci{};
+    lci.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    lci.pNext        = &flagsInfo;
+    lci.flags        = VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT;
+    lci.bindingCount = 1;
+    lci.pBindings    = &binding;
+    VKX_CHECK(vkCreateDescriptorSetLayout(a->device, &lci, nullptr, &a->setLayout));
+    VkDescriptorPoolSize const poolSize{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, a->desc.maxSlots};
+    VkDescriptorPoolCreateInfo dpci{};
+    dpci.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    dpci.flags         = VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT;
+    dpci.maxSets       = 1;
+    dpci.poolSizeCount = 1;
+    dpci.pPoolSizes    = &poolSize;
+    VKX_CHECK(vkCreateDescriptorPool(a->device, &dpci, nullptr, &a->descPool));
+    VkDescriptorSetAllocateInfo dsai{};
+    dsai.sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    dsai.descriptorPool     = a->descPool;
+    dsai.descriptorSetCount = 1;
+    dsai.pSetLayouts        = &a->setLayout;
+    VKX_CHECK(vkAllocateDescriptorSets(a->device, &dsai, &a->set));
+    VkSamplerCreateInfo sampler{};
+    sampler.sType        = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    sampler.magFilter    = VK_FILTER_LINEAR;
+    sampler.minFilter    = VK_FILTER_LINEAR;
+    sampler.mipmapMode   = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+    sampler.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    sampler.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    sampler.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    sampler.minLod       = 0.0f;
+    sampler.maxLod       = VK_LOD_CLAMP_NONE;
+    VKX_CHECK(vkCreateSampler(a->device, &sampler, nullptr, &a->sampler));
+    return kOk;
+}
+
+} // namespace
+
+Result<VkAdapter*> adapter_create(AdapterDesc const& desc, Adapter* out) noexcept {
+    if (!out || !desc.device || !desc.device->device || desc.maxSlots == 0 || desc.maxObjects == 0 ||
+        desc.stagingBytes == 0)
+        return make_status(Code::InvalidArgument);
+    Device const& d = *desc.device;
+    VkPhysicalDeviceVulkan12Properties p12{};
+    p12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_PROPERTIES;
+    VkPhysicalDeviceProperties2 p2{};
+    p2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+    p2.pNext = &p12;
+    vkGetPhysicalDeviceProperties2(d.physical, &p2);
+    if (desc.maxSlots > p12.maxPerStageDescriptorUpdateAfterBindSampledImages ||
+        desc.maxSlots > p12.maxDescriptorSetUpdateAfterBindSampledImages) {
+        KILN_ERROR("vk-adapter", "maxSlots %u exceeds the device's update-after-bind sampled image limit %u",
+                   desc.maxSlots, p12.maxPerStageDescriptorUpdateAfterBindSampledImages);
+        return make_status(Code::Unsupported);
+    }
+
+    Allocator const* alloc = desc.alloc ? desc.alloc : default_allocator();
+    VkAdapter* a           = new_object<VkAdapter>(alloc, Tag::Payload);
+    a->desc                = desc;
+    a->desc.alloc          = alloc;
+    a->alloc               = alloc;
+    a->dev                 = &d;
+    a->device              = d.device;
+    a->concurrent          = d.graphicsFamily != d.transferFamily;
+    a->submitOnPoll        = d.transferQueue == d.graphicsQueue;
+    a->ringSize            = desc.stagingBytes;
+
+    u32 famCount = 0;
+    vkGetPhysicalDeviceQueueFamilyProperties(d.physical, &famCount, nullptr);
+    VkQueueFamilyProperties fam[32];
+    famCount = famCount < 32 ? famCount : 32;
+    vkGetPhysicalDeviceQueueFamilyProperties(d.physical, &famCount, fam);
+    a->transferHasGraphics =
+        d.transferFamily < famCount && (fam[d.transferFamily].queueFlags & VK_QUEUE_GRAPHICS_BIT);
+
+    // Every table is sized here, so nothing regrows under the lock.
+    u32 const maxObj = desc.maxObjects;
+    a->objects.init(alloc, Tag::Payload);
+    a->objects.resize(maxObj);
+    a->freeObjects.init(alloc, Tag::Payload);
+    a->freeObjects.reserve(maxObj);
+    for (u32 i = maxObj; i > 0; --i)
+        a->freeObjects.push_back(i - 1); // pop_back hands out index 0 first
+    a->byValue.init(alloc, Tag::Payload);
+    a->byValue.resize(maxObj);
+    a->ring.init(alloc, maxObj);
+    a->cmdsInFlight.init(alloc, maxObj);
+    a->freeCmds.init(alloc, Tag::Payload);
+    a->freeCmds.reserve(maxObj);
+    a->deferred.init(alloc, Tag::Payload);
+    a->deferred.reserve(maxObj);
+    a->freeSlots.init(alloc, Tag::Payload);
+    a->freeSlots.reserve(desc.maxSlots);
+    for (u32 i = desc.maxSlots; i > 0; --i)
+        a->freeSlots.push_back(i - 1);
+    a->slotReleases.init(alloc, Tag::Payload);
+    a->slotReleases.reserve(desc.maxSlots);
+    a->assetSlots.init(alloc, Tag::Payload);
+    a->assetSlots.reserve(desc.maxSlots);
+
+    Status const st = create_vulkan_objects(a);
+    if (st.failed()) {
+        KILN_ERROR("vk-adapter", "creating the staging ring or the bindless set failed (%s)",
+                   code_name(st.code));
+        adapter_destroy(a);
+        return st;
+    }
+
+    *out                    = Adapter{};
+    out->supports_format    = &vk_supports_format;
+    out->copy_constraints   = &vk_copy_constraints;
+    out->acquire            = &vk_acquire;
+    out->begin_upload       = &vk_begin_upload;
+    out->commit_upload      = &vk_commit_upload;
+    out->is_upload_complete = &vk_is_upload_complete;
+    out->publish            = &vk_publish;
+    out->destroy_deferred   = &vk_destroy_deferred;
+    out->caps               = kSelfSubmitting;
+    out->user               = a;
+    KILN_ASSERT(adapter_is_valid(*out));
+    return a;
+}
+
+void adapter_destroy(VkAdapter* a) noexcept {
+    if (!a) return;
+    if (a->device) {
+        {
+            std::lock_guard<std::mutex> lock(a->mutex);
+            submit_ready(a); // anything recorded but held back in submit-on-poll mode
+        }
+        if (a->dev->transferQueue) vkQueueWaitIdle(a->dev->transferQueue);
+        for (u32 i = 0; i < a->objects.size(); ++i)
+            if (a->objects[i].state != ObjectState::Free) object_free(a, i);
+        if (a->sampler) vkDestroySampler(a->device, a->sampler, nullptr);
+        if (a->descPool) vkDestroyDescriptorPool(a->device, a->descPool, nullptr);
+        if (a->setLayout) vkDestroyDescriptorSetLayout(a->device, a->setLayout, nullptr);
+        if (a->pool) vkDestroyCommandPool(a->device, a->pool, nullptr);
+        if (a->timeline) vkDestroySemaphore(a->device, a->timeline, nullptr);
+        if (a->staging) vkDestroyBuffer(a->device, a->staging, nullptr);
+        if (a->stagingMem) vkFreeMemory(a->device, a->stagingMem, nullptr);
+    }
+    delete_object(a->alloc, a, Tag::Payload);
+}
+
+VkDescriptorSetLayout adapter_set_layout(VkAdapter* a) noexcept { return a ? a->setLayout : VK_NULL_HANDLE; }
+VkDescriptorSet adapter_descriptor_set(VkAdapter* a) noexcept { return a ? a->set : VK_NULL_HANDLE; }
+VkSemaphore adapter_timeline(VkAdapter* a) noexcept { return a ? a->timeline : VK_NULL_HANDLE; }
+
+u64 adapter_upload_watermark(VkAdapter* a) noexcept {
+    return a ? a->watermark.load(std::memory_order_relaxed) : 0;
+}
+
+MeshPayload adapter_mesh(VkAdapter* a, GpuObject obj) noexcept {
+    if (!a) return {};
+    std::lock_guard<std::mutex> lock(a->mutex);
+    Object const* o = object_of(a, obj);
+    if (!o || !o->buffer) return {};
+    return MeshPayload{.buffer = o->buffer, .offset = 0, .size = o->size, .address = o->address};
+}
+
+void adapter_retire(VkAdapter* a, u64 completedFrame) noexcept {
+    if (!a) return;
+    std::lock_guard<std::mutex> lock(a->mutex);
+    a->frame            = completedFrame;
+    u64 const fif       = a->desc.framesInFlight;
+    u64 const completed = timeline_value(a);
+    ring_reclaim(a, completed);
+    cmds_reclaim(a, completed);
+    for (usize i = 0; i < a->deferred.size();) {
+        DeferredObject const d = a->deferred[i];
+        Object const& o        = a->objects[d.index];
+        // An upload still on the transfer queue (e.g. unloaded while awaiting) waits for it too.
+        bool const idle = o.state == ObjectState::Submitted && o.value <= completed;
+        if (d.frame + fif <= completedFrame && idle) {
+            object_free(a, d.index);
+            a->deferred.erase_unordered(i);
+        } else {
+            ++i;
+        }
+    }
+    for (usize i = 0; i < a->slotReleases.size();) {
+        if (a->slotReleases[i].frame + fif <= completedFrame) {
+            a->freeSlots.push_back(a->slotReleases[i].slot);
+            a->slotReleases.erase_unordered(i);
+        } else {
+            ++i;
+        }
+    }
+}
+
+AdapterStats adapter_stats(VkAdapter* a) noexcept {
+    if (!a) return {};
+    std::lock_guard<std::mutex> lock(a->mutex);
+    u64 const completed = timeline_value(a);
+    ring_reclaim(a, completed);
+    cmds_reclaim(a, completed);
+    return AdapterStats{
+        .uploadsInFlight = u32(a->lastValue > completed ? a->lastValue - completed : 0),
+        .busyReturned    = a->busyReturned,
+        .bytesUploaded   = a->bytesUploaded,
+        .liveObjects     = a->liveObjects,
+        .slotsInUse      = a->desc.maxSlots - u32(a->freeSlots.size()),
+        .stagingUsed     = ring_used(a),
+    };
+}
+
+} // namespace kiln::vkx
