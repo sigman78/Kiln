@@ -1,30 +1,36 @@
 # Mesh cooker pipeline
 
-Status: **Proposed** (2026-09-27). Records the stage order of the glTF to `.mesh` cooker and
-the determinism rules it follows. The file format itself is in `../mesh-format-spec.md`.
+**Status:** Proposed (awaiting owner sign-off). Implemented in M2: `src/cook/gltf_import.cpp`,
+`src/cook/mesh_cook.cpp`.
+**Decides:** The stage order of the glTF to `.mesh` cooker and the determinism rules it follows.
+The file format is in `../mesh-format-spec.md`; task splitting is in `cook-kernels.md`.
 
 ## Stages
 
 ```
-import (gltf_import.cpp) -> scale baking -> split per material -> welding ->
-generated normals -> MikkTSpace tangents -> optimize (meshoptimizer) ->
-quantize (mesh-format-spec §6) -> LOD / submesh / material records -> write
+import (gltf_import.cpp) -> per (part, LOD): expand and bake transforms, one submesh per material
+-> generated normals -> MikkTSpace tangents -> weld -> optimize (meshoptimizer)
+-> quantize (mesh-format-spec §6) -> LOD / submesh / material records -> write
 ```
+
+- Normals are generated only where a primitive has none. Tangents run on an unindexed triangle
+  list, so welding follows them.
+- Building (expand to optimize) and quantizing run per (part, LOD) task; records and interning run
+  sequentially in traversal order (`cook-kernels.md`).
 
 ### Import
 
-- Parses GLB or `.gltf` JSON with cgltf. cgltf's memory hooks route to the cook arena.
+- Parses GLB or `.gltf` JSON with cgltf. cgltf's memory hooks go to the cook arena.
 - Buffers: the GLB BIN chunk and `data:` URIs go through cgltf. External URIs go through
   `MeshSource::resolver`, never the file system directly.
-- Rejects Draco, `EXT_meshopt_compression` and sparse accessors (K1002, see
-  `../diagnostics.md`). Every accessor read goes through one buffer-view resolver, which is the
-  future `EXT_meshopt_compression` decode hook (`dependencies.md`). That decode would use
-  `meshopt_decodeVertexBuffer` / `meshopt_decodeIndexBuffer` into the arena.
-- Traverses the scene with the naming conventions (`col_`, `_`, `mount_`, `_lodN`) and reduces
-  node transforms to a part translation and rotation plus a residual matrix baked into the
-  vertices.
-- Output is `detail::ImportScene`, with all memory in the cook arena. Every attribute is
-  expanded to `f32`.
+- Rejects Draco and `EXT_meshopt_compression` (K1002) and sparse accessors (K1003, see
+  `../diagnostics.md`). Every accessor read goes through one buffer-view resolver, the future
+  `EXT_meshopt_compression` decode hook (`dependencies.md`).
+- Traverses the scene with the naming conventions (`col_` and `_` skip a subtree, `mount_`,
+  `_lodN`) and reduces node transforms to a part translation and rotation plus a residual matrix
+  baked into the vertices.
+- Output is `detail::ImportScene`, with all memory in the cook arena. Every attribute is expanded
+  to `f32`.
 
 ## Determinism
 

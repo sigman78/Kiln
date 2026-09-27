@@ -8,6 +8,8 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
 ## [Unreleased]
 
 ### Added
+- `ContextDesc::workerPriority` passes a `ThreadPriority` to the built-in pool, so a host that lets kiln
+  create the pool can still keep loading below its own threads.
 - M4: `kiln-viewer` draws cooked meshes through the example adapter with one pipeline per vertex
   layout (zero-buffer inputs and specialization constants for attributes a layout lacks), dynamic
   rendering and synchronization2, two frames in flight, and frame submits that wait on the adapter's

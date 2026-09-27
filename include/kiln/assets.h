@@ -79,10 +79,12 @@ struct ContextDesc {
     bool devPlaceholders                     = KILN_DEBUG != 0; ///< Failed textures show the magenta checker
     Span<PlaceholderDesc const> placeholders = {}; ///< overrides per kind; missing kinds use built-ins
 
-    u32 maxAssets       = 4096; ///< registry capacity (allocated once at create)
-    u32 maxGroups       = 64;
-    u32 maxEvents       = 1024;      ///< events kept between pumps; overflow drops oldest with a warning
-    u32 workerThreads   = 0;         ///< built-in pool only; 0 = auto
+    u32 maxAssets     = 4096; ///< registry capacity (allocated once at create)
+    u32 maxGroups     = 64;
+    u32 maxEvents     = 1024; ///< events kept between pumps; overflow drops oldest with a warning
+    u32 workerThreads = 0;    ///< built-in pool only; 0 = auto
+    ThreadPriority workerPriority =
+        ThreadPriority::Normal;      ///< built-in pool only; Low keeps loading below the host's threads
     u32 maxIoJobs       = 0;         ///< concurrent reads; 0 = worker count
     u64 ioInFlightBytes = 64u << 20; ///< budget for bytes being read at once
 };

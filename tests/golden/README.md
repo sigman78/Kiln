@@ -1,8 +1,8 @@
 # Golden files
 
 Committed cooker output, compared byte-for-byte against a fresh cook every test run
-(`tests/test_mesh_golden.cpp`, `tests/test_texture_golden.cpp`; see `docs/HANDOFF.md` §10).
-This is stricter than the structural checks in `tests/test_mesh_cook.cpp` /
+(`tests/test_mesh_golden.cpp`, `tests/test_texture_golden.cpp`). This is stricter than the
+structural checks in `tests/test_mesh_cook.cpp` /
 `tests/test_texture_cook.cpp` (part/material/texture counts, etc.): a golden diff catches
 *any* change to the exact encoded bytes — quantization bit patterns, vertex order after
 optimization, string table layout, KTX2 level packing — including changes the structural

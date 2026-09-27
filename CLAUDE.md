@@ -1,7 +1,7 @@
 # kiln — agent notes
 
 Read `docs/HANDOFF.md` first (direction, principles, milestones) and `docs/design/README.md`
-(M0 design notes awaiting owner sign-off). `docs/open-questions.md` tracks anything unresolved;
+(the design notes: what is decided, what awaits owner sign-off). `docs/open-questions.md` tracks anything unresolved;
 add to it instead of deciding silently.
 
 ## Build
@@ -11,6 +11,7 @@ add to it instead of deciding silently.
 cmd /c "call C:\dev\msvc.2026\VC\Auxiliary\Build\vcvars64.bat >nul && cmake --preset win-msvc-debug && cmake --build --preset win-msvc-debug && ctest --preset win-msvc-debug"
 # clang-cl also wants that environment: use the win-clangcl-* presets the same way.
 # Linux: cmake --preset linux-clang-debug   (or linux-gcc-debug)
+# gcc/clang warning set on Windows: configure with -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_C_COMPILER=clang (GNU driver)
 # Tests binary: build/<preset>/tests/kiln_tests [filter] [--list] [-v]
 ```
 
@@ -59,4 +60,5 @@ compiler is too old, update it.
 ## Layout
 
 `include/kiln/` public headers · `src/core|io|formats|cook|runtime/` · `tests/` (own runner,
-`tests/kiln_test.h`) · `tools/` (M1+) · `examples/` (M3+) · `docs/design/` design notes.
+`tests/kiln_test.h`) · `tools/` (`kiln-cook`, `kiln-info`, shared parser `tools/cli.h`) ·
+`examples/` (`headless`, `viewer`) · `docs/design/` design notes · `.githooks/` pre-commit hook.

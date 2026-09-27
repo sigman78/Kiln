@@ -100,3 +100,13 @@ add_custom_target(viewer-assets
     COMMAND ${CMAKE_COMMAND} -DOUT_DIR=${CMAKE_SOURCE_DIR}/examples/assets/khronos
             -P ${CMAKE_CURRENT_SOURCE_DIR}/fetch_assets.cmake
     COMMENT "Fetching the viewer demo assets")
+
+# One command to see it: fetch the models, cook them on the fly into the build tree's
+# demo-store, open the viewer. `cmake --build --preset <p> --target viewer-demo`.
+set(KILN_VIEWER_DEMO_MODELS Lantern.mesh WaterBottle.mesh Avocado.mesh SheenChair.mesh BoomBox.mesh)
+add_custom_target(viewer-demo
+    COMMAND $<TARGET_FILE:kiln-viewer> --source ${CMAKE_SOURCE_DIR}/examples/assets/khronos
+            --store ${CMAKE_BINARY_DIR}/demo-store ${KILN_VIEWER_DEMO_MODELS}
+    DEPENDS kiln-viewer viewer-assets
+    USES_TERMINAL
+    COMMENT "kiln-viewer on the demo models (Esc quits)")

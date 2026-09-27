@@ -1,198 +1,151 @@
 # Read-only shipping (M1.5)
 
-**Status:** Decided (2026-09-27), except the mechanism choice (Decision 2), which is the
-coordinator's recommendation: **Proposed (awaiting owner sign-off)**.
-**Milestone:** M1.5
+**Status:** Decided (2026-09-27), except the mechanism choice (Decision 2): **Proposed (awaiting
+owner sign-off)**. Implemented: `CMakeLists.txt` (targets, install), `CMakePresets.json`
+(`*-shipping`), `tests/CMakeLists.txt`, `tests/shipping_consumer/`, the `shipping` job in
+`.github/workflows/ci.yml`.
 **Decides:** What a shipping build of a product built on kiln links and installs; the boundary
 between `kiln_runtime` and `kiln_cook`; the header, install-component and test split that enforces
 it; the shipping presets and the CI job that keeps the contract green.
-
-This note turns HANDOFF §1.1 rule 3 ("shipping builds ... link only `kiln_core` + `kiln_runtime`")
-into a concrete, checked contract, ahead of M2 (cooker) and M3 (runtime) landing real code.
 
 ## Decision
 
 ### 1. Shipping contract
 
-A product that ships pre-cooked assets links **`kiln_core` + `kiln_runtime` only**.
+A product that ships pre-cooked assets links **`kiln_core` + `kiln_runtime` only** (HANDOFF rule).
 
 - `kiln_runtime` never writes files, never imports source formats (glTF, PNG), never encodes, and
   has no dependency, symbol reference or link edge to `kiln_cook`.
-- `kiln_runtime` reaches cooking only through a function-pointer **cook provider** table that
-  `kiln_cook` registers at startup (HANDOFF §7, `kiln::cook::install_provider`). There is no symbol
-  reference from runtime to cook: the provider is the only seam, and it is absent by construction
-  when `kiln_cook` is not linked.
+- `kiln_runtime` reaches cooking only through the `CookProvider` function-pointer table that
+  `kiln::cook::install_provider` registers. The provider is the only seam, and it is absent by
+  construction when `kiln_cook` is not linked.
 - Third-party code inside `kiln_runtime`: **none in v0.5**. Later, only decoders (zstd
   decode-only, meshoptimizer's vertex/index decoder sources, per `dependencies.md`), built from
-  source with kiln's own compiler flags. No encoder, importer or third-party writer ever enters
-  `kiln_runtime`.
-- `kiln-info` is read-only (it dumps `.mesh` / KTX2 headers and blob tables; see `error-model.md`
-  and HANDOFF M1) and may ship with tools even though it is built alongside `kiln_cook` today (see
-  Open points).
+  source with kiln's own flags.
+- `kiln-info` is read-only and links only `kiln_runtime`. It installs with the runtime, but the
+  shipping presets do not build tools.
 
 ### 2. Mechanism: structural split first, conditional compilation only for hot reload
 
 **Proposed (awaiting owner sign-off).**
 
 The split between "ships" and "dev/cook-only" is enforced by **CMake target boundaries**, not by
-preprocessor conditions on a single library. `kiln_runtime` is a separate target from `kiln_cook`
-today (§3 of HANDOFF, already in `CMakeLists.txt`); this note fixes that as the permanent shape of
-the boundary rather than an implementation detail that could later collapse into one library with
-an `ifdef`.
+preprocessor conditions on a single library. `kiln_runtime` and `kiln_cook` are separate targets,
+and this note fixes that as the permanent shape of the boundary.
 
-**Exception: hot reload.** The file watcher and the re-cook hook stay inside `kiln_runtime`,
-behind `KILN_HOT_RELOAD` (already a CMake option, HANDOFF §9). Reasons this one feature is
-conditional compilation, not a target split:
+**Exception: hot reload** (M5, not implemented). The file watcher and the re-cook hook stay inside
+`kiln_runtime`, behind the `KILN_HOT_RELOAD` CMake option (today it only defines
+`KILN_HOT_RELOAD=1`). Reasons:
 
-- Reloading a pre-cooked file that an external `kiln-cook` process rewrote (asset pipeline running
-  next to a shipping-shaped binary, or a live-service title patching assets on disk) is useful
-  **without** the cooker linked in. Splitting hot reload into its own target would not track the
-  cook/no-cook line; it tracks its own, independent axis (watch files, yes or no).
-- It is a small, self-contained feature (watcher, dependency propagation, generation swap) with no
-  third-party code and no import/encode logic, so an `ifdef` does not reopen the ifdef-hygiene
-  problem this note otherwise avoids.
-- Shipping presets set `KILN_HOT_RELOAD=OFF` (Decision 4), so it never ships regardless.
+- Reloading a pre-cooked file that an external `kiln-cook` rewrote is useful **without** the cooker
+  linked in. Hot reload tracks its own axis (watch files, yes or no), not the cook/no-cook line.
+- It is small and self-contained (watcher, dependency propagation, version swap) with no
+  third-party code and no import/encode logic.
+- Shipping presets set `KILN_HOT_RELOAD=OFF`, so it never ships.
 
-The dev-only magenta "failed" placeholder (`handles-and-states.md`) is **not** part of this split.
-It is a runtime flag, `ContextDesc.devPlaceholders` (default `KILN_DEBUG != 0`), because it changes
-only which texels a placeholder uploads, never what is linked or compiled in.
+The magenta "failed" placeholder is **not** part of this split. It is a runtime flag,
+`ContextDesc.devPlaceholders` (default `KILN_DEBUG != 0`), because it changes only which texels a
+placeholder uploads.
 
 ### 3. Header boundary
 
-Cook-only public headers live under `include/kiln/cook/`:
+Cook-only public headers live under `include/kiln/cook/`: `mesh_writer.h`, `ktx2_writer.h`,
+`settings.h`, `cook.h`, `image.h`, `provider.h`. Everything else in `include/kiln/` is core or
+runtime.
 
-| Header | Today |
-|---|---|
-| `include/kiln/cook/mesh_writer.h` | exists (M1) |
-| `include/kiln/cook/ktx2_writer.h` | exists (M1) |
-| `include/kiln/cook/settings.h` | later (M2, §5) |
-| `include/kiln/cook/cook.h` | later (M2, §6.2) |
-| `include/kiln/cook/*` importer headers | later (M2) |
-
-- Shipping installs only `include/kiln/*.h` (the flat, runtime-and-core headers), never
-  `include/kiln/cook/`.
-- Including a cook header from shipping code fails at compile time: the header is not on disk in a
-  shipping install, and `kiln_runtime` does not add `include/kiln/cook/` to its include path even
-  in a source build. There is no runtime check to get this wrong quietly.
+- A shipping install carries only `include/kiln/*.h`. The `include/kiln/cook/` directory installs
+  with the `cook` component, which exists only when `kiln_cook` is built.
+- In a shipping install, including a cook header fails at compile time: the file is not there. In
+  a source tree the cook headers sit under the same include root as the rest, so there the guard
+  is the `shipping` CI job, which builds everything without `kiln_cook`.
 
 ### 4. Shipping presets and CI
 
-Four new CMake presets, one per compiler/OS pair already in `CMakePresets.json`:
+One preset per compiler/OS pair, all Release:
 
-| Preset | Base | `KILN_BUILD_COOK` | `KILN_HOT_RELOAD` | `KILN_BUILD_TOOLS` | Tests |
-|---|---|---|---|---|---|
-| `win-msvc-shipping` | Release | OFF | OFF | OFF | ON |
-| `win-clangcl-shipping` | Release | OFF | OFF | OFF | ON |
-| `linux-clang-shipping` | Release | OFF | OFF | OFF | ON |
-| `linux-gcc-shipping` | Release | OFF | OFF | OFF | ON |
+| Preset | `KILN_BUILD_COOK` | `KILN_HOT_RELOAD` | `KILN_BUILD_TOOLS` | Tests, examples, viewer |
+|---|---|---|---|---|
+| `win-msvc-shipping` | OFF | OFF | OFF | ON |
+| `win-clangcl-shipping` | OFF | OFF | OFF | ON |
+| `linux-clang-shipping` | OFF | OFF | OFF | ON |
+| `linux-gcc-shipping` | OFF | OFF | OFF | ON |
 
-A new CI job, `shipping`, builds one Windows shipping preset and one Linux shipping preset, then:
+`KILN_BUILD_EXAMPLES` and `KILN_BUILD_VIEWER` are ON in every preset, so the shipping presets also
+build `kiln-headless`, `kiln-viewer` and `kiln-vk-smoke` without the cook side.
 
-1. Runs the reader-only test suite (Decision 6) against that build.
-2. Installs the build to a prefix (`cmake --install`).
-3. Configures, builds and runs `tests/shipping_consumer`, a tiny program that does nothing but
-   `find_package(kiln CONFIG REQUIRED)` and `target_link_libraries(app PRIVATE kiln::runtime)`,
-   against that install prefix.
+The CI job `shipping` builds `linux-gcc-shipping` and `win-msvc-shipping`, then:
 
-This continuously proves the HANDOFF §11.3 exit criterion ("a shipping-config build links only
-`kiln_core` + `kiln_runtime` and loads from a pre-cooked store") instead of relying on someone
-remembering to check it once at the v0.5 tag.
+1. Runs the reader-only test suite (Decision 6).
+2. Installs to a prefix and checks that no cook header was installed.
+3. Configures, builds and runs `tests/shipping_consumer`, which only does
+   `find_package(kiln CONFIG REQUIRED)` and links `kiln::runtime`, against that prefix.
+
+This continuously proves the v0.5 exit criterion "a shipping-config build links only `kiln_core` +
+`kiln_runtime` and loads from a pre-cooked store".
 
 ### 5. Install components
 
 ```
-find_package(kiln CONFIG REQUIRED)
-# -> kiln::core, kiln::runtime
-
-find_package(kiln CONFIG REQUIRED COMPONENTS cook)
-# -> also kiln::cook; fails clearly if cook was not built/installed
+find_package(kiln CONFIG REQUIRED)                  # kiln::core, kiln::runtime
+find_package(kiln CONFIG REQUIRED COMPONENTS cook)  # also kiln::cook
 ```
 
-- Export sets: `kilnRuntimeTargets` (core + runtime) and `kilnCookTargets` (cook), installed
-  separately so a shipping install genuinely does not carry cook's export file, not merely omit
-  linking it.
-- `find_package(kiln COMPONENTS cook)` against an install produced with `KILN_BUILD_COOK=OFF` (any
-  shipping preset) fails with a clear "component cook not found" message, not a silent partial
-  configure.
+- Export sets: `kilnRuntimeTargets` (core + runtime) and `kilnCookTargets` (cook, component
+  `cook`), installed separately, so a shipping install does not carry cook's export file.
+- `find_package(kiln COMPONENTS cook)` against an install without cook fails with a message
+  that names the missing `cook` component, not a silent partial configure.
 
 ### 6. Tests split
 
-| Test file | Includes `kiln/cook/`? | Builds when |
-|---|---|---|
-| `test_mesh_read.cpp` | never | always (reader-only) |
-| `test_ktx2_read.cpp` | never | always (reader-only) |
-| `test_formats.cpp` | never | always (reader-only) |
-| core tests (`test_core.cpp`, `test_alloc.cpp`, `test_containers.cpp`, `test_hash.cpp`, `test_result.cpp`) | never | always |
-| `test_mesh.cpp` (writer tests) | yes | only when `kiln_cook` is built |
-| `test_ktx2.cpp` (writer tests) | yes | only when `kiln_cook` is built |
-| `kiln-info` sample tests | yes (via cooked fixtures) | only when `kiln_cook` is built |
+`kiln_tests` always builds the core, reader, IO, null adapter and runtime tests (`test_core`,
+`test_alloc`, `test_result`, `test_hash`, `test_containers`, `test_formats`, `test_mesh_read`,
+`test_ktx2_read`, `test_ktx2_corpus`, `test_null_adapter`, `test_io`, `test_runtime`). The writer,
+cooker, settings, store, provider, golden and `kiln-info` tests join only when `kiln_cook` is built.
 
-- Reader tests use hand-built byte images (already the M1 approach) and, from M2, checked-in
-  golden files, so they never need a cooker to produce their own fixtures.
-- This is the file layout the reader-only test suite in the `shipping` CI job (Decision 4) runs:
-  everything in the left column above, nothing that needs `kiln_cook`.
-- This note records the target shape. The actual file split (today `test_mesh.cpp` and
-  `test_ktx2.cpp` hold both read and write cases) happens as tests land in M2, not as a rename of
-  existing M1 files under this note.
+- Reader tests use hand-built byte images, the KTX2 corpus and committed golden files, so they
+  never need a cooker to produce their fixtures.
+- `test_mesh.cpp` and `test_ktx2.cpp` hold writer round trips and are cook-only.
 
 ### 7. Cache-less mode and cook-on-miss are dev-only by construction
 
-Both need a registered cook provider (§6.3, §4.3 of HANDOFF). Neither is reachable in a shipping
-build, because `kiln_cook` is not linked and nothing else can call
-`kiln::cook::install_provider`. No flag disables them; they are simply unreachable. A shipping
-build's store (HANDOFF §4.4) is a plain read-only directory, exactly as HANDOFF already states:
-"a host that cooks everything in its build step can treat it as a plain read-only directory."
+Both need a registered cook provider. Neither is reachable in a shipping build, because
+`kiln_cook` is not linked and nothing else can call `install_provider`. No flag disables them. A
+shipping build's store is a plain read-only directory.
 
 ## Rationale
 
-Structural split vs conditional compilation, compared on the axes that matter for a shipping
-contract:
-
 | | Structural split (target boundary) | Conditional compilation (`KILN_NO_COOK` ifdef) |
 |---|---|---|
-| **Enforcement** | The linker enforces it. Cook code cannot be reached from runtime because it is not in the same translation unit set, let alone the same binary. | Relies on every contributor remembering the ifdef and on nobody adding an unguarded include. Discipline, not a mechanical guarantee. |
-| **Binary identity** | The runtime binary a dev build produces and the one a shipping build produces come from the same object files; only what else is linked differs. | Two different sets of object files (`#ifdef`'d in vs out) mean dev and ship are never quite the same binary, which weakens "we tested the dev build" as evidence for shipping. |
-| **Consumer visibility** | The boundary is visible in target names (`kiln::runtime` vs `kiln::cook`) and in `find_package` components. A consumer's own `CMakeLists.txt` documents what it ships. | Invisible from outside; a consumer has to know which macro was on when the library was built. |
-| **Cost of adding a feature** | A new cook-only feature: add a file to `kiln_cook`, done. A new runtime feature: add a file to `kiln_runtime`, done. No ifdef to thread through call sites. | Every cook-reachable code path needs an `#ifdef KILN_NO_COOK` (or equivalent) at each call site that might exist in a runtime-only build, and it grows with every feature. |
+| **Enforcement** | The linker enforces it. | Relies on every contributor remembering the ifdef. |
+| **Binary identity** | Dev and shipping runtimes come from the same object files; only what else is linked differs. | Two sets of object files, so testing the dev build is weaker evidence for shipping. |
+| **Consumer visibility** | Visible in target names (`kiln::runtime` vs `kiln::cook`) and `find_package` components. | Invisible; a consumer must know which macro was on. |
+| **Cost of a feature** | Add a file to the right target. | Every cook-reachable call site needs an `#ifdef`. |
 
-The one exception, hot reload behind `KILN_HOT_RELOAD` (Decision 2), does not fight this: it is a
-single feature, self-contained, already an option in `CMakeLists.txt`, and orthogonal to the
-cook/no-cook line (a shipping-shaped binary may reasonably want it on, in principle, even though
-the shipping presets in this note turn it off).
+Hot reload behind `KILN_HOT_RELOAD` does not fight this: it is one self-contained feature,
+orthogonal to the cook/no-cook line.
 
 ## Alternatives considered
 
 | Alternative | Why not |
 |---|---|
-| Single library with `KILN_NO_COOK` ifdefs | No linker enforcement; dev and shipping binaries diverge only by macro, which is easy to get wrong quietly; the boundary is invisible to a consumer's build. |
-| Separate repositories for runtime and cook | Enforces the boundary even harder, but breaks the single-source-of-truth for shared types (`Handle`, `Result`, `.mesh`/KTX2 record layouts) that both sides read, and complicates the M0-era single-repo workflow (one CI, one version, one `CHANGELOG.md`) for no benefit the target split doesn't already give. |
-| `kiln_runtime` as header-only | Would remove the `.cpp` boundary that currently keeps third-party headers and heavy std headers out of `include/kiln/` (HANDOFF §2 header hygiene); also reintroduces the "did I accidentally pull in a cook header" risk at every consumer's compile, instead of once at kiln's own build. |
+| Single library with `KILN_NO_COOK` ifdefs | No linker enforcement; the boundary is invisible to a consumer's build. |
+| Separate repositories for runtime and cook | Breaks the single source of truth for shared types and record layouts, and the single-repo workflow, for no benefit the target split does not already give. |
+| `kiln_runtime` as header-only | Removes the `.cpp` boundary that keeps third-party and heavy std headers out of `include/kiln/`. |
 
-## Consequences / what M2+ must respect
+## Consequences / what later work must respect
 
-- **Every new dependency lands in `kiln_cook` unless it is a decoder.** `dependencies.md`'s
-  runtime-side dependency rule (decoders only, built from source, our flags) is the only door into
-  `kiln_runtime`. An encoder, importer, or anything that writes files is a cook dependency by
-  default; adding it to `kiln_runtime` needs an explicit exception recorded in `dependencies.md`
-  and this note.
-- **Every new public header declares its side.** A header goes in `include/kiln/` if
-  `kiln_runtime` (or `kiln_core`) needs it to compile or if shipping code needs it to consume
-  runtime data; it goes in `include/kiln/cook/` if only `kiln_cook` (or a tool that links it)
-  needs it. There is no third location and no header that is "mostly runtime, but also declares
-  one cook function".
-- **CI gate.** The `shipping` job (Decision 4) is required, not advisory: a change that makes
-  `kiln_runtime` fail to build with `KILN_BUILD_COOK=OFF`, or that makes `tests/shipping_consumer`
-  fail to configure, build or run, fails CI the same as a broken unit test.
-- Install components (Decision 5) mean a consumer's own `find_package(kiln COMPONENTS cook)` is
-  the health check for "did my build actually ship cook by mistake"; M2+ work should keep that
-  failure message clear rather than a generic CMake configure error.
+- **Every new dependency lands in `kiln_cook` unless it is a decoder.** Adding anything else to
+  `kiln_runtime` needs an explicit exception recorded in `dependencies.md` and this note.
+- **Every new public header declares its side:** `include/kiln/` if `kiln_runtime` or `kiln_core`
+  needs it or shipping code consumes it, `include/kiln/cook/` if only `kiln_cook` (or a tool that
+  links it) needs it. No third location, no mixed header.
+- **CI gate.** The `shipping` job is required, not advisory.
+- A consumer's own `find_package(kiln COMPONENTS cook)` is the health check for "did my build ship
+  cook by mistake"; keep its failure message clear.
 
 ## Open points for the owner
 
-- Whether `kiln-info` ships in product (today it links against cook-produced fixtures for its own
-  tests, per Decision 6, but the tool itself is read-only per Decision 1). Proposed: it may ship,
-  since it never writes and has no cook dependency at link time; needs an explicit decision once
-  tools packaging is designed.
-- Whether hot reload should move out of `kiln_runtime` into a separate `kiln_devtools` target
-  later, once it grows (native watchers post-v0.9, per HANDOFF §11.4) past "a few files behind a
-  flag". Not needed for v0.5; noted here so the option isn't foreclosed by how M1.5 ships.
+- Whether `kiln-info` ships in products. Proposed: it may ship, since it never writes and links
+  only `kiln_runtime`; decide once tools packaging is designed.
+- Whether hot reload should move into a separate `kiln_devtools` target once it grows (native
+  watchers post-v0.9). Not needed for v0.5.

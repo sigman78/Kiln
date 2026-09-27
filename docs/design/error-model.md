@@ -1,14 +1,11 @@
 # Error model
 
-**Status:** Proposed (awaiting owner sign-off)
-**Milestone:** M0
-**Decides:** How kiln reports recoverable errors (Status, Result, diagnostics) and when it panics instead.
+**Status:** Proposed (awaiting owner sign-off). Implemented: `include/kiln/result.h`,
+`include/kiln/core.h`, `src/core/`; the code catalogue is `../diagnostics.md`.
+**Decides:** How kiln reports recoverable errors (Status, Result, diagnostics) and when it panics
+instead.
 
 ## Decision
-
-This note describes what is already implemented in `include/kiln/result.h` and
-`include/kiln/core.h`, plus two proposals: the diagnostic code namespace and the third-party
-exception boundary.
 
 ### Two classes of error
 
@@ -29,24 +26,22 @@ Panic macros (`core.h`):
 default handler logs to the log sink (category `panic`, or stderr if no sink), breaks into the
 debugger and aborts. If a user handler returns, `panic()` still aborts.
 
-Allocator out-of-memory panics: `kiln::alloc()` panics on null. `try_alloc()` exists for the rare
-caller that can recover, which then returns `Code::OutOfMemory`.
+Out of memory: `kiln::alloc()` panics on null. `try_alloc()` is for the rare caller that can
+recover, which then returns `Code::OutOfMemory`.
 
-**Runtime API misuse that panics** (always on, `KILN_VERIFY` / `KILN_PANIC`, with a message that
-names the rule):
+**Runtime API misuse:**
 
-| Misuse | Why a panic, not a `Status` |
-|---|---|
-| `wait()` called off the pump thread | `pump()` state is single-threaded; running it from two threads would race |
-| `wait()` with an adapter that lacks `AdapterCaps::kSelfSubmitting` | uploads cannot complete without the host recording a frame, so the call would hang until the timeout on every use |
-| `pump()` called from a thread other than the bound pump thread (proposed, see `handles-and-states.md`) | same race as above |
+| Misuse | Handling | Why |
+|---|---|---|
+| `wait()` called off the pump thread | panic, K5007 | `pump()` state is single-threaded; two threads would race |
+| `wait()` with an adapter that lacks `kSelfSubmitting` | panic, K5007 | uploads cannot complete without the host recording a frame, so the call would hang until the timeout |
+| `pump()` called off the pump thread | `KILN_ASSERT`, debug builds only (R5i) | same race as above |
 
 Rule: a blocking API never hangs on misuse. It panics at entry, before blocking.
 
 ### `Code`
 
-`enum class Code : u16`. Stable once released, append only. `code_name(Code)` returns a
-snake_case name.
+`enum class Code : u16`, append only once released. `code_name(Code)` returns a snake_case name.
 
 | Code | Used when |
 |---|---|
@@ -55,15 +50,15 @@ snake_case name.
 | `InvalidArgument` | caller passed a value the API rejects (recoverable form; contract violations panic instead) |
 | `OutOfMemory` | an allocation failed where the caller opted in to recover via `try_alloc` |
 | `NotFound` | asset, file, key or store entry does not exist |
-| `AlreadyExists` | registering an id that is already registered; store entry exists |
-| `Unsupported` | format, extension or feature not supported (Draco, sparse accessors, BCn in v0.5) |
+| `AlreadyExists` | registering a path that is already registered; store entry exists |
+| `Unsupported` | format, extension or feature not supported (Draco, sparse accessors, compressed `.mesh` codecs in v0.5) |
 | `IoError` | OS-level IO failure; `detail` carries the OS error |
 | `IoEof` | read past end of file (truncated file) |
 | `ParseError` | malformed input: glTF JSON, PNG, KTX2 header, config |
 | `ValidationFailed` | well-formed input that breaks a semantic rule (index out of range, bad settings combination) |
-| `Corrupt` | cooked data failed integrity checks (bad `.mesh` section bounds, `BLOB` table ranges or overlaps, decoded size mismatch, store entry mismatch) |
+| `Corrupt` | cooked data failed integrity checks (section bounds, `BLOB` ranges or overlaps, decoded size mismatch, store entry mismatch) |
 | `VersionMismatch` | cooked data from an incompatible `.mesh` version (other major, or other minor while the major is 0) or cooker version |
-| `Busy` | back-pressure: adapter or budget says "not now", retry next `pump()` |
+| `Busy` | back-pressure: adapter, budget or table says "not now" |
 | `NotReady` | the target is not in a state that allows the operation |
 | `Cancelled` | request released or context destroyed while work was in flight |
 | `Timeout` | a bounded wait expired |
@@ -71,115 +66,87 @@ snake_case name.
 
 ### `Status`
 
-```cpp
-struct Status {
-    Code code   = Code::Ok;
-    u16  detail = 0;   // code-specific
-};
-inline constexpr Status kOk{};
-constexpr Status make_status(Code c, u16 detail = 0);
-```
+`struct Status { Code code; u16 detail; }`, `kOk`, `make_status(Code, u16 detail = 0)`.
 
 - 4 bytes, trivially copyable, returned in a register.
-- `detail` meaning:
-  - `IoError`: `errno`, or the low 16 bits of `GetLastError()` on Windows.
-  - Other codes: code-specific, documented at the emitting site. For example, a parse error may
-    carry the failing section fourcc index or a small sub-reason. 0 when unused.
-- **No string payload, by design.** A string needs either heap allocation or an ownership rule
-  (static? arena? who frees?). Both are wrong for a value that is copied and returned through
-  every layer. Human-readable context goes to a `DiagSink` at the point where it is known.
+- `detail`: for `IoError`, `errno` or the low 16 bits of `GetLastError()`; for other codes,
+  code-specific and documented at the emitting site; 0 when unused.
+- **No string payload, by design.** A string needs heap allocation or an ownership rule, both wrong
+  for a value copied through every layer. Human-readable context goes to a `DiagSink` where it is
+  known.
 
 ### `Result<T>`
 
-- Value-or-Status. Inline storage (`alignas(T) unsigned char[sizeof(T)]`) plus a `Status`. No heap.
+- Value-or-Status with inline storage plus a `Status`. No heap.
 - Constructed implicitly from `T` (success) or from `Status` / `Code` (failure). Constructing from
   an Ok status asserts.
-- `value()`, `operator*`, `operator->` check `ok()` with `KILN_ASSERT`. Debug builds panic on
-  misuse; release builds do not check.
+- `value()`, `operator*`, `operator->` check `ok()` with `KILN_ASSERT`: debug builds panic on
+  misuse, release builds do not check.
 - `value_or(fallback)`, `status()`, `code()`, `ok()`, `failed()`.
-- `Result<T&>` is rejected by `static_assert`; use `Result<T*>`.
-- `Result<void>` carries only a `Status` and default-constructs to Ok.
-
-### Propagation macros
-
-```cpp
-KILN_TRY(read_header(src, &hdr));           // returns the Status on failure
-KILN_TRY_ASSIGN(auto blob, load_blob(src)); // binds the value on success
-```
-
-Both accept a `Status` or any `Result<T>`, and return a `Status` from the enclosing function.
-The enclosing function must therefore return `Status` or a `Result<U>`.
+- `Result<T&>` is rejected by `static_assert`; use `Result<T*>`. `Result<void>` carries only a
+  `Status` and default-constructs to Ok.
+- `KILN_TRY(expr)` returns the `Status` on failure; `KILN_TRY_ASSIGN(decl, expr)` also binds the
+  value on success. Both accept a `Status` or any `Result<T>`, so the enclosing function returns
+  `Status` or a `Result<U>`.
 
 ### Diagnostics
 
-```cpp
-enum class Severity : u8 { Info, Warning, Error };
-
-struct Diagnostic {
-    u32      code     = 0;       // stable diagnostic code, 0 = none (see namespace below)
-    Severity severity = Severity::Error;
-    Status   status   = kOk;     // the Status this diagnostic accompanies, if any
-    StrView  asset;              // asset path or id text
-    StrView  where;              // node, material, section, ...
-    StrView  message;            // human-readable
-};
-
-struct DiagSink { void (*fn)(void* user, Diagnostic const&); void* user; };
-```
+`Diagnostic { u32 code; Severity severity; Status status; StrView asset, where, message; }` and
+`DiagSink { fn, user }`, with `Severity { Info, Warning, Error }`.
 
 - All views are valid only during the callback. The sink copies what it keeps.
-- A null sink or null `fn` drops diagnostics. `emit(sink, d)` handles both.
+- A null sink or null `fn` drops diagnostics; `emit(sink, d)` handles both.
 - `diagf(sink, status, code, severity, asset, where, fmt, ...)` formats into a stack buffer
   (`kLogMessageMax` = 1024 bytes) and returns `status`, so the idiom is
   `return diagf(diag, make_status(Code::ParseError), 1003, Severity::Error, path, node, "...");`.
 - `log_diag_sink()` forwards to the log (category `diag`), printing `K%04u` when a code is set.
-- The sink must be thread-safe if it is shared by concurrent cooks. Inside the runtime,
-  diagnostics from workers are queued and delivered on the pumping thread (see
-  `threading-and-io.md`).
+- A sink shared by concurrent cooks must be thread-safe. The runtime never calls the host's sink
+  from a worker (`threading-and-io.md`).
 
 ### Runtime contract for recoverable errors
 
 When loading an asset fails for a recoverable reason:
 
-1. The asset moves to `Failed` (see `handles-and-states.md`).
+1. The asset moves to `Failed` (`handles-and-states.md`).
 2. Textures: `gpu()` serves the Failed placeholder (magenta checker when `devPlaceholders` is on,
-   else the kind placeholder). Meshes have no placeholder: `is_ready()` stays false and `view()`
-   is empty.
-3. **Exactly one** diagnostic with `Severity::Error` is emitted for the failure, plus a `Failed`
-   event on `pump()`. Warnings emitted earlier during the same cook are not limited.
+   else the kind placeholder). Meshes: `is_ready()` stays false and `mesh_view()` is null.
+3. **Exactly one** `Severity::Error` diagnostic (K5xxx) is emitted, plus a `Failed` event, in
+   `pump()`. It carries the first diagnostic the worker produced (reader, provider or cooker) as
+   text; other worker diagnostics are not delivered (R5f).
 
 ### `.mesh` blob table failures
 
-The blob decode loop (mesh-format-spec §5.9, §7) fails the asset recoverably. Proposed mapping:
+A bad blob table fails the asset recoverably (mesh-format-spec §5.9, §7):
 
 | Failure | `Code` | Diagnostic |
 |---|---|---|
-| Header sizes disagree (`gpuDataSize` vs `GPUD` size vs `fileSize - gpuDataOffset`; with `kPayloadRaw`, vs `payloadDecodedSize`) | `Corrupt` | K4xxx |
-| `BLOB` missing, not sorted by `encodedOffset`, or `lodRank` decreasing along the table | `Corrupt` | K4xxx |
-| Blob encoded range outside `GPUD`, or decoded range outside `payloadDecodedSize` | `Corrupt` | K4xxx |
-| Encoded ranges overlap, decoded ranges overlap, or decoded ranges do not cover a range that `LODS` references | `Corrupt` | K4xxx |
-| Decoder output size differs from `decodedSize` (short, or would write past it) | `Corrupt` | K4xxx |
-| `kPayloadRaw` set but a blob is not an identity range (codec, filter, offsets or sizes differ) | `Corrupt` | K4xxx |
-| `checksum` mismatch (tools and debug builds) | `Corrupt` | K4xxx |
-| Misaligned offsets, `elementSize` 0, `decodedSize` not a multiple of `elementSize` (of 3 x index size for `MeshoptIndex`) | `ValidationFailed` | K4xxx |
-| Codec/filter pair not in the spec §5.9 table, `kBlobOuterZstd` with a non-`Meshopt*` codec, or a U8 index blob with a `Meshopt*` codec | `ValidationFailed` | K4xxx |
-| Unknown codec or filter id, or one not built into this runtime (anything but `None` in v0.5) | `Unsupported` | K4xxx |
+| Header sizes disagree (`gpuDataSize` vs `GPUD` size vs `fileSize - gpuDataOffset`; with `kPayloadRaw`, vs `payloadDecodedSize`) | `Corrupt` | K4003, K4016 |
+| `BLOB` missing, not sorted by `encodedOffset`, or `lodRank` decreasing | `Corrupt` | K4005, K4013 |
+| Blob encoded range outside `GPUD`, or decoded range outside `payloadDecodedSize` | `Corrupt` | K4013 |
+| Encoded or decoded ranges overlap, or blobs do not cover a range that `LODS` references | `Corrupt` | K4013, K4012 |
+| Decoder output size differs from `decodedSize` | `Corrupt` | K4021 |
+| `kPayloadRaw` set but a blob is not an identity range | `Corrupt` | K4016 |
+| `checksum` mismatch (`DecodeOptions::verifyChecksums`, on in debug builds) | `Corrupt` | K4017 |
+| Misaligned offsets, `elementSize` 0, `decodedSize` not a multiple of the codec unit | `ValidationFailed` | K4014 |
+| Codec/filter pair not allowed, `kBlobOuterZstd` with a non-`Meshopt*` codec, or a U8 index blob with a `Meshopt*` codec | `ValidationFailed` | K4014 |
+| Unknown codec or filter id, or one not built into this runtime (anything but `None` in v0.5) | `Unsupported` | K4015 |
 
 - `Corrupt` means the bytes cannot be trusted (bounds, overlaps, sizes). `ValidationFailed` means
-  the file is structurally sound but breaks a spec rule. Both are recoverable: the asset goes to
-  `Failed`.
-- `Status.detail` carries the blob index (low 16 bits) so tools can point at the entry.
-- The same checks run in the cooker's writer self-check (K4xxx, `Severity::Error`) and in
-  `kiln-info`.
+  the file is structurally sound but breaks a spec rule. Both are recoverable.
+- Proposed: `Status.detail` carries the blob index so tools can point at the entry. Not
+  implemented; `detail` is 0 today.
+- The writer validates its input by the same spec rules (`mesh::write`), and `kiln-info --check`
+  runs the reader checks on a file.
 
 Never a crash, never a silent failure (v0.5 exit criterion).
 
-### Proposal: diagnostic code namespace
+### Diagnostic code namespace
 
 - Codes are `u32`, rendered as `K` plus 4 digits (`K1003`). 0 means "no code".
-- Codes are stable once released. Each code is documented in a future `docs/diagnostics.md`
-  (created in M2) with a one-line meaning and an artist-facing fix hint.
-- Ranges:
+- Codes are stable once released. Each emitting module defines its codes as an enum in its public
+  header (`GltfDiagCode`, `ImageDiagCode`, `SettingsDiagCode`, `mesh::DiagCode`, `ktx2::DiagCode`,
+  `RuntimeDiagCode`). `../diagnostics.md` documents each with a meaning and an artist-facing fix
+  hint. No test checks for duplicate numbers yet.
 
 | Range | Area |
 |---|---|
@@ -187,20 +154,18 @@ Never a crash, never a silent failure (v0.5 exit criterion).
 | K2000-2999 | image import and encode (PNG decode, KTX2 pass-through, size, channel checks) |
 | K3000-3999 | settings resolution (invalid combinations, unknown keys later) |
 | K4000-4999 | `.mesh` and KTX2 validation (reader and writer checks, including `BLOB` table checks) |
-| K5000-5999 | runtime and store (store miss, corrupt entry, adapter failures, placeholder served) |
+| K5000-5999 | runtime and store (store miss, corrupt entry, adapter failures, placeholder failures) |
 | K6000-9999 | reserved |
 
-- Codes are defined as `constexpr u32` in the emitting module's private header, and the doc table
-  is the source of truth. A test checks there are no duplicates (M2).
-
-### Proposal: exception boundary for third-party code
+### Exception boundary for third-party code
 
 - kiln code never uses `throw`, `try`, `catch`, `dynamic_cast` or `typeid`.
-- If a dependency can throw on bad input, the **only** `try`/`catch` allowed is in the single
-  `.cpp` that wraps it. It catches, converts to `Status` (usually `ParseError` or `Internal`),
-  and emits a diagnostic.
-- When `KILN_NO_EXCEPTIONS` lands (v1.0), those blocks are compiled out behind the macro.
-- None of the v0.5 dependencies in `dependencies.md` throw, so no such block is expected in v0.5.
+- If a dependency or std call can throw on a path kiln must report, the **only** `try`/`catch`
+  allowed is in the single `.cpp` that calls it. It catches, converts to `Status`, and emits a
+  diagnostic where it can. `KILN_HAS_EXCEPTIONS` (`core.h`) compiles the block out when exceptions
+  are off.
+- The only such block today is the `std::thread` construction in `src/io/thread_pool.cpp` (R5l).
+  None of the third-party dependencies throw.
 
 ## Rationale
 
@@ -212,24 +177,21 @@ Never a crash, never a silent failure (v0.5 exit criterion).
 
 ## Alternatives considered
 
-- **`std::expected`**: C++23, not guaranteed on all targets; pulls a heavier header.
-- **Status with an owned message string**: heap in the error path, ownership questions.
-- **Status with a `char const*` to a static string**: forces messages to be static, loses context
-  (paths, node names).
-- **Error codes as a global registry**: needs a registration step and a global; a plain `enum`
-  plus module-local diagnostic codes is simpler.
+`std::expected` (pulls a heavier std header into public headers), a Status with an owned message
+string (heap in the error path), a Status with a static `char const*` (loses paths and node names),
+and a global error-code registry (a registration step and a global): rejected.
 
 ## Consequences / what this constrains later
 
 - `Code` is append-only after the first release. Reordering is an ABI and log-format break.
-- Diagnostic code numbers become part of the artist-facing documentation; renumbering is not
-  allowed after release.
+- Diagnostic numbers are part of the artist-facing documentation; no renumbering after release.
 - Any API that can fail recoverably returns `Status` or `Result<T>`; no out-parameter error codes.
 
 ## Open points for the owner
 
 - Confirm the `K` + 4-digit code format and the ranges above.
-- Confirm "exactly one Error diagnostic per failed load".
+- Confirm "exactly one Error diagnostic per failed load", including that other worker diagnostics
+  are not delivered (R5f).
 - Confirm that `Status.detail` stays 16 bits (it truncates Windows error codes to their low bits).
-- Confirm the `wait()` misuse panics (off-thread, adapter without `kSelfSubmitting`).
+- Confirm the `wait()` misuse panics and `pump()` off-thread as a debug assert only.
 - Confirm the `Corrupt` vs `ValidationFailed` split for blob-table failures above.

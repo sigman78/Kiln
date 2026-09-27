@@ -234,6 +234,7 @@ Result<Context*> create(ContextDesc const& desc) noexcept {
         ThreadPoolDesc pd;
         pd.alloc                     = a;
         pd.threads                   = desc.workerThreads;
+        pd.priority                  = desc.workerPriority;
         Result<JobSystem> const pool = create_thread_pool(pd);
         if (pool.failed()) {
             delete_object(a, ctx, Tag::Registry);
