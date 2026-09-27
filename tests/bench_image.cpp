@@ -89,6 +89,11 @@ void stage_downsample_srgb(Image const&, Image const& rgba8, Allocator const* al
     Result<Image> r = downsample_2x(rgba8, MipOptions{.srgb = true}, alloc, jobs);
     KILN_VERIFY(r.ok());
 }
+void stage_downsample_renorm(Image const&, Image const& rgba8, Allocator const* alloc,
+                             JobBudget const& jobs) {
+    Result<Image> r = downsample_2x(rgba8, MipOptions{.renormalize = true}, alloc, jobs);
+    KILN_VERIFY(r.ok());
+}
 void stage_build_mip_chain(Image const&, Image const& rgba8, Allocator const* alloc, JobBudget const& jobs) {
     Result<Vec<Image>> r = build_mip_chain(clone_image(rgba8), MipOptions{.srgb = true}, 0, alloc, jobs);
     KILN_VERIFY(r.ok());
@@ -109,6 +114,7 @@ constexpr StageSpec kStages[] = {
     {"renormalize",               &stage_renormalize,       &bytes_of_rgba8},
     {"downsample_2x linear",      &stage_downsample_linear, &bytes_of_rgba8},
     {"downsample_2x srgb",        &stage_downsample_srgb,   &bytes_of_rgba8},
+    {"downsample_2x renormalize", &stage_downsample_renorm, &bytes_of_rgba8},
     {"build_mip_chain srgb",      &stage_build_mip_chain,   &bytes_of_rgba8},
 };
 

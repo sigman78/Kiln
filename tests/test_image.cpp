@@ -8,6 +8,8 @@
 
 #include "../src/cook/kernels.h"
 
+#include <cmath>
+
 using namespace kiln;
 using namespace kiln::cook;
 namespace png = kiln::test::png;
@@ -558,6 +560,38 @@ Image reference_convert(Image const& src, u32 channels, u32 bits) {
     return dst;
 }
 
+/// The original renormalize_px, written independently of kernels.h: every value goes
+/// through the divide (no kUnitFrom8 table), in the documented operation order.
+void reference_renormalize_px(u32 bits, u32* rgb) {
+    u32 const maxv    = bits == 8 ? 255u : 65535u;
+    double const half = double(maxv) * 0.5;
+    double const x    = double(rgb[0]) / half - 1.0;
+    double const y    = double(rgb[1]) / half - 1.0;
+    double const z    = double(rgb[2]) / half - 1.0;
+    double const len2 = x * x + y * y + z * z;
+    double n[3]       = {0.0, 0.0, 1.0};
+    if (len2 > 0.0) {
+        double const len = std::sqrt(len2);
+        n[0]             = x / len;
+        n[1]             = y / len;
+        n[2]             = z / len;
+    }
+    for (u32 c = 0; c < 3; ++c) {
+        double const e = std::floor((n[c] + 1.0) * half + 0.5);
+        rgb[c]         = e <= 0.0 ? 0u : (e >= double(maxv) ? maxv : u32(e));
+    }
+}
+
+void reference_renormalize(Image& img) {
+    for (u32 y = 0; y < img.height; ++y)
+        for (u32 x = 0; x < img.width; ++x) {
+            u32 rgb[3] = {texel(img, x, y, 0), texel(img, x, y, 1), texel(img, x, y, 2)};
+            reference_renormalize_px(img.bitsPerChannel, rgb);
+            for (u32 c = 0; c < 3; ++c)
+                set_texel(img, x, y, c, rgb[c]);
+        }
+}
+
 /// Straightforward 2x2 box filter with per-sample clamps (the pre-kernel code).
 Image reference_downsample(Image const& src, MipOptions const& opt) {
     u32 const w     = max(src.width / 2, 1u);
@@ -581,7 +615,7 @@ Image reference_downsample(Image const& src, MipOptions const& opt) {
             }
         }
     }
-    if (rn) renormalize(dst);
+    if (rn) reference_renormalize(dst);
     return dst;
 }
 
@@ -683,7 +717,7 @@ Image clone(Image const& src) {
 }
 
 /// Every image operation with a job pool against the same call without one.
-void check_row_bands(JobSystem const* jobs, Image const& src) {
+void check_row_bands(JobBudget const& jobs, Image const& src) {
     u32 const targetBits[2]             = {src.bitsPerChannel, src.bitsPerChannel == 8 ? 16u : 8u};
     constexpr PrepareOptions kPrepare[] = {
         {},
@@ -815,7 +849,7 @@ KILN_TEST(image, row_bands_match_single_thread) {
         KILN_REQUIRE(pool.ok());
         Lcg rng{0x7EADu + threads};
         for (Case const& c : kCases)
-            check_row_bands(&*pool, random_image(rng, c.w, c.h, c.channels, c.bits));
+            check_row_bands(JobBudget{&*pool, 0}, random_image(rng, c.w, c.h, c.channels, c.bits));
         destroy_thread_pool(*pool);
     }
 }
@@ -839,4 +873,118 @@ KILN_TEST(image, renormalize_simd_matches_scalar) {
                            ch, bits);
         }
     }
+}
+
+namespace {
+
+/// Every 8-bit red value against a spread of green and blue values (including 0, the
+/// midpoint pair 127/128 and 255), one row, odd width, alpha 77.
+Image renormalize8_sweep(u32 channels) {
+    constexpr u32 kSpread[] = {0, 1, 2, 31, 64, 100, 126, 127, 128, 129, 150, 191, 200, 223, 254, 255};
+    u32 width = 256 * u32(sizeof kSpread / sizeof kSpread[0]) * u32(sizeof kSpread / sizeof kSpread[0]);
+    ++width; // odd: the scalar tail of the SIMD kernel runs too
+    Vec<u8> zeros(default_allocator(), Tag::Test);
+    zeros.resize(usize(width) * channels);
+    Image img = make(width, 1, channels, 8, zeros.span());
+    u32 x     = 0;
+    for (u32 g : kSpread)
+        for (u32 b : kSpread)
+            for (u32 r = 0; r < 256; ++r, ++x) {
+                set_texel(img, x, 0, 0, r);
+                set_texel(img, x, 0, 1, g);
+                set_texel(img, x, 0, 2, b);
+            }
+    set_texel(img, x, 0, 0, 128);
+    set_texel(img, x, 0, 1, 127);
+    set_texel(img, x, 0, 2, 255);
+    if (channels == 4)
+        for (u32 i = 0; i < width; ++i)
+            set_texel(img, i, 0, 3, 77);
+    return img;
+}
+
+/// Runs `fn` over every row of `img` in place.
+void run_rows(kernels::RowFn fn, Image& img) {
+    kernels::RowCtx const ctx = {.src         = nullptr,
+                                 .dst         = img.pixels.data(),
+                                 .srcRowBytes = 0,
+                                 .dstRowBytes = usize(img.width) * img.channels * (img.bitsPerChannel / 8),
+                                 .width       = img.width};
+    fn(ctx, 0, img.height);
+}
+
+/// A source whose 2x2 blocks average to the crafted triples: each block holds the
+/// triple with per-sample offsets {0, +1, -1, 0} (clamped), so the rounding of the
+/// average is exercised too. `extraColumn` makes the source width odd; `oneRow` makes
+/// the source a single row (the row step is 0).
+Image crafted_downsample_source(u32 bits, u32 channels, bool extraColumn, bool oneRow) {
+    Image const t  = crafted_texels(bits, channels);
+    u32 const maxv = bits == 8 ? 255u : 65535u;
+    u32 const w    = 2 * t.width + (extraColumn ? 1 : 0);
+    u32 const h    = oneRow ? 1 : 2;
+    Vec<u8> zeros(default_allocator(), Tag::Test);
+    zeros.resize(usize(w) * h * channels * (bits / 8));
+    Image src             = make(w, h, channels, bits, zeros.span());
+    constexpr int kOff[4] = {0, 1, -1, 0};
+    for (u32 x = 0; x < w; ++x)
+        for (u32 y = 0; y < h; ++y) {
+            u32 const tx = min(x / 2, t.width - 1);
+            int const d  = kOff[(y & 1) * 2 + (x & 1)];
+            for (u32 c = 0; c < channels; ++c) {
+                int const v = int(texel(t, tx, 0, c)) + (c < 3 ? d : 0);
+                set_texel(src, x, y, c, u32(v < 0 ? 0 : (v > int(maxv) ? int(maxv) : v)));
+            }
+        }
+    return src;
+}
+
+} // namespace
+
+KILN_TEST(image, renormalize_8bit_table_matches_divide) {
+    // The table entries against the runtime divide (volatile keeps it at run time).
+    for (u32 i = 0; i < 256; ++i) {
+        volatile double v = double(i);
+        double const want = v / 127.5 - 1.0;
+        KILN_CHECK_MSG(std::memcmp(&kernels::kUnitFrom8.v[i], &want, sizeof want) == 0, "table entry %u", i);
+    }
+    // Both kernels against the divide-only reference, over every red value.
+    constexpr u32 kChannels[] = {3, 4};
+    for (u32 ch : kChannels) {
+        Image const src = renormalize8_sweep(ch);
+        Image want      = clone(src);
+        reference_renormalize(want);
+        Image fast = clone(src), scalar = clone(src);
+        run_rows(kernels::renormalize_kernel(8, ch), fast);
+        run_rows(kernels::renormalize_kernel_scalar(8, ch), scalar);
+        KILN_CHECK_MSG(same_image(fast, want), "dispatched kernel, %u channels", ch);
+        KILN_CHECK_MSG(same_image(scalar, want), "scalar kernel, %u channels", ch);
+    }
+}
+
+KILN_TEST(image, downsample_renormalize_matches_reference) {
+    constexpr u32 kWidths[]   = {1, 2, 3, 4, 5, 6, 7, 9, 33};
+    constexpr u32 kHeights[]  = {1, 2, 3, 4};
+    constexpr u32 kBits[]     = {8, 16};
+    constexpr u32 kChannels[] = {3, 4};
+    MipOptions const opt      = {.renormalize = true};
+    Lcg rng{0xD0E5u};
+    for (u32 bits : kBits)
+        for (u32 ch : kChannels) {
+            for (u32 w : kWidths)
+                for (u32 h : kHeights) {
+                    Image const src   = random_image(rng, w, h, ch, bits);
+                    Result<Image> got = downsample_2x(src, opt, default_allocator());
+                    KILN_REQUIRE(got.ok());
+                    KILN_CHECK_MSG(same_image(*got, reference_downsample(src, opt)),
+                                   "random %ux%u, %u channels, %u bits", w, h, ch, bits);
+                }
+            constexpr bool kOddWidth[2] = {false, true}; // odd width goes with a single row
+            for (bool odd : kOddWidth) {
+                Image const src   = crafted_downsample_source(bits, ch, odd, odd);
+                Result<Image> got = downsample_2x(src, opt, default_allocator());
+                KILN_REQUIRE(got.ok());
+                KILN_CHECK_MSG(same_image(*got, reference_downsample(src, opt)),
+                               "crafted, odd %u, %u channels, %u bits", u32(odd), ch, bits);
+            }
+        }
 }

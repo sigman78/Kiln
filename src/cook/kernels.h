@@ -11,7 +11,8 @@
 // | flip_green_rows   | bits, channels                   | rows  | auto                                 |
 // | renormalize_rows  | bits, channels                   | rows  | SSE2 (x64), scalar elsewhere         |
 // | prepare_rows      | the three kernels above          | rows  | as its parts; fused per row          |
-// | downsample_rows   | bits, channels, mode             | rows  | auto (linear); scalar (sRGB, renorm) |
+// | downsample_rows   | bits, channels, Linear or Srgb   | rows  | auto (linear); scalar (sRGB)         |
+// | downsample_rows   | bits, channels, Renorm           | rows  | SSE2 (x64), scalar elsewhere         |
 #pragma once
 
 #include "kiln/core.h"
@@ -119,14 +120,40 @@ template <u32 From, u32 To> KILN_FORCEINLINE u32 convert_depth(u32 v) noexcept {
         return v;
 }
 
+struct UnitFrom8Table {
+    double v[256];
+};
+
+/// First renormalize step for 8-bit values: v[i] = double(i) / 127.5 - 1.0, evaluated
+/// at compile time in IEEE double with the same two correctly rounded operations the
+/// runtime expression performs, so a lookup is bit-identical to computing it. Saves
+/// three of the seven dependent divides per texel; 16-bit keeps the divides (a
+/// 65536-entry table would not stay in cache).
+constexpr UnitFrom8Table make_unit_from8() noexcept {
+    UnitFrom8Table t{};
+    for (u32 i = 0; i < 256; ++i)
+        t.v[i] = double(i) / 127.5 - 1.0;
+    return t;
+}
+
+inline constexpr UnitFrom8Table kUnitFrom8 = make_unit_from8();
+
+/// A channel value mapped to [-1, 1]: double(v) / half - 1.0, from kUnitFrom8 for 8-bit.
+template <u32 Bits> KILN_FORCEINLINE double to_unit(u32 v) noexcept {
+    if constexpr (Bits == 8)
+        return kUnitFrom8.v[v];
+    else
+        return double(v) / (double(kMaxValue<Bits>) * 0.5) - 1.0;
+}
+
 /// Renormalize one RGB triple (values in 0..max) as a unit vector. The operation
 /// order is part of the output format: do not reorder or simplify.
 template <u32 Bits> KILN_FORCEINLINE void renormalize_px(u32* rgb) noexcept {
     constexpr u32 maxv = kMaxValue<Bits>;
     double const half  = double(maxv) * 0.5; // 127.5 or 32767.5
-    double const x     = double(rgb[0]) / half - 1.0;
-    double const y     = double(rgb[1]) / half - 1.0;
-    double const z     = double(rgb[2]) / half - 1.0;
+    double const x     = to_unit<Bits>(rgb[0]);
+    double const y     = to_unit<Bits>(rgb[1]);
+    double const z     = to_unit<Bits>(rgb[2]);
     double const len2  = x * x + y * y + z * z;
     double n[3]        = {0.0, 0.0, 1.0}; // a zero vector becomes the flat normal
     if (len2 > 0.0) {
@@ -220,10 +247,12 @@ KILN_HOT void renormalize_rows(RowCtx const& ctx, u32 rowBegin, u32 rowEnd) noex
 }
 
 #if defined(KILN_ARCH_X64)
-/// renormalize_px<Bits> for two texels at once: lane 0 of every vector is texel `a`,
-/// lane 1 is texel `b`. Bit-identical to the scalar path: each step is the same
-/// correctly rounded IEEE double operation in the same order (divpd and sqrtpd round
-/// like divsd and sqrtsd), and fp contract is off, so no FMA forms.
+/// renormalize_px<Bits> for two texels at once, in place on the first three values of
+/// `a` and `b`: lane 0 of every vector is texel `a`, lane 1 is texel `b`. Shared by
+/// renormalize_rows_sse2 and the renormalizing downsample. Bit-identical to the scalar
+/// path: each step is the same correctly rounded IEEE double operation in the same
+/// order (divpd and sqrtpd round like divsd and sqrtsd), 8-bit values come from the
+/// same kUnitFrom8 table, and fp contract is off, so no FMA forms.
 template <u32 Bits> KILN_FORCEINLINE void renormalize_px2_sse2(u32* a, u32* b) noexcept {
     constexpr u32 maxv    = kMaxValue<Bits>;
     __m128d const half    = _mm_set1_pd(double(maxv) * 0.5);
@@ -232,8 +261,12 @@ template <u32 Bits> KILN_FORCEINLINE void renormalize_px2_sse2(u32* a, u32* b) n
     __m128d const roundUp = _mm_set1_pd(0.5);
     __m128d v[3];
     for (u32 c = 0; c < 3; ++c) {
-        __m128i const i = _mm_setr_epi32(int(a[c]), int(b[c]), 0, 0); // values <= 65535
-        v[c]            = _mm_sub_pd(_mm_div_pd(_mm_cvtepi32_pd(i), half), one);
+        if constexpr (Bits == 8) {
+            v[c] = _mm_setr_pd(kUnitFrom8.v[a[c]], kUnitFrom8.v[b[c]]);
+        } else {
+            __m128i const i = _mm_setr_epi32(int(a[c]), int(b[c]), 0, 0); // values <= 65535
+            v[c]            = _mm_sub_pd(_mm_div_pd(_mm_cvtepi32_pd(i), half), one);
+        }
     }
     __m128d const len2 =
         _mm_add_pd(_mm_add_pd(_mm_mul_pd(v[0], v[0]), _mm_mul_pd(v[1], v[1])), _mm_mul_pd(v[2], v[2]));
@@ -331,31 +364,57 @@ struct DownsampleCtx {
 
 using DownsampleFn = void (*)(DownsampleCtx const& ctx, u32 rowBegin, u32 rowEnd) noexcept;
 
+/// One output texel's 2x2 average; `r0` and `r1` point at the first column sample in
+/// the two source rows. Renorm averages like Linear; the caller then renormalizes.
+template <u32 Bits, u32 Channels, DownsampleMode Mode>
+KILN_FORCEINLINE void box_px(u8 const* r0, u8 const* r1, usize colStep, u32* out) noexcept {
+    constexpr u32 bpc    = Bits / 8;
+    constexpr u32 srgbCh = Mode == DownsampleMode::Srgb ? (Channels < 3 ? Channels : 3) : 0;
+    for (u32 c = 0; c < srgbCh; ++c) {
+        u32 const sum = 2 + kSrgbToLinear16[r0[c]] + kSrgbToLinear16[r0[colStep + c]] +
+                        kSrgbToLinear16[r1[c]] + kSrgbToLinear16[r1[colStep + c]];
+        out[c] = kLinear16ToSrgb8.v[sum / 4];
+    }
+    for (u32 c = srgbCh; c < Channels; ++c) {
+        u32 const off = c * bpc;
+        u32 const sum = 2 + load<Bits>(r0 + off) + load<Bits>(r0 + colStep + off) + load<Bits>(r1 + off) +
+                        load<Bits>(r1 + colStep + off);
+        out[c] = sum / 4; // the +2 rounds to nearest
+    }
+}
+
+/// On x64 the Renorm mode averages two output texels, then renormalizes both with
+/// renormalize_px2_sse2; an odd last texel, and every texel of the other modes, takes
+/// the one-texel loop.
 template <u32 Bits, u32 Channels, DownsampleMode Mode>
 KILN_HOT void downsample_rows(DownsampleCtx const& ctx, u32 rowBegin, u32 rowEnd) noexcept {
     static_assert(Mode != DownsampleMode::Srgb || Bits == 8, "sRGB averaging is 8-bit only");
     static_assert(Mode != DownsampleMode::Renorm || Channels >= 3, "renormalize needs RGB");
     constexpr u32 bpc = Bits / 8, bpp = Channels * bpc;
-    constexpr u32 srgbCh = Mode == DownsampleMode::Srgb ? (Channels < 3 ? Channels : 3) : 0;
-    u32 const width      = ctx.dstWidth;
-    usize const colStep  = ctx.colStep;
+    u32 const width     = ctx.dstWidth;
+    usize const colStep = ctx.colStep;
     for (u32 y = rowBegin; y < rowEnd; ++y) {
         u8 const* KILN_RESTRICT r0 = ctx.src + usize(2 * y) * ctx.srcRowBytes;
         u8 const* KILN_RESTRICT r1 = r0 + ctx.rowStep;
         u8* KILN_RESTRICT d        = ctx.dst + usize(y) * ctx.dstRowBytes;
-        for (u32 x = 0; x < width; ++x, r0 += 2 * bpp, r1 += 2 * bpp, d += bpp) {
+        u32 x                      = 0;
+#if defined(KILN_ARCH_X64)
+        if constexpr (Mode == DownsampleMode::Renorm) {
+            for (; x + 2 <= width; x += 2, r0 += 4 * bpp, r1 += 4 * bpp, d += 2 * bpp) {
+                u32 a[Channels] = {}, b[Channels] = {};
+                box_px<Bits, Channels, Mode>(r0, r1, colStep, a);
+                box_px<Bits, Channels, Mode>(r0 + 2 * bpp, r1 + 2 * bpp, colStep, b);
+                renormalize_px2_sse2<Bits>(a, b);
+                for (u32 c = 0; c < Channels; ++c) {
+                    store<Bits>(d + c * bpc, a[c]);
+                    store<Bits>(d + bpp + c * bpc, b[c]);
+                }
+            }
+        }
+#endif
+        for (; x < width; ++x, r0 += 2 * bpp, r1 += 2 * bpp, d += bpp) {
             u32 out[Channels] = {};
-            for (u32 c = 0; c < srgbCh; ++c) {
-                u32 const sum = 2 + kSrgbToLinear16[r0[c]] + kSrgbToLinear16[r0[colStep + c]] +
-                                kSrgbToLinear16[r1[c]] + kSrgbToLinear16[r1[colStep + c]];
-                out[c] = kLinear16ToSrgb8.v[sum / 4];
-            }
-            for (u32 c = srgbCh; c < Channels; ++c) {
-                u32 const off = c * bpc;
-                u32 const sum = 2 + load<Bits>(r0 + off) + load<Bits>(r0 + colStep + off) +
-                                load<Bits>(r1 + off) + load<Bits>(r1 + colStep + off);
-                out[c] = sum / 4; // the +2 rounds to nearest
-            }
+            box_px<Bits, Channels, Mode>(r0, r1, colStep, out);
             if constexpr (Mode == DownsampleMode::Renorm) renormalize_px<Bits>(out);
             for (u32 c = 0; c < Channels; ++c)
                 store<Bits>(d + c * bpc, out[c]);
