@@ -95,6 +95,17 @@ else()
     add_test(NAME kiln_tests COMMAND kiln_tests --corpus ${KILN_KTX2_CORPUS} ${KILN_TEST_ARGS})
 endif()
 
+# kiln_bench_image: manual image-kernel benchmark (rollout step 1, docs/design/cook-kernels.md).
+# Deliberately not add_test()'d: it prints timings, not pass/fail, and is meant to be run
+# by hand for a before/after comparison around the step 2 SIMD kernel work.
+#   build/<preset>/tests/kiln_bench_image [--max 2048|4096|8192] [--repeat N]
+if(TARGET kiln_cook)
+    add_executable(kiln_bench_image bench_image.cpp png_writer.h)
+    kiln_apply_defaults(kiln_bench_image)
+    target_include_directories(kiln_bench_image PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(kiln_bench_image PRIVATE kiln_cook)
+endif()
+
 # wait() misuse must panic (never hang) with a K5007 message (test_runtime.cpp). These
 # cases panic on purpose, so they run as their own processes, selected by exact name.
 # PASS_REGULAR_EXPRESSION alone decides (CTest ignores the exit code then; combining it

@@ -41,6 +41,15 @@
 #define KILN_DEBUGBREAK() __builtin_trap()
 #endif
 
+// KILN_HOT marks a hot function (optimize harder, place with other hot code); MSVC
+// has no equivalent. KILN_RESTRICT promises the pointer is the only access path.
+#if defined(KILN_COMPILER_MSVC)
+#define KILN_HOT
+#else
+#define KILN_HOT __attribute__((hot))
+#endif
+#define KILN_RESTRICT __restrict
+
 // Unreachable code: use std::unreachable() (C++23, <utility>).
 
 // 1 when exceptions are enabled in this translation unit. kiln never throws. It

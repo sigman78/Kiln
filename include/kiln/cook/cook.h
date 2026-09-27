@@ -46,6 +46,32 @@ enum GltfDiagCode : u32 {
 };
 
 // ---------------------------------------------------------------------------
+// Cook statistics (rollout step 1, docs/design/cook-kernels.md): per-stage wall time
+// for manual profiling, filled in by cook_mesh / cook_texture. Never affects cooked
+// bytes. A field stays 0 when its stage did not run (e.g. tangentsUs with no UV0, or
+// the mesh fields on a CookedTexture).
+// ---------------------------------------------------------------------------
+
+struct CookStats {
+    // Texture: decode_png, prepare_image (convert + flip green + renormalize),
+    // build_mip_chain, ktx2::write.
+    u64 decodeUs  = 0;
+    u64 prepareUs = 0;
+    u64 mipsUs    = 0;
+
+    // Mesh: accumulated across every (part, LOD).
+    u64 importUs   = 0; ///< glTF parse/import
+    u64 buildUs    = 0; ///< build_lod: expand, bake, weld, normals
+    u64 tangentsUs = 0;
+    u64 optimizeUs = 0;
+    u64 packUs     = 0; ///< quantize/pack + submesh records
+
+    // Shared: the file write and the whole cook_mesh / cook_texture call.
+    u64 writeUs = 0;
+    u64 totalUs = 0;
+};
+
+// ---------------------------------------------------------------------------
 // Mesh cooking
 // ---------------------------------------------------------------------------
 
@@ -84,6 +110,7 @@ struct CookedMesh {
     u64 sourceHash = 0;
     u32 partCount = 0, lodCount = 0;
     u32 triangleCount = 0, vertexCount = 0; ///< totals across all LOD records, not LOD0 only
+    CookStats stats;
 };
 
 /// Cook a glTF/GLB into a .mesh. `settings` must be resolved (resolve_mesh).
@@ -109,6 +136,7 @@ struct CookedTexture {
     ktx2::TextureDesc desc;
     bool passthrough = false; ///< input was a KTX2 already suitable for the target
     u64 sourceHash   = 0;
+    CookStats stats;
 };
 
 /// Cook a PNG (decode, convert per usage, mips) or pass a suitable KTX2 through.

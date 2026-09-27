@@ -118,6 +118,7 @@ if(KILN_BUILD_COOK)
         src/cook/store.cpp
         include/kiln/cook/image.h
         src/cook/image.cpp
+        src/cook/kernels.h
         src/cook/png_decode.cpp
         src/cook/texture_cook.cpp
         src/cook/cook_internal.h

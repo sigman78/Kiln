@@ -449,3 +449,226 @@ KILN_TEST(image, png_truncated_and_bad) {
     KILN_CHECK_EQ(r4.code(), Code::Unsupported);
     KILN_CHECK(log4.has(kDiagImageTooLarge));
 }
+
+// ---------------------------------------------------------------------------
+// Kernel equivalence: the specialized kernels against slow references
+// ---------------------------------------------------------------------------
+
+namespace {
+
+/// The pre-table linear16_to_srgb8: binary search for the smallest entry >= v, then
+/// the nearer of it and its predecessor (ties to the lower index).
+u8 slow_linear16_to_srgb8(u16 v) {
+    u32 lo = 0, hi = 255;
+    while (lo < hi) {
+        u32 const mid = (lo + hi) / 2;
+        if (srgb8_to_linear16(u8(mid)) < v)
+            lo = mid + 1;
+        else
+            hi = mid;
+    }
+    if (lo > 0 && u32(v) - srgb8_to_linear16(u8(lo - 1)) <= u32(srgb8_to_linear16(u8(lo))) - v) --lo;
+    return u8(lo);
+}
+
+struct Lcg {
+    u32 s;
+    u32 next() {
+        s = s * 1664525u + 1013904223u;
+        return s >> 8;
+    }
+};
+
+Image random_image(Lcg& rng, u32 w, u32 h, u32 channels, u32 bits) {
+    Vec<u8> px(default_allocator(), Tag::Test);
+    px.resize(usize(w) * h * channels * (bits / 8));
+    for (usize i = 0; i < px.size(); ++i)
+        px[i] = u8(rng.next());
+    // Some flat and extreme texels so zero vectors and clamps get exercised.
+    if (px.size() >= 8) std::memset(px.data(), rng.next() & 1 ? 0 : 0xFF, 8);
+    return make(w, h, channels, bits, px.span());
+}
+
+u32 texel(Image const& img, u32 x, u32 y, u32 c) {
+    usize const i = (usize(y) * img.width + x) * img.channels + c;
+    return img.bitsPerChannel == 8 ? u32(img.pixels[i]) : u32(px16(img, i));
+}
+
+void set_texel(Image& img, u32 x, u32 y, u32 c, u32 v) {
+    usize const i = (usize(y) * img.width + x) * img.channels + c;
+    if (img.bitsPerChannel == 8) {
+        img.pixels[i] = u8(v);
+    } else {
+        u16 const s = u16(v);
+        std::memcpy(img.pixels.data() + i * 2, &s, 2);
+    }
+}
+
+bool same_image(Image const& a, Image const& b) {
+    return a.width == b.width && a.height == b.height && a.channels == b.channels &&
+           a.bitsPerChannel == b.bitsPerChannel && a.pixels.size() == b.pixels.size() &&
+           std::memcmp(a.pixels.data(), b.pixels.data(), a.pixels.size()) == 0;
+}
+
+/// prepare_image's documented meaning, built from the separate operations.
+Image reference_prepare(Image const& src, u32 channels, u32 bits, PrepareOptions const& opt) {
+    Image out;
+    if (opt.grayAlpha && src.channels == 2 && channels >= 3) {
+        Result<Image> ga = convert_image(src, 2, bits, default_allocator());
+        Result<Image> r  = convert_image(*ga, channels, bits, default_allocator()); // allocation only
+        out              = std::move(r).value();
+        for (u32 y = 0; y < src.height; ++y)
+            for (u32 x = 0; x < src.width; ++x)
+                for (u32 c = 0; c < channels; ++c)
+                    set_texel(out, x, y, c, texel(*ga, x, y, c == 3 ? 1 : 0));
+    } else {
+        out = std::move(convert_image(src, channels, bits, default_allocator())).value();
+    }
+    if (opt.flipGreen) flip_green(out);
+    if (opt.renormalize) renormalize(out);
+    return out;
+}
+
+/// convert_image's rules from image.h, one texel and channel at a time.
+Image reference_convert(Image const& src, u32 channels, u32 bits) {
+    Vec<u8> px(default_allocator(), Tag::Test);
+    px.resize(usize(src.width) * src.height * channels * (bits / 8));
+    Image dst       = make(src.width, src.height, channels, bits, px.span());
+    u32 const smax  = src.bitsPerChannel == 8 ? 255u : 65535u;
+    auto const conv = [&](u32 v) {
+        if (src.bitsPerChannel == 16 && bits == 8) return (v * 255u + 32767u) / 65535u;
+        if (src.bitsPerChannel == 8 && bits == 16) return v * 257u;
+        return v;
+    };
+    for (u32 y = 0; y < src.height; ++y)
+        for (u32 x = 0; x < src.width; ++x)
+            for (u32 c = 0; c < channels; ++c) {
+                u32 v = 0;
+                if (c < src.channels)
+                    v = texel(src, x, y, c);
+                else if (c == 3)
+                    v = smax;
+                else if (src.channels == 1)
+                    v = texel(src, x, y, 0);
+                set_texel(dst, x, y, c, conv(v));
+            }
+    return dst;
+}
+
+/// Straightforward 2x2 box filter with per-sample clamps (the pre-kernel code).
+Image reference_downsample(Image const& src, MipOptions const& opt) {
+    u32 const w     = max(src.width / 2, 1u);
+    u32 const h     = max(src.height / 2, 1u);
+    bool const rn   = opt.renormalize && src.channels >= 3;
+    bool const srgb = opt.srgb && src.bitsPerChannel == 8 && !rn;
+    Vec<u8> px(default_allocator(), Tag::Test);
+    px.resize(usize(w) * h * src.channels * (src.bitsPerChannel / 8));
+    Image dst = make(w, h, src.channels, src.bitsPerChannel, px.span());
+    for (u32 y = 0; y < h; ++y) {
+        u32 const ys[2] = {min(2 * y, src.height - 1), min(2 * y + 1, src.height - 1)};
+        for (u32 x = 0; x < w; ++x) {
+            u32 const xs[2] = {min(2 * x, src.width - 1), min(2 * x + 1, src.width - 1)};
+            for (u32 c = 0; c < src.channels; ++c) {
+                u32 sum = 2;
+                for (u32 sy : ys)
+                    for (u32 sx : xs)
+                        sum += srgb && c < 3 ? srgb8_to_linear16(u8(texel(src, sx, sy, c)))
+                                             : texel(src, sx, sy, c);
+                set_texel(dst, x, y, c, srgb && c < 3 ? linear16_to_srgb8(u16(sum / 4)) : sum / 4);
+            }
+        }
+    }
+    if (rn) renormalize(dst);
+    return dst;
+}
+
+struct Size {
+    u32 w, h;
+};
+constexpr Size kOddSizes[] = {
+    {1,  1 },
+    {1,  2 },
+    {2,  1 },
+    {1,  5 },
+    {5,  1 },
+    {2,  2 },
+    {3,  3 },
+    {4,  5 },
+    {7,  6 },
+    {9,  13},
+    {16, 1 },
+    {17, 11},
+};
+
+} // namespace
+
+KILN_TEST(image, srgb_inverse_table_exhaustive) {
+    u32 bad = 0;
+    for (u32 v = 0; v < 65536; ++v)
+        if (linear16_to_srgb8(u16(v)) != slow_linear16_to_srgb8(u16(v)) && bad++ < 8)
+            KILN_CHECK_MSG(false, "linear %u: table %u, search %u", v, u32(linear16_to_srgb8(u16(v))),
+                           u32(slow_linear16_to_srgb8(u16(v))));
+    KILN_CHECK_EQ(bad, 0u);
+}
+
+KILN_TEST(image, prepare_matches_separate_ops) {
+    Lcg rng{0x5EEDu};
+    u32 const bitsList[2] = {8, 16};
+    for (Size const sz : kOddSizes)
+        for (u32 sb : bitsList)
+            for (u32 sc = 1; sc <= 4; ++sc) {
+                Image const src = random_image(rng, sz.w, sz.h, sc, sb);
+                for (u32 db : bitsList)
+                    for (u32 dc = 1; dc <= 4; ++dc)
+                        for (u32 flags = 0; flags < 8; ++flags) {
+                            PrepareOptions const opt = {.grayAlpha   = (flags & 1) != 0,
+                                                        .flipGreen   = (flags & 2) != 0,
+                                                        .renormalize = (flags & 4) != 0};
+                            Result<Image> got        = prepare_image(src, dc, db, opt, default_allocator());
+                            KILN_REQUIRE(got.ok());
+                            Image const want = reference_prepare(src, dc, db, opt);
+                            KILN_CHECK_MSG(same_image(*got, want),
+                                           "%ux%u %u-bit %uch -> %u-bit %uch, flags %u differ", sz.w, sz.h,
+                                           sb, sc, db, dc, flags);
+                        }
+            }
+
+    Image const src = random_image(rng, 3, 3, 4, 8);
+    KILN_CHECK_EQ(prepare_image(src, 0, 8, {}, default_allocator()).code(), Code::InvalidArgument);
+    KILN_CHECK_EQ(prepare_image(src, 4, 12, {}, default_allocator()).code(), Code::InvalidArgument);
+}
+
+KILN_TEST(image, convert_matches_reference) {
+    Lcg rng{0xC0DEu};
+    u32 const bitsList[2] = {8, 16};
+    for (Size const sz : kOddSizes)
+        for (u32 sb : bitsList)
+            for (u32 sc = 1; sc <= 4; ++sc) {
+                Image const src = random_image(rng, sz.w, sz.h, sc, sb);
+                for (u32 db : bitsList)
+                    for (u32 dc = 1; dc <= 4; ++dc) {
+                        Result<Image> got = convert_image(src, dc, db, default_allocator());
+                        KILN_REQUIRE(got.ok());
+                        KILN_CHECK_MSG(same_image(*got, reference_convert(src, dc, db)),
+                                       "%ux%u %u-bit %uch -> %u-bit %uch differ", sz.w, sz.h, sb, sc, db, dc);
+                    }
+            }
+}
+
+KILN_TEST(image, downsample_matches_reference) {
+    Lcg rng{0xB0Bu};
+    u32 const bitsList[2] = {8, 16};
+    for (Size const sz : kOddSizes)
+        for (u32 bits : bitsList)
+            for (u32 ch = 1; ch <= 4; ++ch) {
+                Image const src = random_image(rng, sz.w, sz.h, ch, bits);
+                for (u32 mode = 0; mode < 4; ++mode) {
+                    MipOptions const opt = {.srgb = (mode & 1) != 0, .renormalize = (mode & 2) != 0};
+                    Result<Image> got    = downsample_2x(src, opt, default_allocator());
+                    KILN_REQUIRE(got.ok());
+                    Image const want = reference_downsample(src, opt);
+                    KILN_CHECK_MSG(same_image(*got, want), "%ux%u %u-bit %uch, srgb %u renorm %u differ",
+                                   sz.w, sz.h, bits, ch, mode & 1, (mode >> 1) & 1);
+                }
+            }
+}

@@ -109,6 +109,9 @@ struct Cook {
 
     u64 triangles = 0;
     u64 vertices  = 0;
+
+    // Per-stage timing accumulated across every (part, LOD); see CookStats.
+    u64 buildUs = 0, tangentsUs = 0, optimizeUs = 0, packUs = 0;
 };
 
 #define COOK_FAIL(k, errCode, diagCode, where, ...)                                                          \
@@ -350,6 +353,7 @@ struct PartNotes {
 };
 
 Status build_lod(Cook& k, ImportPart const& part, ImportLod const& lod, LodGeom& g, PartNotes& notes) {
+    Stopwatch swBuild;
     g.lodIndex = lod.lodIndex;
     // Distinct materials in first-appearance order: one submesh each.
     Vec<u32> order(k.alloc, Tag::Cook);
@@ -436,7 +440,9 @@ Status build_lod(Cook& k, ImportPart const& part, ImportLod const& lod, LodGeom&
     }
     for (Vtx& v : g.verts)
         canonicalize(v);
+    k.buildUs += swBuild.elapsed_us();
 
+    Stopwatch const swTangents;
     if (k.settings.genTangents) {
         if (!g.hasUv[0]) {
             if (!notes.noTangentUv)
@@ -471,9 +477,13 @@ Status build_lod(Cook& k, ImportPart const& part, ImportLod const& lod, LodGeom&
             }
         }
     }
+    k.tangentsUs += swTangents.elapsed_us();
 
+    Stopwatch const swWeld;
     weld(k, g);
+    k.buildUs += swWeld.elapsed_us();
 
+    Stopwatch const swOptimize;
     if (k.settings.optimize && !g.idx.empty()) {
         u32 const vc = u32(g.verts.size());
         Vec<u32> scratch(k.alloc, Tag::Cook);
@@ -492,7 +502,9 @@ Status build_lod(Cook& k, ImportPart const& part, ImportLod const& lod, LodGeom&
         out.resize(used);
         g.verts = std::move(out);
     }
+    k.optimizeUs += swOptimize.elapsed_us();
 
+    Stopwatch const swBounds;
     if (!g.verts.empty()) {
         for (u32 a = 0; a < 3; ++a)
             g.mn[a] = g.mx[a] = g.verts[0].p[a];
@@ -502,6 +514,7 @@ Status build_lod(Cook& k, ImportPart const& part, ImportLod const& lod, LodGeom&
                 g.mx[a] = max(g.mx[a], v.p[a]);
             }
     }
+    k.buildUs += swBounds.elapsed_us();
     return kOk;
 }
 
@@ -735,6 +748,7 @@ u32 intern_layout(Cook& k, mesh::VertexLayout const& l) {
 }
 
 void pack_lod(Cook& k, LodGeom const& g, PartFormat const& pf) {
+    Stopwatch const sw;
     // Layout: stream 0 = position only; stream 1 = normal, tangent, uv0, uv1, color.
     mesh::VertexLayout l;
     std::memset(&l, 0, sizeof l);
@@ -844,6 +858,7 @@ void pack_lod(Cook& k, LodGeom const& g, PartFormat const& pf) {
     k.lods.push_back(ld);
     k.triangles += ic / 3;
     k.vertices += vc;
+    k.packUs += sw.elapsed_us();
 }
 
 // ---------------------------------------------------------------------------
@@ -975,10 +990,13 @@ Result<CookedMesh> cook_mesh(MeshSource const& src, MeshCookSettings const& sett
                              TargetProfile const& target, Allocator const* alloc,
                              DiagSink const* diag) noexcept {
     if (!alloc) alloc = default_allocator();
+    Stopwatch const swTotal;
     Arena arena(Arena::Desc{alloc, usize(1) << 20, Tag::Cook});
 
     ImportScene scene;
+    Stopwatch const swImport;
     KILN_TRY(import_gltf(src, settings, arena, alloc, diag, scene));
+    u64 const importUs = swImport.elapsed_us();
 
     Cook k(src, settings, alloc, diag, arena, scene);
     k.matMap.resize(scene.materials.size, kInvalid);
@@ -1028,20 +1046,22 @@ Result<CookedMesh> cook_mesh(MeshSource const& src, MeshCookSettings const& sett
         hash_combine(hash_combine(hash_settings(settings), hash_target(target)), u64(kCookerVersion));
 
     mesh::WriteDesc wd;
-    wd.name              = last_component(src.assetPath);
-    wd.assetId           = hash_name(src.assetPath);
-    wd.bounds            = model;
-    wd.sourceHash        = sourceHash;
-    wd.cookHash          = cookHash;
-    wd.layouts           = k.layouts.span();
-    wd.parts             = k.parts.span();
-    wd.lods              = k.lods.span();
-    wd.submeshes         = k.submeshes.span();
-    wd.materials         = k.materials.span();
-    wd.textures          = k.bindings.span();
-    wd.mounts            = k.mounts.span();
+    wd.name       = last_component(src.assetPath);
+    wd.assetId    = hash_name(src.assetPath);
+    wd.bounds     = model;
+    wd.sourceHash = sourceHash;
+    wd.cookHash   = cookHash;
+    wd.layouts    = k.layouts.span();
+    wd.parts      = k.parts.span();
+    wd.lods       = k.lods.span();
+    wd.submeshes  = k.submeshes.span();
+    wd.materials  = k.materials.span();
+    wd.textures   = k.bindings.span();
+    wd.mounts     = k.mounts.span();
+    Stopwatch const swWrite;
     Result<Vec<u8>> file = mesh::write(wd, mesh::WriteOptions{}, alloc, diag);
     if (file.failed()) return file.status();
+    u64 const writeUs = swWrite.elapsed_us();
 
     CookedMesh out;
     out.file = std::move(file).value();
@@ -1100,6 +1120,14 @@ Result<CookedMesh> cook_mesh(MeshSource const& src, MeshCookSettings const& sett
         t.srgb = k.refs[i].srgb;
         out.textures.push_back(t);
     }
+
+    out.stats.importUs   = importUs;
+    out.stats.buildUs    = k.buildUs;
+    out.stats.tangentsUs = k.tangentsUs;
+    out.stats.optimizeUs = k.optimizeUs;
+    out.stats.packUs     = k.packUs;
+    out.stats.writeUs    = writeUs;
+    out.stats.totalUs    = swTotal.elapsed_us();
     return out;
 }
 

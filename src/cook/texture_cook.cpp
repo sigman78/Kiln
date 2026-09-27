@@ -1,6 +1,7 @@
 // src/cook/texture_cook.cpp — texture cooking: PNG -> KTX2 (decode, convert per usage,
 // mips) or KTX2 pass-through.
-#include "kiln/cook/cook.h"
+#include "cook_internal.h"
+
 #include "kiln/cook/image.h"
 #include "kiln/cook/ktx2_writer.h"
 #include "kiln/log.h"
@@ -54,32 +55,11 @@ Result<CookedTexture> pass_through(TextureSource const& src, u32 cap, Allocator 
     return out;
 }
 
-/// Gray + alpha (2 channels) -> RGBA8 as (Y, Y, Y, A). convert_image's generic
-/// rule treats 2 channels as RG, which is wrong for a PNG gray+alpha source.
-Result<Image> gray_alpha_to_rgba8(Image const& src, Allocator const* alloc) noexcept {
-    KILN_TRY_ASSIGN(Image ga, convert_image(src, 2, 8, alloc));
-    KILN_TRY_ASSIGN(Image out, convert_image(ga, 4, 8, alloc)); // allocates RGBA8; values fixed below
-    u64 const n = u64(ga.width) * ga.height;
-    u8 const* s = ga.pixels.data();
-    u8* d       = out.pixels.data();
-    for (u64 i = 0; i < n; ++i, s += 2, d += 4) {
-        d[0] = d[1] = d[2] = s[0];
-        d[3]               = s[1];
-    }
-    return out;
-}
-
-/// Any source -> 4 channels, 8 bits (gray+alpha expanded as Y, Y, Y, A).
-Result<Image> to_rgba8(Image const& src, Allocator const* alloc) noexcept {
-    if (src.channels == 2) return gray_alpha_to_rgba8(src, alloc);
-    return convert_image(src, 4, 8, alloc);
-}
-
 struct Plan {
     Format format = Format::Undefined;
     u32 channels  = 0;
     u32 bits      = 0;
-    bool rgba8    = false; ///< use to_rgba8 rather than convert_image
+    bool rgba8    = false; ///< RGBA8 target; a gray+alpha source expands as (Y, Y, Y, A)
     MipOptions mips;
     bool normal = false;
 };
@@ -141,27 +121,32 @@ bool is_pow2(u32 v) noexcept { return v != 0 && (v & (v - 1)) == 0; }
 Result<CookedTexture> cook_png(TextureSource const& src, TextureCookSettings const& settings,
                                TargetProfile const& target, u32 cap, Allocator const* alloc,
                                DiagSink const* diag, StrView asset, u64 sourceHash) noexcept {
+    detail::Stopwatch const swTotal;
+    detail::Stopwatch const swDecode;
     KILN_TRY_ASSIGN(Image decoded, decode_png(src.bytes, alloc, diag, asset));
+    u64 const decodeUs = swDecode.elapsed_us();
 
     TextureUsage const usage = settings.usage == TextureUsage::Auto ? TextureUsage::Color : settings.usage;
     ColorSpace const cs =
         settings.colorSpace == ColorSpace::Auto ? color_space_for(usage) : settings.colorSpace;
     Plan plan = plan_for(decoded, usage, cs, diag, asset);
 
+    detail::Stopwatch const swPrepare;
     Result<Image> converted =
-        plan.rgba8 ? to_rgba8(decoded, alloc) : convert_image(decoded, plan.channels, plan.bits, alloc);
+        prepare_image(decoded, plan.channels, plan.bits,
+                      PrepareOptions{.grayAlpha   = plan.rgba8 && decoded.channels == 2,
+                                     .flipGreen   = plan.normal && settings.flipGreen,
+                                     .renormalize = plan.normal && settings.normalRenormalize},
+                      alloc);
     if (converted.failed())
         return fail(diag, asset, converted.status(), kDiagImageUnsupported, "image conversion failed");
     Image img = std::move(converted).value();
     decoded.pixels.release();
 
     if (plan.normal) {
-        if (settings.flipGreen) flip_green(img);
-        if (settings.normalRenormalize) {
-            renormalize(img);
-            plan.mips.renormalize = true;
-        }
+        if (settings.normalRenormalize) plan.mips.renormalize = true;
     }
+    u64 const prepareUs = swPrepare.elapsed_us();
 
     // Size cap: drop leading levels until the top fits.
     u32 const srcW = img.width, srcH = img.height;
@@ -176,7 +161,9 @@ Result<CookedTexture> cook_png(TextureSource const& src, TextureCookSettings con
 
     u32 const fullLevels = u32(std::bit_width(max(srcW, srcH)));
     u32 const buildCount = settings.genMips ? fullLevels : drop + 1;
+    detail::Stopwatch const swMips;
     KILN_TRY_ASSIGN(Vec<Image> chain, build_mip_chain(std::move(img), plan.mips, buildCount, alloc));
+    u64 const mipsUs     = swMips.elapsed_us();
     u32 const levelCount = u32(chain.size()) - drop;
     KILN_VERIFY(levelCount >= 1 && levelCount <= ktx2::kMaxLevels);
     KILN_VERIFY(chain[drop].width == topW && chain[drop].height == topH);
@@ -208,13 +195,20 @@ Result<CookedTexture> cook_png(TextureSource const& src, TextureCookSettings con
         .premultipliedAlpha = false,
         .extraKeys          = extra,
     };
+    detail::Stopwatch const swWrite;
     KILN_TRY_ASSIGN(Vec<u8> file, ktx2::write(wd, alloc, diag));
+    u64 const writeUs = swWrite.elapsed_us();
 
     CookedTexture out;
     out.file = std::move(file);
     out.desc = ktx2::TextureDesc{.format = plan.format, .width = topW, .height = topH, .levels = levelCount};
-    out.passthrough = false;
-    out.sourceHash  = sourceHash;
+    out.passthrough     = false;
+    out.sourceHash      = sourceHash;
+    out.stats.decodeUs  = decodeUs;
+    out.stats.prepareUs = prepareUs;
+    out.stats.mipsUs    = mipsUs;
+    out.stats.writeUs   = writeUs;
+    out.stats.totalUs   = swTotal.elapsed_us();
     return out;
 }
 

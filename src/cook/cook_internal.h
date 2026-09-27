@@ -1,11 +1,25 @@
 // src/cook/cook_internal.h — private interface between the glTF importer
 // (gltf_import.cpp, the only file that sees cgltf) and the mesh cooker (mesh_cook.cpp).
+// Also holds Stopwatch, a tiny CookStats timer shared with texture_cook.cpp.
 #pragma once
 
 #include "kiln/cook/cook.h"
 #include "kiln/mesh.h"
 
+#include <chrono>
+
 namespace kiln::cook::detail {
+
+/// Wall-clock timer for CookStats (rollout step 1, docs/design/cook-kernels.md).
+/// std::chrono is fine here (a .cpp-only internal header); never in include/.
+struct Stopwatch {
+    std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
+
+    [[nodiscard]] u64 elapsed_us() const noexcept {
+        auto const dt = std::chrono::steady_clock::now() - begin;
+        return u64(std::chrono::duration_cast<std::chrono::microseconds>(dt).count());
+    }
+};
 
 inline constexpr u32 kMaxUvSets       = 2;        ///< TEXCOORD_0 / TEXCOORD_1 are cooked
 inline constexpr u32 kSlotCount       = 5;        ///< mesh::TextureSlot BaseColor..Emissive

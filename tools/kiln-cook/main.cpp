@@ -326,6 +326,22 @@ bool emit(Ctx& c, StrView assetPath, char const* ext, u64 key, Span<u8 const> by
     return true;
 }
 
+// --verbose per-stage timings (rollout step 1, docs/design/cook-kernels.md). Zero
+// fields are stages the cook did not run (e.g. a KTX2 pass-through has none).
+void print_texture_stats(CookStats const& s) {
+    std::printf("  stats: decode %.1f ms, prepare %.1f ms, mips %.1f ms, write %.1f ms (total %.1f ms)\n",
+                double(s.decodeUs) / 1000.0, double(s.prepareUs) / 1000.0, double(s.mipsUs) / 1000.0,
+                double(s.writeUs) / 1000.0, double(s.totalUs) / 1000.0);
+}
+
+void print_mesh_stats(CookStats const& s) {
+    std::printf("  stats: import %.1f ms, build %.1f ms, tangents %.1f ms, optimize %.1f ms, pack %.1f ms, "
+                "write %.1f ms (total %.1f ms)\n",
+                double(s.importUs) / 1000.0, double(s.buildUs) / 1000.0, double(s.tangentsUs) / 1000.0,
+                double(s.optimizeUs) / 1000.0, double(s.packUs) / 1000.0, double(s.writeUs) / 1000.0,
+                double(s.totalUs) / 1000.0);
+}
+
 bool cook_one_texture(Ctx& c, Span<u8 const> bytes, StrView assetPath, StrView sourcePath, SlotHint hint) {
     u64 pathHash = hash_name(assetPath);
     if (c.doneTextures.contains(pathHash)) return true; // shared between meshes
@@ -341,7 +357,9 @@ bool cook_one_texture(Ctx& c, Span<u8 const> bytes, StrView assetPath, StrView s
     Result<CookedTexture> r = cook_texture(src, *rs, c.opt.target, default_allocator(), &c.sink);
     if (r.failed()) return false;
     u64 key = store_key(r->sourceHash, hash_settings(*rs), hash_target(c.opt.target));
-    return emit(c, assetPath, "ktx2", key, r->file.span());
+    if (!emit(c, assetPath, "ktx2", key, r->file.span())) return false;
+    if (c.opt.verbose) print_texture_stats(r->stats);
+    return true;
 }
 
 bool cook_one_mesh(Ctx& c, Span<u8 const> bytes, StrView assetPath, char const* sourcePath) {
@@ -364,6 +382,7 @@ bool cook_one_mesh(Ctx& c, Span<u8 const> bytes, StrView assetPath, char const* 
     if (r.failed()) return false;
     u64 key = store_key(r->sourceHash, hash_settings(*rs), hash_target(c.opt.target));
     if (!emit(c, assetPath, "mesh", key, r->file.span())) return false;
+    if (c.opt.verbose) print_mesh_stats(r->stats);
 
     // Referenced textures: embedded bytes or files next to the source.
     bool ok = true;

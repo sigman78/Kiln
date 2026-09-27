@@ -8,6 +8,15 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
 ## [Unreleased]
 
 ### Added
+- Cook kernels, step 1 and 2 of docs/design/cook-kernels.md. `kiln::cook::CookStats` on
+  `CookedTexture` / `CookedMesh` gives per-stage microseconds (decode / prepare / mips / write for
+  textures; import / build / tangents / optimize / pack / write for meshes) and `kiln-cook --verbose`
+  prints them. `kiln_bench_image` (tests/, manual, not a CTest) benchmarks the image kernels and
+  `cook_texture` end to end. `src/cook/kernels.h` holds the image kernels as format-specialized
+  templates with a kernel table; `linear16_to_srgb8` uses a 64 KiB table instead of a binary search;
+  `kiln::cook::prepare_image` does convert + flip green + renormalize in one pass. Cooked bytes are
+  unchanged (`kCookerVersion` not bumped); `downsample_2x` on 4K RGBA8 is about 5x (linear) and 9x
+  (sRGB) faster. `KILN_HOT` and `KILN_RESTRICT` join `kiln/core.h`.
 - `examples/headless`: a GPU-free walkthrough of the runtime API (null adapter, requests, a load
   group, `pump()` per frame, events, metadata queries, cook-on-miss when built with `kiln_cook`)
   that logs every step. `--slow` / `--latency` add artificial IO and cook delays so large files

@@ -55,7 +55,8 @@ KILN_API Result<Image> decode_png(Span<u8 const> bytes, Allocator const* alloc,
 
 /// sRGB-encoded 8-bit value -> linear 16-bit (0..65535), from a fixed table.
 [[nodiscard]] KILN_API u16 srgb8_to_linear16(u8 v) noexcept;
-/// Linear 16-bit -> nearest sRGB-encoded 8-bit value (binary search over the same table).
+/// Linear 16-bit -> nearest sRGB-encoded 8-bit value (ties to the lower code), from a
+/// 64 KiB table derived from the same 256 entries.
 [[nodiscard]] KILN_API u8 linear16_to_srgb8(u16 v) noexcept;
 
 // ---------------------------------------------------------------------------
@@ -68,6 +69,18 @@ KILN_API Result<Image> decode_png(Span<u8 const> bytes, Allocator const* alloc,
 /// v * 257. Returns a copy when nothing changes.
 KILN_API Result<Image> convert_image(Image const& src, u32 channels, u32 bitsPerChannel,
                                      Allocator const* alloc) noexcept;
+
+/// Level 0 preparation for prepare_image. Flip and renormalize apply to the converted
+/// image and are no-ops where flip_green / renormalize would be.
+struct PrepareOptions {
+    bool grayAlpha   = false; ///< a 2-channel source is gray+alpha: to 3/4 channels as (Y, Y, Y, A)
+    bool flipGreen   = false; ///< flip_green after converting
+    bool renormalize = false; ///< renormalize after converting (and flipping)
+};
+/// convert_image, then flip_green and renormalize as `opt` asks, in one pass over
+/// `src`. Byte-identical to calling them in that order.
+KILN_API Result<Image> prepare_image(Image const& src, u32 channels, u32 bitsPerChannel,
+                                     PrepareOptions const& opt, Allocator const* alloc) noexcept;
 
 /// `srgb`: sRGB-correct averaging of the first three channels (8-bit only; alpha is
 /// always linear). `renormalize`: treat RGB as a tangent-space normal (0..1 -> -1..1)
