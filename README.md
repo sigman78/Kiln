@@ -1,6 +1,6 @@
-# kiln
+# Kiln
 
-kiln is a graphics-API-agnostic asset cook/load library for C++20. It sits between **source
+Kiln is a graphics-API-agnostic asset cook/load library for C++20. It sits between **source
 assets** (`.glb`, `.png`, `.ktx2`) and **any renderer**: it cooks sources into GPU-ready,
 API-agnostic runtime formats (the `.mesh` format and KTX2), loads them asynchronously and directly
 into memory the renderer provides, and optionally hot-reloads them on source change. The library
