@@ -64,6 +64,7 @@ struct CookStats {
     u64 mipsUs    = 0;
 
     // Mesh: accumulated across every (part, LOD).
+    // Summed task time: with a job pool the stages run in parallel and can add up to more than totalUs.
     u64 importUs   = 0; ///< glTF parse/import
     u64 buildUs    = 0; ///< build_lod: expand, bake, weld, normals
     u64 tangentsUs = 0;

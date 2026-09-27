@@ -8,6 +8,13 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
 ## [Unreleased]
 
 ### Added
+- Cook kernels, steps 4 and 5: `cook_mesh` builds and quantizes each (part, LOD) as a task over
+  `CookEnv::jobs` and merges the results sequentially in traversal order, so cooked bytes and the
+  diagnostic order are unchanged with or without a pool (tested with 1 and 8 threads); the mesh
+  `CookStats` fields are summed task time and can exceed `totalUs` with a pool. The renormalize
+  kernel (normal maps: level 0 prepare and `renormalize()`) has an SSE2 path on x64 that is
+  bit-identical to the scalar path and about 2.8x faster at 4096x4096. `KILN_ARCH_X64` /
+  `KILN_ARCH_ARM64` join `kiln/core.h`.
 - Cook kernels, step 3: `kiln::cook::CookEnv { alloc, diag, jobs }`; when `jobs` is set, the image
   passes (prepare, flip green, renormalize, and the level 0 to 1 downsample) split by row bands over
   the job system through an internal helping `parallel_for` that never deadlocks inside a worker.

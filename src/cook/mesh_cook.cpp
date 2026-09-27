@@ -5,6 +5,7 @@
 
 #include "kiln/cook/mesh_writer.h"
 #include "kiln/log.h"
+#include "parallel.h"
 
 #include <cmath>
 
@@ -68,6 +69,58 @@ struct LodGeom {
     u32 lodIndex           = 0;
 };
 
+struct PartFormat {
+    bool floatPos            = false;
+    bool floatUv[kMaxUvSets] = {false, false};
+    f32 posScale[3]          = {1, 1, 1};
+    f32 posBias[3]           = {0, 0, 0};
+};
+
+/// What the plan decided for one (part, LOD) task, mirroring the sequential walk.
+enum class Fate : u8 {
+    Skipped,   ///< not reached: after an empty LOD0 or a failed LOD
+    Failed,    ///< LOD too large; the cook fails here
+    EmptyPart, ///< LOD0 has no triangles; the part keeps no LODs
+    Dropped,   ///< a later LOD has no triangles
+    Kept,
+};
+
+/// One (part, LOD) of the compute phase. A task reads the import data, the settings and
+/// the allocator and writes only itself: no Cook state, no shared arena, no diagnostics.
+/// The diagnostics the sequential cook emitted from build_lod are recorded here and the
+/// merge emits them in traversal order.
+struct LodTask {
+    ImportPart const* part = nullptr;
+    ImportLod const* lod   = nullptr;
+    LodGeom g;
+    Arena arena; ///< stream, index and bounds output; must live until mesh::write
+
+    // build_lod
+    bool tooLarge          = false; ///< kDiagGltfLimit error, reported with totalV / totalI
+    u64 totalV             = 0;
+    u64 totalI             = 0;
+    bool noteNoNormals     = false;
+    bool noteNoTangentUv   = false;
+    bool noteMikkFailed    = false;
+    bool bigUv[kMaxUvSets] = {false, false}; ///< TEXCOORD_n outside +-2048
+    Bounds whole           = {};             ///< every triangle; the part bounds (first LOD only)
+
+    // plan
+    Fate fate = Fate::Skipped;
+    PartFormat pf;
+
+    // quantize_lod
+    mesh::VertexLayout layout = {}; ///< not interned yet
+    Span<u8 const> streams[2];
+    Span<u8 const> indices;
+    u32 vertexCount           = 0;
+    u32 indexCount            = 0;
+    mesh::IndexType indexType = mesh::IndexType::U16;
+    Span<Bounds const> subBounds; ///< one per non-empty SubRange, in order
+
+    u64 buildUs = 0, tangentsUs = 0, optimizeUs = 0, packUs = 0;
+};
+
 struct TexRefBuild {
     StrView path; ///< arena
     StrView uri;
@@ -83,7 +136,7 @@ struct Cook {
         : src(s), settings(st), alloc(al), diag(d), arena(a), scene(sc), asset(diag_asset(s)),
           layouts(al, Tag::Cook), parts(al, Tag::Cook), lods(al, Tag::Cook), submeshes(al, Tag::Cook),
           materials(al, Tag::Cook), bindings(al, Tag::Cook), mounts(al, Tag::Cook), matMap(al, Tag::Cook),
-          vertexColor(al, Tag::Cook), imageRef(al, Tag::Cook), refs(al, Tag::Cook) {}
+          vertexColor(al, Tag::Cook), imageRef(al, Tag::Cook), refs(al, Tag::Cook), tasks(al, Tag::Cook) {}
 
     MeshSource const& src;
     MeshCookSettings const& settings;
@@ -106,11 +159,12 @@ struct Cook {
     Vec<u8> vertexColor; ///< per glTF material, +1 slot at the end for the default material
     Vec<u32> imageRef;   ///< glTF image -> refs index
     Vec<TexRefBuild> refs;
+    Vec<LodTask> tasks; ///< every (part, LOD) in traversal order; LodDesc streams point into them
 
     u64 triangles = 0;
     u64 vertices  = 0;
 
-    // Per-stage timing accumulated across every (part, LOD); see CookStats.
+    // Per-stage timing summed over every (part, LOD) task; see CookStats.
     u64 buildUs = 0, tangentsUs = 0, optimizeUs = 0, packUs = 0;
 };
 
@@ -284,14 +338,14 @@ void canonicalize(Vtx& v) noexcept {
         if (f[i] == 0.0f) f[i] = 0.0f;
 }
 
-void weld(Cook& k, LodGeom& g) {
+void weld(Allocator const* alloc, LodGeom& g) {
     usize const vc = g.verts.size();
     if (vc == 0 || g.idx.empty()) return;
-    Vec<u32> remap(k.alloc, Tag::Cook);
+    Vec<u32> remap(alloc, Tag::Cook);
     remap.resize(vc);
     usize const unique = meshopt_generateVertexRemap(remap.data(), g.idx.data(), g.idx.size(), g.verts.data(),
                                                      vc, sizeof(Vtx));
-    Vec<Vtx> out(k.alloc, Tag::Cook);
+    Vec<Vtx> out(alloc, Tag::Cook);
     out.resize(unique);
     meshopt_remapVertexBuffer(out.data(), g.verts.data(), vc, sizeof(Vtx), remap.data());
     meshopt_remapIndexBuffer(g.idx.data(), g.idx.data(), g.idx.size(), remap.data());
@@ -300,18 +354,18 @@ void weld(Cook& k, LodGeom& g) {
 
 /// Area-weighted smooth normals for the vertices flagged in `need`, accumulated per
 /// welded position.
-void generate_normals(Cook& k, LodGeom& g, Vec<u8> const& need) {
+void generate_normals(Allocator const* alloc, LodGeom& g, Vec<u8> const& need) {
     usize const vc = g.verts.size();
-    Vec<f32> pos(k.alloc, Tag::Cook);
+    Vec<f32> pos(alloc, Tag::Cook);
     pos.resize(vc * 3);
     for (usize i = 0; i < vc; ++i)
         for (u32 a = 0; a < 3; ++a)
             pos[i * 3 + a] = g.verts[i].p[a] + 0.0f;
-    Vec<u32> remap(k.alloc, Tag::Cook);
+    Vec<u32> remap(alloc, Tag::Cook);
     remap.resize(vc);
     usize const unique = meshopt_generateVertexRemap(remap.data(), g.idx.data(), g.idx.size(), pos.data(), vc,
                                                      sizeof(f32) * 3);
-    Vec<f32> acc(k.alloc, Tag::Cook);
+    Vec<f32> acc(alloc, Tag::Cook);
     acc.resize(unique * 3, 0.0f);
     for (usize t = 0; t + 2 < g.idx.size(); t += 3) {
         u32 const a = g.idx[t], b = g.idx[t + 1], c = g.idx[t + 2];
@@ -347,16 +401,15 @@ void generate_normals(Cook& k, LodGeom& g, Vec<u8> const& need) {
     }
 }
 
-struct PartNotes {
-    bool noNormals   = false;
-    bool noTangentUv = false;
-};
-
-Status build_lod(Cook& k, ImportPart const& part, ImportLod const& lod, LodGeom& g, PartNotes& notes) {
+/// Compute phase, part 1: expand/bake, normals, tangents, weld, optimize, bounds.
+void build_lod(LodTask& task, MeshCookSettings const& settings, Allocator const* alloc) {
+    ImportPart const& part = *task.part;
+    ImportLod const& lod   = *task.lod;
+    LodGeom& g             = task.g;
     Stopwatch swBuild;
     g.lodIndex = lod.lodIndex;
     // Distinct materials in first-appearance order: one submesh each.
-    Vec<u32> order(k.alloc, Tag::Cook);
+    Vec<u32> order(alloc, Tag::Cook);
     u64 totalV = 0, totalI = 0;
     bool missingNormals = false;
     for (ImportPrim const& p : lod.prims) {
@@ -371,14 +424,16 @@ Status build_lod(Cook& k, ImportPart const& part, ImportLod const& lod, LodGeom&
         g.hasColor |= p.colors != nullptr;
         missingNormals |= p.normals == nullptr;
     }
-    if (totalV >= kInvalid || totalI >= kInvalid)
-        COOK_FAIL(k, Code::Unsupported, kDiagGltfLimit, lod.nodeName,
-                  "LOD too large (%llu vertices, %llu indices)", static_cast<unsigned long long>(totalV),
-                  static_cast<unsigned long long>(totalI));
+    task.totalV = totalV;
+    task.totalI = totalI;
+    if (totalV >= kInvalid || totalI >= kInvalid) {
+        task.tooLarge = true;
+        return;
+    }
 
     g.verts.reserve(usize(totalV));
     g.idx.reserve(usize(totalI));
-    Vec<u8> need(k.alloc, Tag::Cook);
+    Vec<u8> need(alloc, Tag::Cook);
     if (missingNormals) need.reserve(usize(totalV));
 
     for (u32 key : order) {
@@ -432,26 +487,20 @@ Status build_lod(Cook& k, ImportPart const& part, ImportLod const& lod, LodGeom&
     }
 
     if (missingNormals) {
-        if (!notes.noNormals)
-            COOK_NOTE(k, Severity::Info, kDiagGltfNoNormals, lod.nodeName,
-                      "normals missing; generated smooth normals");
-        notes.noNormals = true;
-        generate_normals(k, g, need);
+        task.noteNoNormals = true;
+        generate_normals(alloc, g, need);
     }
     for (Vtx& v : g.verts)
         canonicalize(v);
-    k.buildUs += swBuild.elapsed_us();
+    task.buildUs += swBuild.elapsed_us();
 
     Stopwatch const swTangents;
-    if (k.settings.genTangents) {
+    if (settings.genTangents) {
         if (!g.hasUv[0]) {
-            if (!notes.noTangentUv)
-                COOK_NOTE(k, Severity::Warning, kDiagGltfNoTangentSource, lod.nodeName,
-                          "tangents requested but TEXCOORD_0 is missing; no tangents");
-            notes.noTangentUv = true;
+            task.noteNoTangentUv = true;
         } else if (!g.idx.empty()) {
             // Unindexed triangle list -> MikkTSpace -> re-weld (below).
-            Vec<Vtx> flat(k.alloc, Tag::Cook);
+            Vec<Vtx> flat(alloc, Tag::Cook);
             flat.resize(g.idx.size());
             for (usize i = 0; i < g.idx.size(); ++i)
                 flat[i] = g.verts[g.idx[i]];
@@ -472,21 +521,20 @@ Status build_lod(Cook& k, ImportPart const& part, ImportLod const& lod, LodGeom&
                     g.idx[i] = u32(i);
                 g.hasTangent = true;
             } else {
-                COOK_NOTE(k, Severity::Warning, kDiagGltfNoTangentSource, lod.nodeName,
-                          "MikkTSpace failed; no tangents");
+                task.noteMikkFailed = true;
             }
         }
     }
-    k.tangentsUs += swTangents.elapsed_us();
+    task.tangentsUs += swTangents.elapsed_us();
 
     Stopwatch const swWeld;
-    weld(k, g);
-    k.buildUs += swWeld.elapsed_us();
+    weld(alloc, g);
+    task.buildUs += swWeld.elapsed_us();
 
     Stopwatch const swOptimize;
-    if (k.settings.optimize && !g.idx.empty()) {
+    if (settings.optimize && !g.idx.empty()) {
         u32 const vc = u32(g.verts.size());
-        Vec<u32> scratch(k.alloc, Tag::Cook);
+        Vec<u32> scratch(alloc, Tag::Cook);
         scratch.resize(g.idx.size());
         for (SubRange const& s : g.subs) {
             if (s.count == 0) continue;
@@ -495,14 +543,14 @@ Status build_lod(Cook& k, ImportPart const& part, ImportLod const& lod, LodGeom&
             meshopt_optimizeOverdraw(range, scratch.data(), s.count, &g.verts[0].p[0], vc, sizeof(Vtx),
                                      1.05f);
         }
-        Vec<Vtx> out(k.alloc, Tag::Cook);
+        Vec<Vtx> out(alloc, Tag::Cook);
         out.resize(vc);
         usize const used = meshopt_optimizeVertexFetch(out.data(), g.idx.data(), g.idx.size(), g.verts.data(),
                                                        vc, sizeof(Vtx));
         out.resize(used);
         g.verts = std::move(out);
     }
-    k.optimizeUs += swOptimize.elapsed_us();
+    task.optimizeUs += swOptimize.elapsed_us();
 
     Stopwatch const swBounds;
     if (!g.verts.empty()) {
@@ -514,8 +562,15 @@ Status build_lod(Cook& k, ImportPart const& part, ImportLod const& lod, LodGeom&
                 g.mx[a] = max(g.mx[a], v.p[a]);
             }
     }
-    k.buildUs += swBounds.elapsed_us();
-    return kOk;
+    // Inputs of the part's quantization plan and bounds (cook_part scanned these before).
+    for (u32 s = 0; s < kMaxUvSets; ++s) {
+        if (!g.hasUv[s]) continue;
+        for (Vtx const& v : g.verts)
+            task.bigUv[s] |= v.uv[s][0] > 2048.0f || v.uv[s][0] < -2048.0f || v.uv[s][1] > 2048.0f ||
+                             v.uv[s][1] < -2048.0f;
+    }
+    if (task.lod == part.lods.data) task.whole = bounds_of(g.verts.data(), g.idx.data(), u32(g.idx.size()));
+    task.buildUs += swBounds.elapsed_us();
 }
 
 // ---------------------------------------------------------------------------
@@ -723,13 +778,6 @@ u32 material_for(Cook& k, u32 key) {
 // Quantize + pack one LOD
 // ---------------------------------------------------------------------------
 
-struct PartFormat {
-    bool floatPos            = false;
-    bool floatUv[kMaxUvSets] = {false, false};
-    f32 posScale[3]          = {1, 1, 1};
-    f32 posBias[3]           = {0, 0, 0};
-};
-
 void add_attrib(mesh::VertexLayout& l, mesh::Semantic sem, u8 semIndex, u8 stream, Format f,
                 u16 offset) noexcept {
     mesh::VertexAttrib& a = l.attribs[l.attribCount++];
@@ -747,8 +795,12 @@ u32 intern_layout(Cook& k, mesh::VertexLayout const& l) {
     return u32(k.layouts.size() - 1);
 }
 
-void pack_lod(Cook& k, LodGeom const& g, PartFormat const& pf) {
+/// Compute phase, part 2: quantize into the task arena, build the (not yet interned)
+/// layout and the submesh bounds. Frees the working vertices and indices.
+void quantize_lod(LodTask& task) {
     Stopwatch const sw;
+    LodGeom& g           = task.g;
+    PartFormat const& pf = task.pf;
     // Layout: stream 0 = position only; stream 1 = normal, tangent, uv0, uv1, color.
     mesh::VertexLayout l;
     std::memset(&l, 0, sizeof l);
@@ -783,8 +835,8 @@ void pack_lod(Cook& k, LodGeom const& g, PartFormat const& pf) {
     u32 const vc      = u32(g.verts.size());
     usize const s0    = usize(vc) * l.strides[0];
     usize const s1    = usize(vc) * l.strides[1];
-    u8* const stream0 = k.arena.alloc_array<u8>(max(s0, usize(1)));
-    u8* const stream1 = k.arena.alloc_array<u8>(max(s1, usize(1)));
+    u8* const stream0 = task.arena.alloc_array<u8>(max(s0, usize(1)));
+    u8* const stream1 = task.arena.alloc_array<u8>(max(s1, usize(1)));
     std::memset(stream0, 0, s0);
     std::memset(stream1, 0, s1);
 
@@ -826,7 +878,7 @@ void pack_lod(Cook& k, LodGeom const& g, PartFormat const& pf) {
     u32 const ic                = u32(g.idx.size());
     mesh::IndexType const itype = vc <= 0xFFFFu ? mesh::IndexType::U16 : mesh::IndexType::U32;
     usize const ibytes          = usize(ic) * mesh::index_size(itype);
-    u8* const ib                = k.arena.alloc_array<u8>(max(ibytes, usize(1)));
+    u8* const ib                = task.arena.alloc_array<u8>(max(ibytes, usize(1)));
     for (u32 i = 0; i < ic; ++i) {
         if (itype == mesh::IndexType::U16)
             write_unaligned(ib + usize(i) * 2, u16(g.idx[i]));
@@ -834,30 +886,56 @@ void pack_lod(Cook& k, LodGeom const& g, PartFormat const& pf) {
             write_unaligned(ib + usize(i) * 4, g.idx[i]);
     }
 
+    std::memcpy(&task.layout, &l, sizeof l); // interning compares bytes
+    task.vertexCount = vc;
+    task.streams[0]  = {stream0, s0};
+    task.streams[1]  = {stream1, s1};
+    task.indices     = {ib, ibytes};
+    task.indexCount  = ic;
+    task.indexType   = itype;
+
+    u32 subCount = 0;
+    for (SubRange const& s : g.subs)
+        subCount += s.count != 0;
+    Bounds* const sb = task.arena.alloc_array<Bounds>(max(subCount, 1u));
+    u32 n            = 0;
+    for (SubRange const& s : g.subs)
+        if (s.count != 0) sb[n++] = bounds_of(g.verts.data(), g.idx.data() + s.first, s.count);
+    task.subBounds = {sb, subCount};
+
+    g.verts.release();
+    g.idx.release();
+    task.packUs += sw.elapsed_us();
+}
+
+/// Merge phase for one kept LOD: intern the layout, resolve materials, append the LOD
+/// and submesh records. Runs sequentially in traversal order.
+void merge_lod(Cook& k, LodTask const& t) {
+    Stopwatch const sw;
     mesh::LodDesc ld;
-    ld.layout       = intern_layout(k, l);
-    ld.vertexCount  = vc;
-    ld.streams[0]   = {stream0, s0};
-    ld.streams[1]   = {stream1, s1};
-    ld.indices      = {ib, ibytes};
-    ld.indexCount   = ic;
-    ld.indexType    = itype;
+    ld.layout       = intern_layout(k, t.layout);
+    ld.vertexCount  = t.vertexCount;
+    ld.streams[0]   = t.streams[0];
+    ld.streams[1]   = t.streams[1];
+    ld.indices      = t.indices;
+    ld.indexCount   = t.indexCount;
+    ld.indexType    = t.indexType;
     ld.submeshFirst = u32(k.submeshes.size());
     ld.submeshCount = 0;
-    for (SubRange const& s : g.subs) {
+    for (SubRange const& s : t.g.subs) {
         if (s.count == 0) continue;
         mesh::Submesh sm{};
         sm.material   = material_for(k, s.materialKey);
         sm.indexFirst = s.first;
         sm.indexCount = s.count;
         sm.vertexBase = 0;
-        sm.bounds     = bounds_of(g.verts.data(), g.idx.data() + s.first, s.count);
+        sm.bounds     = t.subBounds[ld.submeshCount];
         k.submeshes.push_back(sm);
         ++ld.submeshCount;
     }
     k.lods.push_back(ld);
-    k.triangles += ic / 3;
-    k.vertices += vc;
+    k.triangles += t.indexCount / 3;
+    k.vertices += t.vertexCount;
     k.packUs += sw.elapsed_us();
 }
 
@@ -865,8 +943,90 @@ void pack_lod(Cook& k, LodGeom const& g, PartFormat const& pf) {
 // Parts
 // ---------------------------------------------------------------------------
 
-Status cook_part(Cook& k, u32 index, ImportPart const& part, f32 modelMin[3], f32 modelMax[3], bool& anyModel,
-                 Vec<Bounds>& worldSpheres) {
+/// Per-part decisions between the two compute rounds: which LODs are kept and the
+/// quantization format, plus the notes merge_part emits about them.
+struct PartPlan {
+    u32 firstTask = 0; ///< into Cook::tasks
+    u32 taskCount = 0;
+    u32 keptCount = 0;
+    PartFormat pf;
+    bool posFallback            = false;
+    f32 maxExtent               = 0;
+    bool uvFallback[kMaxUvSets] = {false, false};
+};
+
+/// Walks the part's LODs as the sequential cook did, sets each task's fate and the part
+/// format. Emits nothing. Returns false at a failed LOD (the walk stops there).
+bool plan_part(MeshCookSettings const& settings, Span<LodTask> tasks, PartPlan& plan) {
+    for (LodTask& t : tasks) {
+        if (t.tooLarge) {
+            t.fate = Fate::Failed;
+            return false;
+        }
+        if (t.g.idx.empty()) {
+            if (plan.keptCount == 0) {
+                t.fate = Fate::EmptyPart; // LOD0 empty: the part keeps no LODs at all
+                break;
+            }
+            t.fate = Fate::Dropped;
+            continue;
+        }
+        t.fate = Fate::Kept;
+        ++plan.keptCount;
+    }
+    if (plan.keptCount == 0) return true;
+
+    // Quantization box: union of every LOD's AABB (== LOD0's unless coarser LODs stick out).
+    f32 mn[3], mx[3];
+    for (u32 a = 0; a < 3; ++a) {
+        mn[a] = tasks[0].g.mn[a];
+        mx[a] = tasks[0].g.mx[a];
+    }
+    for (LodTask const& t : tasks) {
+        if (t.fate != Fate::Kept) continue;
+        for (u32 a = 0; a < 3; ++a) {
+            mn[a] = min(mn[a], t.g.mn[a]);
+            mx[a] = max(mx[a], t.g.mx[a]);
+        }
+    }
+    f32 maxExtent = 0;
+    for (u32 a = 0; a < 3; ++a)
+        maxExtent = max(maxExtent, mx[a] - mn[a]);
+
+    PartFormat& pf     = plan.pf;
+    bool const precise = settings.profile == VertexProfile::Precise;
+    pf.floatPos        = precise;
+    if (!precise && maxExtent / 65535.0f > settings.posTolMm / 1000.0f) {
+        pf.floatPos      = true;
+        plan.posFallback = true;
+        plan.maxExtent   = maxExtent;
+    }
+    if (!pf.floatPos)
+        for (u32 a = 0; a < 3; ++a) {
+            f32 const e    = mx[a] - mn[a];
+            pf.posScale[a] = e > 0 ? e : 1.0f;
+            pf.posBias[a]  = mn[a];
+        }
+    for (u32 s = 0; s < kMaxUvSets; ++s) {
+        pf.floatUv[s] = precise;
+        if (precise) continue;
+        bool big = false;
+        for (LodTask const& t : tasks)
+            big |= t.fate == Fate::Kept && t.bigUv[s];
+        if (big) {
+            pf.floatUv[s]      = true;
+            plan.uvFallback[s] = true;
+        }
+    }
+    for (LodTask& t : tasks)
+        if (t.fate == Fate::Kept) t.pf = pf;
+    return true;
+}
+
+/// Merge phase for one part, in traversal order: emits the part's diagnostics in the
+/// order the sequential cook did, then appends its LODs and the part record.
+Status merge_part(Cook& k, ImportPart const& part, PartPlan const& plan, f32 modelMin[3], f32 modelMax[3],
+                  bool& anyModel, Vec<Bounds>& worldSpheres) {
     mesh::PartDesc pd;
     pd.name   = part.name;
     pd.parent = part.parent;
@@ -877,79 +1037,58 @@ Status cook_part(Cook& k, u32 index, ImportPart const& part, f32 modelMin[3], f3
     pd.lodFirst = u32(k.lods.size());
     pd.lodCount = 0;
 
-    Vec<LodGeom> geoms(k.alloc, Tag::Cook);
-    PartNotes notes;
-    for (ImportLod const& lod : part.lods) {
-        LodGeom g;
-        g.verts.init(k.alloc, Tag::Cook);
-        g.idx.init(k.alloc, Tag::Cook);
-        g.subs.init(k.alloc, Tag::Cook);
-        KILN_TRY(build_lod(k, part, lod, g, notes));
-        if (g.idx.empty()) {
-            if (geoms.empty()) {
-                COOK_NOTE(k, Severity::Warning, kDiagGltfEmptyMesh, part.name,
-                          "part has no triangles; kept as a hierarchy node without LODs");
-                break; // LOD0 empty: the part keeps no LODs at all
-            }
-            COOK_NOTE(k, Severity::Warning, kDiagGltfEmptyMesh, lod.nodeName,
-                      "LOD %u has no triangles; dropped", lod.lodIndex);
-            continue;
-        }
-        geoms.push_back(std::move(g));
+    Span<LodTask const> const tasks(k.tasks.data() + plan.firstTask, plan.taskCount);
+    for (LodTask const& t : tasks) { // every task that ran, also those the walk below skips
+        k.buildUs += t.buildUs;
+        k.tangentsUs += t.tangentsUs;
+        k.optimizeUs += t.optimizeUs;
+        k.packUs += t.packUs;
     }
 
-    PartFormat pf;
-    if (!geoms.empty()) {
-        // Quantization box: union of every LOD's AABB (== LOD0's unless coarser LODs stick out).
-        f32 mn[3], mx[3];
-        for (u32 a = 0; a < 3; ++a) {
-            mn[a] = geoms[0].mn[a];
-            mx[a] = geoms[0].mx[a];
+    // build_lod's diagnostics, LOD by LOD; the missing-normals and missing-UV notes once per part.
+    bool notedNormals = false, notedTangentUv = false;
+    for (LodTask const& t : tasks) {
+        if (t.fate == Fate::Skipped) break;
+        ImportLod const& lod = *t.lod;
+        if (t.fate == Fate::Failed)
+            COOK_FAIL(k, Code::Unsupported, kDiagGltfLimit, lod.nodeName,
+                      "LOD too large (%llu vertices, %llu indices)",
+                      static_cast<unsigned long long>(t.totalV), static_cast<unsigned long long>(t.totalI));
+        if (t.noteNoNormals && !notedNormals)
+            COOK_NOTE(k, Severity::Info, kDiagGltfNoNormals, lod.nodeName,
+                      "normals missing; generated smooth normals");
+        notedNormals |= t.noteNoNormals;
+        if (t.noteNoTangentUv && !notedTangentUv)
+            COOK_NOTE(k, Severity::Warning, kDiagGltfNoTangentSource, lod.nodeName,
+                      "tangents requested but TEXCOORD_0 is missing; no tangents");
+        notedTangentUv |= t.noteNoTangentUv;
+        if (t.noteMikkFailed)
+            COOK_NOTE(k, Severity::Warning, kDiagGltfNoTangentSource, lod.nodeName,
+                      "MikkTSpace failed; no tangents");
+        if (t.fate == Fate::EmptyPart) {
+            COOK_NOTE(k, Severity::Warning, kDiagGltfEmptyMesh, part.name,
+                      "part has no triangles; kept as a hierarchy node without LODs");
+            break;
         }
-        for (LodGeom const& g : geoms)
-            for (u32 a = 0; a < 3; ++a) {
-                mn[a] = min(mn[a], g.mn[a]);
-                mx[a] = max(mx[a], g.mx[a]);
-            }
-        f32 maxExtent = 0;
-        for (u32 a = 0; a < 3; ++a)
-            maxExtent = max(maxExtent, mx[a] - mn[a]);
+        if (t.fate == Fate::Dropped)
+            COOK_NOTE(k, Severity::Warning, kDiagGltfEmptyMesh, lod.nodeName,
+                      "LOD %u has no triangles; dropped", lod.lodIndex);
+    }
 
-        bool const precise = k.settings.profile == VertexProfile::Precise;
-        pf.floatPos        = precise;
-        if (!precise && maxExtent / 65535.0f > k.settings.posTolMm / 1000.0f) {
-            pf.floatPos = true;
+    if (plan.keptCount != 0) {
+        if (plan.posFallback)
             COOK_NOTE(k, Severity::Info, kDiagGltfQuantFallback, part.name,
-                      "extent %g m exceeds 16-bit precision at %g mm; float positions", f64(maxExtent),
+                      "extent %g m exceeds 16-bit precision at %g mm; float positions", f64(plan.maxExtent),
                       f64(k.settings.posTolMm));
-        }
-        if (!pf.floatPos)
-            for (u32 a = 0; a < 3; ++a) {
-                f32 const e    = mx[a] - mn[a];
-                pf.posScale[a] = e > 0 ? e : 1.0f;
-                pf.posBias[a]  = mn[a];
-            }
-        for (u32 s = 0; s < kMaxUvSets; ++s) {
-            pf.floatUv[s] = precise;
-            if (precise) continue;
-            bool big = false;
-            for (LodGeom const& g : geoms) {
-                if (!g.hasUv[s]) continue;
-                for (Vtx const& v : g.verts)
-                    big |= v.uv[s][0] > 2048.0f || v.uv[s][0] < -2048.0f || v.uv[s][1] > 2048.0f ||
-                           v.uv[s][1] < -2048.0f;
-            }
-            if (big) {
-                pf.floatUv[s] = true;
+        for (u32 s = 0; s < kMaxUvSets; ++s)
+            if (plan.uvFallback[s])
                 COOK_NOTE(k, Severity::Info, kDiagGltfQuantFallback, part.name,
                           "TEXCOORD_%u outside +-2048; float UVs", s);
-            }
-        }
 
-        pd.bounds = bounds_of(geoms[0].verts.data(), geoms[0].idx.data(), u32(geoms[0].idx.size()));
-        for (LodGeom const& g : geoms)
-            pack_lod(k, g, pf);
-        pd.lodCount = u32(geoms.size());
+        pd.bounds = tasks[0].whole;
+        for (LodTask const& t : tasks)
+            if (t.fate == Fate::Kept) merge_lod(k, t);
+        pd.lodCount = plan.keptCount;
 
         // Model bounds: part AABB corners through the part's model-space frame.
         Bounds const& b = pd.bounds;
@@ -971,12 +1110,30 @@ Status cook_part(Cook& k, u32 index, ImportPart const& part, f32 modelMin[3], f3
         worldSpheres.push_back(ws);
     }
     for (u32 a = 0; a < 3; ++a) {
-        pd.posScale[a] = pf.posScale[a];
-        pd.posBias[a]  = pf.posBias[a];
+        pd.posScale[a] = plan.pf.posScale[a];
+        pd.posBias[a]  = plan.pf.posBias[a];
     }
-    (void)index;
     k.parts.push_back(pd);
     return kOk;
+}
+
+/// parallel_for payload for the two compute rounds.
+struct TaskRun {
+    LodTask* tasks                   = nullptr;
+    MeshCookSettings const* settings = nullptr;
+    Allocator const* alloc           = nullptr;
+};
+
+void build_tasks(void* user, u32 begin, u32 end) noexcept {
+    TaskRun const& r = *static_cast<TaskRun const*>(user);
+    for (u32 i = begin; i < end; ++i)
+        build_lod(r.tasks[i], *r.settings, r.alloc);
+}
+
+void quantize_tasks(void* user, u32 begin, u32 end) noexcept {
+    TaskRun const& r = *static_cast<TaskRun const*>(user);
+    for (u32 i = begin; i < end; ++i)
+        if (r.tasks[i].fate == Fate::Kept) quantize_lod(r.tasks[i]);
 }
 
 [[nodiscard]] StrView last_component(StrView path) noexcept {
@@ -1010,11 +1167,43 @@ Result<CookedMesh> cook_mesh(MeshSource const& src, MeshCookSettings const& sett
                 if (pr.colors)
                     k.vertexColor[pr.material == kDefaultMaterial ? scene.materials.size : pr.material] = 1;
 
+    // One task per (part, LOD) in traversal order: build (parallel), plan each part
+    // (sequential), quantize (parallel), merge (sequential, traversal order).
+    Vec<PartPlan> plans(alloc, Tag::Cook);
+    plans.resize(scene.parts.size);
+    u32 taskCount = 0;
+    for (u32 i = 0; i < u32(scene.parts.size); ++i) {
+        plans[i].firstTask = taskCount;
+        plans[i].taskCount = u32(scene.parts[i].lods.size);
+        taskCount += plans[i].taskCount;
+    }
+    k.tasks.resize(taskCount);
+    for (u32 i = 0; i < u32(scene.parts.size); ++i)
+        for (u32 j = 0; j < plans[i].taskCount; ++j) {
+            LodTask& t = k.tasks[plans[i].firstTask + j];
+            t.part     = &scene.parts[i];
+            t.lod      = &scene.parts[i].lods[j];
+            t.g.verts.init(alloc, Tag::Cook);
+            t.g.idx.init(alloc, Tag::Cook);
+            t.g.subs.init(alloc, Tag::Cook);
+            t.arena.init(Arena::Desc{alloc, usize(16) << 10, Tag::Cook});
+        }
+
+    // Thread safety: meshoptimizer is pure and reentrant, MikkTSpace is reentrant per context, cgltf is done.
+    TaskRun run{k.tasks.data(), &settings, alloc};
+    parallel_for(env.jobs, alloc, taskCount, 1, &build_tasks, &run);
+    u32 planned = 0;
+    while (planned < u32(scene.parts.size)) {
+        PartPlan& plan = plans[planned++];
+        if (!plan_part(settings, Span<LodTask>(k.tasks.data() + plan.firstTask, plan.taskCount), plan)) break;
+    }
+    parallel_for(env.jobs, alloc, taskCount, 1, &quantize_tasks, &run);
+
     f32 modelMin[3] = {0, 0, 0}, modelMax[3] = {0, 0, 0};
     bool anyModel = false;
     Vec<Bounds> spheres(alloc, Tag::Cook);
-    for (u32 i = 0; i < u32(scene.parts.size); ++i)
-        KILN_TRY(cook_part(k, i, scene.parts[i], modelMin, modelMax, anyModel, spheres));
+    for (u32 i = 0; i < planned; ++i)
+        KILN_TRY(merge_part(k, scene.parts[i], plans[i], modelMin, modelMax, anyModel, spheres));
     if (k.lods.empty())
         return diagf(diag, make_status(Code::ValidationFailed), kDiagGltfNoScene, Severity::Error, k.asset,
                      StrView{}, "no triangle geometry in any part");

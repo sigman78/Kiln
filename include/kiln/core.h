@@ -31,6 +31,13 @@
 #define KILN_OS_LINUX 1
 #endif
 
+// ARM64EC also defines _M_X64 but compiles to ARM64 code, so it counts as ARM64.
+#if defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__aarch64__)
+#define KILN_ARCH_ARM64 1
+#elif defined(_M_X64) || defined(__x86_64__)
+#define KILN_ARCH_X64 1
+#endif
+
 #if defined(KILN_COMPILER_MSVC)
 #define KILN_FORCEINLINE __forceinline
 #define KILN_NOINLINE __declspec(noinline)

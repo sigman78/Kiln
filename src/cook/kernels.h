@@ -9,7 +9,7 @@
 // |-------------------|----------------------------------|-------|--------------------------------------|
 // | convert_rows      | src/dst bits, channels, grayAlpha | rows  | auto                                 |
 // | flip_green_rows   | bits, channels                   | rows  | auto                                 |
-// | renormalize_rows  | bits, channels                   | rows  | scalar (double sqrt per texel)       |
+// | renormalize_rows  | bits, channels                   | rows  | SSE2 (x64), scalar elsewhere         |
 // | prepare_rows      | the three kernels above          | rows  | as its parts; fused per row          |
 // | downsample_rows   | bits, channels, mode             | rows  | auto (linear); scalar (sRGB, renorm) |
 #pragma once
@@ -18,6 +18,10 @@
 
 #include <cmath>
 #include <cstring>
+
+#if defined(KILN_ARCH_X64)
+#include <emmintrin.h> // SSE2, the x64 baseline: no ISA check needed
+#endif
 
 // No FMA contraction (see image.cpp); repeated here so the kernels never depend on
 // include order.
@@ -215,6 +219,76 @@ KILN_HOT void renormalize_rows(RowCtx const& ctx, u32 rowBegin, u32 rowEnd) noex
     }
 }
 
+#if defined(KILN_ARCH_X64)
+/// renormalize_px<Bits> for two texels at once: lane 0 of every vector is texel `a`,
+/// lane 1 is texel `b`. Bit-identical to the scalar path: each step is the same
+/// correctly rounded IEEE double operation in the same order (divpd and sqrtpd round
+/// like divsd and sqrtsd), and fp contract is off, so no FMA forms.
+template <u32 Bits> KILN_FORCEINLINE void renormalize_px2_sse2(u32* a, u32* b) noexcept {
+    constexpr u32 maxv    = kMaxValue<Bits>;
+    __m128d const half    = _mm_set1_pd(double(maxv) * 0.5);
+    __m128d const one     = _mm_set1_pd(1.0);
+    __m128d const zero    = _mm_setzero_pd();
+    __m128d const roundUp = _mm_set1_pd(0.5);
+    __m128d v[3];
+    for (u32 c = 0; c < 3; ++c) {
+        __m128i const i = _mm_setr_epi32(int(a[c]), int(b[c]), 0, 0); // values <= 65535
+        v[c]            = _mm_sub_pd(_mm_div_pd(_mm_cvtepi32_pd(i), half), one);
+    }
+    __m128d const len2 =
+        _mm_add_pd(_mm_add_pd(_mm_mul_pd(v[0], v[0]), _mm_mul_pd(v[1], v[1])), _mm_mul_pd(v[2], v[2]));
+    // Per lane: a zero vector becomes the flat normal (0, 0, 1). Its divisor is replaced
+    // by 1.0 so no lane computes 0/0; the blend then discards that lane's quotient.
+    // Integer input never gives a zero vector (half is not an integer), but the scalar
+    // path handles one, so this one does too.
+    __m128d const nonzero = _mm_cmpgt_pd(len2, zero);
+    __m128d const len     = _mm_or_pd(_mm_and_pd(nonzero, _mm_sqrt_pd(len2)), _mm_andnot_pd(nonzero, one));
+    __m128d const flat[3] = {zero, zero, one};
+    for (u32 c = 0; c < 3; ++c) {
+        __m128d const q = _mm_div_pd(v[c], len);
+        __m128d const n = _mm_or_pd(_mm_and_pd(nonzero, q), _mm_andnot_pd(nonzero, flat[c]));
+        __m128d const e = _mm_add_pd(_mm_mul_pd(_mm_add_pd(n, one), half), roundUp);
+        // SSE2 has no floor. |n| <= 1 (a correctly rounded x / len with |x| <= len), so
+        // e lies in [0.5, maxv + 0.5]: never negative and far below 2^31, where
+        // truncation equals floor. The scalar clamp to [0, maxv] then reduces to an
+        // integer min.
+        __m128i const t = _mm_cvttpd_epi32(e);
+        u32 const ea    = u32(_mm_cvtsi128_si32(t));
+        u32 const eb    = u32(_mm_cvtsi128_si32(_mm_srli_si128(t, 4)));
+        a[c]            = ea < maxv ? ea : maxv;
+        b[c]            = eb < maxv ? eb : maxv;
+    }
+}
+
+/// renormalize_rows with two texels per step; an odd last texel takes the scalar path.
+template <u32 Bits, u32 Channels>
+KILN_HOT void renormalize_rows_sse2(RowCtx const& ctx, u32 rowBegin, u32 rowEnd) noexcept {
+    static_assert(Channels >= 3);
+    constexpr u32 bpc = Bits / 8, bpp = Channels * bpc;
+    u32 const width = ctx.width;
+    for (u32 y = rowBegin; y < rowEnd; ++y) {
+        u8* KILN_RESTRICT p = ctx.dst + usize(y) * ctx.dstRowBytes;
+        u32 x               = 0;
+        for (; x + 2 <= width; x += 2, p += 2 * bpp) {
+            u8* const q = p + bpp;
+            u32 a[3]    = {load<Bits>(p), load<Bits>(p + bpc), load<Bits>(p + 2 * bpc)};
+            u32 b[3]    = {load<Bits>(q), load<Bits>(q + bpc), load<Bits>(q + 2 * bpc)};
+            renormalize_px2_sse2<Bits>(a, b);
+            for (u32 c = 0; c < 3; ++c) {
+                store<Bits>(p + c * bpc, a[c]);
+                store<Bits>(q + c * bpc, b[c]);
+            }
+        }
+        if (x < width) {
+            u32 rgb[3] = {load<Bits>(p), load<Bits>(p + bpc), load<Bits>(p + 2 * bpc)};
+            renormalize_px<Bits>(rgb);
+            for (u32 c = 0; c < 3; ++c)
+                store<Bits>(p + c * bpc, rgb[c]);
+        }
+    }
+}
+#endif
+
 /// Level 0 preparation fused per row: each destination row is converted, then flipped
 /// and renormalized while it is still in cache. One pass over the source.
 struct PrepareCtx {
@@ -339,12 +413,24 @@ template <u32 B> RowFn flip_green_for(u32 channels) noexcept {
     }
 }
 
-template <u32 B> RowFn renormalize_for(u32 channels) noexcept {
+template <u32 B> RowFn renormalize_scalar_for(u32 channels) noexcept {
     switch (channels) {
     case 3: return &renormalize_rows<B, 3>;
     case 4: return &renormalize_rows<B, 4>;
     default: return nullptr;
     }
+}
+
+template <u32 B> RowFn renormalize_for(u32 channels) noexcept {
+#if defined(KILN_ARCH_X64)
+    switch (channels) {
+    case 3: return &renormalize_rows_sse2<B, 3>;
+    case 4: return &renormalize_rows_sse2<B, 4>;
+    default: return nullptr;
+    }
+#else
+    return renormalize_scalar_for<B>(channels);
+#endif
 }
 
 template <u32 B, u32 C> DownsampleFn downsample_mode(DownsampleMode mode) noexcept {
@@ -387,10 +473,16 @@ inline RowFn flip_green_kernel(u32 bits, u32 channels) noexcept {
 }
 
 /// Null when there is nothing to renormalize (fewer than 3 channels) or the format is
-/// unsupported.
+/// unsupported. The SSE2 path on x64, the scalar template elsewhere.
 inline RowFn renormalize_kernel(u32 bits, u32 channels) noexcept {
     return bits == 8 ? detail::renormalize_for<8>(channels)
                      : (bits == 16 ? detail::renormalize_for<16>(channels) : nullptr);
+}
+
+/// Always the scalar reference template: tests compare it with renormalize_kernel.
+inline RowFn renormalize_kernel_scalar(u32 bits, u32 channels) noexcept {
+    return bits == 8 ? detail::renormalize_scalar_for<8>(channels)
+                     : (bits == 16 ? detail::renormalize_scalar_for<16>(channels) : nullptr);
 }
 
 /// `mode` falls back to Linear where it does not apply (Srgb on 16-bit, Renorm on

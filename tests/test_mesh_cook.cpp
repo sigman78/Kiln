@@ -6,6 +6,7 @@
 
 #include "kiln/containers.h"
 #include "kiln/cook/cook.h"
+#include "kiln/io.h"
 #include "kiln/mesh.h"
 
 #include <cmath>
@@ -66,14 +67,15 @@ struct DirResolver {
 };
 
 Result<cook::CookedMesh> cook_bytes(Span<u8 const> bytes, StrView assetPath, Diags& d,
-                                    cook::MeshCookSettings const& s, DirResolver* resolver = nullptr) {
+                                    cook::MeshCookSettings const& s, DirResolver* resolver = nullptr,
+                                    JobSystem const* jobs = nullptr) {
     cook::MeshSource src{};
     src.bytes      = bytes;
     src.assetPath  = assetPath;
     src.sourcePath = assetPath;
     if (resolver) src.resolver = {&DirResolver::fn, resolver};
     DiagSink sink = d.sink();
-    return cook::cook_mesh(src, s, cook::TargetProfile{}, {.diag = &sink});
+    return cook::cook_mesh(src, s, cook::TargetProfile{}, {.diag = &sink, .jobs = jobs});
 }
 
 /// A cooked file opened with full validation and its decoded payload.
@@ -455,7 +457,7 @@ struct CorpusCook {
 };
 
 /// Cook `<gltf dir>/<rel>` with default settings (and a sibling-file resolver).
-bool cook_corpus(char const* rel, CorpusCook& c, bool withResolver = true) {
+bool cook_corpus(char const* rel, CorpusCook& c, bool withResolver = true, JobSystem const* jobs = nullptr) {
     char dir[1024];
     if (!gltf_dir(dir, sizeof dir)) return false;
     char path[1400];
@@ -472,7 +474,7 @@ bool cook_corpus(char const* rel, CorpusCook& c, bool withResolver = true) {
     char asset[256];
     format(asset, sizeof asset, "meshes/%s", c.name);
     c.result = cook_bytes(c.bytes.span(), StrView(asset), c.diags, default_settings(),
-                          withResolver ? &c.resolver : nullptr);
+                          withResolver ? &c.resolver : nullptr, jobs);
     if (c.result.ok()) open_cooked(c.result.value(), c.opened, c.name);
     return true;
 }
@@ -762,4 +764,82 @@ KILN_TEST(MeshCook, CorpusExternalUri) {
     CorpusCook again;
     if (cook_corpus("generated/external_uri.gltf", again) && again.result.ok())
         KILN_CHECK(same_bytes(c.result->file.span(), again.result->file.span()));
+}
+
+namespace {
+
+bool same_diags(Diags const& a, Diags const& b) {
+    if (a.count != b.count || a.firstErr != b.firstErr) return false;
+    for (int i = 0; i < a.count && i < 256; ++i)
+        if (a.items[i].code != b.items[i].code || a.items[i].sev != b.items[i].sev) return false;
+    return true;
+}
+
+bool same_texture_refs(cook::CookedMesh const& a, cook::CookedMesh const& b) {
+    if (a.textures.size() != b.textures.size()) return false;
+    for (usize i = 0; i < a.textures.size(); ++i) {
+        cook::TextureRef const& x = a.textures[i];
+        cook::TextureRef const& y = b.textures[i];
+        if (x.assetPath != y.assetPath || x.uri != y.uri || x.mimeType != y.mimeType || x.slot != y.slot ||
+            x.srgb != y.srgb || !same_bytes(x.embedded, y.embedded))
+            return false;
+    }
+    return true;
+}
+
+} // namespace
+
+// The per-(part, LOD) tasks must not change a byte or the diagnostic order: every
+// manifest entry and the float-fallback quad, cooked without a pool and with 1 and 8 threads.
+KILN_TEST(MeshCook, threads_byte_identical) {
+    Result<JobSystem> one   = create_thread_pool({.threads = 1});
+    Result<JobSystem> eight = create_thread_pool({.threads = 8});
+    KILN_REQUIRE(one.ok() && eight.ok());
+    JobSystem const* const pools[] = {&*one, &*eight};
+
+    {
+        Vec<u8> const glb = make_quad_glb(100000.0f, 4096.0f); // float positions and UVs
+        Diags d0;
+        Result<cook::CookedMesh> r0 = cook_bytes(glb.span(), "meshes/huge", d0, default_settings());
+        KILN_REQUIRE(r0.ok());
+        for (JobSystem const* jobs : pools) {
+            Diags d;
+            Result<cook::CookedMesh> r =
+                cook_bytes(glb.span(), "meshes/huge", d, default_settings(), nullptr, jobs);
+            KILN_REQUIRE(r.ok());
+            KILN_CHECK(same_bytes(r0->file.span(), r->file.span()));
+            KILN_CHECK(same_diags(d0, d));
+        }
+    }
+
+    char dir[1024];
+    if (gltf_dir(dir, sizeof dir)) {
+        Vec<char> text(default_allocator(), Tag::Test);
+        Vec<GltfEntry> entries(default_allocator(), Tag::Test);
+        if (load_gltf_manifest(dir, text, entries))
+            for (GltfEntry const& e : entries) {
+                char rel[512];
+                format(rel, sizeof rel, "%.*s", KILN_SV(e.path));
+                CorpusCook base;
+                if (!cook_corpus(rel, base)) continue;
+                for (JobSystem const* jobs : pools) {
+                    CorpusCook c;
+                    if (!cook_corpus(rel, c, true, jobs)) continue;
+                    KILN_CHECK_MSG(same_diags(base.diags, c.diags),
+                                   "%s: diagnostics differ with %u thread(s)", rel,
+                                   thread_pool_thread_count(*jobs));
+                    if (!KILN_CHECK_MSG(base.result.ok() == c.result.ok(), "%s: status differs", rel))
+                        continue;
+                    if (!base.result.ok()) continue;
+                    KILN_CHECK_MSG(same_bytes(base.result->file.span(), c.result->file.span()),
+                                   "%s: .mesh bytes differ with %u thread(s)", rel,
+                                   thread_pool_thread_count(*jobs));
+                    KILN_CHECK_MSG(same_texture_refs(base.result.value(), c.result.value()),
+                                   "%s: texture refs differ with %u thread(s)", rel,
+                                   thread_pool_thread_count(*jobs));
+                }
+            }
+    }
+    destroy_thread_pool(*eight);
+    destroy_thread_pool(*one);
 }

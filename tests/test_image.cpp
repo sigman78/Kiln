@@ -6,6 +6,8 @@
 #include "kiln/cook/image.h"
 #include "kiln/io.h"
 
+#include "../src/cook/kernels.h"
+
 using namespace kiln;
 using namespace kiln::cook;
 namespace png = kiln::test::png;
@@ -721,6 +723,79 @@ void check_row_bands(JobSystem const* jobs, Image const& src) {
         KILN_CHECK_MSG(same_image((*a)[i], (*b)[i]), "mip %zu differs", i);
 }
 
+/// Runs the dispatched renormalize kernel (SSE2 on x64) and the scalar reference on
+/// copies of `img`, as two row ranges, and compares the bytes.
+bool renormalize_paths_match(Image const& img) {
+    kernels::RowFn const fast   = kernels::renormalize_kernel(img.bitsPerChannel, img.channels);
+    kernels::RowFn const scalar = kernels::renormalize_kernel_scalar(img.bitsPerChannel, img.channels);
+    if (!KILN_CHECK(fast && scalar)) return false;
+    usize const rowBytes = usize(img.width) * img.channels * (img.bitsPerChannel / 8);
+    Image a = clone(img), b = clone(img);
+    auto run = [rowBytes](kernels::RowFn fn, Image& im) {
+        kernels::RowCtx const ctx = {.src         = nullptr,
+                                     .dst         = im.pixels.data(),
+                                     .srcRowBytes = 0,
+                                     .dstRowBytes = rowBytes,
+                                     .width       = im.width};
+        fn(ctx, 0, 1);
+        fn(ctx, 1, im.height);
+    };
+    run(fast, a);
+    run(scalar, b);
+    for (usize i = 0; i < a.pixels.size(); ++i)
+        if (a.pixels[i] != b.pixels[i])
+            return KILN_CHECK_MSG(false, "byte %zu: simd %u != scalar %u", i, u32(a.pixels[i]),
+                                  u32(b.pixels[i]));
+    return true;
+}
+
+/// One row of hand-picked RGB triples, alpha 77, odd width: every triple of
+/// {0, 1, mid - 1, mid, mid + 1, max - 1, max} (all-zero, all-max, the midpoint and its
+/// neighbours), then every red value against fixed green and blue, and for 8-bit every
+/// red and green against a few blues.
+Image crafted_texels(u32 bits, u32 channels) {
+    u32 const maxv    = bits == 8 ? 255u : 65535u;
+    u32 const mid     = (maxv + 1) / 2;
+    u32 const pick[7] = {0, 1, mid - 1, mid, mid + 1, maxv - 1, maxv};
+    Vec<u32> rgb(default_allocator(), Tag::Test);
+    auto add = [&](u32 r, u32 g, u32 b) {
+        rgb.push_back(r);
+        rgb.push_back(g);
+        rgb.push_back(b);
+    };
+    for (u32 r : pick)
+        for (u32 g : pick)
+            for (u32 b : pick)
+                add(r, g, b);
+    u32 const fixed[4][2] = {
+        {mid,  mid },
+        {0,    0   },
+        {maxv, maxv},
+        {mid,  maxv}
+    };
+    for (auto const& gb : fixed)
+        for (u32 r = 0; r <= maxv; ++r)
+            add(r, gb[0], gb[1]);
+    if (bits == 8) {
+        u32 const blues[3] = {0, mid, maxv};
+        for (u32 b : blues)
+            for (u32 g = 0; g <= maxv; ++g)
+                for (u32 r = 0; r <= maxv; ++r)
+                    add(r, g, b);
+    }
+    if ((rgb.size() / 3) % 2 == 0) add(mid, 0, maxv); // odd width: the scalar tail runs too
+    u32 const width = u32(rgb.size() / 3);
+    Vec<u8> zeros(default_allocator(), Tag::Test);
+    zeros.resize(usize(width) * channels * (bits / 8));
+    Image img = make(width, 1, channels, bits, zeros.span());
+    for (u32 x = 0; x < width; ++x) {
+        for (u32 c = 0; c < 3; ++c)
+            set_texel(img, x, 0, c, rgb[usize(x) * 3 + c]);
+        if (channels == 4) set_texel(img, x, 0, 3, 77);
+    }
+    return img;
+}
+
 } // namespace
 
 // Large enough to split into many row bands (the grain targets ~512 KiB of source).
@@ -742,5 +817,26 @@ KILN_TEST(image, row_bands_match_single_thread) {
         for (Case const& c : kCases)
             check_row_bands(&*pool, random_image(rng, c.w, c.h, c.channels, c.bits));
         destroy_thread_pool(*pool);
+    }
+}
+
+KILN_TEST(image, renormalize_simd_matches_scalar) {
+#if defined(KILN_ARCH_X64)
+    KILN_CHECK(kernels::renormalize_kernel(8, 4) != kernels::renormalize_kernel_scalar(8, 4));
+#endif
+    constexpr u32 kWidths[]   = {1, 2, 3, 5, 16, 17, 255};
+    constexpr u32 kHeights[]  = {1, 3};
+    constexpr u32 kBits[]     = {8, 16};
+    constexpr u32 kChannels[] = {3, 4};
+    Lcg rng{0x5157u};
+    for (u32 bits : kBits) {
+        for (u32 ch : kChannels) {
+            for (u32 w : kWidths)
+                for (u32 h : kHeights)
+                    KILN_CHECK_MSG(renormalize_paths_match(random_image(rng, w, h, ch, bits)),
+                                   "random %ux%u, %u channels, %u bits", w, h, ch, bits);
+            KILN_CHECK_MSG(renormalize_paths_match(crafted_texels(bits, ch)), "crafted, %u channels, %u bits",
+                           ch, bits);
+        }
     }
 }

@@ -79,6 +79,13 @@ own arithmetic, and `generate_normals` (order-dependent float accumulation).
 
 Steps 1 and 2 are independent. Step 3 needs 2; step 4 needs 3; step 5 waits for measurements.
 
+Status (2026-09-27): steps 1 to 4 landed. Step 5 landed for the renormalize kernel (SSE2, x64
+baseline, so no ISA decision was needed). Measured on a 4096x4096 RGBA8 image, MSVC release,
+single thread: `downsample_2x` linear 71 ms to 13 ms, sRGB 190 ms to 21 ms, renormalize 450 ms to
+162 ms; with a pool of 8 the row split gives a further 2x to 4x on the split passes. Remaining
+candidates: the renormalize step inside the normal-map downsample still uses the scalar routine,
+and the 8-bit divides could come from a 256-entry table of exact doubles.
+
 ## Rationale
 
 - Template specialization before intrinsics: all three compilers vectorize a branch-free
