@@ -1,7 +1,740 @@
-// examples/viewer/main.cpp — placeholder until the viewer lands (docs/design/viewer.md).
-#include <cstdio>
+// examples/viewer/main.cpp — kiln-viewer: loads cooked meshes through the example Vulkan adapter
+// and draws them (docs/design/viewer.md). The meshes on the command line form a boot group that
+// is waited on; their textures stream in afterwards under a per-frame upload budget, so the
+// first frames show placeholders. --offscreen renders without a window and can dump a PNG.
+#include <kiln/assets.h>
+#include <kiln/log.h>
+#if KILN_VIEWER_HAS_COOK
+#include <kiln/cook/provider.h>
+#endif
 
-int main() {
-    std::puts("kiln-viewer: not implemented yet");
-    return 2;
+#include "cli.h"
+#include "png_writer.h"
+#include "viewer_math.h"
+#include "viewer_render.h"
+#include "vk_adapter.h"
+#include "vk_device.h"
+
+// volk (through vk_device.h) comes first so GLFW sees the Vulkan types; GLFW_INCLUDE_NONE is set.
+#include <GLFW/glfw3.h>
+
+#include <chrono>
+#include <cmath>
+#include <cstdio>
+#include <cstring>
+
+using namespace kiln;
+using vkx::Mat4;
+using vkx::Vec3;
+
+namespace {
+
+/// For printf's %llu, whatever u64 is on this platform.
+constexpr unsigned long long ull(u64 v) noexcept { return v; }
+
+constexpr u32 kMaxMeshes       = 64;
+constexpr u32 kWarmupFrames    = 10; ///< frames excluded from the running average and the spike check
+constexpr u32 kBootTimeoutMs   = 30000;
+constexpr double kSpikeFloorMs = 1.0; ///< frames faster than this are never reported as spikes
+constexpr f32 kPi              = 3.14159265358979f;
+constexpr f32 kFovY            = 60.0f * kPi / 180.0f;
+
+using Clock = std::chrono::steady_clock;
+
+void log_to_stdout(void*, LogLevel level, StrView category, StrView message) {
+    std::printf("%-5s %-9.*s %.*s\n", log_level_name(level), KILN_SV(category), KILN_SV(message));
+}
+
+void diag_to_stdout(void*, Diagnostic const& d) {
+    std::printf("%-5s K%04u     %.*s%s%.*s: %.*s\n", severity_name(d.severity), d.code, KILN_SV(d.asset),
+                d.where.size ? " @" : "", KILN_SV(d.where), KILN_SV(d.message));
+}
+
+char const* state_name(State s) {
+    switch (s) {
+    case State::Unloaded: return "Unloaded";
+    case State::Pending: return "Pending";
+    case State::MetaReady: return "MetaReady";
+    case State::Ready: return "Ready";
+    case State::Failed: return "Failed";
+    case State::Partial: return "Partial";
+    }
+    return "?";
+}
+
+char const* event_name(EventKind k) {
+    switch (k) {
+    case EventKind::MetaReady: return "MetaReady";
+    case EventKind::Ready: return "Ready";
+    case EventKind::Changed: return "Changed";
+    case EventKind::Failed: return "Failed";
+    }
+    return "?";
+}
+
+// --- Assets -------------------------------------------------------------------------------------
+
+struct MeshItem {
+    StrView path; ///< store-relative, extension stripped
+    MeshHandle handle;
+    State last = State::Unloaded;
+    Vec3 offset; ///< where the model sits in the row of boot meshes
+};
+
+struct TextureItem {
+    u64 textureId = 0;
+    TextureHandle handle;
+    State last = State::Unloaded;
+    char path[160]{}; ///< copied: the mesh view that named it may be reloaded
+};
+
+struct Options {
+    char const* store  = "cooked";
+    char const* source = nullptr;
+    char const* dump   = nullptr;
+    bool validate      = false;
+    bool offscreen     = false;
+    u32 width          = 1280;
+    u32 height         = 720;
+    u32 budgetMiB      = 8;
+    u32 frames         = 0; ///< 0 = 60 offscreen, until closed in a window
+    u32 threads        = 0;
+    MeshItem meshes[kMaxMeshes];
+    u32 meshCount = 0;
+};
+
+bool add_mesh(void* user, char const* arg) {
+    auto* o       = static_cast<Options*>(user);
+    usize const n = std::strlen(arg);
+    if (n <= 5 || std::strcmp(arg + n - 5, ".mesh") != 0) {
+        std::fprintf(stderr, "kiln-viewer: '%s' needs a .mesh extension\n", arg);
+        return false;
+    }
+    if (o->meshCount == kMaxMeshes) {
+        std::fprintf(stderr, "kiln-viewer: too many meshes (max %u)\n", kMaxMeshes);
+        return false;
+    }
+    o->meshes[o->meshCount++].path = StrView(arg, n - 5);
+    return true;
+}
+
+/// The viewer's asset state: boot meshes, the textures they reference, per-part matrices.
+struct Scene {
+    Context* ctx        = nullptr;
+    vkx::VkAdapter* vka = nullptr;
+    vkx::Renderer* ren  = nullptr;
+    MeshItem* meshes    = nullptr;
+    u32 meshCount       = 0;
+    Vec<TextureItem> textures;
+    HashMap<u64, u32> textureIndex; ///< textureId -> index in `textures`
+    Vec<Mat4> world;                ///< per-part scratch, sized once for the largest mesh
+    Vec3 center;                    ///< union of the placed models' bounds
+    f32 radius    = 1.0f;
+    bool warnedU8 = false;
+    u32 frame     = 0; ///< the frame being prepared, for the event log
+};
+
+/// Requests every BaseColor texture the mesh's materials name, once per texture id. They are
+/// not waited on: they stream in under the per-frame budget while frames render.
+void request_textures(Scene& s, MeshItem const& m) {
+    mesh::MeshView const* v = mesh_view(s.ctx, m.handle);
+    if (!v) return;
+    for (u32 i = 0; i < v->textures().size(); ++i) {
+        mesh::TextureBinding const& b = v->textures()[i];
+        auto const slot               = mesh::TextureSlot(b.slot);
+        if (slot != mesh::TextureSlot::BaseColor || s.textureIndex.find(b.textureId)) continue;
+        StrView const path = v->str(b.pathStr);
+        TextureItem t;
+        t.textureId = b.textureId;
+        t.handle = request_texture(s.ctx, path, RequestOptions{.textureKind = texture_kind_for_slot(slot)});
+        t.last   = state(s.ctx, t.handle);
+        format(t.path, sizeof t.path, "%.*s", KILN_SV(path));
+        s.textureIndex.insert(b.textureId, u32(s.textures.size()));
+        s.textures.push_back(t);
+        KILN_INFO("viewer", "request texture %s (%s) for %.*s -> %s", t.path, mesh::texture_slot_name(slot),
+                  KILN_SV(m.path), state_name(t.last));
+    }
+}
+
+/// One pipeline per layout, built as soon as the metadata is readable.
+void ensure_pipelines(Scene& s, MeshHandle h) {
+    mesh::MeshView const* v = mesh_view(s.ctx, h);
+    if (!v) return;
+    for (u32 i = 0; i < v->layouts().size(); ++i)
+        (void)vkx::renderer_pipeline(s.ren, v->layouts()[i]);
+    if (s.world.size() < v->parts().size()) s.world.resize(v->parts().size());
+}
+
+void handle_event(Scene& s, Event const& e) {
+    if (e.asset == AssetKind::Mesh) {
+        for (u32 i = 0; i < s.meshCount; ++i) {
+            MeshItem& m = s.meshes[i];
+            if (m.handle.bits() != e.handle) continue;
+            State const now = state(s.ctx, m.handle);
+            KILN_INFO("viewer", "frame %u: event %-9s mesh    %.*s  (%s -> %s, v%u)", s.frame,
+                      event_name(e.kind), KILN_SV(m.path), state_name(m.last), state_name(now), e.version);
+            m.last = now;
+            if (e.kind == EventKind::Failed) {
+                KILN_ERROR("viewer", "  failed: %s", code_name(e.status.code));
+                return;
+            }
+            ensure_pipelines(s, m.handle);
+            if (e.kind != EventKind::MetaReady) request_textures(s, m);
+            return;
+        }
+    } else {
+        for (TextureItem& t : s.textures) {
+            if (t.handle.bits() != e.handle) continue;
+            State const now   = state(s.ctx, t.handle);
+            GpuObject const g = gpu(s.ctx, t.handle);
+            KILN_INFO("viewer", "frame %u: event %-9s texture %s  (%s -> %s, v%u, slot %d)", s.frame,
+                      event_name(e.kind), t.path, state_name(t.last), state_name(now), e.version,
+                      g.slot == kInvalid ? -1 : int(g.slot));
+            t.last = now;
+            if (e.kind == EventKind::Failed) KILN_WARN("viewer", "  failed: %s", code_name(e.status.code));
+            return;
+        }
+    }
+    KILN_WARN("viewer", "event %s for an unknown handle", event_name(e.kind));
+}
+
+/// Lays the boot meshes out in a row along +X (they are usually all centered at the origin)
+/// and computes a sphere around all of them for the camera.
+void place_meshes(Scene& s) {
+    f32 cursor = 0;
+    u32 placed = 0;
+    for (u32 i = 0; i < s.meshCount; ++i) {
+        MeshItem& m             = s.meshes[i];
+        mesh::MeshView const* v = mesh_view(s.ctx, m.handle);
+        if (!v) continue;
+        mesh::Bounds const& b = v->model().bounds;
+        f32 const r           = b.radius > 0 ? b.radius : 1.0f;
+        m.offset              = Vec3{cursor + r - b.center[0], -b.center[1], -b.center[2]};
+        cursor += (placed + 1 < s.meshCount ? 2.4f : 2.0f) * r;
+        ++placed;
+    }
+    if (placed == 0) return;
+    // Center the row on the origin; the sphere's radius reaches the farthest model's sphere.
+    Vec3 const mid{cursor * 0.5f, 0, 0};
+    f32 radius = 1e-3f;
+    for (u32 i = 0; i < s.meshCount; ++i) {
+        MeshItem& m             = s.meshes[i];
+        mesh::MeshView const* v = mesh_view(s.ctx, m.handle);
+        if (!v) continue;
+        mesh::Bounds const& b = v->model().bounds;
+        m.offset              = m.offset - mid;
+        Vec3 const c          = Vec3{b.center[0], b.center[1], b.center[2]} + m.offset;
+        radius                = max(radius, vkx::length(c) + (b.radius > 0 ? b.radius : 1.0f));
+    }
+    s.center = Vec3{};
+    s.radius = radius;
+}
+
+/// Base-color slot and draw flags for a material (spec §5.7).
+void material_bindings(Scene& s, mesh::MeshView const& v, u32 material, vkx::DrawPush& push) {
+    push.baseColorSlot = 0;
+    push.flags         = 0;
+    if (material >= v.materials().size()) return;
+    mesh::MaterialSlot const& mat = v.materials()[material];
+    if (mat.flags & mesh::kMaterialVertexColor) push.flags |= vkx::kDrawVertexColor;
+    for (u32 t = 0; t < mat.textureCount; ++t) {
+        u32 const ti = mat.textureFirst + t;
+        if (ti >= v.textures().size()) break;
+        mesh::TextureBinding const& b = v.textures()[ti];
+        if (mesh::TextureSlot(b.slot) != mesh::TextureSlot::BaseColor) continue;
+        if (u32 const* idx = s.textureIndex.find(b.textureId)) {
+            GpuObject const g = gpu(s.ctx, s.textures[*idx].handle);
+            if (g.slot != kInvalid) {
+                push.baseColorSlot = g.slot;
+                push.flags |= vkx::kDrawBaseColor;
+            }
+        }
+        return;
+    }
+}
+
+/// Spec §8 per part: world matrix from the parent chain, LOD 0, one draw per submesh.
+void draw_scene(Scene& s, VkCommandBuffer cmd) {
+    VkPipelineLayout const layout = vkx::renderer_pipeline_layout(s.ren);
+    VkBuffer const zero           = vkx::renderer_zero_buffer(s.ren);
+    VkPipeline bound              = VK_NULL_HANDLE;
+    for (u32 mi = 0; mi < s.meshCount; ++mi) {
+        MeshItem const& m = s.meshes[mi];
+        if (!is_ready(s.ctx, m.handle)) continue;
+        mesh::MeshView const* v        = mesh_view(s.ctx, m.handle);
+        vkx::MeshPayload const payload = vkx::adapter_mesh(s.vka, gpu(s.ctx, m.handle));
+        if (!v || !payload.buffer) continue;
+        u32 const partCount = v->parts().size();
+        if (s.world.size() < partCount) s.world.resize(partCount);
+        Mat4 const place = vkx::translation(m.offset);
+
+        for (u32 p = 0; p < partCount; ++p) {
+            mesh::MeshPart const& part = v->parts()[p];
+            Mat4 const local           = vkx::from_rt(part.translation, part.rotation);
+            // Parts are topologically ordered (parent < self), so the parent is already resolved.
+            s.world[p] = part.parent < p ? s.world[part.parent] * local : place * local;
+            if (part.lodCount == 0) continue;
+
+            mesh::MeshLod const& lod = v->lods()[part.lodFirst];
+            auto const indexType     = mesh::IndexType(lod.indexType);
+            if (indexType == mesh::IndexType::U8) {
+                if (!s.warnedU8)
+                    KILN_WARN("viewer",
+                              "%.*s: U8 indices need indexTypeUint8, which the device setup does "
+                              "not enable; skipping those LODs",
+                              KILN_SV(m.path));
+                s.warnedU8 = true;
+                continue;
+            }
+            vkx::LayoutPipeline const* pipe = vkx::renderer_pipeline(s.ren, v->layouts()[lod.layout]);
+            if (!pipe) continue;
+            if (pipe->pipeline != bound) {
+                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe->pipeline);
+                bound = pipe->pipeline;
+            }
+
+            VkBuffer buffers[mesh::kMaxStreams + 6];
+            VkDeviceSize offsets[mesh::kMaxStreams + 6];
+            VkDeviceSize sizes[mesh::kMaxStreams + 6];
+            u32 n        = 0;
+            bool missing = false;
+            for (u32 st = 0; st < pipe->streamCount; ++st, ++n) {
+                if (lod.streamOffset[st] == kInvalid) missing = true;
+                buffers[n] = payload.buffer;
+                offsets[n] = payload.offset + lod.streamOffset[st];
+                sizes[n]   = v->stream_bytes(lod, st);
+            }
+            if (missing) continue;
+            for (u32 z = 0; z < pipe->zeroBindings; ++z, ++n) {
+                buffers[n] = zero;
+                offsets[n] = 0;
+                sizes[n]   = VK_WHOLE_SIZE;
+            }
+            vkCmdBindVertexBuffers2(cmd, 0, n, buffers, offsets, sizes, nullptr);
+            vkCmdBindIndexBuffer2(
+                cmd, payload.buffer, payload.offset + lod.indexOffset, mesh::MeshView::index_bytes(lod),
+                indexType == mesh::IndexType::U32 ? VK_INDEX_TYPE_UINT32 : VK_INDEX_TYPE_UINT16);
+
+            vkx::DrawPush push{};
+            std::memcpy(push.model, s.world[p].m, sizeof push.model);
+            for (u32 c = 0; c < 3; ++c) {
+                push.posScale[c] = part.posScale[c];
+                push.posBias[c]  = part.posBias[c];
+            }
+            for (u32 si = 0; si < lod.submeshCount; ++si) {
+                mesh::Submesh const& sm = v->submeshes()[lod.submeshFirst + si];
+                material_bindings(s, *v, sm.material, push);
+                vkCmdPushConstants(cmd, layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                                   sizeof push, &push);
+                // indexFirst is relative to the LOD's index range, which is where the buffer is bound.
+                vkCmdDrawIndexed(cmd, sm.indexCount, 1, sm.indexFirst, sm.vertexBase, 0);
+            }
+        }
+    }
+}
+
+// --- Camera and window input --------------------------------------------------------------------
+
+struct Camera {
+    f32 azimuth   = 45.0f * kPi / 180.0f;
+    f32 elevation = 30.0f * kPi / 180.0f;
+    f32 zoom      = 1.0f; ///< distance multiplier (wheel)
+};
+
+struct Input {
+    Camera camera;
+    bool dragging = false;
+    double lastX = 0, lastY = 0;
+    vkx::Renderer* ren = nullptr;
+};
+
+void write_uniforms(Scene const& s, Camera const& cam, VkExtent2D extent, vkx::FrameUniforms* u) {
+    f32 const dist = s.radius / std::sin(kFovY * 0.5f) * 1.1f * cam.zoom;
+    f32 const ce   = std::cos(cam.elevation);
+    Vec3 const eye =
+        s.center +
+        Vec3{ce * std::sin(cam.azimuth), std::sin(cam.elevation), ce * std::cos(cam.azimuth)} * dist;
+    f32 const nearZ  = max(dist - s.radius * 2.0f, dist * 0.01f);
+    f32 const farZ   = dist + s.radius * 2.0f;
+    f32 const aspect = extent.height ? f32(extent.width) / f32(extent.height) : 1.0f;
+    Mat4 const vp = vkx::perspective(kFovY, aspect, nearZ, farZ) * vkx::look_at(eye, s.center, Vec3{0, 1, 0});
+    std::memcpy(u->viewProj, vp.m, sizeof u->viewProj);
+    u->cameraPos[0]  = eye.x;
+    u->cameraPos[1]  = eye.y;
+    u->cameraPos[2]  = eye.z;
+    u->cameraPos[3]  = 1.0f;
+    Vec3 const light = vkx::normalize(Vec3{0.45f, 0.8f, 0.6f});
+    u->lightDir[0]   = light.x;
+    u->lightDir[1]   = light.y;
+    u->lightDir[2]   = light.z;
+    u->lightDir[3]   = 0.0f;
+}
+
+Input* input_of(GLFWwindow* w) { return static_cast<Input*>(glfwGetWindowUserPointer(w)); }
+
+void on_mouse_button(GLFWwindow* w, int button, int action, int /*mods*/) {
+    Input* in = input_of(w);
+    if (button != GLFW_MOUSE_BUTTON_LEFT) return;
+    in->dragging = action == GLFW_PRESS;
+    if (in->dragging) glfwGetCursorPos(w, &in->lastX, &in->lastY);
+}
+
+void on_cursor(GLFWwindow* w, double x, double y) {
+    Input* in = input_of(w);
+    if (!in->dragging) return;
+    in->camera.azimuth -= f32(x - in->lastX) * 0.01f;
+    in->camera.elevation = clamp(in->camera.elevation + f32(y - in->lastY) * 0.01f, -1.5f, 1.5f);
+    in->lastX            = x;
+    in->lastY            = y;
+}
+
+void on_scroll(GLFWwindow* w, double /*dx*/, double dy) {
+    Input* in       = input_of(w);
+    in->camera.zoom = clamp(in->camera.zoom * std::pow(0.9f, f32(dy)), 0.05f, 20.0f);
+}
+
+void on_key(GLFWwindow* w, int key, int /*scancode*/, int action, int /*mods*/) {
+    if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS) glfwSetWindowShouldClose(w, GLFW_TRUE);
+}
+
+void on_framebuffer(GLFWwindow* w, int /*width*/, int /*height*/) {
+    Input* in = input_of(w);
+    if (in->ren) vkx::renderer_resize(in->ren);
+}
+
+void framebuffer_size(void* user, u32* width, u32* height) {
+    int w = 0, h = 0;
+    glfwGetFramebufferSize(static_cast<GLFWwindow*>(user), &w, &h);
+    *width  = w > 0 ? u32(w) : 0u;
+    *height = h > 0 ? u32(h) : 0u;
+}
+
+void glfw_error(int code, char const* message) { KILN_ERROR("glfw", "%d: %s", code, message); }
+
+bool write_png(char const* path, Span<u8 const> rgba, u32 w, u32 h) {
+    Vec<u8> const png =
+        test::png::encode({.width = w, .height = h, .colorType = 6, .depth = 8, .pixels = rgba});
+    if (png.empty()) return false;
+    std::FILE* f = std::fopen(path, "wb");
+    if (!f) return false;
+    bool const ok = std::fwrite(png.data(), 1, png.size(), f) == png.size();
+    return std::fclose(f) == 0 && ok;
+}
+
+/// Everything main() tears down, in reverse order of creation.
+struct App {
+    GLFWwindow* window = nullptr;
+    bool glfw          = false;
+    vkx::Device device{};
+    VkSurfaceKHR surface = VK_NULL_HANDLE;
+    vkx::VkAdapter* vka  = nullptr;
+    vkx::Renderer* ren   = nullptr;
+    Context* ctx         = nullptr;
+    bool provider        = false;
+
+    ~App() {
+        if (ren) vkx::renderer_wait_idle(ren);
+#if KILN_VIEWER_HAS_COOK
+        if (provider) cook::uninstall_provider(ctx);
+#endif
+        if (ctx) destroy(ctx); // hands every GPU object to destroy_deferred
+        if (ren) vkx::renderer_destroy(ren);
+        if (vka) vkx::adapter_destroy(vka);
+        if (surface) vkDestroySurfaceKHR(device.instance, surface, nullptr);
+        vkx::device_destroy(device);
+        if (window) glfwDestroyWindow(window);
+        if (glfw) glfwTerminate();
+    }
+};
+
+} // namespace
+
+int main(int argc, char** argv) {
+    Options o;
+    cli::Option const opts[] = {
+        {.name = "--store", .arg = "<dir>", .help = "cooked store root (default: cooked)", .str = &o.store},
+        {.name = "--source",
+         .arg  = "<dir>",
+         .help = "source root; enables cook-on-miss (needs kiln_cook)",
+         .str  = &o.source},
+        {.name = "--validate",
+         .help = "enable the Vulkan validation layer if installed",
+         .flag = &o.validate},
+        {.name   = "--width",
+         .arg    = "<px>",
+         .help   = "window or image width (default: 1280)",
+         .number = &o.width,
+         .max    = 16384},
+        {.name   = "--height",
+         .arg    = "<px>",
+         .help   = "window or image height (default: 720)",
+         .number = &o.height,
+         .max    = 16384},
+        {.name   = "--budget-mib",
+         .arg    = "<n>",
+         .help   = "upload bytes committed per frame, in MiB (default: 8)",
+         .number = &o.budgetMiB,
+         .max    = 4096},
+        {.name = "--offscreen", .help = "render into an image with no window", .flag = &o.offscreen},
+        {.name   = "--frames",
+         .arg    = "<n>",
+         .help   = "frames to render, then exit (default: 60 offscreen, until closed in a window)",
+         .number = &o.frames},
+        {.name = "--dump",
+         .arg  = "<file.png>",
+         .help = "offscreen: write the last frame as a PNG",
+         .str  = &o.dump},
+        {.name   = "--threads",
+         .arg    = "<n>",
+         .help   = "kiln worker threads (default: 0 = auto)",
+         .number = &o.threads,
+         .max    = 256},
+    };
+    cli::Spec const spec{
+        .program  = "kiln-viewer",
+        .synopsis = "[options] <asset.mesh>...",
+        .options  = {opts, countof(opts)},
+        .footer =
+            "<asset.mesh> is a store-relative path, e.g. mesh/Box.mesh. Window: left-drag orbits, wheel\n"
+            "zooms, Esc quits.\n"
+            "Exit codes: 0 ok, 1 a boot asset Failed, 2 usage or setup error.",
+        .positional = &add_mesh,
+        .user       = &o,
+    };
+    cli::Result const args = cli::parse(spec, argc, argv);
+    if (args.help) return 0;
+    if (!args.ok || o.meshCount == 0 || o.width == 0 || o.height == 0) {
+        cli::usage(spec, stderr);
+        return 2;
+    }
+    if (o.dump && !o.offscreen) {
+        std::fprintf(stderr, "kiln-viewer: --dump needs --offscreen\n");
+        return 2;
+    }
+    u32 const maxFrames = o.frames ? o.frames : (o.offscreen ? 60u : 0u);
+    set_log_sink(LogSink{&log_to_stdout, nullptr});
+    DiagSink const diag{&diag_to_stdout, nullptr};
+    App app;
+
+    // 1. Window (unless offscreen) and device.
+    Input input;
+    char const* const* glfwExtensions = nullptr;
+    u32 glfwExtensionCount            = 0;
+    if (!o.offscreen) {
+        glfwSetErrorCallback(&glfw_error);
+        if (!glfwInit()) return 2;
+        app.glfw = true;
+        if (!glfwVulkanSupported()) {
+            KILN_ERROR("viewer", "GLFW found no Vulkan loader");
+            return 2;
+        }
+        glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
+        glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+        app.window = glfwCreateWindow(int(o.width), int(o.height), "kiln-viewer", nullptr, nullptr);
+        if (!app.window) return 2;
+        glfwSetWindowUserPointer(app.window, &input);
+        glfwSetMouseButtonCallback(app.window, &on_mouse_button);
+        glfwSetCursorPosCallback(app.window, &on_cursor);
+        glfwSetScrollCallback(app.window, &on_scroll);
+        glfwSetKeyCallback(app.window, &on_key);
+        glfwSetFramebufferSizeCallback(app.window, &on_framebuffer);
+    }
+    Result<vkx::Device> dev =
+        vkx::device_create({.validation         = o.validate,
+                            .instanceExtensions = Span<char const* const>(glfwExtensions, glfwExtensionCount),
+                            .needSwapchain      = !o.offscreen},
+                           &diag);
+    if (dev.failed()) {
+        KILN_ERROR("viewer", "device_create: %s", code_name(dev.code()));
+        return 2;
+    }
+    app.device = dev.value();
+    if (app.window) {
+        VkResult const r = glfwCreateWindowSurface(app.device.instance, app.window, nullptr, &app.surface);
+        if (r != VK_SUCCESS) {
+            KILN_ERROR("viewer", "glfwCreateWindowSurface: %s", vkx::result_name(r));
+            return 2;
+        }
+    }
+
+    // 2. Adapter, renderer, context.
+    Adapter adapter{};
+    Result<vkx::VkAdapter*> va =
+        vkx::adapter_create({.device = &app.device, .framesInFlight = vkx::kFramesInFlight}, &adapter);
+    if (va.failed()) {
+        KILN_ERROR("viewer", "adapter_create: %s", code_name(va.code()));
+        return 2;
+    }
+    app.vka                   = va.value();
+    Result<vkx::Renderer*> rr = vkx::renderer_create({.device          = &app.device,
+                                                      .adapter         = app.vka,
+                                                      .surface         = app.surface,
+                                                      .width           = o.width,
+                                                      .height          = o.height,
+                                                      .framebufferSize = &framebuffer_size,
+                                                      .user            = app.window});
+    if (rr.failed()) {
+        KILN_ERROR("viewer", "renderer_create: %s", code_name(rr.code()));
+        return 2;
+    }
+    app.ren   = rr.value();
+    input.ren = app.ren;
+
+    StrView const sourceRoot = o.source ? StrView(o.source) : StrView{};
+    Result<Context*> c       = create(ContextDesc{
+              .diag          = diag,
+              .adapter       = &adapter,
+              .storeDir      = StrView(o.store),
+              .sourceRoots   = Span<StrView const>(&sourceRoot, o.source ? 1u : 0u),
+              .workerThreads = o.threads,
+    });
+    if (c.failed()) {
+        KILN_ERROR("viewer", "create: %s", code_name(c.code()));
+        return 2;
+    }
+    app.ctx = c.value();
+#if KILN_VIEWER_HAS_COOK
+    if (o.source) {
+        Status const st = cook::install_provider(app.ctx, cook::ProviderDesc{});
+        if (st.failed()) {
+            KILN_ERROR("viewer", "install_provider: %s", code_name(st.code));
+            return 2;
+        }
+        app.provider = true;
+    }
+#else
+    if (o.source) KILN_WARN("viewer", "built without kiln_cook: --source is ignored");
+#endif
+
+    // 3. The boot group: every mesh on the command line, waited on before the first frame.
+    Scene scene;
+    scene.ctx       = app.ctx;
+    scene.vka       = app.vka;
+    scene.ren       = app.ren;
+    scene.meshes    = o.meshes;
+    scene.meshCount = o.meshCount;
+    scene.textures.init(default_allocator(), Tag::General);
+    scene.textures.reserve(64);
+    scene.textureIndex.init(default_allocator(), Tag::General);
+    scene.textureIndex.reserve(64);
+    scene.world.init(default_allocator(), Tag::General);
+
+    Group const boot = group(app.ctx);
+    for (u32 i = 0; i < o.meshCount; ++i)
+        o.meshes[i].handle = request_mesh(app.ctx, o.meshes[i].path, RequestOptions{.group = boot});
+    Clock::time_point const bootStart = Clock::now();
+    GroupStatus const gs              = wait(app.ctx, boot, WaitOptions{.timeoutMs = kBootTimeoutMs});
+    double const bootMs = std::chrono::duration<double, std::milli>(Clock::now() - bootStart).count();
+    KILN_INFO("viewer", "boot group settled in %.1f ms: %u ready, %u failed, %u pending", bootMs, gs.ready,
+              gs.failed, gs.pending);
+    release(app.ctx, boot);
+    u32 bootFailed = 0;
+    for (u32 i = 0; i < o.meshCount; ++i) {
+        MeshItem& m = o.meshes[i];
+        m.last      = state(app.ctx, m.handle);
+        KILN_INFO("viewer", "boot mesh %.*s: %s", KILN_SV(m.path), state_name(m.last));
+        if (m.last != State::Ready) ++bootFailed;
+    }
+    if (bootFailed) {
+        KILN_ERROR("viewer", "%u boot mesh(es) did not load", bootFailed);
+        return 1;
+    }
+    // Events raised inside wait() are gone by now; set up what the MetaReady / Ready handlers do.
+    for (u32 i = 0; i < o.meshCount; ++i) {
+        ensure_pipelines(scene, o.meshes[i].handle);
+        request_textures(scene, o.meshes[i]);
+    }
+    place_meshes(scene);
+    KILN_INFO("viewer", "scene: %u mesh(es), radius %.3f, %u texture(s) streaming, budget %u MiB per frame",
+              o.meshCount, double(scene.radius), u32(scene.textures.size()), o.budgetMiB);
+
+    // 4. Frames.
+    PumpOptions const pumpOpt{.uploadBytes = u64(o.budgetMiB) << 20};
+    u32 frames      = 0;
+    double totalMs  = 0;
+    double worstMs  = 0;
+    u32 worstFrame  = 0;
+    double warmMs   = 0; ///< sum over frames after the warm-up
+    u32 warmFrames  = 0;
+    u64 uploads     = 0;
+    u64 uploadBytes = 0;
+    u32 busyRetries = 0;
+    for (;;) {
+        if (app.window) {
+            glfwPollEvents();
+            if (glfwWindowShouldClose(app.window)) break;
+        }
+        if (maxFrames && frames >= maxFrames) break;
+
+        vkx::renderer_wait_frame(app.ren);
+        Clock::time_point const t0 = Clock::now();
+        scene.frame                = frames + 1;
+        PumpStats const ps         = pump(app.ctx, pumpOpt);
+        uploads += ps.uploadsCommitted;
+        uploadBytes += ps.uploadBytes;
+        busyRetries += ps.busyRetries;
+        for (Event const& e : events(app.ctx))
+            handle_event(scene, e);
+
+        VkCommandBuffer const cmd = vkx::renderer_begin(app.ren);
+        if (!cmd) {
+            if (app.window) glfwWaitEventsTimeout(0.05); // minimized or resizing
+            continue;
+        }
+        write_uniforms(scene, input.camera, vkx::renderer_extent(app.ren), vkx::renderer_uniforms(app.ren));
+        draw_scene(scene, cmd);
+        bool const last = o.offscreen && frames + 1 == maxFrames;
+        vkx::renderer_end(app.ren, last && o.dump != nullptr);
+
+        double const ms = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
+        ++frames;
+        totalMs += ms;
+        if (ms > worstMs) {
+            worstMs    = ms;
+            worstFrame = frames;
+        }
+        if (frames > kWarmupFrames) {
+            // The floor keeps sub-millisecond jitter out of the log.
+            if (warmFrames > 0 && ms > 2.0 * (warmMs / warmFrames) && ms > kSpikeFloorMs)
+                KILN_WARN("viewer", "frame %u: %.2f ms CPU, over 2x the running average %.2f ms", frames, ms,
+                          warmMs / warmFrames);
+            warmMs += ms;
+            ++warmFrames;
+        }
+    }
+    vkx::renderer_wait_idle(app.ren);
+
+    // 5. The dump and the summary.
+    int exitCode = 0;
+    if (o.dump && frames > 0) {
+        Vec<u8> rgba(default_allocator(), Tag::General);
+        u32 w = 0, h = 0;
+        if (vkx::renderer_read_back(app.ren, &rgba, &w, &h).failed() ||
+            !write_png(o.dump, rgba.span(), w, h)) {
+            KILN_ERROR("viewer", "could not write %s", o.dump);
+            exitCode = 2;
+        } else {
+            KILN_INFO("viewer", "wrote %s (%ux%u, %s)", o.dump, w, h,
+                      vkx::renderer_color_format_name(app.ren));
+        }
+    }
+    u32 texturesReady = 0;
+    for (TextureItem const& t : scene.textures)
+        texturesReady += state(app.ctx, t.handle) == State::Ready ? 1u : 0u;
+    vkx::AdapterStats const as = vkx::adapter_stats(app.vka);
+    KILN_INFO("viewer", "%u frames, CPU (pump + record + submit) avg %.2f ms, worst %.2f ms (frame %u)",
+              frames, frames ? totalMs / frames : 0.0, worstMs, worstFrame);
+    KILN_INFO("viewer", "pump: %llu uploads committed, %llu bytes, %u busy retries; textures ready %u/%u",
+              ull(uploads), ull(uploadBytes), busyRetries, texturesReady, u32(scene.textures.size()));
+    KILN_INFO("viewer",
+              "adapter: %u uploads in flight, %u busy, %llu bytes uploaded, %u live objects, %u slots, %llu "
+              "staging bytes reserved",
+              as.uploadsInFlight, as.busyReturned, ull(as.bytesUploaded), as.liveObjects, as.slotsInUse,
+              ull(as.stagingUsed));
+
+    for (TextureItem const& t : scene.textures)
+        release(app.ctx, t.handle);
+    for (u32 i = 0; i < o.meshCount; ++i)
+        release(app.ctx, o.meshes[i].handle);
+    return exitCode;
 }

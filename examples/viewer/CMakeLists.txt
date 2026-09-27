@@ -72,6 +72,8 @@ endif()
 # ---------------------------------------------------------------------------
 add_executable(kiln-viewer
     main.cpp
+    viewer_math.h
+    viewer_render.h viewer_render.cpp
     vk_device.h vk_device.cpp
     vk_adapter.h vk_adapter.cpp
     ${KILN_VIEWER_SHADER_HEADERS})
