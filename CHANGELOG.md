@@ -24,6 +24,10 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
 - KTX2 writer: the alpha sample of sRGB formats carried the EXPONENT qualifier (0x20) instead of LINEAR (0x10); found by `ktx validate`.
 
 ### Changed
+- `.mesh` writer: `WriteOptions::splitBytes` and `kiln::mesh::split_unit()` are removed (pre-1.0 break).
+  The cooker never set them; the writer emits one blob per vertex stream per LOD and one per index
+  range. Blob splitting returns with the v0.6 codec work, and spec §5.9 now records the split rules as
+  deferred. Migration: drop the field; files written without splitting are unchanged.
 - `kiln-cook` writes the `StoreLayout::Named` layout (`<store>/<assetPath>.<ext>`) by default, matching
   what the runtime's v0.5 store expects (`kiln/assets.h`); the old content-hashed file names move behind
   `--hashed`, kept for the index-based hashed layout landing in v0.6 (pre-1.0 break: scripts that relied

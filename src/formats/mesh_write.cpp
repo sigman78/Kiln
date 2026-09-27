@@ -222,25 +222,19 @@ Result<Vec<u8>> write(WriteDesc const& desc, WriteOptions const& opt, Allocator 
     Vec<BlobOut> blobs(alloc, Tag::Cook);
     u64 cursor = 0;
 
-    auto emit_range = [&](u8 const* src, u64 bytes, u32 elementSize, u32 unit, u8 lodRank) {
-        u64 chunk = bytes;
-        if (opt.splitBytes != 0) {
-            u64 su = split_unit(unit);
-            chunk  = max(su, u64(opt.splitBytes) / su * su);
-        }
-        for (u64 off = 0; off < bytes; off += chunk) {
-            u64 n = min(chunk, bytes - off);
-            PayloadBlob b{};
-            b.decodedOffset = u32(cursor + off);
-            b.decodedSize   = u32(n);
-            b.elementSize   = u16(elementSize);
-            b.codec         = u8(Codec::None);
-            b.filter        = u8(Filter::None);
-            b.flags         = 0;
-            b.lodRank       = lodRank;
-            b.checksum      = opt.checksums ? xxh32(src + off, usize(n)) : 0u;
-            blobs.push_back(BlobOut{b, src + off});
-        }
+    // One blob per stream per LOD and one per index range. Splitting ranges into
+    // smaller blobs is deferred to the codec work (spec §5.9).
+    auto emit_range = [&](u8 const* src, u64 bytes, u32 elementSize, u8 lodRank) {
+        PayloadBlob b{};
+        b.decodedOffset = u32(cursor);
+        b.decodedSize   = u32(bytes);
+        b.elementSize   = u16(elementSize);
+        b.codec         = u8(Codec::None);
+        b.filter        = u8(Filter::None);
+        b.flags         = 0;
+        b.lodRank       = lodRank;
+        b.checksum      = opt.checksums ? xxh32(src, usize(bytes)) : 0u;
+        blobs.push_back(BlobOut{b, src});
     };
 
     for (u32 li : order) {
@@ -260,7 +254,7 @@ Result<Vec<u8>> write(WriteDesc const& desc, WriteOptions const& opt, Allocator 
                 KILN_WRITE_FAIL(kDiagHeaderSizes,
                                 "decoded payload exceeds the 4 GiB limit (lod %u stream %u)", li, s);
             r.streamOffset[s] = u32(cursor);
-            emit_range(l.streams[s].data, bytes, lay.strides[s], lay.strides[s], rank[li]);
+            emit_range(l.streams[s].data, bytes, lay.strides[s], rank[li]);
             cursor += bytes;
         }
         u32 isz    = index_size(l.indexType);
@@ -269,7 +263,7 @@ Result<Vec<u8>> write(WriteDesc const& desc, WriteOptions const& opt, Allocator 
         if (cursor + ibytes >= kLimit32)
             KILN_WRITE_FAIL(kDiagHeaderSizes, "decoded payload exceeds the 4 GiB limit (lod %u indices)", li);
         r.indexOffset = u32(cursor);
-        if (ibytes) emit_range(l.indices.data, ibytes, isz, 3 * isz, rank[li]);
+        if (ibytes) emit_range(l.indices.data, ibytes, isz, rank[li]);
         cursor += ibytes;
         r.indexCount     = l.indexCount;
         r.indexType      = u8(l.indexType);

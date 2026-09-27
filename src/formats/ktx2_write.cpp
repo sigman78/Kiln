@@ -2,19 +2,11 @@
 #include "kiln/cook/ktx2_writer.h"
 #include "kiln/log.h"
 
+#include "formats_internal.h"
+
 namespace kiln::ktx2 {
 
 namespace {
-
-constexpr u32 gcd(u32 a, u32 b) noexcept {
-    while (b != 0) {
-        u32 t = a % b;
-        a     = b;
-        b     = t;
-    }
-    return a;
-}
-constexpr u32 lcm(u32 a, u32 b) noexcept { return a / gcd(a, b) * b; }
 
 /// Round up to a multiple of `a` (not necessarily a power of two, e.g. 12).
 constexpr u64 round_up(u64 v, u64 a) noexcept { return (v + a - 1) / a * a; }
@@ -158,7 +150,7 @@ Result<Vec<u8>> write(WriteDesc const& desc, Allocator const* alloc, DiagSink co
         kvdLength += u32(align_up(u64(4) + kvLength, u64(4)));
     }
 
-    u64 const align = lcm(info->bytesPerBlock, 4u);
+    u64 const align = fmt::ktx2_level_align(info->bytesPerBlock);
     LevelIndex index[kMaxLevels]{};
     u64 pos = u64(kvdOffset) + kvdLength;
     for (u32 i = levelCount; i-- > 0;) { // smallest level first, level 0 last

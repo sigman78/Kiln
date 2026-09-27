@@ -81,10 +81,6 @@ struct WriteDesc {
 struct WriteOptions {
     u32 payloadAlignment = kPayloadBaseAlign; ///< FileHeader::payloadAlignment (>= 256, power of two)
     bool checksums       = true;              ///< fill PayloadBlob::checksum (xxh32 of decoded bytes)
-    /// 0 = one blob per stream per LOD and one per index range. Otherwise split
-    /// ranges into blobs of at most this many decoded bytes, rounded down to a
-    /// multiple of split_unit(unit) = lcm(unit, 16) (spec §5.9), never below one split_unit.
-    u32 splitBytes = 0;
     /// Testing aid for the non-raw decode path: zero bytes inserted before every
     /// encoded blob (rounded up to a multiple of 16). Non-zero clears kPayloadRaw
     /// because encoded offsets no longer equal decoded offsets.
@@ -107,17 +103,5 @@ struct WriteStats {
 KILN_API Result<Vec<u8>> write(WriteDesc const& desc, WriteOptions const& opt = {},
                                Allocator const* alloc = nullptr, DiagSink const* diag = nullptr,
                                WriteStats* stats = nullptr) noexcept;
-
-/// lcm(unit, 16): the split granularity for a vertex stream (unit = stride) or an
-/// index range (unit = 3 * index size), spec §5.9.
-[[nodiscard]] constexpr u32 split_unit(u32 unit) noexcept {
-    u32 a = unit, b = kBlobAlign;
-    while (b) {
-        u32 t = a % b;
-        a     = b;
-        b     = t;
-    }
-    return unit / a * kBlobAlign; // unit * 16 / gcd
-}
 
 } // namespace kiln::mesh

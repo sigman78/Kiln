@@ -1,6 +1,8 @@
 // KTX2 reader: validates the header, level index, DFD and KVD.
 #include "kiln/ktx2.h"
 
+#include "formats_internal.h"
+
 namespace kiln::ktx2 {
 
 char const* supercompression_name(Supercompression s) noexcept {
@@ -28,16 +30,6 @@ bool add_ok(u64 a, u64 b, u64& out) noexcept {
     out = a + b;
     return true;
 }
-
-constexpr u32 gcd(u32 a, u32 b) noexcept {
-    while (b != 0) {
-        u32 t = a % b;
-        a     = b;
-        b     = t;
-    }
-    return a;
-}
-constexpr u32 lcm(u32 a, u32 b) noexcept { return a / gcd(a, b) * b; }
 
 /// Bytes of one w x h x d image in `info`, whole blocks, overflow-checked.
 bool image_bytes(FormatInfo const& info, u32 w, u32 h, u32 d, u64& out) noexcept {
@@ -230,7 +222,7 @@ Result<Ktx2View> Ktx2View::open(Span<u8 const> bytes, DiagSink const* diag, StrV
 
     // --- Level ranges ------------------------------------------------------------------
     u64 const metaEnd = metadata_size(h);
-    u32 const align   = lcm(info.bytesPerBlock, 4u);
+    u32 const align   = fmt::ktx2_level_align(info.bytesPerBlock);
     for (u32 i = 0; i < levelCount; ++i) {
         LevelIndex const& li = v.levels_[i];
         if (li.byteLength != li.uncompressedByteLength)

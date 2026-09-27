@@ -72,6 +72,7 @@ add_library(kiln_runtime STATIC
     include/kiln/mesh.h
     src/formats/mesh_read.cpp
     include/kiln/ktx2.h
+    src/formats/formats_internal.h
     src/formats/ktx2_read.cpp
     include/kiln/assets.h
     src/runtime/runtime_internal.h

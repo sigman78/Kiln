@@ -1,6 +1,6 @@
 // tests/test_mesh_read.cpp — reader-only .mesh tests; the shipping (KILN_BUILD_COOK=OFF) build runs them.
 // No kiln/cook/ includes and no mesh::write(): file images are hand-built per docs/mesh-format-spec.md.
-// Writer round trips and split_unit() static_asserts live in test_mesh.cpp.
+// Writer round trips live in test_mesh.cpp.
 #include "kiln_test.h"
 
 #include "kiln/containers.h"

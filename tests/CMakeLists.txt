@@ -66,8 +66,6 @@ if(TARGET kiln_cook)
                  COMMAND $<TARGET_FILE:kiln-info> samples/sample_raw.mesh --blobs --check)
         add_test(NAME kiln_info_mesh_padded
                  COMMAND $<TARGET_FILE:kiln-info> samples/sample_padded.mesh --blobs --check)
-        add_test(NAME kiln_info_mesh_split
-                 COMMAND $<TARGET_FILE:kiln-info> samples/sample_split.mesh --blobs --check)
         add_test(NAME kiln_info_ktx2_srgb
                  COMMAND $<TARGET_FILE:kiln-info> samples/sample_rgba8_srgb.ktx2 --check)
         add_test(NAME kiln_info_ktx2_snorm
@@ -77,13 +75,13 @@ if(TARGET kiln_cook)
         add_test(NAME kiln_info_usage COMMAND $<TARGET_FILE:kiln-info>)
 
         set_tests_properties(
-            kiln_info_mesh_raw kiln_info_mesh_padded kiln_info_mesh_split
+            kiln_info_mesh_raw kiln_info_mesh_padded
             kiln_info_ktx2_srgb kiln_info_ktx2_snorm
             kiln_info_bad_file kiln_info_usage
             PROPERTIES FIXTURES_REQUIRED kiln_samples
         )
         set_tests_properties(
-            kiln_info_mesh_raw kiln_info_mesh_padded kiln_info_mesh_split
+            kiln_info_mesh_raw kiln_info_mesh_padded
             kiln_info_ktx2_srgb kiln_info_ktx2_snorm
             PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
         )

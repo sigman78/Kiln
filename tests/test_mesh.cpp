@@ -10,15 +10,6 @@
 using namespace kiln;
 using namespace kiln::mesh;
 
-// split_unit() is writer-side (kiln/cook/mesh_writer.h), so it is asserted here.
-// Reader-side static_asserts live in test_mesh_read.cpp, next to the hand-built file.
-
-static_assert(split_unit(24) == 48u);
-static_assert(split_unit(6) == 48u);
-static_assert(split_unit(16) == 16u);
-static_assert(split_unit(4) == 16u);
-static_assert(split_unit(12) == 48u);
-
 namespace {
 
 struct DiagCapture {
@@ -502,51 +493,6 @@ KILN_TEST(Mesh, RoundTripPadded) {
         KILN_CHECK_EQ(rr->blobs()[i].decodedOffset, v.blobs()[i].decodedOffset);
 }
 
-KILN_TEST(Mesh, RoundTripSplit) {
-    TestMesh m;
-    WriteOptions opt;
-    opt.splitBytes = 128;
-    WriteStats stats;
-    Vec<u8> const bytes = write_ok(m.desc(), opt, &stats);
-    KILN_REQUIRE(!bytes.empty());
-    KILN_CHECK(stats.raw);
-    KILN_CHECK(stats.blobCount > 9u);
-    KILN_CHECK_EQ(stats.blobCount, 18u);
-
-    auto r = open_bytes(bytes);
-    KILN_REQUIRE(r.ok());
-    MeshView const& v = *r;
-    KILN_CHECK(v.payload_raw());
-    KILN_CHECK_EQ(v.blobs().size(), stats.blobCount);
-
-    for (u32 bi = 0; bi < v.blobs().size(); ++bi) {
-        PayloadBlob const& b = v.blobs()[bi];
-        bool found           = false;
-        KILN_CHECK(b.decodedSize <= 128u || b.decodedSize == split_unit(b.elementSize));
-        for (MeshLod const& l : v.lods()) {
-            VertexLayout const& lay = v.layouts()[l.layout];
-            for (u32 s = 0; s < lay.streamCount; ++s) {
-                u64 start = l.streamOffset[s], end = start + v.stream_bytes(l, s);
-                if (b.decodedOffset >= start && b.decodedOffset < end) {
-                    found = true;
-                    KILN_CHECK_EQ(u32(b.elementSize), u32(lay.strides[s]));
-                    KILN_CHECK_EQ((b.decodedOffset - start) % split_unit(b.elementSize), u64(0));
-                    KILN_CHECK(b.decodedOffset + u64(b.decodedSize) <= end);
-                }
-            }
-            u64 start = l.indexOffset, end = start + MeshView::index_bytes(l);
-            if (b.decodedOffset >= start && b.decodedOffset < end) {
-                found = true;
-                KILN_CHECK_EQ(u32(b.elementSize), index_size(IndexType(l.indexType)));
-                KILN_CHECK_EQ((b.decodedOffset - start) % split_unit(3u * u32(b.elementSize)), u64(0));
-                KILN_CHECK(b.decodedOffset + u64(b.decodedSize) <= end);
-            }
-        }
-        KILN_CHECK_MSG(found, "blob %u not inside any lod range", bi);
-    }
-    check_payload_matches(v, m);
-}
-
 KILN_TEST(Mesh, Deterministic) {
     TestMesh m;
     Vec<u8> const a = write_ok(m.desc());
@@ -851,10 +797,4 @@ KILN_TEST(Mesh, WriteSampleFiles) {
     Vec<u8> const padded     = write_ok(m.desc(), paddedOpt);
     KILN_REQUIRE(!padded.empty());
     write_sample_file(dir, "sample_padded.mesh", padded.span());
-
-    WriteOptions splitOpt;
-    splitOpt.splitBytes = 128;
-    Vec<u8> const split = write_ok(m.desc(), splitOpt);
-    KILN_REQUIRE(!split.empty());
-    write_sample_file(dir, "sample_split.mesh", split.span());
 }
