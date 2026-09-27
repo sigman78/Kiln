@@ -15,6 +15,8 @@ cmd /c "call C:\dev\msvc.2026\VC\Auxiliary\Build\vcvars64.bat >nul && cmake --pr
 ```
 
 Every change must build on MSVC, clang-cl and gcc/clang (Linux) with warnings as errors.
+Run `clang-format -i` on every file you touch. The pre-commit hook in `.githooks/` rejects
+unformatted staged files; enable it once per clone with `git config core.hooksPath .githooks`.
 Language baseline is C++23 (owner decision, 2026-09-27). Never add shims for older compilers; if a local
 compiler is too old, update it.
 

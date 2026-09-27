@@ -24,6 +24,9 @@ renderer (Vulkan / sokol / bgfx / custom) ◄── adapter ◄── async runt
 - CMake ≥ 3.25
 - A C++23 compiler: MSVC 2022 17.10+ (or 2026), clang-cl / clang 17+, or gcc 13+. The baseline is deliberately
   recent; when a compiler lags, the answer is to update the compiler, not to add workarounds.
+- clang-format (any recent version) for contributors: `.clang-format` is the style, and the pre-commit
+  hook in `.githooks/` rejects unformatted staged files. Enable it once per clone:
+  `git config core.hooksPath .githooks`.
 
 **Commands:**
 

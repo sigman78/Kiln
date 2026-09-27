@@ -1,0 +1,27 @@
+#!/bin/sh
+# Rejects a commit whose staged C++ files are not clang-format clean. Checks the staged
+# content, never rewrites the working tree. Enable once per clone:
+#   git config core.hooksPath .githooks
+# Scope: include/ src/ tests/ tools/ examples/ (third_party/ is vendored and untouched).
+
+fmt=${CLANG_FORMAT:-clang-format}
+if ! command -v "$fmt" >/dev/null 2>&1; then
+    echo "pre-commit: $fmt not found; set CLANG_FORMAT or install clang-format" >&2
+    exit 1
+fi
+
+bad=""
+for f in $(git diff --cached --name-only --diff-filter=ACMR -- 'include/*' 'src/*' 'tests/*' 'tools/*' 'examples/*' |
+           grep -E '\.(h|hpp|c|cpp)$'); do
+    if ! git show ":$f" | "$fmt" --style=file --assume-filename="$f" --dry-run --Werror >/dev/null 2>&1; then
+        bad="$bad $f"
+    fi
+done
+
+if [ -n "$bad" ]; then
+    echo "pre-commit: not clang-format clean:" >&2
+    for f in $bad; do echo "  $f" >&2; done
+    echo "run: clang-format -i$bad" >&2
+    exit 1
+fi
+exit 0
