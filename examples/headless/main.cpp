@@ -8,6 +8,8 @@
 #include <kiln/cook/provider.h>
 #endif
 
+#include "cli.h"
+
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -17,22 +19,6 @@
 using namespace kiln;
 
 namespace {
-
-char const* const kUsage =
-    "kiln-headless: load assets through the kiln runtime without a GPU.\n"
-    "\n"
-    "  kiln-headless [options] <asset>...\n"
-    "\n"
-    "  <asset>          store-relative path with its extension, e.g. mesh/Box.mesh or ui/font.ktx2\n"
-    "  --store <dir>    cooked store root (default: cooked)\n"
-    "  --source <dir>   source root; enables cook-on-miss (needs a build with kiln_cook)\n"
-    "  --slow <ms>      artificial delay per MiB read or cooked (default: 0)\n"
-    "  --latency <ms>   artificial delay per read call (default: 0)\n"
-    "  --frame <ms>     simulated frame time between pumps (default: 16)\n"
-    "  --timeout <s>    give up after this many seconds (default: 60)\n"
-    "  --trace          also show the runtime's debug log\n"
-    "\n"
-    "Exit codes: 0 every asset Ready, 1 one or more Failed or timed out, 2 usage or setup error.\n";
 
 constexpr double kMiB = 1024.0 * 1024.0;
 
@@ -242,57 +228,62 @@ struct Options {
     u32 itemCount = 0;
 };
 
-bool parse_args(int argc, char** argv, Options& o) {
-    for (int i = 1; i < argc; ++i) {
-        char const* a = argv[i];
-        auto value    = [&](char const*& out) {
-            if (i + 1 >= argc) return false;
-            out = argv[++i];
-            return true;
-        };
-        char const* v = nullptr;
-        if (std::strcmp(a, "--store") == 0) {
-            if (!value(o.store)) return false;
-        } else if (std::strcmp(a, "--source") == 0) {
-            if (!value(o.source)) return false;
-        } else if (std::strcmp(a, "--slow") == 0) {
-            if (!value(v)) return false;
-            o.slowMs = std::atof(v);
-        } else if (std::strcmp(a, "--latency") == 0) {
-            if (!value(v)) return false;
-            o.latencyMs = std::atof(v);
-        } else if (std::strcmp(a, "--frame") == 0) {
-            if (!value(v)) return false;
-            o.frameMs = u32(std::atoi(v));
-        } else if (std::strcmp(a, "--timeout") == 0) {
-            if (!value(v)) return false;
-            o.timeoutS = u32(std::atoi(v));
-        } else if (std::strcmp(a, "--trace") == 0) {
-            o.trace = true;
-        } else if (a[0] == '-') {
-            std::fprintf(stderr, "unknown option %s\n", a);
-            return false;
-        } else {
-            if (o.itemCount == kMaxItems) {
-                std::fprintf(stderr, "too many assets (max %u)\n", kMaxItems);
-                return false;
-            }
-            if (!parse_item(a, o.items[o.itemCount])) {
-                std::fprintf(stderr, "'%s' needs a .mesh or .ktx2 extension\n", a);
-                return false;
-            }
-            ++o.itemCount;
-        }
+bool add_item(void* user, char const* arg) {
+    auto* o = static_cast<Options*>(user);
+    if (o->itemCount == kMaxItems) {
+        std::fprintf(stderr, "kiln-headless: too many assets (max %u)\n", kMaxItems);
+        return false;
     }
-    return o.itemCount > 0;
+    if (!parse_item(arg, o->items[o->itemCount])) {
+        std::fprintf(stderr, "kiln-headless: '%s' needs a .mesh or .ktx2 extension\n", arg);
+        return false;
+    }
+    ++o->itemCount;
+    return true;
 }
 
 } // namespace
 
 int main(int argc, char** argv) {
     Options o;
-    if (!parse_args(argc, argv, o)) {
-        std::fputs(kUsage, stderr);
+    cli::Option const opts[] = {
+        {.name = "--store", .arg = "<dir>", .help = "cooked store root (default: cooked)", .str = &o.store},
+        {.name = "--source",
+         .arg  = "<dir>",
+         .help = "source root; enables cook-on-miss (needs kiln_cook)",
+         .str  = &o.source},
+        {.name = "--slow",
+         .arg  = "<ms>",
+         .help = "artificial delay per MiB read or cooked (default: 0)",
+         .real = &o.slowMs},
+        {.name = "--latency",
+         .arg  = "<ms>",
+         .help = "artificial delay per read call and per cook (default: 0)",
+         .real = &o.latencyMs},
+        {.name   = "--frame",
+         .arg    = "<ms>",
+         .help   = "simulated frame time between pumps (default: 16)",
+         .number = &o.frameMs},
+        {.name   = "--timeout",
+         .arg    = "<s>",
+         .help   = "give up after this many seconds (default: 60)",
+         .number = &o.timeoutS},
+        {.name = "--trace", .help = "also show the runtime's debug log", .flag = &o.trace},
+    };
+    cli::Spec const spec{
+        .program  = "kiln-headless",
+        .synopsis = "[options] <asset>...",
+        .options  = {opts, countof(opts)},
+        .footer =
+            "<asset> is a store-relative path with its extension, e.g. mesh/Box.mesh or ui/font.ktx2.\n"
+            "Exit codes: 0 every asset Ready, 1 one or more Failed or timed out, 2 usage or setup error.",
+        .positional = &add_item,
+        .user       = &o,
+    };
+    cli::Result const args = cli::parse(spec, argc, argv);
+    if (args.help) return 0;
+    if (!args.ok || o.itemCount == 0) {
+        cli::usage(spec, stderr);
         return 2;
     }
     g_start = Clock::now();

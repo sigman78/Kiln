@@ -1,5 +1,7 @@
 // tools/kiln-cook/main.cpp — cook glTF/GLB, PNG and KTX2 sources into the store. Options: README.md.
 // Exit codes: 0 all inputs cooked, 1 usage, 2 IO failure, 3 one or more cook errors.
+#include "cli.h"
+
 #include "kiln/containers.h"
 #include "kiln/cook/cook.h"
 #include "kiln/cook/settings.h"
@@ -27,90 +29,20 @@ namespace {
 
 struct Options {
     Vec<char const*> inputs{default_allocator(), Tag::General};
-    char const* store = "cooked";
-    char const* root  = nullptr;
-    char const* map   = nullptr;
-    bool check        = false;
-    bool hashed       = false; ///< false (default): Named layout, <store>/<assetPath>.<ext>
-    bool quiet        = false;
-    bool verbose      = false;
-    u32 threads       = 0; ///< cooking threads including the main one; 0 = auto, 1 = no pool
+    char const* store      = "cooked";
+    char const* root       = nullptr;
+    char const* map        = nullptr;
+    bool check             = false;
+    bool hashed            = false; ///< false (default): Named layout, <store>/<assetPath>.<ext>
+    bool quiet             = false;
+    bool verbose           = false;
+    u32 threads            = 0; ///< cooking threads including the main one; 0 = auto, 1 = no pool
+    char const* profile    = "default";
+    char const* targetName = "desktop";
     MeshCookSettings mesh;
     TextureCookSettings tex;
     TargetProfile target;
 };
-
-int usage() {
-    std::fputs(
-        "usage: kiln-cook <input>... [-o <store>] [--root <dir>] [--check] [--hashed] [--map <file>]\n"
-        "                 [--target <name>] [--profile default|precise] [--no-tangents]\n"
-        "                 [--no-optimize] [--no-mips] [--no-lods] [--threads <n>] [--quiet] [--verbose]\n"
-        "  --threads <n>  cooking threads including the main one: 0 (default) = one per core,\n"
-        "                 1 = single-threaded. Cooked bytes are identical for every value.\n",
-        stderr);
-    return 1;
-}
-
-bool parse_args(int argc, char** argv, Options& o) {
-    for (int i = 1; i < argc; ++i) {
-        char const* a = argv[i];
-        auto next     = [&](char const*& out) {
-            if (i + 1 >= argc) return false;
-            out = argv[++i];
-            return true;
-        };
-        if (std::strcmp(a, "-o") == 0 || std::strcmp(a, "--store") == 0) {
-            if (!next(o.store)) return false;
-        } else if (std::strcmp(a, "--root") == 0) {
-            if (!next(o.root)) return false;
-        } else if (std::strcmp(a, "--map") == 0) {
-            if (!next(o.map)) return false;
-        } else if (std::strcmp(a, "--target") == 0) {
-            char const* t;
-            if (!next(t)) return false;
-            if (std::strcmp(t, "desktop") != 0) {
-                std::fprintf(stderr, "kiln-cook: unknown target '%s' (v0.5 has only 'desktop')\n", t);
-                return false;
-            }
-        } else if (std::strcmp(a, "--profile") == 0) {
-            char const* p;
-            if (!next(p)) return false;
-            if (std::strcmp(p, "default") == 0)
-                o.mesh.profile = VertexProfile::Default;
-            else if (std::strcmp(p, "precise") == 0)
-                o.mesh.profile = VertexProfile::Precise;
-            else
-                return false;
-        } else if (std::strcmp(a, "--threads") == 0) {
-            char const* n;
-            if (!next(n)) return false;
-            char* end        = nullptr;
-            long const value = std::strtol(n, &end, 10);
-            if (end == n || *end != '\0' || value < 0 || value > 256) return false;
-            o.threads = u32(value);
-        } else if (std::strcmp(a, "--check") == 0)
-            o.check = true;
-        else if (std::strcmp(a, "--hashed") == 0)
-            o.hashed = true;
-        else if (std::strcmp(a, "--no-tangents") == 0)
-            o.mesh.genTangents = false;
-        else if (std::strcmp(a, "--no-optimize") == 0)
-            o.mesh.optimize = false;
-        else if (std::strcmp(a, "--no-lods") == 0)
-            o.mesh.useAuthoredLods = false;
-        else if (std::strcmp(a, "--no-mips") == 0)
-            o.tex.genMips = false;
-        else if (std::strcmp(a, "--quiet") == 0 || std::strcmp(a, "-q") == 0)
-            o.quiet = true;
-        else if (std::strcmp(a, "--verbose") == 0 || std::strcmp(a, "-v") == 0)
-            o.verbose = true;
-        else if (a[0] == '-')
-            return false;
-        else
-            o.inputs.push_back(a);
-    }
-    return !o.inputs.empty();
-}
 
 // Tool-local path and file helpers (they predate the kiln IO layer, kiln/io.h).
 Vec<u8> g_scratch{default_allocator(), Tag::Io};
@@ -445,11 +377,81 @@ void cook_file(Ctx& c, char const* path, char const* root) {
         ++c.failed;
 }
 
+bool add_input(void* user, char const* arg) {
+    static_cast<Options*>(user)->inputs.push_back(arg);
+    return true;
+}
+
+char const* const kProfiles[] = {"default", "precise", nullptr};
+char const* const kTargets[]  = {"desktop", nullptr};
+
 } // namespace
 
 int main(int argc, char** argv) {
     Options o;
-    if (!parse_args(argc, argv, o)) return usage();
+    bool noTangents = false, noOptimize = false, noMips = false, noLods = false;
+    cli::Option const opts[] = {
+        {.name = "--store",
+         .alt  = "-o",
+         .arg  = "<dir>",
+         .help = "store directory (default: cooked)",
+         .str  = &o.store},
+        {.name = "--root",
+         .arg  = "<dir>",
+         .help = "source root for asset paths (default: the input directory)",
+         .str  = &o.root},
+        {.name = "--check", .help = "validate only: cook in memory, write nothing", .flag = &o.check},
+        {.name = "--hashed",
+         .help = "content-hash file names instead of <store>/<assetPath>.<ext>",
+         .flag = &o.hashed},
+        {.name = "--map",
+         .arg  = "<file>",
+         .help = "append \"<assetPath>\\t<file name>\\t<key hex>\" per output",
+         .str  = &o.map},
+        {.name    = "--target",
+         .arg     = "<name>",
+         .help    = "target profile",
+         .str     = &o.targetName,
+         .choices = kTargets},
+        {.name    = "--profile",
+         .arg     = "<name>",
+         .help    = "vertex profile",
+         .str     = &o.profile,
+         .choices = kProfiles},
+        {.name = "--no-tangents", .help = "skip MikkTSpace tangents", .flag = &noTangents},
+        {.name = "--no-optimize", .help = "skip the meshoptimizer passes", .flag = &noOptimize},
+        {.name = "--no-mips", .help = "no mip chain for textures", .flag = &noMips},
+        {.name = "--no-lods", .help = "ignore authored LODs", .flag = &noLods},
+        {.name   = "--threads",
+         .arg    = "<n>",
+         .help   = "cooking threads including the main one: 0 = one per core, 1 = single-threaded",
+         .number = &o.threads,
+         .max    = 256},
+        {.name = "--quiet", .alt = "-q", .help = "errors only", .flag = &o.quiet},
+        {.name = "--verbose",
+         .alt  = "-v",
+         .help = "infos, diagnostics and per-asset stats",
+         .flag = &o.verbose},
+    };
+    cli::Spec const spec{
+        .program    = "kiln-cook",
+        .synopsis   = "<input>... [options]",
+        .options    = {opts, countof(opts)},
+        .footer     = "Exit codes: 0 all inputs cooked, 1 usage, 2 IO failure, 3 one or more cook errors.",
+        .positional = &add_input,
+        .user       = &o,
+    };
+    cli::Result const args = cli::parse(spec, argc, argv);
+    if (args.help) return 0;
+    if (!args.ok || o.inputs.empty()) {
+        cli::usage(spec, stderr);
+        return 1;
+    }
+    o.mesh.genTangents     = !noTangents;
+    o.mesh.optimize        = !noOptimize;
+    o.mesh.useAuthoredLods = !noLods;
+    o.tex.genMips          = !noMips;
+    o.mesh.profile = std::strcmp(o.profile, "precise") == 0 ? VertexProfile::Precise : VertexProfile::Default;
 
     DiagState ds{o.quiet, o.verbose};
     Ctx c{

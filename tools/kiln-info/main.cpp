@@ -1,5 +1,7 @@
 // tools/kiln-info/main.cpp — dump a cooked .mesh or .ktx2 file. Options: README.md.
 // Exit codes: 0 ok, 1 usage, 2 file could not be read, 3 open/validation failed, 4 --check failed.
+#include "cli.h"
+
 #include "kiln/containers.h"
 #include "kiln/ktx2.h"
 #include "kiln/log.h"
@@ -285,30 +287,42 @@ int dump_ktx2(Span<u8 const> bytes, Options const& o, DiagSink const* diag) {
     return 0;
 }
 
-int usage() {
-    std::fprintf(stderr, "usage: kiln-info <file.mesh|file.ktx2> [--blobs] [--check] [--quiet]\n");
-    return 1;
+bool set_path(void* user, char const* arg) {
+    auto* o = static_cast<Options*>(user);
+    if (o->path) {
+        std::fprintf(stderr, "kiln-info: one file at a time ('%s' after '%s')\n", arg, o->path);
+        return false;
+    }
+    o->path = arg;
+    return true;
 }
 
 } // namespace
 
 int main(int argc, char** argv) {
     Options o;
-    for (int i = 1; i < argc; ++i) {
-        if (std::strcmp(argv[i], "--blobs") == 0)
-            o.blobs = true;
-        else if (std::strcmp(argv[i], "--check") == 0)
-            o.check = true;
-        else if (std::strcmp(argv[i], "--quiet") == 0)
-            o.quiet = true;
-        else if (argv[i][0] == '-')
-            return usage();
-        else if (!o.path)
-            o.path = argv[i];
-        else
-            return usage();
+    cli::Option const opts[] = {
+        {.name = "--blobs", .help = "print the full BLOB table (default: summary only)",                  .flag = &o.blobs},
+        {.name = "--check",
+         .help = ".mesh: decode the payload and verify checksums and indices; .ktx2: verify every level",
+         .flag = &o.check                                                                                                 },
+        {.name = "--quiet", .help = "errors only (the exit code still reports the result)",               .flag = &o.quiet},
+    };
+    cli::Spec const spec{
+        .program  = "kiln-info",
+        .synopsis = "<file.mesh|file.ktx2> [options]",
+        .options  = {opts, countof(opts)},
+        .footer = "Exit codes: 0 ok, 1 usage, 2 file could not be read, 3 open/validation failed, 4 --check "
+                  "failed.",
+        .positional = &set_path,
+        .user       = &o,
+    };
+    cli::Result const args = cli::parse(spec, argc, argv);
+    if (args.help) return 0;
+    if (!args.ok || !o.path) {
+        cli::usage(spec, stderr);
+        return 1;
     }
-    if (!o.path) return usage();
     g_quiet = o.quiet;
 
     DiagSink diag{&diag_to_stderr, nullptr};

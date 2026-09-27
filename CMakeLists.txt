@@ -139,6 +139,11 @@ endif()
 # ---------------------------------------------------------------------------
 # Tools, examples, tests
 # ---------------------------------------------------------------------------
+# Option-table argument parser shared by the tools and examples (header-only, not installed).
+add_library(kiln_cli INTERFACE tools/cli.h)
+target_include_directories(kiln_cli INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/tools)
+target_link_libraries(kiln_cli INTERFACE kiln_core)
+
 if(KILN_BUILD_TOOLS)
     add_subdirectory(tools)
 endif()

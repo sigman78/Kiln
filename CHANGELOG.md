@@ -8,6 +8,11 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
 ## [Unreleased]
 
 ### Added
+- `tools/cli.h`: a small option-table argument parser shared by `kiln-cook`, `kiln-info` and
+  `kiln-headless` (not installed, no allocation, no exceptions). Options are declared once with
+  designated initializers; `--help` prints usage generated from the same table; values accept
+  `--opt value` and `--opt=value`; numbers are range-checked and choices validated. Every existing
+  option and exit code is unchanged.
 - `ThreadPoolDesc::priority` (`ThreadPriority::Normal` / `Low` / `High`): the host's hint for where
   kiln's workers sit relative to its own threads. The built-in pool applies it per worker on
   Windows (`SetThreadPriority`) and Linux (per-thread nice); other platforms ignore it for now.
