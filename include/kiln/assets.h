@@ -246,6 +246,9 @@ struct ContextStats {
 [[nodiscard]] KILN_API StrView store_dir(Context* ctx) noexcept;
 [[nodiscard]] KILN_API Span<StrView const> source_roots(Context* ctx) noexcept;
 [[nodiscard]] KILN_API Allocator const* allocator(Context* ctx) noexcept;
+/// The job system the context runs its IO and cook jobs on: the host's JobSystem
+/// from ContextDesc, or the built-in pool. Valid until destroy(ctx).
+[[nodiscard]] KILN_API JobSystem const* jobs(Context* ctx) noexcept;
 [[nodiscard]] KILN_API Adapter const* adapter(Context* ctx) noexcept;
 
 // ---------------------------------------------------------------------------

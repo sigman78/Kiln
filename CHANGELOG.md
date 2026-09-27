@@ -8,6 +8,12 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
 ## [Unreleased]
 
 ### Added
+- Cook kernels, step 3: `kiln::cook::CookEnv { alloc, diag, jobs }`; when `jobs` is set, the image
+  passes (prepare, flip green, renormalize, and the level 0 to 1 downsample) split by row bands over
+  the job system through an internal helping `parallel_for` that never deadlocks inside a worker.
+  Output is byte-identical with or without a pool. `kiln::jobs(ctx)` exposes the context's pool and the
+  cook-on-miss provider passes it; `kiln-cook --threads <n>` and `kiln_bench_image --threads <n>`
+  select the pool size. Image functions gain a trailing `JobSystem const* jobs = nullptr`.
 - Cook kernels, step 1 and 2 of docs/design/cook-kernels.md. `kiln::cook::CookStats` on
   `CookedTexture` / `CookedMesh` gives per-stage microseconds (decode / prepare / mips / write for
   textures; import / build / tangents / optimize / pack / write for meshes) and `kiln-cook --verbose`
@@ -38,6 +44,10 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
 - KTX2 writer: the alpha sample of sRGB formats carried the EXPONENT qualifier (0x20) instead of LINEAR (0x10); found by `ktx validate`.
 
 ### Changed
+- **Breaking (cook):** `cook_mesh` and `cook_texture` take `CookEnv const& env = {}` in place of the
+  trailing `Allocator const* alloc, DiagSink const* diag`. Migration:
+  `cook_texture(src, s, target, alloc, &sink)` becomes `cook_texture(src, s, target, {.alloc = alloc, .diag = &sink})`;
+  `cook_mesh(src, s, target, default_allocator())` becomes `cook_mesh(src, s, target)`.
 - `.mesh` writer: `WriteOptions::splitBytes` and `kiln::mesh::split_unit()` are removed (pre-1.0 break).
   The cooker never set them; the writer emits one blob per vertex stream per LOD and one per index
   range. Blob splitting returns with the v0.6 codec work, and spec §5.9 now records the split rules as

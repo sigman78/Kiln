@@ -8,6 +8,7 @@
 #include "kiln/containers.h"
 #include "kiln/cook/cook.h"
 #include "kiln/cook/image.h"
+#include "kiln/io.h"
 #include "kiln/ktx2.h"
 
 #include <cmath>
@@ -59,10 +60,10 @@ void write_sample(char const* name, Span<u8 const> bytes) {
 }
 
 Result<CookedTexture> run_cook(Span<u8 const> bytes, TextureCookSettings const& s, DiagLog* log = nullptr,
-                               TargetProfile const& target = {}) {
+                               TargetProfile const& target = {}, JobSystem const* jobs = nullptr) {
     DiagSink sink = log ? log->sink() : DiagSink{};
     return cook_texture({.bytes = bytes, .assetPath = "test/tex", .sourcePath = "tex.png"}, s, target,
-                        default_allocator(), &sink);
+                        {.diag = &sink, .jobs = jobs});
 }
 
 /// Open the cooked file and check it matches `desc`. Returns false on failure.
@@ -375,4 +376,29 @@ KILN_TEST(texture_cook, deterministic) {
         KILN_REQUIRE(a.ok() && b.ok());
         KILN_CHECK(kiln::test::corpus::bytes_equal(a->file.span(), b->file.span()));
     }
+}
+
+// The row-band split must not change a byte: a texture large enough to split, cooked
+// with and without a pool, as color (sRGB mips) and as a normal map (flip + renormalize).
+KILN_TEST(texture_cook, threads_byte_identical) {
+    constexpr u32 kW = 1030, kH = 700;
+    Vec<u8> rgba(default_allocator(), Tag::Test);
+    rgba.resize(usize(kW) * kH * 4);
+    pattern(rgba.data(), rgba.size(), 21);
+    Vec<u8> f = png::encode({.width = kW, .height = kH, .colorType = 6, .depth = 8, .pixels = rgba.span()});
+
+    constexpr TextureCookSettings kCases[] = {
+        {.colorSpace = ColorSpace::Srgb, .usage = TextureUsage::Color},
+        {.colorSpace = ColorSpace::Linear, .usage = TextureUsage::Normal, .flipGreen = true},
+    };
+    Result<JobSystem> pool = create_thread_pool({.threads = 4});
+    KILN_REQUIRE(pool.ok());
+    for (TextureCookSettings const& s : kCases) {
+        Result<CookedTexture> single   = run_cook(f.span(), s);
+        Result<CookedTexture> threaded = run_cook(f.span(), s, nullptr, {}, &*pool);
+        KILN_REQUIRE(single.ok() && threaded.ok());
+        KILN_CHECK(single->file.size() == threaded->file.size() &&
+                   std::memcmp(single->file.data(), threaded->file.data(), single->file.size()) == 0);
+    }
+    destroy_thread_pool(*pool);
 }

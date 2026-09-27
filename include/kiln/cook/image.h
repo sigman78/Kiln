@@ -7,6 +7,10 @@
 #include "kiln/containers.h"
 #include "kiln/result.h"
 
+namespace kiln {
+struct JobSystem; // kiln/io.h
+} // namespace kiln
+
 namespace kiln::cook {
 
 /// Uncompressed, tightly packed, top-left origin, row-major.
@@ -61,6 +65,9 @@ KILN_API Result<Image> decode_png(Span<u8 const> bytes, Allocator const* alloc,
 
 // ---------------------------------------------------------------------------
 // Operations (all deterministic; results allocated from `alloc`, Tag::Cook)
+//
+// `jobs` (optional) splits the work into row bands run on its workers and the calling
+// thread; rows are independent, so the output is byte-identical with or without it.
 // ---------------------------------------------------------------------------
 
 /// Convert to another channel count / bit depth. Dropping channels keeps the first N.
@@ -68,7 +75,7 @@ KILN_API Result<Image> decode_png(Span<u8 const> bytes, Allocator const* alloc,
 /// are RG, not gray+alpha); A = max. 16 -> 8 is (v * 255 + 32767) / 65535; 8 -> 16 is
 /// v * 257. Returns a copy when nothing changes.
 KILN_API Result<Image> convert_image(Image const& src, u32 channels, u32 bitsPerChannel,
-                                     Allocator const* alloc) noexcept;
+                                     Allocator const* alloc, JobSystem const* jobs = nullptr) noexcept;
 
 /// Level 0 preparation for prepare_image. Flip and renormalize apply to the converted
 /// image and are no-ops where flip_green / renormalize would be.
@@ -80,7 +87,8 @@ struct PrepareOptions {
 /// convert_image, then flip_green and renormalize as `opt` asks, in one pass over
 /// `src`. Byte-identical to calling them in that order.
 KILN_API Result<Image> prepare_image(Image const& src, u32 channels, u32 bitsPerChannel,
-                                     PrepareOptions const& opt, Allocator const* alloc) noexcept;
+                                     PrepareOptions const& opt, Allocator const* alloc,
+                                     JobSystem const* jobs = nullptr) noexcept;
 
 /// `srgb`: sRGB-correct averaging of the first three channels (8-bit only; alpha is
 /// always linear). `renormalize`: treat RGB as a tangent-space normal (0..1 -> -1..1)
@@ -91,18 +99,19 @@ struct MipOptions {
 };
 /// Next mip level with a 2x2 box filter. Floor halving, min 1: an odd trailing column
 /// or row is dropped; a dimension of 1 samples the same texel twice.
-KILN_API Result<Image> downsample_2x(Image const& src, MipOptions const& opt,
-                                     Allocator const* alloc) noexcept;
+KILN_API Result<Image> downsample_2x(Image const& src, MipOptions const& opt, Allocator const* alloc,
+                                     JobSystem const* jobs = nullptr) noexcept;
 
 /// Flip the green channel (v -> max - v) in place; DirectX -> OpenGL normal convention.
-KILN_API void flip_green(Image& img) noexcept;
+KILN_API void flip_green(Image& img, JobSystem const* jobs = nullptr) noexcept;
 
 /// Renormalize RGB as unit vectors in place (8- or 16-bit). No-op for < 3 channels.
-KILN_API void renormalize(Image& img) noexcept;
+KILN_API void renormalize(Image& img, JobSystem const* jobs = nullptr) noexcept;
 
 /// Full mip chain: level 0 is `src` (moved in), then downsample_2x until 1x1.
-/// `maxLevels` 0 = full chain.
+/// `maxLevels` 0 = full chain. `jobs` splits only the level 0 to 1 downsample; the
+/// smaller levels run on the calling thread.
 KILN_API Result<Vec<Image>> build_mip_chain(Image&& src, MipOptions const& opt, u32 maxLevels,
-                                            Allocator const* alloc) noexcept;
+                                            Allocator const* alloc, JobSystem const* jobs = nullptr) noexcept;
 
 } // namespace kiln::cook

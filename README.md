@@ -119,7 +119,7 @@ Both tools are dev/CI only except `kiln-info`, which is read-only and ships with
 ```
 kiln-cook <input>... [-o <store>] [--root <dir>] [--check] [--hashed] [--map <file>]
           [--target <name>] [--profile default|precise] [--no-tangents] [--no-optimize]
-          [--no-mips] [--no-lods] [--quiet] [--verbose]
+          [--no-mips] [--no-lods] [--threads <n>] [--quiet] [--verbose]
 
   <input>       .glb / .gltf / .png / .ktx2 files, or directories (recursed)
   -o <store>    store directory (default: ./cooked). Files are <store>/<assetPath>.<ext>,
@@ -131,6 +131,8 @@ kiln-cook <input>... [-o <store>] [--root <dir>] [--check] [--hashed] [--map <fi
   --hashed      write content-hash file names instead of <store>/<assetPath>.<ext>
                 (kept for the index-based hashed layout arriving in v0.6)
   --map <file>  append "<assetPath>	<file name>	<key hex>" lines for every output
+  --threads <n> cooking threads including the main one: 0 (default) = one per core,
+                1 = single-threaded. Cooked bytes are identical for every value.
 
 Exit codes: 0 all inputs cooked, 1 usage, 2 IO failure, 3 one or more cook errors.
 ```

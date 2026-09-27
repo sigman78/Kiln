@@ -212,12 +212,11 @@ KILN_TEST(MeshGolden, Corpus) {
         format(asset, sizeof asset, "meshes/%s", stemBuf);
 
         cook::MeshSource src{};
-        src.bytes      = bytes.span();
-        src.assetPath  = asset;
-        src.sourcePath = asset;
-        src.resolver   = {&DirResolver::fn, &resolver};
-        Result<cook::CookedMesh> r =
-            cook::cook_mesh(src, settings, cook::TargetProfile{}, default_allocator());
+        src.bytes                  = bytes.span();
+        src.assetPath              = asset;
+        src.sourcePath             = asset;
+        src.resolver               = {&DirResolver::fn, &resolver};
+        Result<cook::CookedMesh> r = cook::cook_mesh(src, settings, cook::TargetProfile{});
         if (!KILN_CHECK_MSG(r.ok(), "%s: cook failed", stemBuf)) continue;
         check_golden_mesh(stemBuf, r->file.span());
     }

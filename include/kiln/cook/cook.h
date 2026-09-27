@@ -9,6 +9,10 @@
 #include "kiln/ktx2.h"
 #include "kiln/result.h"
 
+namespace kiln {
+struct JobSystem; // kiln/io.h
+} // namespace kiln
+
 namespace kiln::cook {
 
 /// Bump when cooked output changes for identical input and settings. Part of every store key.
@@ -72,6 +76,18 @@ struct CookStats {
 };
 
 // ---------------------------------------------------------------------------
+// Cook environment: the services a cook may use. Never affects cooked bytes.
+// ---------------------------------------------------------------------------
+
+struct CookEnv {
+    Allocator const* alloc = nullptr; ///< nullptr = default allocator
+    DiagSink const* diag   = nullptr; ///< optional
+    /// Optional. Splits the heavy image passes across its workers; the calling thread
+    /// works too, so this is safe from inside a job of the same pool.
+    JobSystem const* jobs = nullptr;
+};
+
+// ---------------------------------------------------------------------------
 // Mesh cooking
 // ---------------------------------------------------------------------------
 
@@ -117,8 +133,7 @@ struct CookedMesh {
 /// Failure: Status per error-model.md, one or more K1xxx diagnostics. Warnings and
 /// infos never fail the cook.
 KILN_API Result<CookedMesh> cook_mesh(MeshSource const& src, MeshCookSettings const& settings,
-                                      TargetProfile const& target, Allocator const* alloc,
-                                      DiagSink const* diag = nullptr) noexcept;
+                                      TargetProfile const& target, CookEnv const& env = {}) noexcept;
 
 // ---------------------------------------------------------------------------
 // Texture cooking
@@ -142,8 +157,7 @@ struct CookedTexture {
 /// Cook a PNG (decode, convert per usage, mips) or pass a suitable KTX2 through.
 /// `settings` must be resolved (resolve_texture).
 KILN_API Result<CookedTexture> cook_texture(TextureSource const& src, TextureCookSettings const& settings,
-                                            TargetProfile const& target, Allocator const* alloc,
-                                            DiagSink const* diag = nullptr) noexcept;
+                                            TargetProfile const& target, CookEnv const& env = {}) noexcept;
 
 // ---------------------------------------------------------------------------
 // Store: content-hashed files, atomic writes, no index in v0.5

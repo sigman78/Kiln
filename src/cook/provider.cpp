@@ -31,6 +31,7 @@ struct Provider {
     Vec<char> rootsBuf; ///< owned copies of source_roots(ctx), NUL-separated
     Vec<StrView> roots; ///< views into rootsBuf
     Allocator const* alloc = nullptr;
+    JobSystem const* jobs  = nullptr; ///< the context's pool; provider_cook runs on one of its workers
 
     explicit Provider(Allocator const* a) noexcept
         : storeDirBuf(a, Tag::Cook), rootsBuf(a, Tag::Cook), roots(a, Tag::Cook), alloc(a) {}
@@ -155,10 +156,11 @@ Status cook_texture_own_source(Provider const& p, StrView sourcePath, StrView as
     if (rs.failed()) return rs.status();
 
     TextureSource src{};
-    src.bytes               = bytes.span();
-    src.assetPath           = assetPath;
-    src.sourcePath          = sourcePath;
-    Result<CookedTexture> r = cook_texture(src, *rs, p.desc.target, alloc, diag);
+    src.bytes      = bytes.span();
+    src.assetPath  = assetPath;
+    src.sourcePath = sourcePath;
+    Result<CookedTexture> r =
+        cook_texture(src, *rs, p.desc.target, {.alloc = alloc, .diag = diag, .jobs = p.jobs});
     if (r.failed()) return r.status();
 
     if (p.desc.storeMode == StoreMode::Disk) {
@@ -188,7 +190,8 @@ Status cook_mesh_full(Provider const& p, StrView meshAssetPath, StrView sourcePa
     src.sourcePath = sourcePath;
     src.resolver   = {&resolve_uri_fn, &uctx};
 
-    Result<CookedMesh> r = cook_mesh(src, p.resolvedMesh, p.desc.target, alloc, diag);
+    Result<CookedMesh> r =
+        cook_mesh(src, p.resolvedMesh, p.desc.target, {.alloc = alloc, .diag = diag, .jobs = p.jobs});
     if (r.failed()) return r.status();
 
     if (p.desc.storeMode == StoreMode::Disk) {
@@ -230,10 +233,11 @@ Status cook_mesh_full(Provider const& p, StrView meshAssetPath, StrView sourcePa
             continue;
         }
         TextureSource tsrc{};
-        tsrc.bytes               = texBytes;
-        tsrc.assetPath           = t.assetPath;
-        tsrc.sourcePath          = sourcePath;
-        Result<CookedTexture> tr = cook_texture(tsrc, *rs, p.desc.target, alloc, diag);
+        tsrc.bytes      = texBytes;
+        tsrc.assetPath  = t.assetPath;
+        tsrc.sourcePath = sourcePath;
+        Result<CookedTexture> tr =
+            cook_texture(tsrc, *rs, p.desc.target, {.alloc = alloc, .diag = diag, .jobs = p.jobs});
         if (tr.failed()) {
             if (isRequested) requestedTexStatus = tr.status();
             continue;
@@ -306,6 +310,7 @@ Status install_provider(Context* ctx, ProviderDesc const& desc) noexcept {
 
     Provider* p = new_object<Provider>(alloc, Tag::Cook, alloc);
     p->desc     = effective;
+    p->jobs     = jobs(ctx);
     p->session  = CookSession{effective.storeMode, effective.fastPreview};
 
     StrView const dir = store_dir(ctx);

@@ -73,7 +73,7 @@ Result<cook::CookedMesh> cook_bytes(Span<u8 const> bytes, StrView assetPath, Dia
     src.sourcePath = assetPath;
     if (resolver) src.resolver = {&DirResolver::fn, resolver};
     DiagSink sink = d.sink();
-    return cook::cook_mesh(src, s, cook::TargetProfile{}, default_allocator(), &sink);
+    return cook::cook_mesh(src, s, cook::TargetProfile{}, {.diag = &sink});
 }
 
 /// A cooked file opened with full validation and its decoded payload.

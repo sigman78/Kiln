@@ -120,7 +120,8 @@ bool is_pow2(u32 v) noexcept { return v != 0 && (v & (v - 1)) == 0; }
 
 Result<CookedTexture> cook_png(TextureSource const& src, TextureCookSettings const& settings,
                                TargetProfile const& target, u32 cap, Allocator const* alloc,
-                               DiagSink const* diag, StrView asset, u64 sourceHash) noexcept {
+                               DiagSink const* diag, JobSystem const* jobs, StrView asset,
+                               u64 sourceHash) noexcept {
     detail::Stopwatch const swTotal;
     detail::Stopwatch const swDecode;
     KILN_TRY_ASSIGN(Image decoded, decode_png(src.bytes, alloc, diag, asset));
@@ -137,7 +138,7 @@ Result<CookedTexture> cook_png(TextureSource const& src, TextureCookSettings con
                       PrepareOptions{.grayAlpha   = plan.rgba8 && decoded.channels == 2,
                                      .flipGreen   = plan.normal && settings.flipGreen,
                                      .renormalize = plan.normal && settings.normalRenormalize},
-                      alloc);
+                      alloc, jobs);
     if (converted.failed())
         return fail(diag, asset, converted.status(), kDiagImageUnsupported, "image conversion failed");
     Image img = std::move(converted).value();
@@ -162,7 +163,7 @@ Result<CookedTexture> cook_png(TextureSource const& src, TextureCookSettings con
     u32 const fullLevels = u32(std::bit_width(max(srcW, srcH)));
     u32 const buildCount = settings.genMips ? fullLevels : drop + 1;
     detail::Stopwatch const swMips;
-    KILN_TRY_ASSIGN(Vec<Image> chain, build_mip_chain(std::move(img), plan.mips, buildCount, alloc));
+    KILN_TRY_ASSIGN(Vec<Image> chain, build_mip_chain(std::move(img), plan.mips, buildCount, alloc, jobs));
     u64 const mipsUs     = swMips.elapsed_us();
     u32 const levelCount = u32(chain.size()) - drop;
     KILN_VERIFY(levelCount >= 1 && levelCount <= ktx2::kMaxLevels);
@@ -215,17 +216,18 @@ Result<CookedTexture> cook_png(TextureSource const& src, TextureCookSettings con
 } // namespace
 
 Result<CookedTexture> cook_texture(TextureSource const& src, TextureCookSettings const& settings,
-                                   TargetProfile const& target, Allocator const* alloc,
-                                   DiagSink const* diag) noexcept {
-    if (!alloc) alloc = default_allocator();
-    StrView const asset   = src.assetPath.empty() ? src.sourcePath : src.assetPath;
-    u64 const sourceHash  = src.sourceHash ? src.sourceHash : xxh64(src.bytes);
-    u32 const settingsCap = settings.maxSize ? settings.maxSize : kNoLimit;
-    u32 const targetCap   = target.maxTextureSize ? target.maxTextureSize : kNoLimit;
-    u32 const cap         = min(settingsCap, targetCap);
+                                   TargetProfile const& target, CookEnv const& env) noexcept {
+    Allocator const* const alloc = env.alloc ? env.alloc : default_allocator();
+    DiagSink const* const diag   = env.diag;
+    StrView const asset          = src.assetPath.empty() ? src.sourcePath : src.assetPath;
+    u64 const sourceHash         = src.sourceHash ? src.sourceHash : xxh64(src.bytes);
+    u32 const settingsCap        = settings.maxSize ? settings.maxSize : kNoLimit;
+    u32 const targetCap          = target.maxTextureSize ? target.maxTextureSize : kNoLimit;
+    u32 const cap                = min(settingsCap, targetCap);
 
     if (is_ktx2(src.bytes)) return pass_through(src, cap, alloc, diag, asset, sourceHash);
-    if (is_png(src.bytes)) return cook_png(src, settings, target, cap, alloc, diag, asset, sourceHash);
+    if (is_png(src.bytes))
+        return cook_png(src, settings, target, cap, alloc, diag, env.jobs, asset, sourceHash);
     return fail(diag, asset, make_status(Code::Unsupported), kDiagImageUnknownFormat,
                 "source is neither PNG nor KTX2 (%llu bytes)", src.bytes.size);
 }

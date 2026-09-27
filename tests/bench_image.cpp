@@ -2,7 +2,9 @@
 // docs/design/cook-kernels.md). Not a unit test: this is the "before" (and later
 // "after") baseline for the step 2 kernel work, so it gets its own executable and
 // its own main(), never wired into ctest. Build and run it directly:
-//   build/<preset>/tests/kiln_bench_image [--max 2048|4096|8192] [--repeat N]
+//   build/<preset>/tests/kiln_bench_image [--max 2048|4096|8192] [--repeat N] [--threads N]
+// --threads N counts the calling thread, like kiln-cook: 1 (the default) passes no job
+// system, 0 means one thread per core, n means a pool of n - 1 workers.
 //
 // Every source image is synthetic LCG noise, generated in memory (no file IO, no
 // <random>: a fixed seed keeps runs comparable). The one exception is the
@@ -12,6 +14,7 @@
 #include "kiln/containers.h"
 #include "kiln/cook/cook.h"
 #include "kiln/cook/image.h"
+#include "kiln/io.h"
 #include "kiln/log.h"
 
 #include <chrono>
@@ -63,30 +66,31 @@ Image clone_image(Image const& src) {
 // Stage table: {name, run, srcBytes}. Add a new kernel here to bench it too.
 // ---------------------------------------------------------------------------
 
-void stage_convert(Image const& rgb8, Image const&, Allocator const* alloc) {
-    Result<Image> r = convert_image(rgb8, 4, 8, alloc);
+// flip_green / renormalize work in place, so their timing includes a clone of the
+// source (a memcpy, small next to the kernel).
+void stage_convert(Image const& rgb8, Image const&, Allocator const* alloc, JobSystem const* jobs) {
+    Result<Image> r = convert_image(rgb8, 4, 8, alloc, jobs);
     KILN_VERIFY(r.ok());
 }
-void stage_flip_green(Image const&, Image const& rgba8, Allocator const* alloc) {
+void stage_flip_green(Image const&, Image const& rgba8, Allocator const*, JobSystem const* jobs) {
     Image img = clone_image(rgba8);
-    (void)alloc;
-    flip_green(img);
+    flip_green(img, jobs);
 }
-void stage_renormalize(Image const&, Image const& rgba8, Allocator const* alloc) {
+void stage_renormalize(Image const&, Image const& rgba8, Allocator const*, JobSystem const* jobs) {
     Image img = clone_image(rgba8);
-    (void)alloc;
-    renormalize(img);
+    renormalize(img, jobs);
 }
-void stage_downsample_linear(Image const&, Image const& rgba8, Allocator const* alloc) {
-    Result<Image> r = downsample_2x(rgba8, MipOptions{.srgb = false}, alloc);
+void stage_downsample_linear(Image const&, Image const& rgba8, Allocator const* alloc,
+                             JobSystem const* jobs) {
+    Result<Image> r = downsample_2x(rgba8, MipOptions{.srgb = false}, alloc, jobs);
     KILN_VERIFY(r.ok());
 }
-void stage_downsample_srgb(Image const&, Image const& rgba8, Allocator const* alloc) {
-    Result<Image> r = downsample_2x(rgba8, MipOptions{.srgb = true}, alloc);
+void stage_downsample_srgb(Image const&, Image const& rgba8, Allocator const* alloc, JobSystem const* jobs) {
+    Result<Image> r = downsample_2x(rgba8, MipOptions{.srgb = true}, alloc, jobs);
     KILN_VERIFY(r.ok());
 }
-void stage_build_mip_chain(Image const&, Image const& rgba8, Allocator const* alloc) {
-    Result<Vec<Image>> r = build_mip_chain(clone_image(rgba8), MipOptions{.srgb = true}, 0, alloc);
+void stage_build_mip_chain(Image const&, Image const& rgba8, Allocator const* alloc, JobSystem const* jobs) {
+    Result<Vec<Image>> r = build_mip_chain(clone_image(rgba8), MipOptions{.srgb = true}, 0, alloc, jobs);
     KILN_VERIFY(r.ok());
 }
 
@@ -95,7 +99,7 @@ u64 bytes_of_rgba8(Image const&, Image const& rgba8) noexcept { return rgba8.byt
 
 struct StageSpec {
     char const* name;
-    void (*run)(Image const& rgb8, Image const& rgba8, Allocator const* alloc);
+    void (*run)(Image const& rgb8, Image const& rgba8, Allocator const* alloc, JobSystem const* jobs);
     u64 (*srcBytes)(Image const& rgb8, Image const& rgba8) noexcept;
 };
 
@@ -135,20 +139,39 @@ void print_header() {
 int main(int argc, char** argv) {
     u32 maxSize = 4096;
     u32 repeat  = 3;
+    u32 threads = 1;
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--max") == 0 && i + 1 < argc) {
             maxSize = u32(std::atoi(argv[++i]));
         } else if (std::strcmp(argv[i], "--repeat") == 0 && i + 1 < argc) {
             repeat = u32(std::atoi(argv[++i]));
+        } else if (std::strcmp(argv[i], "--threads") == 0 && i + 1 < argc) {
+            threads = u32(std::atoi(argv[++i]));
         } else {
-            std::fprintf(stderr, "usage: kiln_bench_image [--max 2048|4096|8192] [--repeat N]\n");
+            std::fprintf(stderr,
+                         "usage: kiln_bench_image [--max 2048|4096|8192] [--repeat N] [--threads N]\n");
             return 1;
         }
     }
     if (repeat == 0) repeat = 1;
 
     Allocator const* alloc = default_allocator();
-    std::printf("kiln_bench_image: max %u, repeat %u (best of N reported)\n\n", maxSize, repeat);
+    JobSystem pool;
+    JobSystem const* jobs = nullptr;
+    if (threads != 1) {
+        Result<JobSystem> created = create_thread_pool({.threads = threads ? threads - 1 : 0});
+        KILN_VERIFY(created.ok());
+        pool = *created;
+        jobs = &pool;
+        std::printf("kiln_bench_image: max %u, repeat %u (best of N reported), threads: pool of %u workers "
+                    "+ calling thread\n\n",
+                    maxSize, repeat, thread_pool_thread_count(pool));
+    } else {
+        std::printf(
+            "kiln_bench_image: max %u, repeat %u (best of N reported), threads: none (single-threaded)"
+            "\n\n",
+            maxSize, repeat);
+    }
     print_header();
 
     static constexpr u32 kSweepSizes[] = {2048, 4096, 8192};
@@ -163,7 +186,7 @@ int main(int argc, char** argv) {
             double best = -1.0;
             for (u32 r = 0; r < repeat; ++r) {
                 auto const t0 = std::chrono::steady_clock::now();
-                st.run(rgb8, rgba8, alloc);
+                st.run(rgb8, rgba8, alloc, jobs);
                 double const ms = ms_since(t0);
                 if (best < 0.0 || ms < best) best = ms;
             }
@@ -190,7 +213,7 @@ int main(int argc, char** argv) {
             auto const t0 = std::chrono::steady_clock::now();
             Result<CookedTexture> c =
                 cook_texture({.bytes = pngBytes.span(), .assetPath = "bench/tex", .sourcePath = "bench.png"},
-                             kSettings, kTarget, alloc);
+                             kSettings, kTarget, {.alloc = alloc, .jobs = jobs});
             double const ms = ms_since(t0);
             KILN_VERIFY(c.ok());
             if (best < 0.0 || ms < best) {
@@ -208,5 +231,6 @@ int main(int argc, char** argv) {
                     double(stats.mipsUs) / 1000.0, double(stats.writeUs) / 1000.0,
                     double(stats.totalUs) / 1000.0);
     }
+    if (jobs) destroy_thread_pool(pool);
     return 0;
 }

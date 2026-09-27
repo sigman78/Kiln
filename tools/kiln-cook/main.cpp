@@ -4,9 +4,11 @@
 #include "kiln/cook/cook.h"
 #include "kiln/cook/settings.h"
 #include "kiln/hash.h"
+#include "kiln/io.h"
 #include "kiln/log.h"
 
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <sys/stat.h>
 
@@ -32,16 +34,20 @@ struct Options {
     bool hashed       = false; ///< false (default): Named layout, <store>/<assetPath>.<ext>
     bool quiet        = false;
     bool verbose      = false;
+    u32 threads       = 0; ///< cooking threads including the main one; 0 = auto, 1 = no pool
     MeshCookSettings mesh;
     TextureCookSettings tex;
     TargetProfile target;
 };
 
 int usage() {
-    std::fputs("usage: kiln-cook <input>... [-o <store>] [--root <dir>] [--check] [--hashed] [--map <file>]\n"
-               "                 [--target <name>] [--profile default|precise] [--no-tangents]\n"
-               "                 [--no-optimize] [--no-mips] [--no-lods] [--quiet] [--verbose]\n",
-               stderr);
+    std::fputs(
+        "usage: kiln-cook <input>... [-o <store>] [--root <dir>] [--check] [--hashed] [--map <file>]\n"
+        "                 [--target <name>] [--profile default|precise] [--no-tangents]\n"
+        "                 [--no-optimize] [--no-mips] [--no-lods] [--threads <n>] [--quiet] [--verbose]\n"
+        "  --threads <n>  cooking threads including the main one: 0 (default) = one per core,\n"
+        "                 1 = single-threaded. Cooked bytes are identical for every value.\n",
+        stderr);
     return 1;
 }
 
@@ -75,6 +81,13 @@ bool parse_args(int argc, char** argv, Options& o) {
                 o.mesh.profile = VertexProfile::Precise;
             else
                 return false;
+        } else if (std::strcmp(a, "--threads") == 0) {
+            char const* n;
+            if (!next(n)) return false;
+            char* end        = nullptr;
+            long const value = std::strtol(n, &end, 10);
+            if (end == n || *end != '\0' || value < 0 || value > 256) return false;
+            o.threads = u32(value);
         } else if (std::strcmp(a, "--check") == 0)
             o.check = true;
         else if (std::strcmp(a, "--hashed") == 0)
@@ -282,7 +295,8 @@ struct Ctx {
     DiagState& ds;
     DiagSink sink;
     CookSession session;
-    std::FILE* map = nullptr;
+    std::FILE* map        = nullptr;
+    JobSystem const* jobs = nullptr; ///< null: single-threaded
     u32 cooked = 0, skipped = 0, failed = 0;
     HashMap<u64, u8> doneTextures{default_allocator(), Tag::General}; ///< by asset path hash
 };
@@ -354,7 +368,7 @@ bool cook_one_texture(Ctx& c, Span<u8 const> bytes, StrView assetPath, StrView s
     src.bytes               = bytes;
     src.assetPath           = assetPath;
     src.sourcePath          = sourcePath;
-    Result<CookedTexture> r = cook_texture(src, *rs, c.opt.target, default_allocator(), &c.sink);
+    Result<CookedTexture> r = cook_texture(src, *rs, c.opt.target, {.diag = &c.sink, .jobs = c.jobs});
     if (r.failed()) return false;
     u64 key = store_key(r->sourceHash, hash_settings(*rs), hash_target(c.opt.target));
     if (!emit(c, assetPath, "ktx2", key, r->file.span())) return false;
@@ -378,7 +392,7 @@ bool cook_one_mesh(Ctx& c, Span<u8 const> bytes, StrView assetPath, char const* 
     src.assetPath        = assetPath;
     src.sourcePath       = StrView(sourcePath);
     src.resolver         = {&resolve_uri_fn, baseDir};
-    Result<CookedMesh> r = cook_mesh(src, *rs, c.opt.target, default_allocator(), &c.sink);
+    Result<CookedMesh> r = cook_mesh(src, *rs, c.opt.target, {.diag = &c.sink, .jobs = c.jobs});
     if (r.failed()) return false;
     u64 key = store_key(r->sourceHash, hash_settings(*rs), hash_target(c.opt.target));
     if (!emit(c, assetPath, "mesh", key, r->file.span())) return false;
@@ -451,6 +465,18 @@ int main(int argc, char** argv) {
         return 2;
     }
 
+    // The main thread cooks too, so the pool gets one worker fewer than --threads.
+    JobSystem pool;
+    if (o.threads != 1) {
+        Result<JobSystem> const created = create_thread_pool({.threads = o.threads ? o.threads - 1 : 0});
+        if (created.ok()) {
+            pool   = *created;
+            c.jobs = &pool;
+        } else {
+            std::fprintf(stderr, "kiln-cook: cannot start a thread pool; cooking single-threaded\n");
+        }
+    }
+
     for (char const* input : o.inputs) {
         char in[1024];
         format(in, sizeof in, "%s", input);
@@ -484,6 +510,7 @@ int main(int argc, char** argv) {
         }
     }
     if (c.map) std::fclose(c.map);
+    if (c.jobs) destroy_thread_pool(pool);
 
     if (!o.quiet)
         std::printf("%s: %u cooked, %u failed, %u warning(s)\n", o.check ? "check" : "cook", c.cooked,

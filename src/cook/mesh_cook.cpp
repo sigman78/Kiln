@@ -987,9 +987,9 @@ Status cook_part(Cook& k, u32 index, ImportPart const& part, f32 modelMin[3], f3
 } // namespace
 
 Result<CookedMesh> cook_mesh(MeshSource const& src, MeshCookSettings const& settings,
-                             TargetProfile const& target, Allocator const* alloc,
-                             DiagSink const* diag) noexcept {
-    if (!alloc) alloc = default_allocator();
+                             TargetProfile const& target, CookEnv const& env) noexcept {
+    Allocator const* const alloc = env.alloc ? env.alloc : default_allocator();
+    DiagSink const* const diag   = env.diag;
     Stopwatch const swTotal;
     Arena arena(Arena::Desc{alloc, usize(1) << 20, Tag::Cook});
 

@@ -119,6 +119,8 @@ if(KILN_BUILD_COOK)
         include/kiln/cook/image.h
         src/cook/image.cpp
         src/cook/kernels.h
+        src/cook/parallel.h
+        src/cook/parallel.cpp
         src/cook/png_decode.cpp
         src/cook/texture_cook.cpp
         src/cook/cook_internal.h

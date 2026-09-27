@@ -352,6 +352,7 @@ Span<StrView const> source_roots(Context* ctx) noexcept {
     return ctx ? Span<StrView const>(ctx->roots, ctx->rootCount) : Span<StrView const>{};
 }
 Allocator const* allocator(Context* ctx) noexcept { return ctx ? ctx->alloc : nullptr; }
+JobSystem const* jobs(Context* ctx) noexcept { return ctx ? &ctx->jobs : nullptr; }
 Adapter const* adapter(Context* ctx) noexcept { return ctx ? &ctx->adapter : nullptr; }
 
 } // namespace kiln

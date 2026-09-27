@@ -84,7 +84,7 @@ void check_golden_ktx2(char const* name, Span<u8 const> got) {
 
 Result<CookedTexture> run_cook(Span<u8 const> bytes, TextureCookSettings const& s) {
     return cook_texture({.bytes = bytes, .assetPath = "test/golden", .sourcePath = "golden.png"}, s,
-                        TargetProfile{}, default_allocator());
+                        TargetProfile{});
 }
 
 } // namespace

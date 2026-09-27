@@ -4,6 +4,7 @@
 
 #include "kiln/containers.h"
 #include "kiln/cook/image.h"
+#include "kiln/io.h"
 
 using namespace kiln;
 using namespace kiln::cook;
@@ -671,4 +672,75 @@ KILN_TEST(image, downsample_matches_reference) {
                                    sz.w, sz.h, bits, ch, mode & 1, (mode >> 1) & 1);
                 }
             }
+}
+
+namespace {
+
+Image clone(Image const& src) {
+    return make(src.width, src.height, src.channels, src.bitsPerChannel, src.pixels.span());
+}
+
+/// Every image operation with a job pool against the same call without one.
+void check_row_bands(JobSystem const* jobs, Image const& src) {
+    u32 const targetBits[2]             = {src.bitsPerChannel, src.bitsPerChannel == 8 ? 16u : 8u};
+    constexpr PrepareOptions kPrepare[] = {
+        {},
+        {.flipGreen = true, .renormalize = true},
+        {.grayAlpha = true},
+    };
+    for (PrepareOptions const& opt : kPrepare)
+        for (u32 const bits : targetBits) {
+            Result<Image> a = prepare_image(src, 4, bits, opt, default_allocator());
+            Result<Image> b = prepare_image(src, 4, bits, opt, default_allocator(), jobs);
+            KILN_REQUIRE(a.ok() && b.ok());
+            KILN_CHECK_MSG(same_image(*a, *b), "prepare %ux%u %u-bit %uch -> %u-bit differs", src.width,
+                           src.height, src.bitsPerChannel, src.channels, bits);
+        }
+
+    Image fa = clone(src), fb = clone(src);
+    flip_green(fa);
+    flip_green(fb, jobs);
+    KILN_CHECK(same_image(fa, fb));
+    renormalize(fa);
+    renormalize(fb, jobs);
+    KILN_CHECK(same_image(fa, fb));
+
+    for (u32 mode = 0; mode < 4; ++mode) {
+        MipOptions const opt = {.srgb = (mode & 1) != 0, .renormalize = (mode & 2) != 0};
+        Result<Image> a      = downsample_2x(src, opt, default_allocator());
+        Result<Image> b      = downsample_2x(src, opt, default_allocator(), jobs);
+        KILN_REQUIRE(a.ok() && b.ok());
+        KILN_CHECK_MSG(same_image(*a, *b), "downsample %ux%u %u-bit %uch mode %u differs", src.width,
+                       src.height, src.bitsPerChannel, src.channels, mode);
+    }
+
+    Result<Vec<Image>> a = build_mip_chain(clone(src), {.srgb = true}, 0, default_allocator());
+    Result<Vec<Image>> b = build_mip_chain(clone(src), {.srgb = true}, 0, default_allocator(), jobs);
+    KILN_REQUIRE(a.ok() && b.ok() && a->size() == b->size());
+    for (usize i = 0; i < a->size(); ++i)
+        KILN_CHECK_MSG(same_image((*a)[i], (*b)[i]), "mip %zu differs", i);
+}
+
+} // namespace
+
+// Large enough to split into many row bands (the grain targets ~512 KiB of source).
+KILN_TEST(image, row_bands_match_single_thread) {
+    struct Case {
+        u32 w, h, channels, bits;
+    };
+    constexpr Case kCases[] = {
+        {1031, 517,   4, 16},
+        {2049, 301,   3, 8 },
+        {3,    40000, 2, 16}, // tiny rows: the chunk-count cap sets the grain
+        {777,  2,     1, 8 }, // one chunk: runs inline
+    };
+    constexpr u32 kThreads[] = {1, 8};
+    for (u32 threads : kThreads) {
+        Result<JobSystem> pool = create_thread_pool({.threads = threads});
+        KILN_REQUIRE(pool.ok());
+        Lcg rng{0x7EADu + threads};
+        for (Case const& c : kCases)
+            check_row_bands(&*pool, random_image(rng, c.w, c.h, c.channels, c.bits));
+        destroy_thread_pool(*pool);
+    }
 }
