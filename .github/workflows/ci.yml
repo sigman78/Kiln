@@ -1,0 +1,118 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows-msvc:
+    name: windows-msvc (${{ matrix.config.name }})
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        config:
+          - { name: debug, preset: win-msvc-debug }
+          - { name: release, preset: win-msvc-release }
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ilammy/msvc-dev-cmd@v1
+
+      - uses: seanmiddleditch/gha-setup-ninja@v5
+
+      - name: Configure
+        run: cmake --preset ${{ matrix.config.preset }}
+
+      - name: Build
+        run: cmake --build --preset ${{ matrix.config.preset }}
+
+      - name: Test
+        run: ctest --preset ${{ matrix.config.preset }}
+
+  windows-clangcl:
+    name: windows-clangcl (${{ matrix.config.name }})
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        config:
+          - { name: debug, preset: win-clangcl-debug }
+          - { name: release, preset: win-clangcl-release }
+    steps:
+      - uses: actions/checkout@v4
+
+      # Sets up the MSVC environment (include/lib paths, etc.) that clang-cl
+      # also relies on; must run before configuring.
+      - uses: ilammy/msvc-dev-cmd@v1
+
+      - uses: seanmiddleditch/gha-setup-ninja@v5
+
+      - name: Configure
+        run: cmake --preset ${{ matrix.config.preset }}
+
+      - name: Build
+        run: cmake --build --preset ${{ matrix.config.preset }}
+
+      - name: Test
+        run: ctest --preset ${{ matrix.config.preset }}
+
+  linux:
+    name: linux (${{ matrix.compiler }}, ${{ matrix.preset }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { compiler: gcc, preset: linux-gcc-debug }
+          - { compiler: gcc, preset: linux-gcc-release }
+          - { compiler: clang, preset: linux-clang-debug }
+          - { compiler: clang, preset: linux-clang-release }
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Ninja
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build
+
+      - name: Configure
+        run: cmake --preset ${{ matrix.preset }}
+
+      - name: Build
+        run: cmake --build --preset ${{ matrix.preset }}
+
+      - name: Test
+        run: ctest --preset ${{ matrix.preset }}
+
+  compile-time:
+    name: compile-time
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Ninja
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build
+
+      - name: Configure
+        run: cmake --preset linux-clang-release
+
+      - name: Full rebuild timing
+        run: |
+          START=$(date +%s.%N)
+          cmake --build --preset linux-clang-release
+          END=$(date +%s.%N)
+          ELAPSED=$(echo "$END - $START" | bc)
+          {
+            echo "## Compile-time report"
+            echo ""
+            echo "Full rebuild (\`linux-clang-release\`): **${ELAPSED}s**"
+          } >> "$GITHUB_STEP_SUMMARY"
+          # TODO: flag >20% regression against baseline

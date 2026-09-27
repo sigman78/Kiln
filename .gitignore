@@ -1,0 +1,23 @@
+# Build output
+build/
+out/
+cmake-build-*/
+
+# IDE / editor
+.vs/
+.vscode/
+.idea/
+*.user
+
+# CMake local overrides / generated
+CMakeUserPresets.json
+compile_commands.json
+.cache/
+
+# Editor swap / OS cruft
+*.swp
+.DS_Store
+Thumbs.db
+
+# Cooked asset store
+cooked/
