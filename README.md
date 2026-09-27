@@ -146,6 +146,21 @@ kiln-info <file> [--blobs] [--check] [--quiet]
 Exit codes: 0 ok, 1 usage, 2 file could not be read, 3 open/validation failed, 4 --check failed.
 ```
 
+## Examples
+
+`examples/headless` drives the runtime without a GPU: it creates a null adapter and a context, requests
+meshes and textures in one load group, pumps once per simulated frame, and logs every request, event,
+metadata query and diagnostic. `--slow <ms per MiB>` and `--latency <ms>` add artificial IO and cook
+delays so large files visibly take several frames; `--source <dir>` turns on cook-on-miss when the
+build has `kiln_cook`.
+
+```
+kiln-headless --store tests/golden --slow 200 --latency 5 mesh/Box.mesh ktx2/color_srgb.ktx2
+kiln-headless --store /tmp/store --source tests/corpus/gltf/khronos --latency 300 Box.mesh
+```
+
+Every preset builds it (`KILN_BUILD_EXAMPLES=ON`), and CTest runs it against the golden files.
+
 ## Docs
 
 - [`docs/HANDOFF.md`](docs/HANDOFF.md) — project hand-off and engineering principles

@@ -320,6 +320,7 @@ void destroy(Context* ctx) noexcept {
 void set_cook_provider(Context* ctx, CookProvider const& provider) noexcept {
     if (ctx) ctx->provider = provider; // pump thread; snapshotted per load at dispatch
 }
+CookProvider cook_provider(Context* ctx) noexcept { return ctx ? ctx->provider : CookProvider{}; }
 
 ContextStats stats(Context* ctx) noexcept {
     ContextStats st;

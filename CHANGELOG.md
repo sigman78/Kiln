@@ -8,6 +8,11 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
 ## [Unreleased]
 
 ### Added
+- `examples/headless`: a GPU-free walkthrough of the runtime API (null adapter, requests, a load
+  group, `pump()` per frame, events, metadata queries, cook-on-miss when built with `kiln_cook`)
+  that logs every step. `--slow` / `--latency` add artificial IO and cook delays so large files
+  visibly take time. Built by every preset (`KILN_BUILD_EXAMPLES=ON`) and run as a CTest smoke test.
+- `kiln::cook_provider(ctx)` returns the installed provider so a host can wrap it.
 - M3: runtime (kiln/assets.h): context, handles with generations, states Unloaded/Pending/MetaReady/Ready/Failed, refcounted requests with two priorities, pump() with upload budget and Busy back-pressure, events, load groups with progress/wait (panics on misuse), kind-specific placeholders (host-overridable, dev magenta for Failed), publish/acquire adapter hooks and gpu() lookup, in-memory registration, cook-on-miss provider hook; compat IO backend (positional reads) and built-in thread pool (kiln/io.h); null adapter (kiln/null_adapter.h); kiln_cook install_provider (kiln/cook/provider.h). Zero steady-state allocations verified by tag stats. Diagnostics K5001-K5009.
 - M3: cook-on-miss provider (`kiln/cook/provider.h`, `kiln::cook::install_provider`/`uninstall_provider`):
   installs a `CookProvider` on a runtime `Context` that cooks missing mesh/texture assets from the

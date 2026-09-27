@@ -10,7 +10,7 @@ namespace kiln::mesh {
 
 /// Input record for PART. Strings are given as views; the writer builds STRS.
 struct PartDesc {
-    StrView name;
+    StrView name       = {};
     u32 parent         = kInvalid;
     f32 translation[3] = {0, 0, 0};
     f32 rotation[4]    = {0, 0, 0, 1};
@@ -27,17 +27,17 @@ struct LodDesc {
     u32 layout      = 0; ///< LAYT index
     u32 vertexCount = 0;
     Span<u8 const>
-        streams[kMaxStreams]; ///< stream s bytes: vertexCount * strides[s]; empty for s >= streamCount
-    Span<u8 const> indices;   ///< indexCount * index_size(indexType) bytes; may be empty
-    u32 indexCount      = 0;
-    IndexType indexType = IndexType::U16;
-    u32 submeshFirst    = 0;
-    u32 submeshCount    = 0;
-    f32 geometricError  = 0;
+        streams[kMaxStreams];    ///< stream s bytes: vertexCount * strides[s]; empty for s >= streamCount
+    Span<u8 const> indices = {}; ///< indexCount * index_size(indexType) bytes; may be empty
+    u32 indexCount         = 0;
+    IndexType indexType    = IndexType::U16;
+    u32 submeshFirst       = 0;
+    u32 submeshCount       = 0;
+    f32 geometricError     = 0;
 };
 
 struct MaterialDesc {
-    StrView name;
+    StrView name        = {};
     u32 flags           = 0; ///< MaterialFlags
     u32 textureFirst    = 0;
     u32 textureCount    = 0;
@@ -46,36 +46,36 @@ struct MaterialDesc {
 };
 
 struct TextureBindingDesc {
-    StrView path;         ///< cooked texture asset path (also stored as pathStr)
-    u64 textureId    = 0; ///< 0 = hash_name(path)
+    StrView path     = {}; ///< cooked texture asset path (also stored as pathStr)
+    u64 textureId    = 0;  ///< 0 = hash_name(path)
     TextureSlot slot = TextureSlot::BaseColor;
     u8 uvSet         = 0;
     u16 flags        = 0; ///< TextureBindingFlags
 };
 
 struct MountDesc {
-    StrView name;
+    StrView name       = {};
     u32 parentPart     = kInvalid;
     f32 translation[3] = {0, 0, 0};
     f32 rotation[4]    = {0, 0, 0, 1};
-    StrView extras; ///< "key=value;key=value"; empty = none (kInvalid)
+    StrView extras     = {}; ///< "key=value;key=value"; empty = none (kInvalid)
 };
 
 struct WriteDesc {
-    StrView name;        ///< MODL nameStr
+    StrView name   = {}; ///< MODL nameStr
     u64 assetId    = 0;  ///< 0 = hash_name(name)
     Bounds bounds  = {}; ///< MODL bounds
     u32 modelFlags = 0;
     u64 sourceHash = 0;
     u64 cookHash   = 0;
 
-    Span<VertexLayout const> layouts; ///< on-disk form, validated by the writer
-    Span<PartDesc const> parts;       ///< topological order (parent < self)
-    Span<LodDesc const> lods;
-    Span<Submesh const> submeshes; ///< on-disk form (no strings)
-    Span<MaterialDesc const> materials;
-    Span<TextureBindingDesc const> textures;
-    Span<MountDesc const> mounts; ///< any order; the writer sorts by nameHash
+    Span<VertexLayout const> layouts        = {}; ///< on-disk form, validated by the writer
+    Span<PartDesc const> parts              = {}; ///< topological order (parent < self)
+    Span<LodDesc const> lods                = {};
+    Span<Submesh const> submeshes           = {}; ///< on-disk form (no strings)
+    Span<MaterialDesc const> materials      = {};
+    Span<TextureBindingDesc const> textures = {};
+    Span<MountDesc const> mounts            = {}; ///< any order; the writer sorts by nameHash
 };
 
 struct WriteOptions {

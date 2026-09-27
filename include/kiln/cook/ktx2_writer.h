@@ -12,8 +12,8 @@ namespace kiln::ktx2 {
 /// Extra key/value entry. The writer appends the terminating NUL to the value
 /// (KTX convention for string values) and sorts entries by key.
 struct KeyValue {
-    StrView key;   ///< ASCII, no NUL, unique
-    StrView value; ///< bytes; a NUL is appended
+    StrView key   = {}; ///< ASCII, no NUL, unique
+    StrView value = {}; ///< bytes; a NUL is appended
 };
 
 struct WriteDesc {

@@ -58,11 +58,11 @@ enum class StoreLayout : u8 { Named = 0 };
 
 /// Host-supplied placeholder pixels for one texture kind (RGBA8, tightly packed).
 struct PlaceholderDesc {
-    TextureKind kind = TextureKind::BaseColor;
-    Format format    = Format::R8G8B8A8_UNORM; ///< R8G8B8A8_UNORM or _SRGB
-    u32 width        = 1;
-    u32 height       = 1;
-    Span<u8 const> pixels; ///< width * height * 4 bytes
+    TextureKind kind      = TextureKind::BaseColor;
+    Format format         = Format::R8G8B8A8_UNORM; ///< R8G8B8A8_UNORM or _SRGB
+    u32 width             = 1;
+    u32 height            = 1;
+    Span<u8 const> pixels = {}; ///< width * height * 4 bytes
 };
 
 struct ContextDesc {
@@ -73,11 +73,11 @@ struct ContextDesc {
     IoBackend const* io    = nullptr; ///< nullptr = compat backend
     Adapter const* adapter = nullptr; ///< required
 
-    StrView storeDir;                ///< cooked store root (read-only for the runtime)
-    Span<StrView const> sourceRoots; ///< where the cook provider looks for sources (dev)
-    StoreLayout storeLayout = StoreLayout::Named;
-    bool devPlaceholders    = KILN_DEBUG != 0; ///< Failed textures show the magenta checker
-    Span<PlaceholderDesc const> placeholders;  ///< overrides per kind; missing kinds use built-ins
+    StrView storeDir                         = {}; ///< cooked store root (read-only for the runtime)
+    Span<StrView const> sourceRoots          = {}; ///< where the cook provider looks for sources (dev)
+    StoreLayout storeLayout                  = StoreLayout::Named;
+    bool devPlaceholders                     = KILN_DEBUG != 0; ///< Failed textures show the magenta checker
+    Span<PlaceholderDesc const> placeholders = {}; ///< overrides per kind; missing kinds use built-ins
 
     u32 maxAssets       = 4096; ///< registry capacity (allocated once at create)
     u32 maxGroups       = 64;
@@ -139,9 +139,9 @@ KILN_API void release(Context* ctx, TextureHandle h) noexcept;
 [[nodiscard]] KILN_API mesh::MeshView const* mesh_view(Context* ctx, MeshHandle h) noexcept;
 
 struct TextureInfo {
-    ktx2::TextureDesc desc;          ///< of the real texture (has_meta) or the placeholder
-    Span<u64 const> levelOffsets;    ///< byte offset of each level inside the upload, ascending level order
-    Span<u64 const> levelRowPitches; ///< row pitch used for each level
+    ktx2::TextureDesc desc;            ///< of the real texture (has_meta) or the placeholder
+    Span<u64 const> levelOffsets = {}; ///< byte offset of each level inside the upload, ascending level order
+    Span<u64 const> levelRowPitches = {}; ///< row pitch used for each level
     GpuObject gpu;
     u32 version        = 0;
     bool isPlaceholder = true;
@@ -228,6 +228,8 @@ struct CookProvider {
     void* user                           = nullptr;
 };
 KILN_API void set_cook_provider(Context* ctx, CookProvider const& provider) noexcept;
+/// The installed provider (null fn if none), so a host can wrap it.
+[[nodiscard]] KILN_API CookProvider cook_provider(Context* ctx) noexcept;
 
 // ---------------------------------------------------------------------------
 // Introspection

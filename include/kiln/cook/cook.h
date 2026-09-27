@@ -58,23 +58,23 @@ struct UriResolver {
 };
 
 struct MeshSource {
-    Span<u8 const> bytes; ///< .glb (or .gltf JSON) contents
-    StrView assetPath;    ///< cooked asset path, e.g. "meshes/ship_hauler_a" (no extension)
-    StrView sourcePath;   ///< for diagnostics and relative URIs, e.g. "assets/ship_hauler_a.glb"
-    u64 sourceHash = 0;   ///< xxh64 of bytes; 0 = computed by cook_mesh
-    UriResolver resolver; ///< optional
+    Span<u8 const> bytes = {}; ///< .glb (or .gltf JSON) contents
+    StrView assetPath    = {}; ///< cooked asset path, e.g. "meshes/ship_hauler_a" (no extension)
+    StrView sourcePath   = {}; ///< for diagnostics and relative URIs, e.g. "assets/ship_hauler_a.glb"
+    u64 sourceHash       = 0;  ///< xxh64 of bytes; 0 = computed by cook_mesh
+    UriResolver resolver;      ///< optional
 };
 
 /// A texture the mesh references. cook_mesh does not cook it; the caller does,
 /// using `slot` for usage inference. Views point into CookedMesh::strings or the
 /// source bytes.
 struct TextureRef {
-    StrView assetPath;       ///< cooked texture asset path: "<mesh assetPath>/<image stem>"
-    StrView uri;             ///< source-relative URI for external images; empty when embedded
-    Span<u8 const> embedded; ///< image bytes when embedded in the GLB (points into MeshSource::bytes)
-    StrView mimeType;        ///< "image/png", "image/ktx2", ... (may be empty for external)
-    SlotHint slot;           ///< first slot that referenced it
-    bool srgb;               ///< as inferred from the slot
+    StrView assetPath       = {}; ///< cooked texture asset path: "<mesh assetPath>/<image stem>"
+    StrView uri             = {}; ///< source-relative URI for external images; empty when embedded
+    Span<u8 const> embedded = {}; ///< image bytes when embedded in the GLB (points into MeshSource::bytes)
+    StrView mimeType        = {}; ///< "image/png", "image/ktx2", ... (may be empty for external)
+    SlotHint slot;                ///< first slot that referenced it
+    bool srgb;                    ///< as inferred from the slot
 };
 
 struct CookedMesh {
@@ -98,10 +98,10 @@ KILN_API Result<CookedMesh> cook_mesh(MeshSource const& src, MeshCookSettings co
 // ---------------------------------------------------------------------------
 
 struct TextureSource {
-    Span<u8 const> bytes; ///< PNG or KTX2
-    StrView assetPath;    ///< e.g. "meshes/ship_hauler_a/hull_albedo"
-    StrView sourcePath;   ///< for diagnostics
-    u64 sourceHash = 0;   ///< 0 = computed
+    Span<u8 const> bytes = {}; ///< PNG or KTX2
+    StrView assetPath    = {}; ///< e.g. "meshes/ship_hauler_a/hull_albedo"
+    StrView sourcePath   = {}; ///< for diagnostics
+    u64 sourceHash       = 0;  ///< 0 = computed
 };
 
 struct CookedTexture {

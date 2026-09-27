@@ -140,13 +140,13 @@ if(KILN_BUILD_TOOLS)
     add_subdirectory(tools)
 endif()
 
-if(KILN_BUILD_EXAMPLES)
-    # examples/ arrives with M3 (null adapter) and M4 (viewer).
-endif()
-
 if(KILN_BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)
+endif()
+
+if(KILN_BUILD_EXAMPLES)
+    add_subdirectory(examples)
 endif()
 
 # ---------------------------------------------------------------------------
