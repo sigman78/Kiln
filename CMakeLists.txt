@@ -65,6 +65,11 @@ target_compile_features(kiln_core PUBLIC cxx_std_20)
 # Must never depend on kiln_cook.
 # ---------------------------------------------------------------------------
 add_library(kiln_runtime STATIC
+    include/kiln/formats.h
+    include/kiln/mesh.h
+    src/formats/mesh_read.cpp
+    include/kiln/ktx2.h
+    src/formats/ktx2_read.cpp
     src/runtime/runtime.cpp
 )
 add_library(kiln::runtime ALIAS kiln_runtime)
@@ -80,6 +85,10 @@ endif()
 # ---------------------------------------------------------------------------
 if(KILN_BUILD_COOK)
     add_library(kiln_cook STATIC
+        include/kiln/mesh_writer.h
+        src/formats/mesh_write.cpp
+        include/kiln/ktx2_writer.h
+        src/formats/ktx2_write.cpp
         src/cook/cook.cpp
     )
     add_library(kiln::cook ALIAS kiln_cook)
@@ -91,8 +100,8 @@ endif()
 # ---------------------------------------------------------------------------
 # Tools, examples, tests
 # ---------------------------------------------------------------------------
-if(KILN_BUILD_TOOLS AND KILN_BUILD_COOK)
-    # tools/ arrives with M1 (kiln-info) and M2 (kiln-cook).
+if(KILN_BUILD_TOOLS)
+    add_subdirectory(tools)
 endif()
 
 if(KILN_BUILD_EXAMPLES)

@@ -9,12 +9,15 @@ namespace kiln::test {
 
 namespace {
 
-TestCase* g_head = nullptr;
-TestCase* g_tail = nullptr;
-int g_count      = 0;
-int g_failures   = 0; // in current test
+TestCase* g_head        = nullptr;
+TestCase* g_tail        = nullptr;
+int g_count             = 0;
+int g_failures          = 0; // in current test
+char const* g_sampleDir = nullptr;
 
 } // namespace
+
+char const* sample_dir() noexcept { return g_sampleDir; }
 
 Registrar::Registrar(TestCase* tc) noexcept {
     tc->next = nullptr;
@@ -87,6 +90,8 @@ int run_all(int argc, char** argv) noexcept {
             list = true;
         else if (std::strcmp(argv[i], "--verbose") == 0 || std::strcmp(argv[i], "-v") == 0)
             set_log_level(LogLevel::Trace);
+        else if (std::strcmp(argv[i], "--samples") == 0 && i + 1 < argc)
+            g_sampleDir = argv[++i];
         else
             filter = argv[i];
     }

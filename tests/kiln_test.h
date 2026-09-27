@@ -3,7 +3,7 @@
 //   KILN_TEST(suite, name) { KILN_CHECK(x == 1); KILN_CHECK_EQ(a, b); }
 //
 // KILN_CHECK_* record a failure and continue; KILN_REQUIRE_* return from the test.
-// Run: kiln_tests [filter-substring] [--list]
+// Run: kiln_tests [filter-substring] [--list] [--samples <dir>]
 #pragma once
 
 #include "kiln/core.h"
@@ -32,6 +32,9 @@ int current_failures() noexcept;
 
 int run_all(int argc, char** argv) noexcept;
 
+/// Directory passed via `--samples <dir>`, or nullptr if the flag was not given.
+[[nodiscard]] char const* sample_dir() noexcept;
+
 // Value → string helpers for KILN_CHECK_EQ messages.
 usize to_str(char* buf, usize cap, bool v) noexcept;
 usize to_str(char* buf, usize cap, char v) noexcept;
@@ -57,7 +60,11 @@ template <class T> usize to_str(char* buf, usize cap, T* v) noexcept {
     return to_str(buf, cap, static_cast<void const*>(v));
 }
 /// Fallback for anything else: prints "<?>" so the macro still compiles.
-template <class T> usize to_str(char* buf, usize cap, T const&) noexcept { return format(buf, cap, "<?>"); }
+template <class T>
+    requires(!std::is_enum_v<T>)
+usize to_str(char* buf, usize cap, T const&) noexcept {
+    return format(buf, cap, "<?>");
+}
 
 template <class A, class B>
 bool check_eq(char const* file, int line, char const* expr, A const& a, B const& b) noexcept {
