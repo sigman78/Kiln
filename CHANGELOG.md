@@ -8,6 +8,11 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
 ## [Unreleased]
 
 ### Added
+- Cook thread budget: `CookEnv::maxThreads` (default 3, caller included; 1 = inline, 0 = no cap)
+  limits how many pool threads one cook may occupy; the image functions take `JobBudget { jobs,
+  maxThreads }` in place of the bare `JobSystem const*`. `kiln-cook --threads <n>` sets both the
+  pool size and the budget. The renormalize kernel's 8-bit first step comes from a 256-entry table,
+  and the normal-map downsample renormalizes on the same SSE2 path. Output is unchanged.
 - Cook kernels, steps 4 and 5: `cook_mesh` builds and quantizes each (part, LOD) as a task over
   `CookEnv::jobs` and merges the results sequentially in traversal order, so cooked bytes and the
   diagnostic order are unchanged with or without a pool (tested with 1 and 8 threads); the mesh

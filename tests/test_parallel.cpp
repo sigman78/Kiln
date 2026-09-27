@@ -4,6 +4,8 @@
 #include "../src/cook/parallel.h"
 
 #include <atomic>
+#include <chrono>
+#include <thread>
 
 using namespace kiln;
 using namespace kiln::cook;
@@ -124,4 +126,35 @@ KILN_TEST(parallel, call_state_freed) {
     delete_object(default_allocator(), cov, Tag::Test);
     destroy_thread_pool(*pool);
     KILN_CHECK_EQ(default_alloc_stats(Tag::Jobs).bytesCurrent, before);
+}
+
+/// Counts how many chunks run at once, so the thread budget can be observed.
+struct Peak {
+    std::atomic<u32> active{0};
+    std::atomic<u32> peak{0};
+
+    static void fn(void* user, u32, u32) noexcept {
+        auto* self  = static_cast<Peak*>(user);
+        u32 const a = self->active.fetch_add(1, std::memory_order_acq_rel) + 1;
+        u32 p       = self->peak.load(std::memory_order_relaxed);
+        while (p < a && !self->peak.compare_exchange_weak(p, a, std::memory_order_relaxed)) {
+        }
+        std::this_thread::sleep_for(std::chrono::microseconds(200));
+        self->active.fetch_sub(1, std::memory_order_acq_rel);
+    }
+};
+
+KILN_TEST(parallel, max_threads_caps_helpers) {
+    Result<JobSystem> pool = create_thread_pool({.threads = 8});
+    KILN_REQUIRE(pool.ok());
+    Peak two;
+    parallel_for(&*pool, nullptr, 512, 1, &Peak::fn, &two, 2);
+    KILN_CHECK(two.peak.load() <= 2u);
+    Peak one;
+    parallel_for(&*pool, nullptr, 512, 1, &Peak::fn, &one, 1); // inline
+    KILN_CHECK_EQ(one.peak.load(), 1u);
+    Peak many;
+    parallel_for(&*pool, nullptr, 512, 1, &Peak::fn, &many, 0);
+    KILN_CHECK(many.peak.load() <= 9u);
+    destroy_thread_pool(*pool);
 }

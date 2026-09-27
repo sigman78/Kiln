@@ -21,7 +21,10 @@ using ParallelFn = void (*)(void* user, u32 begin, u32 end) noexcept;
 /// With helpers, one small block of call state comes from `alloc` (null = default
 /// allocator, Tag::Jobs); the last helper to leave frees it, possibly after the call
 /// has returned, so `alloc` must outlive the jobs submitted to `jobs`.
+///
+/// `maxThreads` counts the calling thread: at most `maxThreads - 1` helpers are
+/// submitted; 1 runs inline; 0 lifts the cap (an internal limit still applies).
 void parallel_for(JobSystem const* jobs, Allocator const* alloc, u32 count, u32 grain, ParallelFn fn,
-                  void* user) noexcept;
+                  void* user, u32 maxThreads = 0) noexcept;
 
 } // namespace kiln::cook

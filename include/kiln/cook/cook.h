@@ -83,9 +83,12 @@ struct CookStats {
 struct CookEnv {
     Allocator const* alloc = nullptr; ///< nullptr = default allocator
     DiagSink const* diag   = nullptr; ///< optional
-    /// Optional. Splits the heavy image passes across its workers; the calling thread
-    /// works too, so this is safe from inside a job of the same pool.
+    /// Optional. Splits the heavy passes across its workers; the calling thread works
+    /// too, so this is safe from inside a job of the same pool.
     JobSystem const* jobs = nullptr;
+    /// Threads one cook may occupy, the caller included: 1 = inline, 0 = no cap. The
+    /// default leaves the rest of the pool to the host (see docs/design/cook-kernels.md).
+    u32 maxThreads = 3;
 };
 
 // ---------------------------------------------------------------------------

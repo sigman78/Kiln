@@ -60,11 +60,11 @@ void helper_job(void* arg) {
 } // namespace
 
 void parallel_for(JobSystem const* jobs, Allocator const* alloc, u32 count, u32 grain, ParallelFn fn,
-                  void* user) noexcept {
+                  void* user, u32 maxThreads) noexcept {
     if (count == 0) return;
     if (grain == 0) grain = 1;
     u32 const chunks = count / grain + (count % grain != 0 ? 1u : 0u);
-    if (!jobs || !jobs->submit || chunks <= 1) {
+    if (!jobs || !jobs->submit || chunks <= 1 || maxThreads == 1) {
         fn(user, 0, count);
         return;
     }
@@ -75,7 +75,7 @@ void parallel_for(JobSystem const* jobs, Allocator const* alloc, u32 count, u32 
         fn(user, 0, count);
         return;
     }
-    u32 const helpers = min(chunks - 1, kMaxHelpers);
+    u32 const helpers = min(chunks - 1, min(kMaxHelpers, maxThreads ? maxThreads - 1 : kMaxHelpers));
     auto* const c     = ::new (mem) Call;
     c->alloc          = alloc;
     c->fn             = fn;

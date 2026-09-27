@@ -68,28 +68,28 @@ Image clone_image(Image const& src) {
 
 // flip_green / renormalize work in place, so their timing includes a clone of the
 // source (a memcpy, small next to the kernel).
-void stage_convert(Image const& rgb8, Image const&, Allocator const* alloc, JobSystem const* jobs) {
+void stage_convert(Image const& rgb8, Image const&, Allocator const* alloc, JobBudget const& jobs) {
     Result<Image> r = convert_image(rgb8, 4, 8, alloc, jobs);
     KILN_VERIFY(r.ok());
 }
-void stage_flip_green(Image const&, Image const& rgba8, Allocator const*, JobSystem const* jobs) {
+void stage_flip_green(Image const&, Image const& rgba8, Allocator const*, JobBudget const& jobs) {
     Image img = clone_image(rgba8);
     flip_green(img, jobs);
 }
-void stage_renormalize(Image const&, Image const& rgba8, Allocator const*, JobSystem const* jobs) {
+void stage_renormalize(Image const&, Image const& rgba8, Allocator const*, JobBudget const& jobs) {
     Image img = clone_image(rgba8);
     renormalize(img, jobs);
 }
 void stage_downsample_linear(Image const&, Image const& rgba8, Allocator const* alloc,
-                             JobSystem const* jobs) {
+                             JobBudget const& jobs) {
     Result<Image> r = downsample_2x(rgba8, MipOptions{.srgb = false}, alloc, jobs);
     KILN_VERIFY(r.ok());
 }
-void stage_downsample_srgb(Image const&, Image const& rgba8, Allocator const* alloc, JobSystem const* jobs) {
+void stage_downsample_srgb(Image const&, Image const& rgba8, Allocator const* alloc, JobBudget const& jobs) {
     Result<Image> r = downsample_2x(rgba8, MipOptions{.srgb = true}, alloc, jobs);
     KILN_VERIFY(r.ok());
 }
-void stage_build_mip_chain(Image const&, Image const& rgba8, Allocator const* alloc, JobSystem const* jobs) {
+void stage_build_mip_chain(Image const&, Image const& rgba8, Allocator const* alloc, JobBudget const& jobs) {
     Result<Vec<Image>> r = build_mip_chain(clone_image(rgba8), MipOptions{.srgb = true}, 0, alloc, jobs);
     KILN_VERIFY(r.ok());
 }
@@ -99,7 +99,7 @@ u64 bytes_of_rgba8(Image const&, Image const& rgba8) noexcept { return rgba8.byt
 
 struct StageSpec {
     char const* name;
-    void (*run)(Image const& rgb8, Image const& rgba8, Allocator const* alloc, JobSystem const* jobs);
+    void (*run)(Image const& rgb8, Image const& rgba8, Allocator const* alloc, JobBudget const& jobs);
     u64 (*srcBytes)(Image const& rgb8, Image const& rgba8) noexcept;
 };
 
@@ -158,11 +158,13 @@ int main(int argc, char** argv) {
     Allocator const* alloc = default_allocator();
     JobSystem pool;
     JobSystem const* jobs = nullptr;
+    JobBudget budget{nullptr, threads};
     if (threads != 1) {
         Result<JobSystem> created = create_thread_pool({.threads = threads ? threads - 1 : 0});
         KILN_VERIFY(created.ok());
-        pool = *created;
-        jobs = &pool;
+        pool        = *created;
+        jobs        = &pool;
+        budget.jobs = jobs;
         std::printf("kiln_bench_image: max %u, repeat %u (best of N reported), threads: pool of %u workers "
                     "+ calling thread\n\n",
                     maxSize, repeat, thread_pool_thread_count(pool));
@@ -186,7 +188,7 @@ int main(int argc, char** argv) {
             double best = -1.0;
             for (u32 r = 0; r < repeat; ++r) {
                 auto const t0 = std::chrono::steady_clock::now();
-                st.run(rgb8, rgba8, alloc, jobs);
+                st.run(rgb8, rgba8, alloc, budget);
                 double const ms = ms_since(t0);
                 if (best < 0.0 || ms < best) best = ms;
             }
@@ -213,7 +215,7 @@ int main(int argc, char** argv) {
             auto const t0 = std::chrono::steady_clock::now();
             Result<CookedTexture> c =
                 cook_texture({.bytes = pngBytes.span(), .assetPath = "bench/tex", .sourcePath = "bench.png"},
-                             kSettings, kTarget, {.alloc = alloc, .jobs = jobs});
+                             kSettings, kTarget, {.alloc = alloc, .jobs = jobs, .maxThreads = threads});
             double const ms = ms_since(t0);
             KILN_VERIFY(c.ok());
             if (best < 0.0 || ms < best) {

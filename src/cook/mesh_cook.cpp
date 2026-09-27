@@ -1191,13 +1191,13 @@ Result<CookedMesh> cook_mesh(MeshSource const& src, MeshCookSettings const& sett
 
     // Thread safety: meshoptimizer is pure and reentrant, MikkTSpace is reentrant per context, cgltf is done.
     TaskRun run{k.tasks.data(), &settings, alloc};
-    parallel_for(env.jobs, alloc, taskCount, 1, &build_tasks, &run);
+    parallel_for(env.jobs, alloc, taskCount, 1, &build_tasks, &run, env.maxThreads);
     u32 planned = 0;
     while (planned < u32(scene.parts.size)) {
         PartPlan& plan = plans[planned++];
         if (!plan_part(settings, Span<LodTask>(k.tasks.data() + plan.firstTask, plan.taskCount), plan)) break;
     }
-    parallel_for(env.jobs, alloc, taskCount, 1, &quantize_tasks, &run);
+    parallel_for(env.jobs, alloc, taskCount, 1, &quantize_tasks, &run, env.maxThreads);
 
     f32 modelMin[3] = {0, 0, 0}, modelMax[3] = {0, 0, 0};
     bool anyModel = false;

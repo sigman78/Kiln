@@ -120,7 +120,7 @@ bool is_pow2(u32 v) noexcept { return v != 0 && (v & (v - 1)) == 0; }
 
 Result<CookedTexture> cook_png(TextureSource const& src, TextureCookSettings const& settings,
                                TargetProfile const& target, u32 cap, Allocator const* alloc,
-                               DiagSink const* diag, JobSystem const* jobs, StrView asset,
+                               DiagSink const* diag, JobBudget const& budget, StrView asset,
                                u64 sourceHash) noexcept {
     detail::Stopwatch const swTotal;
     detail::Stopwatch const swDecode;
@@ -138,7 +138,7 @@ Result<CookedTexture> cook_png(TextureSource const& src, TextureCookSettings con
                       PrepareOptions{.grayAlpha   = plan.rgba8 && decoded.channels == 2,
                                      .flipGreen   = plan.normal && settings.flipGreen,
                                      .renormalize = plan.normal && settings.normalRenormalize},
-                      alloc, jobs);
+                      alloc, budget);
     if (converted.failed())
         return fail(diag, asset, converted.status(), kDiagImageUnsupported, "image conversion failed");
     Image img = std::move(converted).value();
@@ -163,7 +163,7 @@ Result<CookedTexture> cook_png(TextureSource const& src, TextureCookSettings con
     u32 const fullLevels = u32(std::bit_width(max(srcW, srcH)));
     u32 const buildCount = settings.genMips ? fullLevels : drop + 1;
     detail::Stopwatch const swMips;
-    KILN_TRY_ASSIGN(Vec<Image> chain, build_mip_chain(std::move(img), plan.mips, buildCount, alloc, jobs));
+    KILN_TRY_ASSIGN(Vec<Image> chain, build_mip_chain(std::move(img), plan.mips, buildCount, alloc, budget));
     u64 const mipsUs     = swMips.elapsed_us();
     u32 const levelCount = u32(chain.size()) - drop;
     KILN_VERIFY(levelCount >= 1 && levelCount <= ktx2::kMaxLevels);
@@ -227,7 +227,8 @@ Result<CookedTexture> cook_texture(TextureSource const& src, TextureCookSettings
 
     if (is_ktx2(src.bytes)) return pass_through(src, cap, alloc, diag, asset, sourceHash);
     if (is_png(src.bytes))
-        return cook_png(src, settings, target, cap, alloc, diag, env.jobs, asset, sourceHash);
+        return cook_png(src, settings, target, cap, alloc, diag, JobBudget{env.jobs, env.maxThreads}, asset,
+                        sourceHash);
     return fail(diag, asset, make_status(Code::Unsupported), kDiagImageUnknownFormat,
                 "source is neither PNG nor KTX2 (%llu bytes)", src.bytes.size);
 }

@@ -111,6 +111,7 @@ Every item that a design note reserves for later. Nothing here is built in v0.5.
 | Native file watchers | threading-and-io | hot reload | v0.9 |
 | `try`/`catch` boundary compiled out under `KILN_NO_EXCEPTIONS` | error-model | hardening | v1.0 |
 | `KILN_API` export/import macro (empty now; CMake wires it if a shared build is added) | core.h | shared library build | unscheduled |
+| `ThreadPoolDesc::priority` / job priority hint (cook helpers below render, net and game threads) | cook-kernels | worker priority | unscheduled |
 | Diagnostic ranges K6000-9999 | error-model | new areas | as needed |
 | `Code` values (append only) | error-model | new failure kinds | as needed |
 | `EXT_meshopt_compression` decode at buffer-view resolution | dependencies | compressed glTF input | unscheduled |

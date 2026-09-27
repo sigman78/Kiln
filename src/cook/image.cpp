@@ -61,10 +61,10 @@ struct RowBands {
     }
 };
 
-void in_place_bands(Image& img, kernels::RowFn fn, JobSystem const* jobs) noexcept {
+void in_place_bands(Image& img, kernels::RowFn fn, JobBudget const& budget) noexcept {
     RowBands bands = {.fn = fn, .ctx = in_place_rows(img)};
-    parallel_for(jobs, img.pixels.allocator(), img.height, row_grain(img.height, bands.ctx.dstRowBytes),
-                 &RowBands::run, &bands);
+    parallel_for(budget.jobs, img.pixels.allocator(), img.height,
+                 row_grain(img.height, bands.ctx.dstRowBytes), &RowBands::run, &bands, budget.maxThreads);
 }
 
 void prepare_band(void* user, u32 begin, u32 end) noexcept {
@@ -88,7 +88,7 @@ u16 srgb8_to_linear16(u8 v) noexcept { return kernels::kSrgbToLinear16[v]; }
 u8 linear16_to_srgb8(u16 v) noexcept { return kernels::kLinear16ToSrgb8.v[v]; }
 
 Result<Image> prepare_image(Image const& src, u32 channels, u32 bitsPerChannel, PrepareOptions const& opt,
-                            Allocator const* alloc, JobSystem const* jobs) noexcept {
+                            Allocator const* alloc, JobBudget const& budget) noexcept {
     if (!valid_image(src) || channels < 1 || channels > 4 || (bitsPerChannel != 8 && bitsPerChannel != 16))
         return make_status(Code::InvalidArgument);
 
@@ -108,17 +108,18 @@ Result<Image> prepare_image(Image const& src, u32 channels, u32 bitsPerChannel, 
         .renormalize = opt.renormalize ? kernels::renormalize_kernel(bitsPerChannel, channels) : nullptr,
     };
     KILN_VERIFY(ctx.convert != nullptr);
-    parallel_for(jobs, alloc, src.height, row_grain(src.height, ctx.rows.srcRowBytes), &prepare_band, &ctx);
+    parallel_for(budget.jobs, alloc, src.height, row_grain(src.height, ctx.rows.srcRowBytes), &prepare_band,
+                 &ctx, budget.maxThreads);
     return dst;
 }
 
 Result<Image> convert_image(Image const& src, u32 channels, u32 bitsPerChannel, Allocator const* alloc,
-                            JobSystem const* jobs) noexcept {
-    return prepare_image(src, channels, bitsPerChannel, PrepareOptions{}, alloc, jobs);
+                            JobBudget const& budget) noexcept {
+    return prepare_image(src, channels, bitsPerChannel, PrepareOptions{}, alloc, budget);
 }
 
 Result<Image> downsample_2x(Image const& src, MipOptions const& opt, Allocator const* alloc,
-                            JobSystem const* jobs) noexcept {
+                            JobBudget const& budget) noexcept {
     if (!valid_image(src)) return make_status(Code::InvalidArgument);
     u32 const w = max(src.width / 2, 1u);
     u32 const h = max(src.height / 2, 1u);
@@ -147,24 +148,25 @@ Result<Image> downsample_2x(Image const& src, MipOptions const& opt, Allocator c
                   },
     };
     // An output row reads two source rows.
-    parallel_for(jobs, alloc, h, row_grain(h, 2 * srcRow), &DownsampleBands::run, &bands);
+    parallel_for(budget.jobs, alloc, h, row_grain(h, 2 * srcRow), &DownsampleBands::run, &bands,
+                 budget.maxThreads);
     return dst;
 }
 
-void flip_green(Image& img, JobSystem const* jobs) noexcept {
+void flip_green(Image& img, JobBudget const& budget) noexcept {
     if (!valid_image(img)) return;
     kernels::RowFn const fn = kernels::flip_green_kernel(img.bitsPerChannel, img.channels);
-    if (fn) in_place_bands(img, fn, jobs);
+    if (fn) in_place_bands(img, fn, budget);
 }
 
-void renormalize(Image& img, JobSystem const* jobs) noexcept {
+void renormalize(Image& img, JobBudget const& budget) noexcept {
     if (!valid_image(img)) return;
     kernels::RowFn const fn = kernels::renormalize_kernel(img.bitsPerChannel, img.channels);
-    if (fn) in_place_bands(img, fn, jobs);
+    if (fn) in_place_bands(img, fn, budget);
 }
 
 Result<Vec<Image>> build_mip_chain(Image&& src, MipOptions const& opt, u32 maxLevels, Allocator const* alloc,
-                                   JobSystem const* jobs) noexcept {
+                                   JobBudget const& budget) noexcept {
     if (!valid_image(src)) return make_status(Code::InvalidArgument);
     u32 const full  = u32(std::bit_width(max(src.width, src.height)));
     u32 const count = maxLevels == 0 ? full : min(maxLevels, full);
@@ -172,7 +174,7 @@ Result<Vec<Image>> build_mip_chain(Image&& src, MipOptions const& opt, u32 maxLe
     chain.reserve(count);
     chain.push_back(std::move(src));
     for (u32 i = 1; i < count; ++i) {
-        Result<Image> next = downsample_2x(chain[i - 1], opt, alloc, i == 1 ? jobs : nullptr);
+        Result<Image> next = downsample_2x(chain[i - 1], opt, alloc, i == 1 ? budget : JobBudget{});
         if (next.failed()) return next.status();
         chain.push_back(std::move(next).value());
     }

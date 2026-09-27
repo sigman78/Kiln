@@ -297,6 +297,7 @@ struct Ctx {
     CookSession session;
     std::FILE* map        = nullptr;
     JobSystem const* jobs = nullptr; ///< null: single-threaded
+    u32 maxThreads        = 0;       ///< CookEnv::maxThreads; 0 = no cap
     u32 cooked = 0, skipped = 0, failed = 0;
     HashMap<u64, u8> doneTextures{default_allocator(), Tag::General}; ///< by asset path hash
 };
@@ -365,10 +366,11 @@ bool cook_one_texture(Ctx& c, Span<u8 const> bytes, StrView assetPath, StrView s
         resolve_texture(c.opt.tex, hint, c.opt.target, c.session, &c.sink, assetPath);
     if (rs.failed()) return false;
     TextureSource src{};
-    src.bytes               = bytes;
-    src.assetPath           = assetPath;
-    src.sourcePath          = sourcePath;
-    Result<CookedTexture> r = cook_texture(src, *rs, c.opt.target, {.diag = &c.sink, .jobs = c.jobs});
+    src.bytes      = bytes;
+    src.assetPath  = assetPath;
+    src.sourcePath = sourcePath;
+    Result<CookedTexture> r =
+        cook_texture(src, *rs, c.opt.target, {.diag = &c.sink, .jobs = c.jobs, .maxThreads = c.maxThreads});
     if (r.failed()) return false;
     u64 key = store_key(r->sourceHash, hash_settings(*rs), hash_target(c.opt.target));
     if (!emit(c, assetPath, "ktx2", key, r->file.span())) return false;
@@ -388,11 +390,12 @@ bool cook_one_mesh(Ctx& c, Span<u8 const> bytes, StrView assetPath, char const* 
         std::strcpy(baseDir, ".");
 
     MeshSource src{};
-    src.bytes            = bytes;
-    src.assetPath        = assetPath;
-    src.sourcePath       = StrView(sourcePath);
-    src.resolver         = {&resolve_uri_fn, baseDir};
-    Result<CookedMesh> r = cook_mesh(src, *rs, c.opt.target, {.diag = &c.sink, .jobs = c.jobs});
+    src.bytes      = bytes;
+    src.assetPath  = assetPath;
+    src.sourcePath = StrView(sourcePath);
+    src.resolver   = {&resolve_uri_fn, baseDir};
+    Result<CookedMesh> r =
+        cook_mesh(src, *rs, c.opt.target, {.diag = &c.sink, .jobs = c.jobs, .maxThreads = c.maxThreads});
     if (r.failed()) return false;
     u64 key = store_key(r->sourceHash, hash_settings(*rs), hash_target(c.opt.target));
     if (!emit(c, assetPath, "mesh", key, r->file.span())) return false;
@@ -467,6 +470,7 @@ int main(int argc, char** argv) {
 
     // The main thread cooks too, so the pool gets one worker fewer than --threads.
     JobSystem pool;
+    c.maxThreads = o.threads;
     if (o.threads != 1) {
         Result<JobSystem> const created = create_thread_pool({.threads = o.threads ? o.threads - 1 : 0});
         if (created.ok()) {

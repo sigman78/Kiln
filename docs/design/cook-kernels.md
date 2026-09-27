@@ -52,9 +52,14 @@ A kernel lives in `src/cook/kernels.h` (internal, never installed) and follows t
   itself and takes remaining chunks through an atomic counter, so it always makes progress: no
   deadlock when `jobs` is null, when the pool has one thread, or when the cook itself runs on a
   runtime worker (cook-on-miss). Workers never allocate inside a chunk.
-- The cooker receives the job system through `CookEnv { alloc, diag, jobs }`, which replaces the
-  trailing `alloc, diag` parameters of `cook_mesh` and `cook_texture`. `kiln-cook` and the
-  cook-on-miss provider pass the pool they already own.
+- The cooker receives the job system through `CookEnv { alloc, diag, jobs, maxThreads }`, which
+  replaces the trailing `alloc, diag` parameters of `cook_mesh` and `cook_texture`. `kiln-cook` and
+  the cook-on-miss provider pass the pool they already own.
+- **Thread budget.** `maxThreads` caps how many threads, the caller included, work on one cook
+  (`parallel_for` submits at most `maxThreads - 1` helpers). The default is 3: the measurements
+  below show most of the gain by then, and a cook must not crowd out the host's render, net or
+  game threads that share the pool. `1` runs inline; `0` lifts the cap. The image functions take
+  the same pair as `JobBudget { jobs, maxThreads }`.
 - **Textures** split by row bands: the fused "prepare level 0" pass (convert + flip green +
   renormalize in one kernel) and the level 0 to level 1 downsample. Further levels together are a
   third of that work and stay single-threaded.
@@ -111,6 +116,11 @@ and the 8-bit divides could come from a 256-entry table of exact doubles.
 - `CookEnv` is the place for future cook-wide services (progress callback, cancellation).
 
 ## Open points for the owner
+
+- **Worker priority.** Cook helpers should run below the host's render, net and game threads.
+  That belongs to the pool, not the cooker: a `ThreadPoolDesc::priority` (and the same hint for a
+  host `JobSystem`) mapped to `SetThreadPriority` / `pthread_setschedparam`. Not started; the
+  budget above is the interim cap.
 
 - Should `bench_image` also run in CI as a smoke build (no timing assertions), or stay manual?
 - Baseline ISA for a future intrinsics path: SSE4.1 on x64 and NEON on arm64, or AVX2 on x64?
