@@ -4,6 +4,9 @@
 #   find_package(kiln)                  -> kiln::core, kiln::runtime  (read-only side; ships in products)
 #   find_package(kiln COMPONENTS cook)  -> additionally kiln::cook    (dev builds and tools)
 
+include(CMakeFindDependencyMacro)
+find_dependency(Threads)   # kiln::runtime's built-in thread pool
+
 include("${CMAKE_CURRENT_LIST_DIR}/kilnRuntimeTargets.cmake")
 set(kiln_runtime_FOUND TRUE)
 
