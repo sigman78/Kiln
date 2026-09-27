@@ -29,3 +29,10 @@ build/win-msvc-debug/examples/viewer/kiln-viewer --source examples/assets/khrono
 All five are CC0 1.0 (public domain dedication), pinned to commit
 `7d4ba189827916452eeadc82d4b712dbc6280a6f`. Models with `CC-BY-NC`, vendor test licenses
 (VirtualCity, Sponza) or trademark marks were left out on purpose.
+
+## Your own models
+
+Drop `.glb` or `.gltf` files into this folder and point the viewer at it with
+`--source examples/assets`; the asset name is the file name without extension. Git ignores model
+files here, so anything with a license that does not fit the repository (for example Sketchfab
+downloads under CC-BY-NC) stays on your machine.

@@ -26,5 +26,9 @@ cooked/
 .claude/*.local.json
 .claude/.*.local.json
 
-# Demo assets fetched by the viewer-assets target (examples/assets/README.md)
+# Demo assets: fetched models and anything you drop next to them stay local (examples/assets/README.md)
 examples/assets/khronos/
+examples/assets/*.glb
+examples/assets/*.gltf
+examples/assets/*.bin
+examples/assets/*.png
