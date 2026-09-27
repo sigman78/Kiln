@@ -425,12 +425,12 @@ public:
     }
 
     [[nodiscard]] V* find(K const& key) noexcept {
-        usize i = find_index(key);
-        return i == kNpos ? nullptr : &entries_[i].value;
+        Entry* e = find_entry(key);
+        return e ? &e->value : nullptr;
     }
     [[nodiscard]] V const* find(K const& key) const noexcept {
-        usize i = find_index(key);
-        return i == kNpos ? nullptr : &entries_[i].value;
+        Entry const* e = find_entry(key);
+        return e ? &e->value : nullptr;
     }
     [[nodiscard]] bool contains(K const& key) const noexcept { return find_index(key) != kNpos; }
 
@@ -540,6 +540,20 @@ private:
     }
     [[nodiscard]] static constexpr usize alloc_bytes(usize cap) noexcept {
         return align_up(cap * sizeof(u64), alignof(Entry)) + cap * sizeof(Entry);
+    }
+
+    /// Slot pointer for `key`, or nullptr. Kept separate from find_index so the
+    /// address is only formed on the found path (keeps gcc's -Wnull-dereference quiet).
+    [[nodiscard]] Entry* find_entry(K const& key) const noexcept {
+        if (!cap_) return nullptr;
+        u64 h   = hash_key(key);
+        usize m = cap_ - 1;
+        usize i = usize(h) & m;
+        for (;;) {
+            if (hashes_[i] == 0) return nullptr;
+            if (hashes_[i] == h && entries_[i].key == key) return entries_ + i;
+            i = (i + 1) & m;
+        }
     }
 
     [[nodiscard]] usize find_index(K const& key) const noexcept {

@@ -23,7 +23,6 @@ function(kiln_apply_warnings target)
         -Wcast-align
         -Wunused
         -Woverloaded-virtual
-        -Wnull-dereference
         -Wdouble-promotion
         -Wformat
         -Wformat-security
@@ -37,7 +36,7 @@ function(kiln_apply_warnings target)
         # omitted because they trip -Wunused-command-line-argument under /WX.
         # NOTE: under clang-cl a bare -Wall means -Weverything, so the explicit
         # list is used without -Wall/-Wextra (which /W4 already implies).
-        set(kiln_clangcl_warnings ${kiln_gnu_warnings})
+        set(kiln_clangcl_warnings ${kiln_gnu_warnings} -Wnull-dereference)
         list(REMOVE_ITEM kiln_clangcl_warnings -Wall -Wextra)
         set(kiln_flags
             /W4
@@ -66,7 +65,11 @@ function(kiln_apply_warnings target)
     elseif(CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
         set(kiln_flags ${kiln_gnu_warnings})
         if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+            # -Wnull-dereference is clang-only: gcc's version depends on optimizer
+            # state and reports false positives at -O2/-O3 (seen on HashMap::find).
             list(APPEND kiln_flags -Wduplicated-cond -Wlogical-op)
+        else()
+            list(APPEND kiln_flags -Wnull-dereference)
         endif()
         if(KILN_WARNINGS_AS_ERRORS)
             list(APPEND kiln_flags -Werror)
