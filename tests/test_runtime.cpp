@@ -535,12 +535,20 @@ KILN_TEST(Runtime, BusyBackPressure) {
     MeshHandle a = request_mesh(rt2.ctx, "mesh/Box");
     MeshHandle b = request_mesh(rt2.ctx, "mesh/cube_basic");
     u32 retries  = 0;
+    u32 started  = 0;
+    u64 bytes    = 0;
     for (int i = 0; i < 10000 && !(is_ready(rt2.ctx, a) && is_ready(rt2.ctx, b)); ++i) {
-        retries += rt2.pump_once().busyRetries;
+        PumpStats const ps = rt2.pump_once();
+        retries += ps.busyRetries;
+        started += ps.uploadsStarted;
+        bytes += ps.uploadBytes;
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
     KILN_CHECK(is_ready(rt2.ctx, a) && is_ready(rt2.ctx, b));
     KILN_CHECK(retries > 0);
+    // Retries consume budget but are not counted as new uploads: one per mesh, payload bytes once.
+    KILN_CHECK_EQ(started, 2u);
+    KILN_CHECK_EQ(bytes, mesh_view(rt2.ctx, a)->decoded_size() + mesh_view(rt2.ctx, b)->decoded_size());
     release(rt2.ctx, a);
     release(rt2.ctx, b);
 }

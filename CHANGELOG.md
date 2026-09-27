@@ -13,7 +13,8 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
   rendering and synchronization2, two frames in flight, and frame submits that wait on the adapter's
   upload watermark. Boot meshes are waited on as a group; their base-color textures stream in under
   `--budget-mib`, so placeholders show first. Orbit camera in the window; `--offscreen --frames N
-  --dump out.png` renders headless; `--source` enables cook-on-miss. Demo models: `viewer-assets`
+  --dump out.png` renders headless; `--source` enables cook-on-miss. Boot models are scaled to a bounding radius of 1 and placed 2.5 units apart
+  (`--no-fit` keeps native sizes). Demo models: `viewer-assets`
   fetches five CC0 Khronos glTF models at a pinned commit with SHA-256 checks into
   `examples/assets/khronos/` (git-ignored; `examples/assets/README.md`).
 - M4: `examples/viewer`. Vulkan 1.4 device bring-up (volk, optional validation layer),
@@ -76,6 +77,9 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
 - Project display name is Kiln; GitHub repository renamed to sigman78/Kiln (namespace, CMake package and targets stay lowercase `kiln`).
 
 ### Fixed
+- `PumpStats::uploadsStarted` and `uploadBytes` counted a Busy retry again each time it was
+  re-dispatched, so a run with back-pressure could report many times the bytes actually uploaded.
+  Retries still consume the per-pump budget and show up in `busyRetries`.
 - KTX2 writer: the alpha sample of sRGB formats carried the EXPONENT qualifier (0x20) instead of LINEAR (0x10); found by `ktx validate`.
 
 ### Changed

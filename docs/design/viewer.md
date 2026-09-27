@@ -1,6 +1,6 @@
 # Example Vulkan adapter and viewer (M4)
 
-Status: **Proposed** (2026-09-27; adapter and smoke test landed the same day). Owner decisions taken at M4: Vulkan headers and volk through
+Status: **Proposed** (2026-09-27; adapter, smoke test, viewer and demo assets landed the same day; M4 done-when criteria met on a GTX 1080 Ti). Owner decisions taken at M4: Vulkan headers and volk through
 FetchContent (no SDK required), GLFW for the window, SPIR-V committed next to the GLSL and
 regenerated when a compiler is found, CI compiles the viewer but does not run it.
 

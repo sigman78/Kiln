@@ -213,6 +213,7 @@ void poll_awaiting(Context* ctx) noexcept {
 
 void dispatch_uploads(Context* ctx, u64 budget) noexcept {
     u64 started           = 0;
+    u32 dispatched        = 0;
     QueueId const order[] = {QueueId::UploadHigh, QueueId::UploadNormal};
     for (QueueId q : order) {
         for (u32 i = ctx->queues[u32(q)].head; i != kInvalid;) {
@@ -225,12 +226,15 @@ void dispatch_uploads(Context* ctx, u64 budget) noexcept {
             }
             // At least one upload starts per pump, so a single asset larger than the
             // budget still makes progress.
-            if (ctx->cur.uploadsStarted > 0 && started + s.uploadSize > budget) return;
+            if (dispatched > 0 && started + s.uploadSize > budget) return;
             queue_remove(ctx, s);
             submit_stage(ctx, s, Stage::Upload);
-            ++ctx->cur.uploadsStarted;
-            ctx->cur.uploadBytes += s.uploadSize;
+            ++dispatched;
             started += s.uploadSize;
+            if (s.retryAfter == 0) { // a Busy retry is counted once, in busyRetries
+                ++ctx->cur.uploadsStarted;
+                ctx->cur.uploadBytes += s.uploadSize;
+            }
             i = next;
         }
     }

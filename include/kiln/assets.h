@@ -162,11 +162,11 @@ struct PumpOptions {
 
 struct PumpStats {
     u32 completed        = 0; ///< assets that became MetaReady/Ready/Failed this pump
-    u32 uploadsStarted   = 0;
+    u32 uploadsStarted   = 0; ///< uploads dispatched for the first time (retries are not counted again)
     u32 uploadsCommitted = 0;
-    u64 uploadBytes      = 0;
-    u32 busyRetries      = 0; ///< begin_upload returned Busy
-    u32 eventsDropped    = 0;
+    u64 uploadBytes   = 0; ///< bytes of those uploads; retries consume the budget but are not counted again
+    u32 busyRetries   = 0; ///< begin_upload returned Busy
+    u32 eventsDropped = 0;
 };
 
 /// Drive the pipeline: hand out upload memory, collect completed reads and decodes,
