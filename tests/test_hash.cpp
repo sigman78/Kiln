@@ -64,6 +64,30 @@ static_assert(xxh64(kAbc, 3) == 0x44BC2CF5AD770999ull);
 
 KILN_TEST(Hash, Xxh64SmallArrayRuntime) { KILN_CHECK_EQ(xxh64(kAbc, usize(3)), u64(0x44BC2CF5AD770999ull)); }
 
+// XXH32 reference vectors (xxHash test suite / python-xxhash docs).
+static_assert(xxh32(kAbc, 3) == 0x32D153FFu);
+KILN_TEST(Hash, Xxh32ReferenceVectors) {
+    KILN_CHECK_EQ(xxh32(""_sv), u32(0x02CC5D05u));
+    KILN_CHECK_EQ(xxh32("a"_sv), u32(0x550D7456u));
+    KILN_CHECK_EQ(xxh32("abc"_sv), u32(0x32D153FFu));
+    KILN_CHECK_EQ(xxh32("Nobody inspects the spammish repetition"_sv), u32(0xE2293B2Fu));
+    KILN_CHECK_EQ(xxh32(""_sv, 1u), u32(0x0B2CB792u));
+}
+
+KILN_TEST(Hash, Xxh32TailPathsAreDeterministic) {
+    // Lengths 0..40 exercise the 16-byte stripe loop, 4-byte tail and byte tail.
+    u8 buf[40];
+    for (usize i = 0; i < sizeof buf; ++i)
+        buf[i] = u8(i * 31 + 7);
+    u32 prev = 0;
+    for (usize len = 0; len <= sizeof buf; ++len) {
+        u32 h = xxh32(buf, len);
+        KILN_CHECK_EQ(h, xxh32(buf, len)); // stable
+        if (len) KILN_CHECK_NE(h, prev);   // length-sensitive
+        prev = h;
+    }
+}
+
 KILN_TEST(Hash, Xxh64ReferenceVectorsSeedZero) {
     KILN_CHECK_EQ(xxh64(""_sv), u64(0xEF46DB3751D8E999ull));
     KILN_CHECK_EQ(xxh64("a"_sv), u64(0xD24EC4F1A98C6E5Bull));

@@ -1,4 +1,4 @@
-// kiln/hash.h — constexpr hashing: FNV-1a 64 (names, asset ids), XXH64 (content),
+// kiln/hash.h — constexpr hashing: FNV-1a 64 (names, asset ids), XXH64 (content), XXH32 (checksums),
 // fourcc, and hash_of() overloads used by HashMap.
 #pragma once
 
@@ -171,6 +171,74 @@ inline constexpr u64 kXxhP5 = 0x27D4EB2F165667C5ull;
 }
 [[nodiscard]] inline u64 xxh64(void const* p, usize len, u64 seed = 0) noexcept {
     return xxh64(static_cast<u8 const*>(p), len, seed);
+}
+
+// ---------------------------------------------------------------------------
+// XXH32 — used for small checksums (e.g. .mesh PayloadBlob.checksum)
+// ---------------------------------------------------------------------------
+
+namespace detail {
+inline constexpr u32 kXxh32P1 = 2654435761u;
+inline constexpr u32 kXxh32P2 = 2246822519u;
+inline constexpr u32 kXxh32P3 = 3266489917u;
+inline constexpr u32 kXxh32P4 = 668265263u;
+inline constexpr u32 kXxh32P5 = 374761393u;
+
+[[nodiscard]] constexpr u32 xxh32_round(u32 acc, u32 input) noexcept {
+    acc += input * kXxh32P2;
+    acc = std::rotl(acc, 13);
+    acc *= kXxh32P1;
+    return acc;
+}
+} // namespace detail
+
+/// XXH32, bit-exact with the reference implementation.
+[[nodiscard]] constexpr u32 xxh32(u8 const* p, usize len, u32 seed = 0) noexcept {
+    using namespace detail;
+    u8 const* const end = p + len;
+    u32 h;
+    if (len >= 16) {
+        u32 v1 = seed + kXxh32P1 + kXxh32P2;
+        u32 v2 = seed + kXxh32P2;
+        u32 v3 = seed + 0;
+        u32 v4 = seed - kXxh32P1;
+        do {
+            v1 = xxh32_round(v1, xxh_read32(p));
+            v2 = xxh32_round(v2, xxh_read32(p + 4));
+            v3 = xxh32_round(v3, xxh_read32(p + 8));
+            v4 = xxh32_round(v4, xxh_read32(p + 12));
+            p += 16;
+        } while (end - p >= 16);
+        h = std::rotl(v1, 1) + std::rotl(v2, 7) + std::rotl(v3, 12) + std::rotl(v4, 18);
+    } else {
+        h = seed + kXxh32P5;
+    }
+    h += u32(len);
+    while (end - p >= 4) {
+        h += xxh_read32(p) * kXxh32P3;
+        h = std::rotl(h, 17) * kXxh32P4;
+        p += 4;
+    }
+    while (p < end) {
+        h += u32(*p) * kXxh32P5;
+        h = std::rotl(h, 11) * kXxh32P1;
+        ++p;
+    }
+    h ^= h >> 15;
+    h *= kXxh32P2;
+    h ^= h >> 13;
+    h *= kXxh32P3;
+    h ^= h >> 16;
+    return h;
+}
+[[nodiscard]] constexpr u32 xxh32(Span<u8 const> b, u32 seed = 0) noexcept {
+    return xxh32(b.data, b.size, seed);
+}
+[[nodiscard]] inline u32 xxh32(StrView s, u32 seed = 0) noexcept {
+    return xxh32(reinterpret_cast<u8 const*>(s.data), s.size, seed);
+}
+[[nodiscard]] inline u32 xxh32(void const* p, usize len, u32 seed = 0) noexcept {
+    return xxh32(static_cast<u8 const*>(p), len, seed);
 }
 
 /// Streaming XXH64 for hashing several buffers (settings structs, file chunks).
