@@ -9,6 +9,13 @@ using namespace kiln;
 // ---------------------------------------------------------------------------
 
 static_assert(is_known_format(Format::R8G8B8A8_SRGB));
+static_assert(u32(Format::R8G8B8_SRGB) == 29 && format_info(Format::R8G8B8_SRGB)->bytesPerBlock == 3);
+static_assert(u32(Format::ETC2_R8G8B8A8_SRGB) == 152 &&
+              format_info(Format::ETC2_R8G8B8A8_SRGB)->bytesPerBlock == 16);
+static_assert(u32(Format::ASTC_4x4_UNORM) == 157 && u32(Format::ASTC_12x12_SRGB) == 184);
+static_assert(format_info(Format::ASTC_8x8_UNORM)->blockWidth == 8 &&
+              format_image_bytes(Format::ASTC_8x8_UNORM, 9, 9) == 64);
+static_assert(linear_format(Format::ETC2_R8G8B8_SRGB) == Format::ETC2_R8G8B8_UNORM);
 static_assert(format_info(Format::R8G8B8A8_SRGB)->bytesPerBlock == 4);
 static_assert(linear_format(Format::R8G8B8A8_SRGB) == Format::R8G8B8A8_UNORM);
 static_assert(linear_format(Format::R8G8B8A8_UNORM) == Format::R8G8B8A8_UNORM);

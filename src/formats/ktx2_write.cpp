@@ -19,8 +19,9 @@ constexpr u32 lcm(u32 a, u32 b) noexcept { return a / gcd(a, b) * b; }
 constexpr u64 round_up(u64 v, u64 a) noexcept { return (v + a - 1) / a * a; }
 
 // KHR_DF channel ids and qualifiers for the RGBSDA color model.
-constexpr u32 kChannelIds[4]      = {0, 1, 2, 15}; // R, G, B, A
-constexpr u32 kQualifierLinear    = 0x20;
+constexpr u32 kChannelIds[4] = {0, 1, 2, 15}; // R, G, B, A
+// Sample qualifier bits (KHR_DF_SAMPLE_DATATYPE_*): bits 4..7 of the channelType byte.
+constexpr u32 kQualifierLinear    = 0x10; // 0x20 is EXPONENT; libktx's validator checks this
 constexpr u32 kQualifierSigned    = 0x40;
 constexpr u32 kQualifierFloat     = 0x80;
 constexpr u8 kColorModelRgbsda    = 1;

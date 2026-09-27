@@ -14,10 +14,12 @@ TestCase* g_tail        = nullptr;
 int g_count             = 0;
 int g_failures          = 0; // in current test
 char const* g_sampleDir = nullptr;
+char const* g_corpusDir = nullptr;
 
 } // namespace
 
 char const* sample_dir() noexcept { return g_sampleDir; }
+char const* corpus_dir() noexcept { return g_corpusDir; }
 
 Registrar::Registrar(TestCase* tc) noexcept {
     tc->next = nullptr;
@@ -92,6 +94,8 @@ int run_all(int argc, char** argv) noexcept {
             set_log_level(LogLevel::Trace);
         else if (std::strcmp(argv[i], "--samples") == 0 && i + 1 < argc)
             g_sampleDir = argv[++i];
+        else if (std::strcmp(argv[i], "--corpus") == 0 && i + 1 < argc)
+            g_corpusDir = argv[++i];
         else
             filter = argv[i];
     }

@@ -4,6 +4,11 @@
 # kiln_core + kiln_runtime only) still gets a real test suite. Writer round-trips
 # (test_mesh.cpp, test_ktx2.cpp) and the sample-file / kiln-info coverage that
 # depends on them only join in when kiln_cook is built.
+#
+# The KTX2 corpus (corpus/ktx2, see its manifest.txt) is read in both configurations;
+# the writer round trip over it (test_ktx2_corpus_rt.cpp) needs kiln_cook.
+
+set(KILN_KTX2_CORPUS ${CMAKE_CURRENT_SOURCE_DIR}/corpus/ktx2)
 
 add_executable(kiln_tests
     kiln_test.h
@@ -16,18 +21,21 @@ add_executable(kiln_tests
     test_formats.cpp
     test_mesh_read.cpp
     test_ktx2_read.cpp
+    ktx2_corpus.h
+    test_ktx2_corpus.cpp
 )
 kiln_apply_defaults(kiln_tests)
 target_include_directories(kiln_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(kiln_tests PRIVATE kiln_core kiln_runtime)
 
 if(TARGET kiln_cook)
-    target_sources(kiln_tests PRIVATE test_mesh.cpp test_ktx2.cpp)
+    target_sources(kiln_tests PRIVATE test_mesh.cpp test_ktx2.cpp test_ktx2_corpus_rt.cpp)
     target_link_libraries(kiln_tests PRIVATE kiln_cook)
 
     file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/samples)
 
-    add_test(NAME kiln_tests COMMAND kiln_tests --samples ${CMAKE_CURRENT_BINARY_DIR}/samples)
+    add_test(NAME kiln_tests COMMAND kiln_tests --samples ${CMAKE_CURRENT_BINARY_DIR}/samples
+                                            --corpus ${KILN_KTX2_CORPUS})
     set_tests_properties(kiln_tests PROPERTIES FIXTURES_SETUP kiln_samples)
 
     # kiln-info coverage: feed it the sample .mesh/.ktx2 files kiln_tests just wrote.
@@ -64,5 +72,58 @@ if(TARGET kiln_cook)
             PASS_REGULAR_EXPRESSION "transfer sRGB;check: 3 levels")
     endif()
 else()
-    add_test(NAME kiln_tests COMMAND kiln_tests)
+    add_test(NAME kiln_tests COMMAND kiln_tests --corpus ${KILN_KTX2_CORPUS})
+endif()
+
+# ---------------------------------------------------------------------------
+# Reference validation with the Khronos `ktx` CLI (KTX-Software 4.x), if installed:
+#   ktx_validate_<name>         kiln writer output: sample_*.ktx2 and the corpus round
+#                               trips rt_*.ktx2 (written by kiln_tests, cook builds only)
+#   ktx_validate_corpus_<name>  every corpus file the manifest expects kiln to read,
+#                               documenting that the inputs themselves are conformant
+# ---------------------------------------------------------------------------
+find_program(KILN_KTX_TOOL ktx)
+if(KILN_KTX_TOOL)
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${KILN_KTX2_CORPUS}/manifest.txt)
+    file(STRINGS ${KILN_KTX2_CORPUS}/manifest.txt _kiln_manifest REGEX "^[^#].*[|]")
+    set(_kiln_rt_names "")
+    foreach(_line IN LISTS _kiln_manifest)
+        string(REPLACE "|" ";" _f "${_line}")
+        list(GET _f 0 _path)
+        list(GET _f 1 _expect)
+        list(GET _f 3 _format)
+        list(GET _f 6 _depth)
+        list(GET _f 7 _layers)
+        list(GET _f 8 _faces)
+        list(GET _f 10 _sc)
+        if(NOT _expect STREQUAL "ok")
+            continue()
+        endif()
+        get_filename_component(_base ${_path} NAME)
+        get_filename_component(_stem ${_path} NAME_WE)
+        add_test(NAME ktx_validate_corpus_${_stem} COMMAND ${KILN_KTX_TOOL} validate ${KILN_KTX2_CORPUS}/${_path})
+        # Same eligibility rule as test_ktx2_corpus_rt.cpp: uncompressed plain 2D.
+        if(_depth EQUAL 0 AND _layers EQUAL 0 AND _faces EQUAL 1 AND _sc EQUAL 0
+           AND NOT _format MATCHES "^(-|BC[0-9]|ETC2_|EAC_|ASTC_)")
+            list(APPEND _kiln_rt_names ${_base})
+        endif()
+    endforeach()
+
+    if(TARGET kiln_cook)
+        foreach(_file sample_rgba8_srgb.ktx2 sample_r16g16_snorm.ktx2)
+            get_filename_component(_stem ${_file} NAME_WE)
+            add_test(NAME ktx_validate_${_stem} COMMAND ${KILN_KTX_TOOL} validate samples/${_file})
+            list(APPEND _kiln_validate_tests ktx_validate_${_stem})
+        endforeach()
+        foreach(_base IN LISTS _kiln_rt_names)
+            get_filename_component(_stem ${_base} NAME_WE)
+            add_test(NAME ktx_validate_rt_${_stem} COMMAND ${KILN_KTX_TOOL} validate samples/rt_${_base})
+            list(APPEND _kiln_validate_tests ktx_validate_rt_${_stem})
+        endforeach()
+        set_tests_properties(${_kiln_validate_tests} PROPERTIES
+            FIXTURES_REQUIRED kiln_samples
+            WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    endif()
+else()
+    message(STATUS "ktx tool not found; skipping ktx validate tests")
 endif()

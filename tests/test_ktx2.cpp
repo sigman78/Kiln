@@ -188,7 +188,8 @@ KILN_TEST(Ktx2, DfdMatchesVk2dfd) {
         KILN_CHECK_EQ(dfd[14], u8(2));
         KILN_CHECK_EQ(read_unaligned<u32>(dfd + 28), 0u | (7u << 16));
         KILN_CHECK_EQ(read_unaligned<u32>(dfd + 40), 255u);
-        KILN_CHECK_EQ(read_unaligned<u32>(dfd + 28 + 48), 24u | (7u << 16) | ((15u | 0x20u) << 24));
+        KILN_CHECK_EQ(read_unaligned<u32>(dfd + 28 + 48),
+                      24u | (7u << 16) | ((15u | 0x10u) << 24)); // LINEAR = 0x10
     }
     // R16G16B16A16_SFLOAT: -1.0f / 1.0f bounds.
     {

@@ -26,6 +26,15 @@ jobs:
 
       - uses: seanmiddleditch/gha-setup-ninja@v5
 
+      - name: Install KTX tools (ktx validate for writer output)
+        shell: pwsh
+        run: |
+          $u = "https://github.com/KhronosGroup/KTX-Software/releases/download/v4.4.2/KTX-Software-4.4.2-Windows-x64.exe"
+          Invoke-WebRequest -Uri $u -OutFile ktx-installer.exe
+          7z x ktx-installer.exe -oktxtools -y | Out-Null
+          "$PWD/ktxtools/bin" | Out-File -FilePath $env:GITHUB_PATH -Append
+          & "$PWD/ktxtools/bin/ktx.exe" --version
+
       - name: Configure
         run: cmake --preset ${{ matrix.config.preset }}
 
@@ -52,6 +61,15 @@ jobs:
       - uses: ilammy/msvc-dev-cmd@v1
 
       - uses: seanmiddleditch/gha-setup-ninja@v5
+
+      - name: Install KTX tools (ktx validate for writer output)
+        shell: pwsh
+        run: |
+          $u = "https://github.com/KhronosGroup/KTX-Software/releases/download/v4.4.2/KTX-Software-4.4.2-Windows-x64.exe"
+          Invoke-WebRequest -Uri $u -OutFile ktx-installer.exe
+          7z x ktx-installer.exe -oktxtools -y | Out-Null
+          "$PWD/ktxtools/bin" | Out-File -FilePath $env:GITHUB_PATH -Append
+          & "$PWD/ktxtools/bin/ktx.exe" --version
 
       - name: Configure
         run: cmake --preset ${{ matrix.config.preset }}
@@ -80,6 +98,14 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y ninja-build
+
+      - name: Install KTX tools (ktx validate for writer output)
+        run: |
+          u=https://github.com/KhronosGroup/KTX-Software/releases/download/v4.4.2/KTX-Software-4.4.2-Linux-x86_64.deb
+          curl -sSL -o ktx.deb "$u"
+          echo "b7d4a0833a5aff570f01f56413e40ea8db291212  ktx.deb" | sha1sum -c -
+          sudo apt-get install -y ./ktx.deb
+          ktx --version
 
       - name: Configure
         run: cmake --preset ${{ matrix.preset }}

@@ -3,7 +3,7 @@
 //   KILN_TEST(suite, name) { KILN_CHECK(x == 1); KILN_CHECK_EQ(a, b); }
 //
 // KILN_CHECK_* record a failure and continue; KILN_REQUIRE_* return from the test.
-// Run: kiln_tests [filter-substring] [--list] [--samples <dir>]
+// Run: kiln_tests [filter-substring] [--list] [--samples <dir>] [--corpus <dir>]
 #pragma once
 
 #include "kiln/core.h"
@@ -34,6 +34,10 @@ int run_all(int argc, char** argv) noexcept;
 
 /// Directory passed via `--samples <dir>`, or nullptr if the flag was not given.
 [[nodiscard]] char const* sample_dir() noexcept;
+
+/// Directory passed via `--corpus <dir>` (the KTX2 corpus root holding manifest.txt),
+/// or nullptr if the flag was not given.
+[[nodiscard]] char const* corpus_dir() noexcept;
 
 // Value → string helpers for KILN_CHECK_EQ messages.
 usize to_str(char* buf, usize cap, bool v) noexcept;
