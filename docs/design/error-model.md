@@ -32,6 +32,17 @@ debugger and aborts. If a user handler returns, `panic()` still aborts.
 Allocator out-of-memory panics: `kiln::alloc()` panics on null. `try_alloc()` exists for the rare
 caller that can recover, which then returns `Code::OutOfMemory`.
 
+**Runtime API misuse that panics** (always on, `KILN_VERIFY` / `KILN_PANIC`, with a message that
+names the rule):
+
+| Misuse | Why a panic, not a `Status` |
+|---|---|
+| `wait()` called off the pump thread | `pump()` state is single-threaded; running it from two threads would race |
+| `wait()` with an adapter that lacks `AdapterCaps::kSelfSubmitting` | uploads cannot complete without the host recording a frame, so the call would hang until the timeout on every use |
+| `pump()` called from a thread other than the bound pump thread (proposed, see `handles-and-states.md`) | same race as above |
+
+Rule: a blocking API never hangs on misuse. It panics at entry, before blocking.
+
 ### `Code`
 
 `enum class Code : u16`. Stable once released, append only. `code_name(Code)` returns a
@@ -50,7 +61,7 @@ snake_case name.
 | `IoEof` | read past end of file (truncated file) |
 | `ParseError` | malformed input: glTF JSON, PNG, KTX2 header, config |
 | `ValidationFailed` | well-formed input that breaks a semantic rule (index out of range, bad settings combination) |
-| `Corrupt` | cooked data failed integrity checks (bad `.mesh` section bounds, store entry mismatch) |
+| `Corrupt` | cooked data failed integrity checks (bad `.mesh` section bounds, `BLOB` table ranges or overlaps, decoded size mismatch, store entry mismatch) |
 | `VersionMismatch` | cooked data from an incompatible `.mesh` major version or cooker version |
 | `Busy` | back-pressure: adapter or budget says "not now", retry next `pump()` |
 | `NotReady` | the target is not in a state that allows the operation |
@@ -131,9 +142,32 @@ struct DiagSink { void (*fn)(void* user, Diagnostic const&); void* user; };
 When loading an asset fails for a recoverable reason:
 
 1. The asset moves to `Failed` (see `handles-and-states.md`).
-2. `view()` serves the placeholder for that asset kind, with `isPlaceholder = true`.
+2. Textures: `gpu()` serves the Failed placeholder (magenta checker when `devPlaceholders` is on,
+   else the kind placeholder). Meshes have no placeholder: `is_ready()` stays false and `view()`
+   is empty.
 3. **Exactly one** diagnostic with `Severity::Error` is emitted for the failure, plus a `Failed`
    event on `pump()`. Warnings emitted earlier during the same cook are not limited.
+
+### `.mesh` blob table failures
+
+The blob decode loop (mesh-format-spec §5.9, §7) fails the asset recoverably. Proposed mapping:
+
+| Failure | `Code` | Diagnostic |
+|---|---|---|
+| Blob encoded range outside `GPUD`, or decoded range outside `payloadDecodedSize` | `Corrupt` | K4xxx |
+| Decoded ranges overlap, or do not cover a range that `LODS` references | `Corrupt` | K4xxx |
+| Decoder output size differs from `decodedSize` (short, or would write past it) | `Corrupt` | K4xxx |
+| `kPayloadRaw` set but a blob is not an identity range (codec, filter, offsets or sizes differ) | `Corrupt` | K4xxx |
+| `checksum` mismatch (tools and debug builds) | `Corrupt` | K4xxx |
+| Misaligned offsets, `elementSize` 0 where required, `decodedSize` not a multiple of `elementSize` | `ValidationFailed` | K4xxx |
+| Unknown codec or filter id, or one not built into this runtime (anything but `None` in v0.5) | `Unsupported` | K4xxx |
+
+- `Corrupt` means the bytes cannot be trusted (bounds, overlaps, sizes). `ValidationFailed` means
+  the file is structurally sound but breaks a spec rule. Both are recoverable: the asset goes to
+  `Failed`.
+- `Status.detail` carries the blob index (low 16 bits) so tools can point at the entry.
+- The same checks run in the cooker's writer self-check (K4xxx, `Severity::Error`) and in
+  `kiln-info`.
 
 Never a crash, never a silent failure (v0.5 exit criterion).
 
@@ -149,7 +183,7 @@ Never a crash, never a silent failure (v0.5 exit criterion).
 | K1000-1999 | glTF import (unsupported extensions, sparse accessors, Draco, bad node names, missing UVs) |
 | K2000-2999 | image import and encode (PNG decode, KTX2 pass-through, size, channel checks) |
 | K3000-3999 | settings resolution (invalid combinations, unknown keys later) |
-| K4000-4999 | `.mesh` and KTX2 validation (reader and writer checks) |
+| K4000-4999 | `.mesh` and KTX2 validation (reader and writer checks, including `BLOB` table checks) |
 | K5000-5999 | runtime and store (store miss, corrupt entry, adapter failures, placeholder served) |
 | K6000-9999 | reserved |
 
@@ -194,3 +228,5 @@ Never a crash, never a silent failure (v0.5 exit criterion).
 - Confirm the `K` + 4-digit code format and the ranges above.
 - Confirm "exactly one Error diagnostic per failed load".
 - Confirm that `Status.detail` stays 16 bits (it truncates Windows error codes to their low bits).
+- Confirm the `wait()` misuse panics (off-thread, adapter without `kSelfSubmitting`).
+- Confirm the `Corrupt` vs `ValidationFailed` split for blob-table failures above.

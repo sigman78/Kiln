@@ -172,10 +172,13 @@ kiln/
 
 ### 4.2 Cooked runtime formats
 
-- **Mesh:** the `.mesh` format per `docs/mesh-format-spec.md` (v0.1 draft; **unstable until v1.0**, and the cooker version in the store key handles invalidation).
+- **Mesh:** the `.mesh` format per `docs/mesh-format-spec.md` (v0.2 draft; **unstable until v1.0**, and the cooker version in the store key handles invalidation).
   - Readers are zero-copy views over the loaded metadata blob.
   - The writer is deterministic, so identical input and settings give byte-identical output.
   - LOD records and chunk layout must stay compatible with later progressive loading (smallest LOD blob readable independently).
+  - **Payload compression is designed in, not implemented.** The GPU payload is described by a blob table (`BLOB`, spec §5.9) mapping encoded file ranges to decoded payload ranges, each with a codec (None / Zstd / meshopt vertex and index) and a filter (byte shuffle, delta, meshopt filters). Draw records only use decoded offsets, so compression never touches draw-facing data.
+  - **v0.5:** the cooker writes codec `None` only, with the `kPayloadRaw` fast path (one direct read into staging). The runtime implements the full blob decode *loop* (per-blob read and decode into the destination, with gap zero-fill and validation) and supports `None`. Adding a codec later is then just a new decoder.
+  - The default scheme (Zstd + byte shuffle vs meshopt vs both) is picked later **by measurement** on real assets.
 - **Texture:** KTX2.
   - v0.5: raw formats (RGBA8, RG8, R8, R16, RGBA16F) with gamma-correct mips (plus normal-map renormalization).
   - Later: BCn (BC7 color, BC5 normals, BC4 single channel, BC6H HDR), ASTC/ETC2 for mobile targets, Zstd supercompression, alpha-coverage-preserving mips.
@@ -267,7 +270,7 @@ resolved settings struct → hashed into the store key
 | Encoding | vertex profile (default/precise), quantization tolerances, index width policy |
 | Processing | tangent generation, vertex cache/overdraw/fetch optimization, weld tolerance |
 | LOD | generate yes/no; count or target ratios; error thresholds; attribute weights; lock borders; or "authored `_lodN` only" |
-| Compression | none / Zstd on payload chunks / meshopt vertex and index codecs (later) |
+| Compression | scheme: none / basic (Zstd + byte shuffle) / meshopt / meshopt + Zstd; Zstd level; blob chunk size. Selectable per target and per asset. Post-v0.5 |
 | Import | unit/axis override, prefixes to strip, merge parts |
 
 ### 5.3 Targets and cross-cooking
@@ -309,7 +312,30 @@ resolved settings struct → hashed into the store key
 - **Registry:**
   - Assets are identified by `AssetId` (64-bit path hash).
   - `Handle<T>` = {index, generation}.
-  - States: `Unloaded → Pending → Ready`, or `Failed`, which serves a placeholder. A `Partial` state for progressive loads comes post-v0.5.
+  - States: `Unloaded → Pending → MetaReady → Ready`, or `Failed`, which serves a placeholder. A `Partial` state for progressive loads comes post-v0.5.
+  - **`MetaReady` (meshes):** the CPU metadata (parts, mounts, bounds, material names) is loaded and `view()` works, but the GPU payload is still in flight. It arrives with the first small read, so gameplay can place entities, attach to mounts and cull by bounds before geometry is drawable. Textures can go straight from `Pending` to `Ready` *(discuss: whether textures also expose MetaReady for extent/format)*.
+- **Placeholders:** every texture handle is usable from the moment it's requested.
+  - Placeholders are chosen by **texture kind** (inferred from the glTF material slot) so a partially loaded scene still looks plausibly lit:
+
+    | Kind | Placeholder |
+    |---|---|
+    | Base color | mid-grey |
+    | Normal map | flat normal (0.5, 0.5, 1) |
+    | ORM | AO 1, roughness 1, metallic 0 |
+    | Emissive | black |
+    | Failed (dev builds) | loud magenta checker |
+
+  - Placeholders are created once through the adapter at context creation and are host-overridable per kind.
+  - Meshes have no geometry placeholder. The host skips the draw until `Ready`; a dev-only bounding-box proxy is optional, and coarsest-LOD-first comes with progressive loading.
+- **Load groups:**
+  - `Group g = kiln::group(ctx)`, then `request(..., { .group = g })` to add requests. A request may belong to one group.
+  - `progress(ctx, g) → GroupStatus { ready, failed, pending, bytesDone, bytesTotal }`, which drives loading screens.
+  - `wait(ctx, g, { .timeoutMs })` blocks until every member is `Ready` or `Failed`, or the timeout expires, by looping `pump` plus a short sleep. It returns the same `GroupStatus`.
+    - A group is "settled" when every member is `Ready` or `Failed`. Failures aren't fatal to `wait`; the caller decides.
+    - On timeout, `wait` returns partial results.
+    - Waiting raises the group's members to high priority.
+  - `wait` must be called on the thread that calls `pump()`. It requires a self-submitting adapter (§6.4). Violating either rule is a panic with a clear message, never a hang.
+  - Recommended usage: block with `wait` only on tiny critical groups (fonts, loading-screen art). For level loads, keep the frame loop running, calling `pump()` and showing `progress`, then stream everything else behind placeholders.
 - **Sources:** the loader reads through an abstract source, either a **file range** or a **memory span**. Memory sources serve cache-less cooking and in-memory registration.
 - **In-memory registration:** `register_mesh(ctx, desc, data)` / `register_texture(...)` let the host hand in already-decoded data (procedural or generated content, tests, mods). It returns a normal handle with the same states, events and adapter upload path.
 - **Requests:**
@@ -357,15 +383,40 @@ struct Adapter {
     Status (*begin_upload)(void* user, UploadDesc const&, UploadTarget* out);
     void   (*commit_upload)(void* user, uint64_t token);        // data written, submit
     bool   (*is_upload_complete)(void* user, uint64_t token);   // polled during pump()
+    // visibility: called during pump() when an asset becomes Ready or is hot-reloaded
+    void   (*publish)(void* user, AssetId id, GpuObject obj, uint32_t generation);
     // lifetime
     void   (*destroy_deferred)(void* user, GpuObject obj);      // renderer delays by frames in flight
     // optional residency hooks (budget, eviction requests) — later
+    uint32_t caps;                                              // AdapterCaps, e.g. kSelfSubmitting
     void*  user;
 };
 ```
 
+**Two binding models:** the library supports both, and the renderer picks one.
+
+- **Per-frame lookup.** `kiln::gpu(ctx, handle)` returns the current `GpuObject`: the placeholder while Pending or Failed, the real object once Ready, the new version after a hot reload. It's a table lookup, allocation-free. This works with any renderer (sokol/bgfx-style binding) and needs no `publish` logic.
+- **Stable bindless slot (recommended for Vulkan 1.4).**
+  - At request time the adapter allocates a descriptor-array slot and writes the placeholder into it. Materials store the slot index, which never changes.
+  - On `publish`, the adapter overwrites the same slot with the real image, and the old object goes to `destroy_deferred`.
+  - Arrival, hot reload and (later) progressive mips then need no per-frame work and no material rebuilds.
+  - The slot is exposed through `kiln::gpu(ctx, handle)` as well, so both models share one query.
+
+**`kSelfSubmitting` capability:** the adapter's `commit_upload` submits to a queue by itself (e.g. a dedicated transfer queue), and `is_upload_complete` polls a fence or timeline semaphore. Uploads then make progress without the renderer recording a frame, which `wait()` requires. An adapter that only submits uploads inside the frame's command buffers must not set the flag; `wait()` then panics, and hosts use the keep-rendering pattern instead.
+
+**Frame integration:**
+
+```
+frame:
+  kiln::pump(ctx, { .uploadBytes = budget })   // completes uploads, calls publish, emits events
+  for (auto& e : kiln::events(ctx)) { ... }    // optional: new vertex layout → pipeline, log failures
+  record draws:
+     textures → bindless slot or kiln::gpu(ctx, h) (always valid)
+     meshes   → draw if kiln::is_ready(ctx, m); otherwise skip or draw a dev proxy
+```
+
 - Formats are an engine-neutral enum with a direct mapping to `VkFormat` *(discuss: numeric mirror vs compact enum + table)*. Mapping tables for sokol, bgfx and D3D12 come later.
-- Ship a **null adapter** (CPU memory only) for tests and tools, and an **example Vulkan 1.4 adapter** used by the example viewer (§11.2).
+- Ship a **null adapter** (CPU memory only, self-submitting: uploads complete immediately) for tests and tools, and an **example Vulkan 1.4 adapter** used by the example viewer (§11.2). The example adapter is self-submitting (dedicated transfer queue plus timeline semaphore) and uses bindless slots.
 
 ---
 
@@ -379,14 +430,23 @@ kiln::Context* ctx = kiln::create({
 });
 kiln::cook::install_provider(ctx, { .storeMode = kiln::StoreMode::Disk });   // dev builds only
 
+// critical boot assets: block briefly
+kiln::Group boot = kiln::group(ctx);
+auto font = kiln::request<kiln::Texture>(ctx, "ui/font", { .group = boot });
+kiln::GroupStatus bs = kiln::wait(ctx, boot, { .timeoutMs = 5000 });
+if (bs.failed || bs.pending) { /* host decides: abort, retry, continue */ }
+
+// everything else streams in behind placeholders
 auto mesh = kiln::request<kiln::Mesh>(ctx, "meshes/ship_hauler_a", { .priority = kiln::Priority::High });
 
 // per frame, on render thread:
 kiln::pump(ctx, { .uploadBytes = 64 << 20 });
-if (kiln::state(ctx, mesh) == kiln::State::Ready) {
-    kiln::MeshView v = kiln::view(ctx, mesh);   // parts, lods, submeshes, mounts, material names, GPU tokens
+if (kiln::has_meta(ctx, mesh)) {                // MetaReady or Ready
+    kiln::MeshView v = kiln::view(ctx, mesh);   // parts, lods, submeshes, mounts, material names
+    // place entities, attach to mounts, cull by bounds...
 }
-for (kiln::Event const& e : kiln::events(ctx)) { /* Ready / Changed / Failed */ }
+if (kiln::is_ready(ctx, mesh)) { /* draw; kiln::gpu(ctx, mesh) gives the payload GpuObject */ }
+for (kiln::Event const& e : kiln::events(ctx)) { /* MetaReady / Ready / Changed / Failed */ }
 
 kiln::release(ctx, mesh);
 kiln::destroy(ctx);
@@ -404,9 +464,9 @@ kiln::destroy(ctx);
 |---|---|---|---|
 | glTF parsing | **fastgltf** (+ simdjson) or **cgltf** | cook | fastgltf is fastest; check exception/std usage. cgltf is C99, trivial to isolate |
 | KTX2 | own minimal reader; **libktx** for writing | runtime read / cook write | Runtime reader is simple enough to write ourselves |
-| Zstd | **zstd** | later: runtime decode, cook encode | Decoder-only build for runtime |
+| Zstd | **zstd** | later: runtime decode, cook encode | Decoder-only build for runtime; shared by KTX2 supercompression and `.mesh` blobs |
 | PNG | **wuffs**, spng, or stb_image | cook | wuffs is fastest/safest |
-| Mesh processing | **meshoptimizer**, **mikktspace** | cook | Both small |
+| Mesh processing | **meshoptimizer**, **mikktspace** | cook (meshoptimizer's decoder also at runtime, later) | Both small. meshopt codecs, if chosen, need only the decoder sources in `kiln_runtime` |
 | BCn / ASTC encode | bc7enc_rdo / bc7e + rgbcx, astcenc, or Compressonator SDK | cook, post-v0.5 | |
 | Config parsing | TOML parser, reuse of glTF's JSON parser, or own INI-like | cook, post-v0.5 | *(discuss)* |
 | File watch | own polling (v0.5); later native or efsw / dmon | runtime (dev) | |
@@ -460,6 +520,7 @@ kiln::destroy(ctx);
 - the threading model (workers + `pump()`)
 - the error, diagnostic and placeholder flow
 - ergonomics of `.mesh` views and cook-settings structs
+- the render-while-loading model: placeholders, `publish` into stable slots, `MetaReady`, load groups and `wait`
 
 Quality, performance and platform-reach features come after v0.5, behind interfaces v0.5 establishes.
 
@@ -476,10 +537,10 @@ Quality, performance and platform-reach features come after v0.5, behind interfa
 | M | Deliverable | Done when |
 |---|---|---|
 | **M0** | Skeleton, CMake + presets, CI (Windows + Linux build), core types (alloc, Result/Status, panic, log, minimal containers, hash, fourcc), `.clang-format`, test runner. **Design notes** for deps, error model, adapter, handles/states and settings structs | Core tests pass; owner signed off on design notes |
-| **M1** | `.mesh` read/write per spec; KTX2 read/write for raw formats; `kiln-info` | Hand-built files round-trip; all spec static_asserts in place |
+| **M1** | `.mesh` read/write per spec (incl. `BLOB` table; codec `None` only, blob decode loop in place); KTX2 read/write for raw formats; `kiln-info` (prints blob table) | Hand-built files round-trip, both `kPayloadRaw` and a multi-blob `None` layout; all spec static_asserts in place |
 | **M2** | Cooker: glb → `.mesh` (parts, hierarchy, submeshes, material names, texture bindings + UV sets, mounts, tangents, vertex-cache optimization, default quantized profile with float fallback, authored `_lodN` pass-through if cheap); PNG → KTX2 (RGBA8/RG8/R8, sRGB/linear, gamma-correct mips, normal renorm); KTX2 pass-through; v0.5 settings subset with inference; diagnostics; `kiln-cook <dir>` and `--check` | Golden tests pass; deterministic output; diagnostic codes documented |
-| **M3** | Runtime: context, handles, states, refcounted requests (2 priority levels, reserved range field), `pump()` with upload budget, events, placeholders; compat IO backend; built-in thread pool; file/memory sources; null adapter; store + cook-on-miss provider; cache-less mode; in-memory registration | A folder of assets loads async through the null adapter within budget; tag stats show no steady-state allocation |
-| **M4** | Example Vulkan 1.4 adapter + viewer | Cooked meshes render textured; no upload hitches beyond budget |
+| **M3** | Runtime: context, handles, states incl. `MetaReady`, refcounted requests (2 priority levels + boost, reserved range field), `pump()` with upload budget, events, `publish` hook, `gpu()` lookup; kind-specific placeholders (host-overridable); load groups with `progress` and `wait`; compat IO backend; built-in thread pool; file/memory sources; null adapter; store + cook-on-miss provider; cache-less mode; in-memory registration | A folder of assets loads async through the null adapter within budget; `wait` on a group settles correctly (all ready / some failed / timeout); misuse of `wait` panics with a clear message; tag stats show no steady-state allocation |
+| **M4** | Example Vulkan 1.4 adapter + viewer: self-submitting (transfer queue + timeline semaphore), bindless slots with placeholder-then-publish | Viewer starts instantly with placeholders and fills in as assets arrive; a boot group is waited on before the first frame; no upload hitches beyond budget |
 | **M5** | Hot reload: polling watcher, re-cook, generation swap, `Changed` events, deferred destroy (glb → textures dependency only) | Editing a glb or PNG updates the viewer in ~1 s without leaks or crashes |
 | **v0.5** | Tag after the external project runs on it; API review of `api-friction.md` | Exit criteria below met; v0.6 API changes agreed |
 
@@ -494,12 +555,12 @@ Quality, performance and platform-reach features come after v0.5, behind interfa
 
 | Version | Theme | Contents |
 |---|---|---|
-| **v0.6–0.7** | Quality & pipeline | BCn encoding, Zstd, RDO; alpha-coverage mips, channel packing, cubes/arrays; LOD generation (simplifier); config files, presets, rules, sidecars, `--explain`; store index + `--gc`; fuller dependency tracking for hot reload |
+| **v0.6–0.7** | Quality & pipeline | BCn encoding, Zstd, RDO; `.mesh` payload compression (implement candidate schemes, benchmark ratio and decode MB/s on real assets, pick a default); alpha-coverage mips, channel packing, cubes/arrays; LOD generation (simplifier); config files, presets, rules, sidecars, `--explain`; store index + `--gc`; fuller dependency tracking for hot reload |
 | **v0.8** | Streaming | Range requests, progressive mips/LODs (`Partial` state), residency/budget/eviction hooks |
 | **v0.9** | Platforms | Target profiles + cross-cooking (ASTC/ETC2 mobile), native async IO backends, native file watchers, macOS; network IO backend for on-device iteration *(discuss)* |
 | **v1.0** | Hardening & freeze | `.mesh` v1 freeze; `KILN_NO_EXCEPTIONS` / `KILN_NO_RTTI` in CI; sanitizers everywhere; fuzzing; docs |
 
-Unscheduled: `EXT_meshopt_compression` input, payload compression via meshopt codecs, pack files, sokol/bgfx adapter examples, EXR, extracting `kiln/core` into a separate utility library.
+Unscheduled: `EXT_meshopt_compression` input, GPU decompression of chunked blobs, pack files, sokol/bgfx adapter examples, EXR, extracting `kiln/core` into a separate utility library.
 
 ---
 
@@ -525,3 +586,5 @@ Unscheduled: `EXT_meshopt_compression` input, payload compression via meshopt co
 7. Config file format for cook settings (TOML vs JSON vs own INI-like). Decision needed by v0.6.
 8. Example viewer on raw Vulkan 1.4 or a thin NoGraphicsAPI-style layer?
 9. Pack/archive format: in scope for v1?
+10. Should textures also expose a `MetaReady` state (extent and format known before pixel data), e.g. for pre-sizing UI layout?
+11. Load groups: may a request belong to more than one group, or is one group per request enough?

@@ -12,3 +12,5 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
 - M0: repository skeleton, CMake targets and presets, CI, core vocabulary types (allocator,
   Result/Status, panic, log, Span/StrView, FixedArray/Vec/HashMap, hash/fourcc), minimal test
   runner, design notes.
+- Design notes aligned to HANDOFF v2 (blob table, MetaReady, kind placeholders, load groups,
+  publish/acquire/caps, gpu()).

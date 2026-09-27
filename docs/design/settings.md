@@ -32,6 +32,13 @@ struct TextureCookSettings {
 ```cpp
 enum class VertexProfile : u8 { Default, Precise };
 
+enum class CompressionScheme : u8 {
+    None        = 0,   // every blob codec None; the cooker sets kPayloadRaw
+    Basic       = 1,   // Zstd + ByteShuffle (vertex), Zstd (index)
+    Meshopt     = 2,   // MeshoptVertex / MeshoptIndex
+    MeshoptZstd = 3,   // Meshopt + kBlobOuterZstd
+};
+
 struct MeshCookSettings {
     VertexProfile profile         = VertexProfile::Default;
     bool          genTangents     = true;
@@ -40,9 +47,29 @@ struct MeshCookSettings {
     bool          genLods         = false;   // reserved: simplifier lands in v0.6; true is a K3xxx error in v0.5
     float         posTolMm        = 0.1f;    // quantization tolerance before falling back to float positions
     float         weldTol         = 0.0f;    // 0 = exact-match welding only
-    // reserved: indexWidthPolicy, compression, unit/axis override, name prefixes to strip
+
+    // Compression group (reserved, post-v0.5; see mesh-format-spec §5.9)
+    CompressionScheme compression   = CompressionScheme::None;  // only None accepted in v0.5
+    u8                zstdLevel     = 0;     // 0 = zstd default level; used by Basic and MeshoptZstd
+    u32               blobChunkSize = 0;     // reserved: decoded bytes per split blob; 0 = no split (one blob per stream / index buffer per LOD)
+
+    // reserved: indexWidthPolicy, unit/axis override, name prefixes to strip
 };
 ```
+
+**Compression group** (HANDOFF §5.2, Compression row; Proposed):
+
+- The fields exist from v0.5 so the struct and the hash layout do not change when codecs land.
+- **Only `None` is accepted in v0.5.** `Basic`, `Meshopt` and `MeshoptZstd` are a K3xxx cook error
+  ("compression scheme not supported in this version"). A non-zero `blobChunkSize` is also a K3xxx
+  error in v0.5. `zstdLevel` is ignored while the scheme does not use Zstd.
+- The schemes map to the candidate schemes in mesh-format-spec §5.9. The v0.5 cooker writes codec
+  `None` for every blob and sets `kPayloadRaw`.
+- Later the scheme becomes selectable **per target** (a default in `TargetProfile`) and **per
+  asset** (presets, rules, sidecars in v0.6). The target and per-asset layers resolve into this
+  field like any other.
+- The **default scheme is picked by measurement** (ratio and decode MB/s on real assets) in
+  v0.6-0.7. Until then the default stays `None`.
 
 ### Target and session
 
@@ -112,6 +139,7 @@ Unknown or invalid combinations are cook errors with K3xxx diagnostics, for exam
 - `maxSize` not a power of two (when non-zero): error.
 - `posTolMm <= 0`: error.
 - `profile = Precise` on a target whose `maxVertexProfile` is `Default`: error.
+- `compression` other than `None`, or `blobChunkSize != 0`, in v0.5: error, unsupported.
 
 ### Hashing rule
 
@@ -138,6 +166,8 @@ u64 hash_settings(TextureCookSettings const& s) {
 - Floats are hashed by bit pattern after normalizing `-0.0f` to `0.0f`.
 - Strings (target name) are hashed as length followed by bytes.
 - A unit test pins the hash of a default-constructed struct, so a silent layout change fails CI.
+- Fields that the resolved settings do not use are hashed as 0. Example: `zstdLevel` when
+  `compression` is `None` or `Meshopt`. Changing an unused field then does not miss the store.
 
 ### Store key
 
@@ -175,6 +205,8 @@ file name = 16 lowercase hex digits of key + extension (".mesh" or ".ktx2")
   miss and re-cook, which is correct.
 - Reserved groups (alpha, encoding, supercompression, shape) must be added as new fields, not by
   changing the meaning of existing ones.
+- Enabling a compression scheme later needs no struct or schema change, only accepting the enum
+  value. The cooked output changes, so `kCookerVersion` still bumps if defaults change.
 - Layering in v0.6 needs to know which fields a layer set. `Auto` works for enums; bools and
   numbers will need a set mask or an overrides struct. Decide in v0.6.
 
@@ -186,3 +218,5 @@ file name = 16 lowercase hex digits of key + extension (".mesh" or ".ktx2")
 - Confirm the inference table (`emissiveTexture` as sRGB color).
 - How overrides express "unset" for bools and numbers in v0.6 (set mask vs parallel overrides
   struct).
+- Confirm the Compression group fields (`compression`, `zstdLevel`, `blobChunkSize`) are declared
+  in v0.5 with only `None` / 0 accepted, rather than added when codecs land.
