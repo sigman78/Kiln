@@ -8,7 +8,7 @@ using namespace kiln;
 // Format table (compile time)
 // ---------------------------------------------------------------------------
 
-static_assert(format_info(Format::R8G8B8A8_SRGB) != nullptr);
+static_assert(is_known_format(Format::R8G8B8A8_SRGB));
 static_assert(format_info(Format::R8G8B8A8_SRGB)->bytesPerBlock == 4);
 static_assert(linear_format(Format::R8G8B8A8_SRGB) == Format::R8G8B8A8_UNORM);
 static_assert(linear_format(Format::R8G8B8A8_UNORM) == Format::R8G8B8A8_UNORM);

@@ -386,7 +386,7 @@ KILN_TEST(Mesh, RoundTripRaw) {
     KILN_REQUIRE_EQ(v.sections().size, countof(expected));
     KILN_CHECK_EQ(h.sectionCount, u32(countof(expected)));
     for (usize i = 0; i < countof(expected); ++i) {
-        SectionEntry const& e = v.sections()[i];
+        SectionEntry const e = v.sections()[i];
         KILN_CHECK_EQ(e.id, expected[i]);
         KILN_CHECK_EQ(e.flags, 0u);
         KILN_CHECK_EQ(e.offset % 16, u64(0));

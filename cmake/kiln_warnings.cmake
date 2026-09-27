@@ -68,6 +68,11 @@ function(kiln_apply_warnings target)
             # -Wnull-dereference is clang-only: gcc's version depends on optimizer
             # state and reports false positives at -O2/-O3 (seen on HashMap::find).
             list(APPEND kiln_flags -Wduplicated-cond -Wlogical-op)
+            if(CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 13)
+                # gcc 13's -Wdangling-reference (in -Wall) misfires on the common
+                # `Span<T> by value` + `operator[]` returning a reference pattern.
+                list(APPEND kiln_flags -Wno-dangling-reference)
+            endif()
         else()
             list(APPEND kiln_flags -Wnull-dereference)
         endif()
