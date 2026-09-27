@@ -6,7 +6,9 @@ These notes record the decisions HANDOFF §12 asks for before more code lands. E
 
 The notes were aligned to HANDOFF v2 and mesh-format-spec v0.2 on 2026-09-26: `.mesh` blob table,
 `MetaReady`, kind-specific texture placeholders, load groups, adapter `acquire` / `publish` /
-`caps`, and `kiln::gpu()`. Changed decisions stay **Proposed**.
+`caps`, and `kiln::gpu()`. Changed decisions stay **Proposed**. On 2026-09-27 they were synced to
+mesh-format-spec draft v0.3 (magic `KMSH`, namespace `kiln::mesh`, exact-minor version rule while
+0.x, resolved `BLOB` rules; see open-questions.md section B).
 
 | Note | Decides |
 |---|---|
@@ -35,4 +37,4 @@ The owner ticks each item after reading the note and its "Open points" section.
 - [ ] settings.md
 - [ ] threading-and-io.md
 - [ ] open-questions.md section A (HANDOFF §13 answers)
-- [ ] open-questions.md section B (mesh-format-spec resolutions, B1 magic and namespace and B13-B26 blob table in particular)
+- [ ] open-questions.md section B (mesh-format-spec resolutions, folded into spec v0.3 on 2026-09-27; B1 magic and namespace and B13-B26 blob table in particular)

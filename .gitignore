@@ -21,3 +21,7 @@ Thumbs.db
 
 # Cooked asset store
 cooked/
+
+# Claude Code local settings
+.claude/*.local.json
+.claude/.*.local.json

@@ -249,9 +249,10 @@ per-level offsets and row pitches are handed back in `TextureView`, so the rende
 copy regions from the view without recomputing anything.
 
 **Mesh layout.** kiln writes the **decoded** payload: `payloadDecodedSize` bytes, base aligned to
-`max(payloadAlignment, bufferOffsetAlign)`. With `kPayloadRaw` this is one read of `GPUD` straight
-into `dst`. Otherwise kiln decodes each `BLOB` entry into `dst` at its `decodedOffset` and
-zero-fills the gaps (mesh-format-spec §5.9, §7). In v0.5 only codec `None` is supported. All stream
+`max(payloadAlignment, bufferOffsetAlign)`. The adapter always gets `payloadDecodedSize`, never
+`gpuDataSize` (the encoded size in the file, padding included). With `kPayloadRaw` the two are equal
+and this is one read of `GPUD` straight into `dst`. Otherwise kiln decodes each `BLOB` entry into
+`dst` at its `decodedOffset` and zero-fills the gaps (mesh-format-spec §5.9, §7). In v0.5 only codec `None` is supported. All stream
 and index offsets in the view are relative to the upload start, so the renderer can sub-allocate
 from a larger buffer.
 

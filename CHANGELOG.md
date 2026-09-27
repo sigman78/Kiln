@@ -14,3 +14,4 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
   runner, design notes.
 - Design notes aligned to HANDOFF v2 (blob table, MetaReady, kind placeholders, load groups,
   publish/acquire/caps, gpu()).
+- mesh-format-spec v0.3: KMSH magic, kiln::mesh namespace, exact-minor version rule while 0.x, BLOB rules resolved (filter/codec combinations, split alignment, table order, raw fast path conditions, lodRank, size limits).

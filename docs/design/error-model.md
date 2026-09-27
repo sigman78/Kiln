@@ -62,7 +62,7 @@ snake_case name.
 | `ParseError` | malformed input: glTF JSON, PNG, KTX2 header, config |
 | `ValidationFailed` | well-formed input that breaks a semantic rule (index out of range, bad settings combination) |
 | `Corrupt` | cooked data failed integrity checks (bad `.mesh` section bounds, `BLOB` table ranges or overlaps, decoded size mismatch, store entry mismatch) |
-| `VersionMismatch` | cooked data from an incompatible `.mesh` major version or cooker version |
+| `VersionMismatch` | cooked data from an incompatible `.mesh` version (other major, or other minor while the major is 0) or cooker version |
 | `Busy` | back-pressure: adapter or budget says "not now", retry next `pump()` |
 | `NotReady` | the target is not in a state that allows the operation |
 | `Cancelled` | request released or context destroyed while work was in flight |
@@ -154,12 +154,15 @@ The blob decode loop (mesh-format-spec §5.9, §7) fails the asset recoverably. 
 
 | Failure | `Code` | Diagnostic |
 |---|---|---|
+| Header sizes disagree (`gpuDataSize` vs `GPUD` size vs `fileSize - gpuDataOffset`; with `kPayloadRaw`, vs `payloadDecodedSize`) | `Corrupt` | K4xxx |
+| `BLOB` missing, not sorted by `encodedOffset`, or `lodRank` decreasing along the table | `Corrupt` | K4xxx |
 | Blob encoded range outside `GPUD`, or decoded range outside `payloadDecodedSize` | `Corrupt` | K4xxx |
-| Decoded ranges overlap, or do not cover a range that `LODS` references | `Corrupt` | K4xxx |
+| Encoded ranges overlap, decoded ranges overlap, or decoded ranges do not cover a range that `LODS` references | `Corrupt` | K4xxx |
 | Decoder output size differs from `decodedSize` (short, or would write past it) | `Corrupt` | K4xxx |
 | `kPayloadRaw` set but a blob is not an identity range (codec, filter, offsets or sizes differ) | `Corrupt` | K4xxx |
 | `checksum` mismatch (tools and debug builds) | `Corrupt` | K4xxx |
-| Misaligned offsets, `elementSize` 0 where required, `decodedSize` not a multiple of `elementSize` | `ValidationFailed` | K4xxx |
+| Misaligned offsets, `elementSize` 0, `decodedSize` not a multiple of `elementSize` (of 3 x index size for `MeshoptIndex`) | `ValidationFailed` | K4xxx |
+| Codec/filter pair not in the spec §5.9 table, `kBlobOuterZstd` with a non-`Meshopt*` codec, or a U8 index blob with a `Meshopt*` codec | `ValidationFailed` | K4xxx |
 | Unknown codec or filter id, or one not built into this runtime (anything but `None` in v0.5) | `Unsupported` | K4xxx |
 
 - `Corrupt` means the bytes cannot be trusted (bounds, overlaps, sizes). `ValidationFailed` means

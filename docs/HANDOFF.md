@@ -172,7 +172,7 @@ kiln/
 
 ### 4.2 Cooked runtime formats
 
-- **Mesh:** the `.mesh` format per `docs/mesh-format-spec.md` (v0.2 draft; **unstable until v1.0**, and the cooker version in the store key handles invalidation).
+- **Mesh:** the `.mesh` format per `docs/mesh-format-spec.md` (v0.3 draft; **unstable until v1.0**, and the cooker version in the store key handles invalidation).
   - Readers are zero-copy views over the loaded metadata blob.
   - The writer is deterministic, so identical input and settings give byte-identical output.
   - LOD records and chunk layout must stay compatible with later progressive loading (smallest LOD blob readable independently).

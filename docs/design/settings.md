@@ -51,7 +51,7 @@ struct MeshCookSettings {
     // Compression group (reserved, post-v0.5; see mesh-format-spec §5.9)
     CompressionScheme compression   = CompressionScheme::None;  // only None accepted in v0.5
     u8                zstdLevel     = 0;     // 0 = zstd default level; used by Basic and MeshoptZstd
-    u32               blobChunkSize = 0;     // reserved: decoded bytes per split blob; 0 = no split (one blob per stream / index buffer per LOD)
+    u32               blobChunkSize = 0;     // reserved: decoded bytes per split blob, rounded to the spec §5.9 lcm(unit, 16) split rule; 0 = no split (one blob per stream / index buffer per LOD)
 
     // reserved: indexWidthPolicy, unit/axis override, name prefixes to strip
 };
