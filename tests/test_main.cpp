@@ -15,11 +15,15 @@ int g_count             = 0;
 int g_failures          = 0; // in current test
 char const* g_sampleDir = nullptr;
 char const* g_corpusDir = nullptr;
+char const* g_goldenDir = nullptr;
+bool g_updateGolden     = false;
 
 } // namespace
 
 char const* sample_dir() noexcept { return g_sampleDir; }
 char const* corpus_dir() noexcept { return g_corpusDir; }
+char const* golden_dir() noexcept { return g_goldenDir; }
+bool update_golden() noexcept { return g_updateGolden; }
 
 Registrar::Registrar(TestCase* tc) noexcept {
     tc->next = nullptr;
@@ -96,6 +100,10 @@ int run_all(int argc, char** argv) noexcept {
             g_sampleDir = argv[++i];
         else if (std::strcmp(argv[i], "--corpus") == 0 && i + 1 < argc)
             g_corpusDir = argv[++i];
+        else if (std::strcmp(argv[i], "--golden") == 0 && i + 1 < argc)
+            g_goldenDir = argv[++i];
+        else if (std::strcmp(argv[i], "--update-golden") == 0)
+            g_updateGolden = true;
         else
             filter = argv[i];
     }

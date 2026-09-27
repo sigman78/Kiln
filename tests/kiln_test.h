@@ -4,6 +4,7 @@
 //
 // KILN_CHECK_* record a failure and continue; KILN_REQUIRE_* return from the test.
 // Run: kiln_tests [filter-substring] [--list] [--samples <dir>] [--corpus <dir>]
+//                  [--golden <dir>] [--update-golden]
 #pragma once
 
 #include "kiln/core.h"
@@ -38,6 +39,14 @@ int run_all(int argc, char** argv) noexcept;
 /// Directory passed via `--corpus <dir>` (the KTX2 corpus root holding manifest.txt),
 /// or nullptr if the flag was not given.
 [[nodiscard]] char const* corpus_dir() noexcept;
+
+/// Directory passed via `--golden <dir>` (holds golden/mesh/*.mesh, golden/ktx2/*.ktx2),
+/// or nullptr if the flag was not given. See tests/golden/README.md.
+[[nodiscard]] char const* golden_dir() noexcept;
+
+/// True if `--update-golden` was given: golden-file tests write the golden instead
+/// of comparing against it. See tests/golden/README.md.
+[[nodiscard]] bool update_golden() noexcept;
 
 // Value → string helpers for KILN_CHECK_EQ messages.
 usize to_str(char* buf, usize cap, bool v) noexcept;

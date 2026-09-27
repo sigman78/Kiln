@@ -88,7 +88,7 @@ endfunction()
 
 # kiln_apply_defaults(target)
 #
-# Applies kiln's baseline target setup: the warning set above, the C++20
+# Applies kiln's baseline target setup: the warning set above, the C++23
 # language standard with compiler extensions disabled, and a few MSVC-only
 # compile definitions that avoid CRT and macro friction.
 #
@@ -98,7 +98,7 @@ function(kiln_apply_defaults target)
     kiln_apply_warnings(${target})
 
     set_target_properties(${target} PROPERTIES
-        CXX_STANDARD 20
+        CXX_STANDARD 23
         CXX_STANDARD_REQUIRED ON
         CXX_EXTENSIONS OFF
     )

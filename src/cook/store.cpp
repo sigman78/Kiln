@@ -1,0 +1,193 @@
+// kiln/cook/store.cpp — content-hashed store: atomic writes, no index (v0.5).
+// Design: docs/design/settings.md ("Store key"), docs/HANDOFF.md §4.4.
+//
+// No <filesystem>, no <string>: paths are UTF-8 and built in stack buffers.
+// Windows uses the narrow ("A") Win32 / CRT API for now; a UTF-16 conversion
+// layer belongs to the M3 IO backend (include/kiln/cook/cook.h), not here.
+#include "kiln/cook/cook.h"
+
+#include "kiln/log.h"
+
+#include <atomic>
+#include <cerrno>
+#include <cstdio>
+
+#if defined(KILN_OS_WINDOWS)
+#include <direct.h>  // _mkdir
+#include <windows.h> // MoveFileExA; WIN32_LEAN_AND_MEAN/NOMINMAX set by kiln_apply_defaults
+#else
+#include <sys/stat.h> // mkdir
+#include <unistd.h>   // getpid
+#endif
+
+namespace kiln::cook {
+
+u64 store_key(u64 sourceHash, u64 settingsHash, u64 targetHash, u32 cookerVersion) noexcept {
+    return hash_combine(hash_combine(hash_combine(sourceHash, settingsHash), targetHash), u64(cookerVersion));
+}
+
+usize store_file_name(u64 key, StrView ext, char* out, usize cap) noexcept {
+    constexpr usize kHexDigits = 16;
+    usize const needed         = kHexDigits + 1 + ext.size + 1; // hex + '.' + ext + NUL
+    if (out == nullptr || cap < needed) return 0;
+
+    static constexpr char kHex[] = "0123456789abcdef";
+    for (usize i = 0; i < kHexDigits; ++i) {
+        u32 const shift = u32(kHexDigits - 1 - i) * 4;
+        out[i]          = kHex[(key >> shift) & 0xFu];
+    }
+    out[kHexDigits] = '.';
+    std::memcpy(out + kHexDigits + 1, ext.data, ext.size);
+    out[kHexDigits + 1 + ext.size] = '\0';
+    return kHexDigits + 1 + ext.size;
+}
+
+namespace {
+
+/// Copies `s` into `out` (NUL-terminated). False if it would overflow `cap`.
+[[nodiscard]] bool to_cstr(char* out, usize cap, StrView s) noexcept {
+    if (s.size + 1 > cap) return false;
+    std::memcpy(out, s.data, s.size);
+    out[s.size] = '\0';
+    return true;
+}
+
+/// Builds "<dir>/<name>" into `out` (NUL-terminated). False if it would overflow `cap`.
+[[nodiscard]] bool join_path(char* out, usize cap, StrView dir, StrView name) noexcept {
+    usize const need = dir.size + 1 + name.size + 1; // dir + '/' + name + NUL
+    if (need > cap) return false;
+    std::memcpy(out, dir.data, dir.size);
+    out[dir.size] = '/';
+    std::memcpy(out + dir.size + 1, name.data, name.size);
+    out[dir.size + 1 + name.size] = '\0';
+    return true;
+}
+
+/// Appends ".tmp.<16 hex digits>" to the NUL-terminated path in `buf`. False if
+/// it would overflow `cap`.
+[[nodiscard]] bool append_tmp_suffix(char* buf, usize cap, u64 id) noexcept {
+    usize const len  = std::strlen(buf);
+    usize const need = len + 5 + 16 + 1; // ".tmp." + hex + NUL
+    if (need > cap) return false;
+    static constexpr char kHex[] = "0123456789abcdef";
+    char* p                      = buf + len;
+    *p++                         = '.';
+    *p++                         = 't';
+    *p++                         = 'm';
+    *p++                         = 'p';
+    *p++                         = '.';
+    for (usize i = 0; i < 16; ++i) {
+        u32 const shift = u32(15 - i) * 4;
+        *p++            = kHex[(id >> shift) & 0xFu];
+    }
+    *p = '\0';
+    return true;
+}
+
+/// A process- and call-unique id for temp file names: writes are temp-file-then-
+/// rename (HANDOFF §4.4), so the temp name only needs to not collide with other
+/// writers racing the same store directory.
+[[nodiscard]] u64 next_tmp_id() noexcept {
+    static std::atomic<u64> counter{0};
+#if defined(KILN_OS_WINDOWS)
+    u64 const pid = u64(GetCurrentProcessId());
+#else
+    u64 const pid = u64(getpid());
+#endif
+    return hash_combine(pid, counter.fetch_add(1, std::memory_order_relaxed));
+}
+
+/// mkdir(dir), treating "already exists" as success. One level only: a missing
+/// grandparent directory is a caller error (see store_write's doc comment).
+[[nodiscard]] bool ensure_dir(char const* dir) noexcept {
+#if defined(KILN_OS_WINDOWS)
+    if (_mkdir(dir) == 0) return true;
+#else
+    if (mkdir(dir, 0755) == 0) return true;
+#endif
+    return errno == EEXIST;
+}
+
+} // namespace
+
+bool store_exists(StrView dir, StrView name) noexcept {
+    char path[1024];
+    if (!join_path(path, sizeof path, dir, name)) return false;
+    std::FILE* f = std::fopen(path, "rb");
+    if (!f) return false;
+    std::fclose(f);
+    return true;
+}
+
+Status store_write(StrView dir, StrView name, Span<u8 const> bytes, DiagSink const* diag) noexcept {
+    char dst[1024];
+    if (!join_path(dst, sizeof dst, dir, name)) {
+        return diagf(diag, make_status(Code::InvalidArgument), 0, Severity::Error, name, "store",
+                     "store path too long for dir %.*s", KILN_SV(dir));
+    }
+
+    // Content-addressed: an existing file with this name already holds these
+    // exact bytes (same key -> same content), so there is nothing to do.
+    if (store_exists(dir, name)) return kOk;
+
+    char dirBuf[1024];
+    if (!to_cstr(dirBuf, sizeof dirBuf, dir)) {
+        return diagf(diag, make_status(Code::InvalidArgument), 0, Severity::Error, name, "store",
+                     "store directory path too long: %.*s", KILN_SV(dir));
+    }
+    if (!ensure_dir(dirBuf)) {
+        int const e = errno;
+        return diagf(diag, make_status(Code::IoError, u16(e & 0xFFFF)), 0, Severity::Error, name, "mkdir",
+                     "could not create store directory %s (errno %d)", dirBuf, e);
+    }
+
+    char tmp[1024];
+    usize const dstLen = std::strlen(dst);
+    std::memcpy(tmp, dst, dstLen + 1);
+    if (!append_tmp_suffix(tmp, sizeof tmp, next_tmp_id())) {
+        return diagf(diag, make_status(Code::InvalidArgument), 0, Severity::Error, name, "store",
+                     "temp file path too long: %s", dst);
+    }
+
+    std::FILE* f = std::fopen(tmp, "wb");
+    if (!f) {
+        int const e = errno;
+        return diagf(diag, make_status(Code::IoError, u16(e & 0xFFFF)), 0, Severity::Error, name, "fopen",
+                     "could not open temp file %s for write (errno %d)", tmp, e);
+    }
+    usize const written  = bytes.size ? std::fwrite(bytes.data, 1, bytes.size, f) : usize(0);
+    int const writeErrno = written == bytes.size ? 0 : errno;
+    int const flushErrno = (writeErrno == 0 && std::fflush(f) != 0) ? errno : 0;
+    std::fclose(f);
+    if (writeErrno != 0 || flushErrno != 0) {
+        int const e = writeErrno != 0 ? writeErrno : flushErrno;
+        std::remove(tmp);
+        return diagf(diag, make_status(Code::IoError, u16(e & 0xFFFF)), 0, Severity::Error, name, "fwrite",
+                     "short write to temp file %s: wrote %zu of %zu bytes (errno %d)", tmp, written,
+                     bytes.size, e);
+    }
+
+    bool renamed    = false;
+    int renameErrno = 0;
+#if defined(KILN_OS_WINDOWS)
+    renamed = MoveFileExA(tmp, dst, MOVEFILE_REPLACE_EXISTING) != 0;
+    if (!renamed) renameErrno = int(GetLastError());
+#else
+    renamed = std::rename(tmp, dst) == 0;
+    if (!renamed) renameErrno = errno;
+#endif
+    if (!renamed) {
+        // Another writer may have won the race for this content-addressed name
+        // between our existence check above and this rename; that's fine.
+        if (store_exists(dir, name)) {
+            std::remove(tmp);
+            return kOk;
+        }
+        std::remove(tmp);
+        return diagf(diag, make_status(Code::IoError, u16(renameErrno & 0xFFFF)), 0, Severity::Error, name,
+                     "rename", "could not rename %s to %s (error %d)", tmp, dst, renameErrno);
+    }
+    return kOk;
+}
+
+} // namespace kiln::cook

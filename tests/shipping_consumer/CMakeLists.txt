@@ -19,4 +19,4 @@ endif()
 
 add_executable(shipping_consumer main.cpp)
 target_link_libraries(shipping_consumer PRIVATE kiln::runtime)
-set_target_properties(shipping_consumer PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
+set_target_properties(shipping_consumer PROPERTIES CXX_STANDARD 23 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)

@@ -50,7 +50,7 @@ It loads glTF 2.0 (`.glb`, optionally `.gltf`), KTX2 and PNG sources. It cooks t
 
 ## 2. Engineering principles (owner preferences)
 
-**Language level: C++20.** C++23 features only when all three target compilers support them (MSVC is the constraint). "Orthodox C++" flavor with compact, useful templates allowed.
+**Language level: C++23** (raised from C++20 on 2026-09-27 by the owner). Features are used when the current MSVC, clang and gcc releases support them; compiler friction is resolved by updating the local toolchain, never by compatibility shims in the library. "Orthodox C++" flavor with compact, useful templates allowed.
 
 **Exceptions and RTTI: don't use them, but don't disable them yet.**
 - Default builds keep the normal compiler settings. Library code must not `throw`, `try`/`catch`, `dynamic_cast` or `typeid`; code review enforces this.
@@ -580,7 +580,7 @@ Unscheduled: `EXT_meshopt_compression` input, GPU decompression of chunked blobs
 ## 13. Open questions for the owner
 
 1. Project name and license (MIT vs zlib vs Apache-2).
-2. C++20 baseline, or C++23 where MSVC allows?
+2. ~~C++20 baseline, or C++23 where MSVC allows?~~ Decided 2026-09-27: C++23 baseline.
 3. Own threading/OS wrapper vs `<thread>`/`<mutex>` confined to `.cpp` files.
 4. fastgltf vs cgltf.
 5. Format enum: mirror `VkFormat` numerically, or a compact own enum with mapping tables?

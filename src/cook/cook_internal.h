@@ -1,0 +1,110 @@
+// src/cook/cook_internal.h — private interface between the glTF importer
+// (gltf_import.cpp, the only file that sees cgltf) and the mesh cooker
+// (mesh_cook.cpp: geometry pipeline, quantization, materials, write).
+//
+// The importer resolves everything cgltf-specific into plain arrays in the
+// per-cook arena: naming conventions are applied, node transforms are reduced
+// to part-relative translation/rotation plus a residual matrix to bake into
+// the vertices, and every attribute is expanded to f32.
+#pragma once
+
+#include "kiln/cook/cook.h"
+#include "kiln/mesh.h"
+
+namespace kiln::cook::detail {
+
+inline constexpr u32 kMaxUvSets       = 2;        ///< TEXCOORD_0 / TEXCOORD_1 are cooked
+inline constexpr u32 kSlotCount       = 5;        ///< mesh::TextureSlot BaseColor..Emissive
+inline constexpr u32 kDefaultMaterial = kInvalid; ///< primitive without a material
+
+/// Column-major 4x4 matrix (glTF convention: m[col * 4 + row]).
+struct Mat4 {
+    f32 m[16];
+};
+/// Column-major 3x3 matrix (m[col * 3 + row]).
+struct Mat3 {
+    f32 m[9];
+};
+
+/// One triangle-list primitive, attributes expanded to f32 in the arena.
+struct ImportPrim {
+    u32 material               = kDefaultMaterial; ///< glTF material index or kDefaultMaterial
+    u32 vertexCount            = 0;
+    u32 indexCount             = 0;       ///< multiple of 3; every index < vertexCount
+    f32 const* positions       = nullptr; ///< 3 * vertexCount
+    f32 const* normals         = nullptr; ///< 3 * vertexCount, or null (generated)
+    f32 const* uvs[kMaxUvSets] = {};      ///< 2 * vertexCount, or null
+    f32 const* colors          = nullptr; ///< 4 * vertexCount (RGBA), or null
+    u32 const* indices         = nullptr; ///< indexCount
+};
+
+struct ImportLod {
+    StrView nodeName; ///< the node the geometry came from (diagnostics)
+    u32 lodIndex = 0; ///< authored N (0 for the base)
+    Span<ImportPrim const> prims;
+};
+
+struct ImportPart {
+    StrView name;
+    u32 parent         = kInvalid; ///< index into ImportScene::parts
+    f32 translation[3] = {0, 0, 0};
+    f32 rotation[4]    = {0, 0, 0, 1};
+    /// Residual scale/shear (and mirror) baked into every LOD's vertices:
+    /// position' = bake * position, normal' = normalize(bakeNormal * normal).
+    Mat3 bake         = {};
+    Mat3 bakeNormal   = {};
+    bool bakeIdentity = true;
+    bool flipWinding  = false;  ///< det(bake) < 0
+    Mat4 frame        = {};     ///< model-space frame of the cooked part (translation/rotation chain)
+    Span<ImportLod const> lods; ///< LOD0 first; empty if the node's mesh had no triangles
+};
+
+struct ImportTexture {
+    bool present = false;    ///< the material slot references a texture
+    u32 image    = kInvalid; ///< glTF image index, kInvalid if the texture has no image
+    u32 texcoord = 0;
+};
+
+struct ImportMaterial {
+    StrView name;                  ///< as written; empty if unnamed
+    u32 index                 = 0; ///< glTF material index
+    bool doubleSided          = false;
+    mesh::AlphaMode alphaMode = mesh::AlphaMode::Opaque;
+    f32 alphaCutoff           = 0.5f;
+    ImportTexture slots[kSlotCount]; ///< indexed by mesh::TextureSlot
+};
+
+struct ImportImage {
+    StrView name;         ///< as written; may be empty
+    StrView uri;          ///< external URI as written; empty for embedded / data: images
+    StrView mimeType;     ///< may be empty
+    Span<u8 const> bytes; ///< embedded bytes (buffer view or decoded data: URI)
+    bool usable = false;  ///< has an external URI or embedded bytes
+};
+
+struct ImportMount {
+    StrView name;
+    u32 parentPart     = kInvalid;
+    f32 translation[3] = {0, 0, 0};
+    f32 rotation[4]    = {0, 0, 0, 1};
+    StrView extras; ///< "key=value;..." or empty
+};
+
+struct ImportScene {
+    Span<ImportPart const> parts;         ///< topological (parent < self)
+    Span<ImportMaterial const> materials; ///< every glTF material, glTF order
+    Span<ImportImage const> images;       ///< every glTF image, glTF order
+    Span<ImportMount const> mounts;       ///< traversal order
+};
+
+/// Parse, load buffers, validate and traverse. Everything in `out` lives in
+/// `arena`. Emits K1xxx diagnostics; fails per cook.h.
+Status import_gltf(MeshSource const& src, MeshCookSettings const& settings, Arena& arena,
+                   Allocator const* alloc, DiagSink const* diag, ImportScene& out) noexcept;
+
+/// The asset name used in diagnostics (sourcePath if set, else assetPath).
+[[nodiscard]] inline StrView diag_asset(MeshSource const& src) noexcept {
+    return src.sourcePath.empty() ? src.assetPath : src.sourcePath;
+}
+
+} // namespace kiln::cook::detail

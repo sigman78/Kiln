@@ -1,0 +1,280 @@
+// PNG decoding for texture cooking, via wuffs (third_party/wuffs, v0.4, PNG modules).
+//
+// wuffs never allocates here: the decoder struct, its work buffer and the pixel
+// buffer all come from the caller's allocator (Tag::Cook). The PNG is decoded to
+// one of two interleaved destination formats wuffs can always swizzle to:
+//   8-bit sources (and 1/2/4-bit, expanded)  -> RGBA_NONPREMUL           (4 x u8)
+//   16-bit sources                           -> BGRA_NONPREMUL_4X16LE    (4 x u16 LE)
+// and then narrowed to the channel count the PNG itself declares (IHDR color type
+// plus tRNS), so a gray PNG yields a 1-channel Image, gray+alpha 2, and so on.
+#include "kiln/cook/image.h"
+#include "kiln/ktx2.h"
+
+#include <cstring>
+
+// wuffs is compiled once in third_party/wuffs/wuffs_impl.c; here it is only a header.
+#ifndef WUFFS_CONFIG__MODULES
+#define WUFFS_CONFIG__MODULES
+#endif
+#ifndef WUFFS_CONFIG__MODULE__BASE
+#define WUFFS_CONFIG__MODULE__BASE
+#endif
+#ifndef WUFFS_CONFIG__MODULE__ADLER32
+#define WUFFS_CONFIG__MODULE__ADLER32
+#endif
+#ifndef WUFFS_CONFIG__MODULE__CRC32
+#define WUFFS_CONFIG__MODULE__CRC32
+#endif
+#ifndef WUFFS_CONFIG__MODULE__DEFLATE
+#define WUFFS_CONFIG__MODULE__DEFLATE
+#endif
+#ifndef WUFFS_CONFIG__MODULE__ZLIB
+#define WUFFS_CONFIG__MODULE__ZLIB
+#endif
+#ifndef WUFFS_CONFIG__MODULE__PNG
+#define WUFFS_CONFIG__MODULE__PNG
+#endif
+
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Weverything"
+#elif defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wold-style-cast"
+#pragma GCC diagnostic ignored "-Wconversion"
+#pragma GCC diagnostic ignored "-Wsign-conversion"
+#pragma GCC diagnostic ignored "-Wpedantic"
+#pragma GCC diagnostic ignored "-Wshadow"
+#pragma GCC diagnostic ignored "-Wcast-align"
+#pragma GCC diagnostic ignored "-Wunused-function"
+#pragma GCC diagnostic ignored "-Wunused-parameter"
+#pragma GCC diagnostic ignored "-Wmissing-field-initializers"
+#pragma GCC diagnostic ignored "-Wuseless-cast"
+#pragma GCC diagnostic ignored "-Wduplicated-cond"
+#pragma GCC diagnostic ignored "-Wlogical-op"
+#pragma GCC diagnostic ignored "-Wdouble-promotion"
+#pragma GCC diagnostic ignored "-Wnull-dereference"
+#elif defined(_MSC_VER)
+#pragma warning(push, 0)
+#endif
+#include "wuffs-v0.4.c"
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#elif defined(__GNUC__)
+#pragma GCC diagnostic pop
+#elif defined(_MSC_VER)
+#pragma warning(pop)
+#endif
+
+namespace kiln::cook {
+
+namespace {
+
+constexpr u8 kPngSignature[8] = {0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n'};
+constexpr u32 kMaxDimension   = 16384;
+constexpr u64 kMaxImageBytes  = u64(1) << 32;
+
+u32 be32(u8 const* p) noexcept {
+    return (u32(p[0]) << 24) | (u32(p[1]) << 16) | (u32(p[2]) << 8) | u32(p[3]);
+}
+
+struct PngHeader {
+    u32 width    = 0;
+    u32 height   = 0;
+    u8 depth     = 0;
+    u8 colorType = 0;
+    u8 interlace = 0;
+    bool hasTrns = false;
+};
+
+/// Validate the IHDR combination (PNG spec table 11.1).
+bool valid_depth(u8 colorType, u8 depth) noexcept {
+    switch (colorType) {
+    case 0: return depth == 1 || depth == 2 || depth == 4 || depth == 8 || depth == 16;
+    case 3: return depth == 1 || depth == 2 || depth == 4 || depth == 8;
+    case 2:
+    case 4:
+    case 6: return depth == 8 || depth == 16;
+    default: return false;
+    }
+}
+
+/// Scan chunk headers up to the first IDAT for a tRNS chunk. Stops quietly on a
+/// malformed chunk list; wuffs reports those errors during the real decode.
+bool scan_trns(Span<u8 const> bytes) noexcept {
+    usize pos = 8;
+    while (pos + 8 <= bytes.size) {
+        u32 const len  = be32(bytes.data + pos);
+        u8 const* type = bytes.data + pos + 4;
+        if (std::memcmp(type, "tRNS", 4) == 0) return true;
+        if (std::memcmp(type, "IDAT", 4) == 0 || std::memcmp(type, "IEND", 4) == 0) return false;
+        u64 const next = u64(pos) + 12 + len;
+        if (next > bytes.size) return false;
+        pos = usize(next);
+    }
+    return false;
+}
+
+Status fail(DiagSink const* diag, StrView asset, Code code, u32 k, char const* fmt, unsigned long long a = 0,
+            unsigned long long b = 0) noexcept {
+    return diagf(diag, make_status(code), k, Severity::Error, asset, "png", fmt, a, b);
+}
+
+/// Map a wuffs error/suspension to kiln's Status and a K2xxx diagnostic.
+Status wuffs_fail(DiagSink const* diag, StrView asset, wuffs_base__status st, char const* stage) noexcept {
+    char const* msg = st.repr ? st.repr : "unknown";
+    if (std::strstr(msg, "unsupported") != nullptr)
+        return diagf(diag, make_status(Code::Unsupported), kDiagImageUnsupported, Severity::Error, asset,
+                     "png", "%s: %s", stage, msg);
+    // Suspensions ("$base: short read") on a closed stream mean truncated input.
+    return diagf(diag, make_status(Code::ParseError), kDiagImageDecodeFailed, Severity::Error, asset, "png",
+                 "%s: %s", stage, msg);
+}
+
+/// Allocation owned for the duration of decode_png.
+struct Scratch {
+    Allocator const* allocator = nullptr;
+    void* ptr                  = nullptr;
+    usize size                 = 0;
+    usize align                = 0;
+
+    Scratch(Allocator const* a, usize n, usize al) noexcept : allocator(a), size(n), align(al) {
+        if (n) ptr = kiln::alloc(a, n, al, Tag::Cook);
+    }
+    ~Scratch() noexcept { kiln::free(allocator, ptr, size, align, Tag::Cook); }
+    Scratch(Scratch const&)            = delete;
+    Scratch& operator=(Scratch const&) = delete;
+    [[nodiscard]] u8* bytes() const noexcept { return static_cast<u8*>(ptr); }
+};
+
+} // namespace
+
+bool is_png(Span<u8 const> bytes) noexcept {
+    return bytes.size >= sizeof(kPngSignature) &&
+           std::memcmp(bytes.data, kPngSignature, sizeof(kPngSignature)) == 0;
+}
+
+bool is_ktx2(Span<u8 const> bytes) noexcept {
+    return bytes.size >= sizeof(ktx2::kIdentifier) &&
+           std::memcmp(bytes.data, ktx2::kIdentifier, sizeof(ktx2::kIdentifier)) == 0;
+}
+
+Result<Image> decode_png(Span<u8 const> bytes, Allocator const* alloc, DiagSink const* diag,
+                         StrView asset) noexcept {
+    if (!alloc) alloc = default_allocator();
+    if (!is_png(bytes))
+        return fail(diag, asset, Code::ParseError, kDiagImageDecodeFailed, "not a PNG signature");
+
+    // --- IHDR (always the first chunk: 4 length + 4 type + 13 data + 4 CRC) -----------
+    if (bytes.size < 8 + 8 + 13 + 4 || be32(bytes.data + 8) != 13 ||
+        std::memcmp(bytes.data + 12, "IHDR", 4) != 0)
+        return fail(diag, asset, Code::ParseError, kDiagImageDecodeFailed, "missing or truncated IHDR");
+    u8 const* ihdr = bytes.data + 16;
+    PngHeader h;
+    h.width     = be32(ihdr + 0);
+    h.height    = be32(ihdr + 4);
+    h.depth     = ihdr[8];
+    h.colorType = ihdr[9];
+    h.interlace = ihdr[12];
+    if (h.width == 0 || h.height == 0 || h.width > 0x7FFFFFFFu || h.height > 0x7FFFFFFFu)
+        return fail(diag, asset, Code::ParseError, kDiagImageDecodeFailed, "invalid extent %llux%llu",
+                    h.width, h.height);
+    if (!valid_depth(h.colorType, h.depth))
+        return fail(diag, asset, Code::ParseError, kDiagImageDecodeFailed,
+                    "invalid color type %llu / bit depth %llu", h.colorType, h.depth);
+    if (h.width > kMaxDimension || h.height > kMaxDimension)
+        return fail(diag, asset, Code::Unsupported, kDiagImageTooLarge, "extent %llux%llu exceeds 16384",
+                    h.width, h.height);
+    h.hasTrns = scan_trns(bytes);
+
+    u32 channels = 0;
+    switch (h.colorType) {
+    case 0: channels = h.hasTrns ? 2 : 1; break; // gray (+ tRNS key -> alpha)
+    case 2: channels = h.hasTrns ? 4 : 3; break; // RGB
+    case 3: channels = h.hasTrns ? 4 : 3; break; // palette -> RGB / RGBA
+    case 4: channels = 2; break;                 // gray + alpha
+    case 6: channels = 4; break;                 // RGBA
+    default: break;
+    }
+    u32 const bits      = h.depth == 16 ? 16u : 8u;
+    u64 const outBytes  = u64(h.width) * h.height * channels * (bits / 8);
+    u64 const workBytes = u64(h.width) * h.height * 4 * (bits / 8); // 4-channel decode buffer
+    if (outBytes > kMaxImageBytes)
+        return fail(diag, asset, Code::Unsupported, kDiagImageTooLarge,
+                    "decoded size %llu bytes exceeds 2^32", outBytes);
+
+    // --- wuffs decoder ---------------------------------------------------------------
+    Scratch decMem(alloc, sizeof__wuffs_png__decoder(), 16);
+    auto* dec = static_cast<wuffs_png__decoder*>(decMem.ptr);
+    wuffs_base__status st =
+        wuffs_png__decoder__initialize(dec, sizeof__wuffs_png__decoder(), WUFFS_VERSION, 0u);
+    if (!wuffs_base__status__is_ok(&st)) return wuffs_fail(diag, asset, st, "initialize");
+
+    // wuffs only reads through the io_buffer; the const_cast never leads to a write.
+    wuffs_base__io_buffer src = wuffs_base__ptr_u8__reader(const_cast<u8*>(bytes.data), bytes.size, true);
+
+    wuffs_base__image_config ic = wuffs_base__null_image_config();
+    st                          = wuffs_png__decoder__decode_image_config(dec, &ic, &src);
+    if (!wuffs_base__status__is_ok(&st)) return wuffs_fail(diag, asset, st, "image config");
+    u32 const w   = wuffs_base__pixel_config__width(&ic.pixcfg);
+    u32 const hgt = wuffs_base__pixel_config__height(&ic.pixcfg);
+    if (w != h.width || hgt != h.height)
+        return fail(diag, asset, Code::ParseError, kDiagImageDecodeFailed, "IHDR / decoder extent mismatch");
+
+    u32 const dstFormat = bits == 16 ? WUFFS_BASE__PIXEL_FORMAT__BGRA_NONPREMUL_4X16LE
+                                     : WUFFS_BASE__PIXEL_FORMAT__RGBA_NONPREMUL;
+    wuffs_base__pixel_config__set(&ic.pixcfg, dstFormat, WUFFS_BASE__PIXEL_SUBSAMPLING__NONE, w, hgt);
+
+    u64 const workLen = wuffs_png__decoder__workbuf_len(dec).max_incl;
+    if (workLen > kMaxImageBytes * 2)
+        return fail(diag, asset, Code::Unsupported, kDiagImageTooLarge, "work buffer %llu bytes too large",
+                    workLen);
+    Scratch work(alloc, usize(workLen), 16);
+    Scratch pixels(alloc, usize(workBytes), 16);
+
+    wuffs_base__pixel_buffer pb;
+    st = wuffs_base__pixel_buffer__set_from_slice(&pb, &ic.pixcfg,
+                                                  wuffs_base__make_slice_u8(pixels.bytes(), pixels.size));
+    if (!wuffs_base__status__is_ok(&st)) return wuffs_fail(diag, asset, st, "pixel buffer");
+
+    // WUFFS_BASE__PIXEL_BLEND__SRC is a C-style cast of 0; spelled out to keep -Wold-style-cast quiet.
+    constexpr auto kBlendSrc = static_cast<wuffs_base__pixel_blend>(0);
+    st                       = wuffs_png__decoder__decode_frame(dec, &pb, &src, kBlendSrc,
+                                                                wuffs_base__make_slice_u8(work.bytes(), work.size), nullptr);
+    if (!wuffs_base__status__is_ok(&st)) return wuffs_fail(diag, asset, st, "decode");
+
+    // --- Narrow to the PNG's own channel layout ----------------------------------------
+    Image img;
+    img.width          = w;
+    img.height         = hgt;
+    img.channels       = channels;
+    img.bitsPerChannel = bits;
+    img.pixels.init(alloc, Tag::Cook);
+    img.pixels.resize(usize(outBytes));
+
+    // Source channel order in the decode buffer: RGBA for 8-bit, BGRA for 16-bit.
+    // 1 channel = R (gray replicated), 2 = R + A (gray + alpha), 3 = RGB, 4 = RGBA.
+    u32 const rgbaIndex[4] = {bits == 16 ? 2u : 0u, 1u, bits == 16 ? 0u : 2u, 3u};
+    u32 pick[4]            = {rgbaIndex[0], rgbaIndex[1], rgbaIndex[2], rgbaIndex[3]};
+    if (channels == 2) pick[1] = rgbaIndex[3];
+
+    u64 const count = u64(w) * hgt;
+    u8 const* s     = pixels.bytes();
+    u8* d           = img.pixels.data();
+    if (bits == 8) {
+        for (u64 i = 0; i < count; ++i, s += 4, d += channels)
+            for (u32 c = 0; c < channels; ++c)
+                d[c] = s[pick[c]];
+    } else {
+        for (u64 i = 0; i < count; ++i, s += 8, d += channels * 2) {
+            for (u32 c = 0; c < channels; ++c) {
+                u8 const* q = s + pick[c] * 2;
+                u16 const v = u16(q[0] | (q[1] << 8)); // little-endian -> native
+                std::memcpy(d + c * 2, &v, 2);
+            }
+        }
+    }
+    return img;
+}
+
+} // namespace kiln::cook

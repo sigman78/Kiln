@@ -1,0 +1,787 @@
+// cook_mesh (glTF/GLB -> .mesh) tests. Cook-only.
+//
+// Always run: a minimal GLB built in-test (quad, optional node scale) for
+// quantization, fallback and determinism. With `--corpus <dir>` (the KTX2 corpus
+// root; the glTF corpus is its sibling `<dir>/../gltf`): every entry of
+// tests/corpus/gltf/manifest.txt is cooked with default resolved settings and
+// checked against the manifest, plus targeted assertions per file. Cooked files
+// are written to `<sample_dir()>/cooked_<stem>.mesh` when `--samples` is given.
+#include "kiln_test.h"
+#include "ktx2_corpus.h" // read_file, parse_u32
+
+#include "kiln/containers.h"
+#include "kiln/cook/cook.h"
+#include "kiln/mesh.h"
+
+#include <cmath>
+#include <cstdio>
+
+using namespace kiln;
+namespace corpus = kiln::test::corpus;
+
+namespace {
+
+// ---------------------------------------------------------------------------
+// Diagnostics capture
+// ---------------------------------------------------------------------------
+
+struct Diags {
+    struct Item {
+        u32 code;
+        Severity sev;
+    };
+    Item items[256];
+    int count     = 0;
+    u32 firstErr  = 0;
+    char msg[512] = {};
+
+    static void fn(void* user, Diagnostic const& d) {
+        auto* self = static_cast<Diags*>(user);
+        if (self->count < 256) self->items[self->count] = {d.code, d.severity};
+        ++self->count;
+        if (d.severity == Severity::Error && self->firstErr == 0) {
+            self->firstErr = d.code;
+            format(self->msg, sizeof self->msg, "K%u %.*s: %.*s", d.code, KILN_SV(d.where),
+                   KILN_SV(d.message));
+        }
+    }
+    DiagSink sink() { return DiagSink{&fn, this}; }
+    [[nodiscard]] int count_of(u32 code, Severity sev) const {
+        int n = 0;
+        for (int i = 0; i < count && i < 256; ++i)
+            n += items[i].code == code && items[i].sev == sev;
+        return n;
+    }
+};
+
+// ---------------------------------------------------------------------------
+// Cooking helpers
+// ---------------------------------------------------------------------------
+
+cook::MeshCookSettings default_settings() {
+    Result<cook::MeshCookSettings> r =
+        cook::resolve_mesh(cook::MeshCookSettings{}, cook::TargetProfile{}, cook::CookSession{});
+    KILN_VERIFY(r.ok());
+    return r.value();
+}
+
+struct DirResolver {
+    char dir[1024];
+    static Status fn(void* user, StrView uri, Allocator const* alloc, Vec<u8>* out) {
+        auto* self = static_cast<DirResolver*>(user);
+        char path[2048];
+        format(path, sizeof path, "%s/%.*s", self->dir, KILN_SV(uri));
+        Vec<u8> bytes(alloc, Tag::Cook);
+        if (!corpus::read_file(path, bytes)) return make_status(Code::NotFound);
+        *out = std::move(bytes);
+        return kOk;
+    }
+};
+
+Result<cook::CookedMesh> cook_bytes(Span<u8 const> bytes, StrView assetPath, Diags& d,
+                                    cook::MeshCookSettings const& s, DirResolver* resolver = nullptr) {
+    cook::MeshSource src{};
+    src.bytes      = bytes;
+    src.assetPath  = assetPath;
+    src.sourcePath = assetPath;
+    if (resolver) src.resolver = {&DirResolver::fn, resolver};
+    DiagSink sink = d.sink();
+    return cook::cook_mesh(src, s, cook::TargetProfile{}, default_allocator(), &sink);
+}
+
+/// A cooked file opened with full validation and its decoded payload.
+struct Opened {
+    Vec<u8> payload{default_allocator(), Tag::Test};
+    mesh::MeshView view;
+    bool ok = false;
+};
+
+void open_cooked(cook::CookedMesh const& m, Opened& o, char const* name) {
+    Result<mesh::MeshView> r = mesh::MeshView::open(m.file.span());
+    if (!KILN_CHECK_MSG(r.ok(), "%s: MeshView::open failed (%s)", name, code_name(r.code()))) return;
+    o.view = r.value();
+    o.payload.resize(usize(o.view.decoded_size()));
+    mesh::DecodeOptions dopt;
+    dopt.verifyChecksums = true;
+    if (!KILN_CHECK_MSG(mesh::decode_payload(o.view, o.view.encoded(), o.payload.span(), dopt).ok(),
+                        "%s: decode_payload failed", name))
+        return;
+    if (!KILN_CHECK_MSG(mesh::check_indices(o.view, o.payload.span()).ok(), "%s: check_indices failed", name))
+        return;
+    o.ok = true;
+}
+
+void write_sample(char const* name, Span<u8 const> bytes) {
+    char const* dir = kiln::test::sample_dir();
+    if (!dir) return;
+    char path[1024];
+    format(path, sizeof path, "%s/cooked_%s.mesh", dir, name);
+    std::FILE* f = std::fopen(path, "wb");
+    if (!KILN_CHECK_MSG(f != nullptr, "cannot write %s", path)) return;
+    KILN_CHECK(std::fwrite(bytes.data, 1, bytes.size, f) == bytes.size);
+    std::fclose(f);
+}
+
+// ---------------------------------------------------------------------------
+// Decoding helpers (tests only)
+// ---------------------------------------------------------------------------
+
+mesh::VertexAttrib const* find_attrib(mesh::VertexLayout const& l, mesh::Semantic s, u8 index = 0) {
+    for (u32 i = 0; i < l.attribCount; ++i)
+        if (l.attribs[i].semantic == u8(s) && l.attribs[i].semanticIndex == index) return &l.attribs[i];
+    return nullptr;
+}
+
+f32 half_to_f32(u16 h) {
+    u32 const sign = u32(h & 0x8000u) << 16;
+    u32 const exp  = (h >> 10) & 0x1Fu;
+    u32 const mant = h & 0x3FFu;
+    if (exp == 0) {
+        f32 const v = std::ldexp(f32(mant), -24);
+        return sign ? -v : v;
+    }
+    if (exp == 31) return std::bit_cast<f32>(sign | 0x7F800000u | (mant << 13));
+    return std::bit_cast<f32>(sign | ((exp + 112u) << 23) | (mant << 13));
+}
+
+void decode_position(Opened const& o, mesh::MeshPart const& part, mesh::MeshLod const& lod, u32 v,
+                     f32 out[3]) {
+    mesh::VertexLayout const& l = o.view.layouts()[lod.layout];
+    u8 const* p                 = o.payload.data() + lod.streamOffset[0] + usize(v) * l.strides[0];
+    if (l.attribs[0].format == u32(Format::R32G32B32_SFLOAT)) {
+        std::memcpy(out, p, 12);
+        return;
+    }
+    for (u32 a = 0; a < 3; ++a)
+        out[a] = f32(read_unaligned<u16>(p + a * 2)) / 65535.0f * part.posScale[a] + part.posBias[a];
+}
+
+void decode_normal(Opened const& o, mesh::MeshLod const& lod, u32 v, f32 out[3]) {
+    mesh::VertexLayout const& l = o.view.layouts()[lod.layout];
+    mesh::VertexAttrib const* a = find_attrib(l, mesh::Semantic::Normal);
+    u8 const* p =
+        o.payload.data() + lod.streamOffset[a->stream] + usize(v) * l.strides[a->stream] + a->offset;
+    f32 x = max(f32(read_unaligned<i16>(p)) / 32767.0f, -1.0f);
+    f32 y = max(f32(read_unaligned<i16>(p + 2)) / 32767.0f, -1.0f);
+    f32 z = 1.0f - std::fabs(x) - std::fabs(y);
+    if (z < 0) {
+        f32 const ox = (1.0f - std::fabs(y)) * (x >= 0 ? 1.0f : -1.0f);
+        f32 const oy = (1.0f - std::fabs(x)) * (y >= 0 ? 1.0f : -1.0f);
+        x            = ox;
+        y            = oy;
+    }
+    f32 const len = std::sqrt(x * x + y * y + z * z);
+    out[0]        = x / len;
+    out[1]        = y / len;
+    out[2]        = z / len;
+}
+
+u32 read_index(Opened const& o, mesh::MeshLod const& lod, u32 i) {
+    u8 const* p = o.payload.data() + lod.indexOffset;
+    return lod.indexType == u8(mesh::IndexType::U16) ? read_unaligned<u16>(p + usize(i) * 2)
+                                                     : read_unaligned<u32>(p + usize(i) * 4);
+}
+
+/// Count triangles whose geometric normal (CCW) disagrees with the averaged vertex normal.
+u32 count_backfacing(Opened const& o, mesh::MeshPart const& part, mesh::MeshLod const& lod) {
+    u32 bad = 0;
+    for (u32 t = 0; t + 2 < lod.indexCount; t += 3) {
+        f32 p[3][3], n[3][3];
+        for (u32 c = 0; c < 3; ++c) {
+            u32 const v = read_index(o, lod, t + c);
+            decode_position(o, part, lod, v, p[c]);
+            decode_normal(o, lod, v, n[c]);
+        }
+        f32 const e1[3] = {p[1][0] - p[0][0], p[1][1] - p[0][1], p[1][2] - p[0][2]};
+        f32 const e2[3] = {p[2][0] - p[0][0], p[2][1] - p[0][1], p[2][2] - p[0][2]};
+        f32 const g[3]  = {e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2],
+                           e1[0] * e2[1] - e1[1] * e2[0]};
+        f32 d           = 0;
+        for (u32 a = 0; a < 3; ++a)
+            d += g[a] * (n[0][a] + n[1][a] + n[2][a]);
+        if (d <= 0) ++bad;
+    }
+    return bad;
+}
+
+u32 part_index(mesh::MeshView const& v, StrView name) {
+    for (u32 i = 0; i < v.parts().size(); ++i)
+        if (v.str(v.parts()[i].nameStr) == name) return i;
+    return kInvalid;
+}
+
+// ---------------------------------------------------------------------------
+// Minimal in-test GLB: one quad node "quad" (POSITION/NORMAL/TEXCOORD_0, u16
+// indices, material "paint") with a uniform node scale.
+// ---------------------------------------------------------------------------
+
+void put_bytes(Vec<u8>& out, void const* p, usize n) {
+    out.append(Span<u8 const>(static_cast<u8 const*>(p), n));
+}
+void put_u32(Vec<u8>& out, u32 v) { put_bytes(out, &v, 4); }
+
+Vec<u8> make_quad_glb(f32 scale, f32 uvScale = 1.0f) {
+    f32 const pos[12] = {-1, 0, 1, 1, 0, 1, 1, 0, -1, -1, 0, -1};
+    f32 const nrm[12] = {0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0};
+    f32 const uv[8]   = {0, 0, uvScale, 0, uvScale, uvScale, 0, uvScale};
+    u16 const idx[6]  = {0, 1, 2, 0, 2, 3};
+    Vec<u8> bin(default_allocator(), Tag::Test);
+    put_bytes(bin, pos, sizeof pos);
+    put_bytes(bin, nrm, sizeof nrm);
+    put_bytes(bin, uv, sizeof uv);
+    put_bytes(bin, idx, sizeof idx);
+    while (bin.size() % 4)
+        bin.push_back(0);
+
+    char json[2048];
+    usize n =
+        format(json, sizeof json,
+               "{\"asset\":{\"version\":\"2.0\"},\"scene\":0,\"scenes\":[{\"nodes\":[0]}],"
+               "\"nodes\":[{\"name\":\"quad\",\"mesh\":0,\"scale\":[%g,%g,%g]}],"
+               "\"meshes\":[{\"primitives\":[{\"attributes\":{\"POSITION\":0,\"NORMAL\":1,\"TEXCOORD_0\":2},"
+               "\"indices\":3,\"material\":0}]}],"
+               "\"materials\":[{\"name\":\"paint\"}],"
+               "\"buffers\":[{\"byteLength\":%u}],"
+               "\"bufferViews\":[{\"buffer\":0,\"byteOffset\":0,\"byteLength\":48},"
+               "{\"buffer\":0,\"byteOffset\":48,\"byteLength\":48},"
+               "{\"buffer\":0,\"byteOffset\":96,\"byteLength\":32},"
+               "{\"buffer\":0,\"byteOffset\":128,\"byteLength\":12}],"
+               "\"accessors\":[{\"bufferView\":0,\"componentType\":5126,\"count\":4,\"type\":\"VEC3\","
+               "\"min\":[-1,0,-1],\"max\":[1,0,1]},"
+               "{\"bufferView\":1,\"componentType\":5126,\"count\":4,\"type\":\"VEC3\"},"
+               "{\"bufferView\":2,\"componentType\":5126,\"count\":4,\"type\":\"VEC2\"},"
+               "{\"bufferView\":3,\"componentType\":5123,\"count\":6,\"type\":\"SCALAR\"}]}",
+               f64(scale), f64(scale), f64(scale), unsigned(bin.size()));
+    while (n % 4)
+        json[n++] = ' ';
+
+    Vec<u8> glb(default_allocator(), Tag::Test);
+    put_u32(glb, fourcc('g', 'l', 'T', 'F'));
+    put_u32(glb, 2);
+    put_u32(glb, u32(12 + 8 + n + 8 + bin.size()));
+    put_u32(glb, u32(n));
+    put_u32(glb, fourcc('J', 'S', 'O', 'N'));
+    put_bytes(glb, json, n);
+    put_u32(glb, u32(bin.size()));
+    put_u32(glb, fourcc('B', 'I', 'N', '\0'));
+    put_bytes(glb, bin.data(), bin.size());
+    return glb;
+}
+
+bool same_bytes(Span<u8 const> a, Span<u8 const> b) { return corpus::bytes_equal(a, b); }
+
+} // namespace
+
+// ===========================================================================
+// Always-run tests (in-test GLB)
+// ===========================================================================
+
+KILN_TEST(MeshCook, QuadDefaultProfile) {
+    Vec<u8> const glb = make_quad_glb(1.0f);
+    Diags d;
+    Result<cook::CookedMesh> r = cook_bytes(glb.span(), "meshes/quad", d, default_settings());
+    KILN_REQUIRE(r.ok());
+    KILN_CHECK_EQ(d.firstErr, 0u);
+    Opened o;
+    open_cooked(r.value(), o, "quad");
+    KILN_REQUIRE(o.ok);
+
+    KILN_CHECK_EQ(o.view.name(), StrView("quad"));
+    KILN_CHECK_EQ(o.view.asset_id(), hash_name("meshes/quad"));
+    KILN_CHECK_EQ(r->partCount, 1u);
+    KILN_CHECK_EQ(r->lodCount, 1u);
+    KILN_CHECK_EQ(r->triangleCount, 2u);
+    KILN_CHECK_EQ(r->vertexCount, 4u);
+
+    mesh::MeshLod const& lod    = o.view.lods()[0];
+    mesh::VertexLayout const& l = o.view.layouts()[lod.layout];
+    KILN_CHECK_EQ(l.streamCount, u8(2));
+    KILN_CHECK_EQ(l.attribs[0].format, u32(Format::R16G16B16A16_UNORM));
+    KILN_CHECK_EQ(l.strides[0], u16(8));
+    KILN_CHECK_EQ(lod.indexType, u8(mesh::IndexType::U16));
+    mesh::VertexAttrib const* tan = find_attrib(l, mesh::Semantic::Tangent);
+    mesh::VertexAttrib const* uv  = find_attrib(l, mesh::Semantic::TexCoord);
+    KILN_REQUIRE(tan && uv);
+    KILN_CHECK_EQ(uv->format, u32(Format::R16G16_SFLOAT));
+    KILN_CHECK_EQ(l.strides[1], u16(4 + 8 + 4));
+
+    // Positions dequantize to the source corners; UVs round-trip through half.
+    mesh::MeshPart const& part = o.view.parts()[0];
+    for (u32 v = 0; v < lod.vertexCount; ++v) {
+        f32 p[3];
+        decode_position(o, part, lod, v, p);
+        KILN_CHECK(std::fabs(std::fabs(p[0]) - 1.0f) < 1e-4f && std::fabs(p[1]) < 1e-4f &&
+                   std::fabs(std::fabs(p[2]) - 1.0f) < 1e-4f);
+        u8 const* q = o.payload.data() + lod.streamOffset[1] + usize(v) * l.strides[1] + uv->offset;
+        f32 const u = half_to_f32(read_unaligned<u16>(q));
+        f32 const w = half_to_f32(read_unaligned<u16>(q + 2));
+        KILN_CHECK((u == 0.0f || u == 1.0f) && (w == 0.0f || w == 1.0f));
+        u8 const* t  = o.payload.data() + lod.streamOffset[1] + usize(v) * l.strides[1] + tan->offset;
+        i16 const tw = read_unaligned<i16>(t + 6);
+        KILN_CHECK(tw == 32767 || tw == -32767);
+    }
+    KILN_CHECK_EQ(count_backfacing(o, part, lod), 0u);
+    KILN_CHECK_EQ(o.view.materials().size(), 1u);
+    KILN_CHECK_EQ(o.view.str(o.view.materials()[0].nameStr), StrView("paint"));
+    write_sample("quad", r->file.span());
+}
+
+KILN_TEST(MeshCook, LargeMeshFallsBackToFloatPositions) {
+    Vec<u8> const glb = make_quad_glb(100000.0f);
+    Diags d;
+    Result<cook::CookedMesh> r = cook_bytes(glb.span(), "meshes/huge", d, default_settings());
+    KILN_REQUIRE(r.ok());
+    KILN_CHECK_EQ(d.count_of(cook::kDiagGltfQuantFallback, Severity::Info), 1);
+    KILN_CHECK_EQ(d.count_of(cook::kDiagGltfScaleBaked, Severity::Info), 1);
+    Opened o;
+    open_cooked(r.value(), o, "huge");
+    KILN_REQUIRE(o.ok);
+    mesh::MeshLod const& lod    = o.view.lods()[0];
+    mesh::VertexLayout const& l = o.view.layouts()[lod.layout];
+    KILN_CHECK_EQ(l.attribs[0].format, u32(Format::R32G32B32_SFLOAT));
+    KILN_CHECK_EQ(l.strides[0], u16(12));
+    mesh::MeshPart const& part = o.view.parts()[0];
+    KILN_CHECK_EQ(part.posScale[0], 1.0f);
+    KILN_CHECK_EQ(part.posBias[0], 0.0f);
+    f32 p[3];
+    decode_position(o, part, lod, 0, p);
+    KILN_CHECK_EQ(std::fabs(p[0]), 100000.0f); // scale baked, exact
+    KILN_CHECK(std::fabs(part.bounds.halfExtents[0] - 100000.0f) < 1.0f);
+}
+
+KILN_TEST(MeshCook, TolerancesAndProfiles) {
+    Vec<u8> const glb = make_quad_glb(1.0f, 4096.0f); // UVs beyond +-2048
+    {
+        Diags d;
+        cook::MeshCookSettings s   = default_settings();
+        s.posTolMm                 = 1e-6f; // 2 m / 65535 > 1e-9 m -> float positions
+        Result<cook::CookedMesh> r = cook_bytes(glb.span(), "meshes/tol", d, s);
+        KILN_REQUIRE(r.ok());
+        KILN_CHECK_EQ(d.count_of(cook::kDiagGltfQuantFallback, Severity::Info), 2); // positions + UV0
+        Opened o;
+        open_cooked(r.value(), o, "tol");
+        KILN_REQUIRE(o.ok);
+        mesh::VertexLayout const& l = o.view.layouts()[o.view.lods()[0].layout];
+        KILN_CHECK_EQ(l.attribs[0].format, u32(Format::R32G32B32_SFLOAT));
+        mesh::VertexAttrib const* uv = find_attrib(l, mesh::Semantic::TexCoord);
+        KILN_REQUIRE(uv != nullptr);
+        KILN_CHECK_EQ(uv->format, u32(Format::R32G32_SFLOAT));
+    }
+    {
+        Diags d;
+        cook::MeshCookSettings s   = default_settings();
+        s.profile                  = cook::VertexProfile::Precise;
+        s.genTangents              = false;
+        s.optimize                 = false;
+        Result<cook::CookedMesh> r = cook_bytes(glb.span(), "meshes/precise", d, s);
+        KILN_REQUIRE(r.ok());
+        KILN_CHECK_EQ(d.count_of(cook::kDiagGltfQuantFallback, Severity::Info), 0); // precise by request
+        Opened o;
+        open_cooked(r.value(), o, "precise");
+        KILN_REQUIRE(o.ok);
+        mesh::VertexLayout const& l = o.view.layouts()[o.view.lods()[0].layout];
+        KILN_CHECK_EQ(l.attribs[0].format, u32(Format::R32G32B32_SFLOAT));
+        KILN_CHECK(find_attrib(l, mesh::Semantic::Tangent) == nullptr);
+        KILN_CHECK_EQ(l.strides[1], u16(4 + 8));
+    }
+}
+
+KILN_TEST(MeshCook, DeterministicAndErrors) {
+    Vec<u8> const glb = make_quad_glb(2.5f);
+    Diags d1, d2;
+    Result<cook::CookedMesh> a = cook_bytes(glb.span(), "meshes/det", d1, default_settings());
+    Result<cook::CookedMesh> b = cook_bytes(glb.span(), "meshes/det", d2, default_settings());
+    KILN_REQUIRE(a.ok() && b.ok());
+    KILN_CHECK(same_bytes(a->file.span(), b->file.span()));
+    KILN_CHECK_EQ(a->sourceHash, xxh64(glb.span()));
+
+    // Garbage and truncated input: ParseError K1001.
+    u8 const junk[16] = {'n', 'o', 't', ' ', 'g', 'l', 't', 'f'};
+    Diags d3;
+    Result<cook::CookedMesh> c =
+        cook_bytes(Span<u8 const>(junk, sizeof junk), "meshes/junk", d3, default_settings());
+    KILN_CHECK_EQ(c.code(), Code::ParseError);
+    KILN_CHECK_EQ(d3.firstErr, u32(cook::kDiagGltfParseFailed));
+    Diags d4;
+    Result<cook::CookedMesh> t =
+        cook_bytes(glb.span().first(glb.size() - 20), "meshes/trunc", d4, default_settings());
+    KILN_CHECK(t.failed());
+    KILN_CHECK(d4.firstErr == cook::kDiagGltfParseFailed || d4.firstErr == cook::kDiagGltfBadAccessor);
+}
+
+// ===========================================================================
+// Corpus (tests/corpus/gltf/manifest.txt)
+// ===========================================================================
+
+namespace {
+
+struct GltfEntry {
+    StrView path;
+    bool expectOk = false;
+    u32 code = 0, parts = 0, lods = 0, materials = 0, textures = 0, mounts = 0;
+};
+
+bool gltf_dir(char* out, usize cap) {
+    char const* dir = kiln::test::corpus_dir();
+    if (!dir) return false;
+    format(out, cap, "%s/../gltf", dir);
+    return true;
+}
+
+bool load_gltf_manifest(char const* dir, Vec<char>& text, Vec<GltfEntry>& entries) {
+    char path[1024];
+    format(path, sizeof path, "%s/manifest.txt", dir);
+    Vec<u8> raw(default_allocator(), Tag::Test);
+    if (!KILN_CHECK_MSG(corpus::read_file(path, raw), "cannot read %s", path)) return false;
+    text.resize(raw.size());
+    if (!raw.empty()) std::memcpy(text.data(), raw.data(), raw.size());
+    StrView const all(text.data(), text.size());
+    usize pos = 0;
+    while (pos < all.size) {
+        usize eol = all.find('\n', pos);
+        if (eol == StrView::kNpos) eol = all.size;
+        StrView line = all.substr(pos, eol - pos);
+        pos          = eol + 1;
+        if (!line.empty() && line.back() == '\r') line = line.substr(0, line.size - 1);
+        if (line.empty() || line.front() == '#') continue;
+        StrView f[9];
+        usize n = 0, p = 0;
+        for (; n < 9;) {
+            usize bar = line.find('|', p);
+            f[n++]    = line.substr(p, (bar == StrView::kNpos ? line.size : bar) - p);
+            if (bar == StrView::kNpos) break;
+            p = bar + 1;
+        }
+        if (!KILN_CHECK_MSG(n == 9, "manifest line needs 9 fields: %.*s", KILN_SV(line))) return false;
+        GltfEntry e;
+        e.path     = f[0];
+        e.expectOk = f[1] == "ok";
+        bool ok    = corpus::parse_u32(f[2], e.code) && corpus::parse_u32(f[3], e.parts) &&
+                  corpus::parse_u32(f[4], e.lods) && corpus::parse_u32(f[5], e.materials) &&
+                  corpus::parse_u32(f[6], e.textures) && corpus::parse_u32(f[7], e.mounts);
+        if (!KILN_CHECK_MSG(ok, "manifest line has a non-numeric column: %.*s", KILN_SV(line))) return false;
+        entries.push_back(e);
+    }
+    return KILN_CHECK(!entries.empty());
+}
+
+struct CorpusCook {
+    Vec<u8> bytes{default_allocator(), Tag::Test};
+    DirResolver resolver{};
+    Diags diags;
+    Result<cook::CookedMesh> result = Code::NotFound;
+    Opened opened;
+    char name[128] = {};
+};
+
+/// Cook `<gltf dir>/<rel>` with default settings (and a sibling-file resolver).
+bool cook_corpus(char const* rel, CorpusCook& c, bool withResolver = true) {
+    char dir[1024];
+    if (!gltf_dir(dir, sizeof dir)) return false;
+    char path[1400];
+    format(path, sizeof path, "%s/%s", dir, rel);
+    if (!KILN_CHECK_MSG(corpus::read_file(path, c.bytes), "cannot read %s", path)) return false;
+    format(c.resolver.dir, sizeof c.resolver.dir, "%s", path);
+    if (char* slash = std::strrchr(c.resolver.dir, '/')) *slash = '\0';
+    StrView r(rel);
+    usize const slash = r.rfind('/');
+    StrView stem      = slash == StrView::kNpos ? r : r.substr(slash + 1);
+    usize const dot   = stem.rfind('.');
+    if (dot != StrView::kNpos) stem = stem.substr(0, dot);
+    format(c.name, sizeof c.name, "%.*s", KILN_SV(stem));
+    char asset[256];
+    format(asset, sizeof asset, "meshes/%s", c.name);
+    c.result = cook_bytes(c.bytes.span(), StrView(asset), c.diags, default_settings(),
+                          withResolver ? &c.resolver : nullptr);
+    if (c.result.ok()) open_cooked(c.result.value(), c.opened, c.name);
+    return true;
+}
+
+} // namespace
+
+KILN_TEST(MeshCook, CorpusManifest) {
+    char dir[1024];
+    if (!gltf_dir(dir, sizeof dir)) return;
+    Vec<char> text(default_allocator(), Tag::Test);
+    Vec<GltfEntry> entries(default_allocator(), Tag::Test);
+    if (!load_gltf_manifest(dir, text, entries)) return;
+
+    for (GltfEntry const& e : entries) {
+        char rel[512];
+        format(rel, sizeof rel, "%.*s", KILN_SV(e.path));
+        CorpusCook c;
+        if (!cook_corpus(rel, c)) continue;
+        if (!e.expectOk) {
+            KILN_CHECK_MSG(c.result.failed(), "%s: expected failure", rel);
+            KILN_CHECK_MSG(c.diags.firstErr == e.code, "%s: error K%u, manifest K%u (%s)", rel,
+                           c.diags.firstErr, e.code, c.diags.msg);
+            continue;
+        }
+        if (!KILN_CHECK_MSG(c.result.ok(), "%s: cook failed: %s", rel, c.diags.msg)) continue;
+        if (!c.opened.ok) continue;
+        mesh::MeshView const& v = c.opened.view;
+        u32 maxLods             = 0;
+        for (mesh::MeshPart const& p : v.parts())
+            maxLods = max(maxLods, p.lodCount);
+        KILN_CHECK_MSG(v.parts().size() == e.parts, "%s: parts %u, manifest %u", rel, v.parts().size(),
+                       e.parts);
+        KILN_CHECK_MSG(maxLods == e.lods, "%s: lods %u, manifest %u", rel, maxLods, e.lods);
+        KILN_CHECK_MSG(v.materials().size() == e.materials, "%s: materials %u, manifest %u", rel,
+                       v.materials().size(), e.materials);
+        KILN_CHECK_MSG(c.result->textures.size() == e.textures, "%s: textures %u, manifest %u", rel,
+                       u32(c.result->textures.size()), e.textures);
+        KILN_CHECK_MSG(v.mounts().size() == e.mounts, "%s: mounts %u, manifest %u", rel, v.mounts().size(),
+                       e.mounts);
+        KILN_CHECK_EQ(c.result->partCount, v.parts().size());
+        KILN_CHECK_EQ(c.result->lodCount, v.lods().size());
+
+        // Every triangle faces the way its normals say (winding/normal consistency).
+        // All generated corpus meshes are authored CCW-front-facing with outward
+        // normals (generate.py quad()/box_welded()), so this runs unconditionally.
+        for (mesh::MeshPart const& p : v.parts())
+            for (u32 li = 0; li < p.lodCount; ++li) {
+                u32 const bad = count_backfacing(c.opened, p, v.lods()[p.lodFirst + li]);
+                KILN_CHECK_MSG(bad == 0, "%s: part %.*s lod %u: %u triangle(s) disagree with their normals",
+                               rel, KILN_SV(v.str(p.nameStr)), li, bad);
+            }
+
+        // Determinism: a second cook is byte-identical.
+        CorpusCook again;
+        if (cook_corpus(rel, again) && again.result.ok())
+            KILN_CHECK_MSG(same_bytes(c.result->file.span(), again.result->file.span()),
+                           "%s: not deterministic", rel);
+        write_sample(c.name, c.result->file.span());
+    }
+}
+
+KILN_TEST(MeshCook, CorpusHierarchyParts) {
+    CorpusCook c;
+    if (!cook_corpus("generated/hierarchy_parts.glb", c) || !c.opened.ok) return;
+    mesh::MeshView const& v = c.opened.view;
+    KILN_REQUIRE_EQ(v.parts().size(), 4u);
+    u32 const hull = part_index(v, "hull"), wl = part_index(v, "wing_l"), wr = part_index(v, "wing_r"),
+              ant = part_index(v, "antenna");
+    KILN_REQUIRE(hull != kInvalid && wl != kInvalid && wr != kInvalid && ant != kInvalid);
+    KILN_CHECK_EQ(hull, 0u);
+    KILN_CHECK_EQ(v.parts()[hull].parent, kInvalid);
+    KILN_CHECK_EQ(v.parts()[wl].parent, hull);
+    KILN_CHECK_EQ(v.parts()[wr].parent, hull);
+    KILN_CHECK_EQ(v.parts()[ant].parent, wl);
+    KILN_CHECK_EQ(part_index(v, "ship"), kInvalid);
+    // The mirrored wing was baked (K1011) and keeps CCW front faces.
+    KILN_CHECK(c.diags.count_of(cook::kDiagGltfScaleBaked, Severity::Info) >= 1);
+    mesh::MeshPart const& r = v.parts()[wr];
+    KILN_CHECK_EQ(count_backfacing(c.opened, r, v.lods()[r.lodFirst]), 0u);
+    // Signed volume of the closed wing box is positive (outward winding) for both wings.
+    for (u32 pi : {wl, wr}) {
+        mesh::MeshPart const& p  = v.parts()[pi];
+        mesh::MeshLod const& lod = v.lods()[p.lodFirst];
+        f32 vol                  = 0;
+        for (u32 t = 0; t + 2 < lod.indexCount; t += 3) {
+            f32 a[3], b[3], cc[3];
+            decode_position(c.opened, p, lod, read_index(c.opened, lod, t), a);
+            decode_position(c.opened, p, lod, read_index(c.opened, lod, t + 1), b);
+            decode_position(c.opened, p, lod, read_index(c.opened, lod, t + 2), cc);
+            vol += a[0] * (b[1] * cc[2] - b[2] * cc[1]) - a[1] * (b[0] * cc[2] - b[2] * cc[0]) +
+                   a[2] * (b[0] * cc[1] - b[1] * cc[0]);
+        }
+        KILN_CHECK_MSG(vol > 0, "part %u signed volume %g", pi, f64(vol));
+    }
+    // Rotations stay unit quaternions; no scale remains on the parts.
+    for (mesh::MeshPart const& p : v.parts()) {
+        f32 const q = p.rotation[0] * p.rotation[0] + p.rotation[1] * p.rotation[1] +
+                      p.rotation[2] * p.rotation[2] + p.rotation[3] * p.rotation[3];
+        KILN_CHECK(std::fabs(q - 1.0f) < 1e-5f);
+    }
+}
+
+KILN_TEST(MeshCook, CorpusMountsExtras) {
+    CorpusCook c;
+    if (!cook_corpus("generated/mounts_extras.glb", c) || !c.opened.ok) return;
+    mesh::MeshView const& v = c.opened.view;
+    KILN_REQUIRE_EQ(v.mounts().size(), 3u);
+    for (u32 i = 1; i < v.mounts().size(); ++i)
+        KILN_CHECK(v.mounts()[i - 1].nameHash <= v.mounts()[i].nameHash);
+    mesh::Mount const* gun = v.find_mount(hash_name("mount_gun"));
+    KILN_REQUIRE(gun != nullptr);
+    KILN_CHECK_EQ(v.str(gun->nameStr), StrView("mount_gun"));
+    KILN_CHECK_EQ(gun->parentPart, 0u);
+    // Pairs in the order the file writes them (this file's JSON keys are sorted).
+    KILN_CHECK_EQ(v.str(gun->extrasStr), StrView("enabled=true;size=2;slot=hardpoint"));
+    KILN_CHECK(std::fabs(gun->rotation[1] - 0.382683f) < 1e-4f &&
+               std::fabs(gun->rotation[3] - 0.92388f) < 1e-4f);
+    KILN_CHECK(std::fabs(gun->translation[1] - 0.3f) < 1e-6f &&
+               std::fabs(gun->translation[2] - 0.8f) < 1e-6f);
+    KILN_CHECK_EQ(c.diags.count_of(cook::kDiagGltfExtrasDropped, Severity::Warning), 2);
+    mesh::Mount const* e1 = v.find_mount(hash_name("mount_engine_01"));
+    KILN_REQUIRE(e1 != nullptr);
+    KILN_CHECK_EQ(e1->extrasStr, kInvalid);
+}
+
+KILN_TEST(MeshCook, CorpusAuthoredLods) {
+    CorpusCook c;
+    if (!cook_corpus("generated/authored_lods.glb", c) || !c.opened.ok) return;
+    mesh::MeshView const& v = c.opened.view;
+    KILN_REQUIRE_EQ(v.parts().size(), 1u);
+    mesh::MeshPart const& p = v.parts()[0];
+    KILN_CHECK_EQ(v.str(p.nameStr), StrView("hull"));
+    KILN_REQUIRE_EQ(p.lodCount, 3u);
+    u32 const tris[3] = {48, 12, 2};
+    for (u32 i = 0; i < 3; ++i) {
+        KILN_CHECK_EQ(v.lods()[p.lodFirst + i].indexCount, tris[i] * 3);
+        KILN_CHECK_EQ(v.lods()[p.lodFirst + i].geometricError, 0.0f);
+    }
+    KILN_CHECK_EQ(part_index(v, "col_hull"), kInvalid);
+    KILN_CHECK_EQ(part_index(v, "_helper"), kInvalid);
+    KILN_CHECK_EQ(v.mounts().size(), 0u);
+
+    // useAuthoredLods = false keeps LOD0 only.
+    cook::MeshCookSettings s = default_settings();
+    s.useAuthoredLods        = false;
+    Diags d;
+    Result<cook::CookedMesh> r = cook_bytes(c.bytes.span(), "meshes/authored_lods", d, s);
+    KILN_REQUIRE(r.ok());
+    KILN_CHECK_EQ(r->lodCount, 1u);
+}
+
+KILN_TEST(MeshCook, CorpusMultiMaterial) {
+    CorpusCook c;
+    if (!cook_corpus("generated/multi_material.glb", c) || !c.opened.ok) return;
+    mesh::MeshView const& v = c.opened.view;
+    KILN_REQUIRE_EQ(v.materials().size(), 3u);
+    KILN_CHECK_EQ(v.str(v.materials()[0].nameStr), StrView("metal"));
+    KILN_CHECK_EQ(v.str(v.materials()[1].nameStr), StrView("glass"));
+    KILN_CHECK_EQ(v.str(v.materials()[2].nameStr), StrView("decal"));
+    KILN_CHECK_EQ(v.materials()[1].alphaMode, u8(mesh::AlphaMode::Blend));
+    KILN_CHECK_EQ(v.materials()[2].alphaMode, u8(mesh::AlphaMode::Mask));
+    KILN_CHECK_EQ(v.materials()[0].nameHash, hash_name("metal"));
+    KILN_CHECK_EQ(c.diags.count_of(cook::kDiagGltfMaterialRenamed, Severity::Info), 2);
+    mesh::MeshLod const& lod = v.lods()[0];
+    KILN_REQUIRE_EQ(lod.submeshCount, 4u);
+    KILN_CHECK_EQ(v.submeshes()[lod.submeshFirst + 2].material, 2u);
+    KILN_CHECK_EQ(v.submeshes()[lod.submeshFirst + 3].material, 2u);
+}
+
+KILN_TEST(MeshCook, CorpusTwoUvSets) {
+    CorpusCook c;
+    if (!cook_corpus("generated/two_uv_sets.glb", c) || !c.opened.ok) return;
+    mesh::MeshView const& v     = c.opened.view;
+    mesh::VertexLayout const& l = v.layouts()[v.lods()[0].layout];
+    KILN_CHECK(find_attrib(l, mesh::Semantic::TexCoord, 0) != nullptr);
+    KILN_CHECK(find_attrib(l, mesh::Semantic::TexCoord, 1) != nullptr);
+    KILN_REQUIRE_EQ(v.textures().size(), 2u);
+    mesh::TextureBinding const& b0 = v.textures()[0];
+    mesh::TextureBinding const& b1 = v.textures()[1];
+    KILN_CHECK_EQ(b0.slot, u8(mesh::TextureSlot::BaseColor));
+    KILN_CHECK_EQ(b0.uvSet, u8(0));
+    KILN_CHECK_EQ(b0.flags, u16(mesh::kTextureSrgb));
+    KILN_CHECK_EQ(b1.slot, u8(mesh::TextureSlot::Occlusion));
+    KILN_CHECK_EQ(b1.uvSet, u8(1));
+    KILN_CHECK_EQ(b1.flags, u16(0));
+    KILN_CHECK_EQ(v.str(b0.pathStr), StrView("meshes/two_uv_sets/albedo"));
+    KILN_CHECK_EQ(b0.textureId, hash_name("meshes/two_uv_sets/albedo"));
+}
+
+KILN_TEST(MeshCook, CorpusNoUvNoNormals) {
+    CorpusCook c;
+    if (!cook_corpus("generated/no_uv_no_normals.glb", c) || !c.opened.ok) return;
+    mesh::MeshView const& v     = c.opened.view;
+    mesh::VertexLayout const& l = v.layouts()[v.lods()[0].layout];
+    KILN_CHECK(find_attrib(l, mesh::Semantic::Normal) != nullptr);
+    KILN_CHECK(find_attrib(l, mesh::Semantic::Tangent) == nullptr);
+    KILN_CHECK(find_attrib(l, mesh::Semantic::TexCoord) == nullptr);
+    KILN_CHECK_EQ(c.diags.count_of(cook::kDiagGltfNoTangentSource, Severity::Warning), 1);
+    KILN_CHECK_EQ(c.diags.count_of(cook::kDiagGltfNoNormals, Severity::Info), 1);
+    KILN_REQUIRE_EQ(v.materials().size(), 1u);
+    KILN_CHECK_EQ(v.str(v.materials()[0].nameStr), StrView("default"));
+    // Smooth normals on the welded cube (8 corners) run roughly along the corner diagonals,
+    // on the side the winding says is the front. (This corpus cube is wound CCW seen
+    // from outside, so its "front" is the outside; the cooker follows the authored
+    // winding, it does not guess.)
+    mesh::MeshLod const& lod = v.lods()[0];
+    KILN_CHECK_EQ(lod.vertexCount, 8u);
+    KILN_CHECK_EQ(count_backfacing(c.opened, v.parts()[0], lod), 0u);
+    for (u32 i = 0; i < lod.vertexCount; ++i) {
+        f32 p[3], n[3];
+        decode_position(c.opened, v.parts()[0], lod, i, p);
+        decode_normal(c.opened, lod, i, n);
+        f32 const d =
+            (p[0] * n[0] + p[1] * n[1] + p[2] * n[2]) / std::sqrt(p[0] * p[0] + p[1] * p[1] + p[2] * p[2]);
+        // Area weighting favours the face split into two triangles at this corner, so
+        // the normal is near (not exactly on) the diagonal.
+        KILN_CHECK_MSG(std::fabs(d) > 0.9f, "vertex %u: normal not along the diagonal (%g)", i, f64(d));
+    }
+}
+
+KILN_TEST(MeshCook, CorpusPbrTextures) {
+    CorpusCook c;
+    if (!cook_corpus("generated/pbr_textures.glb", c) || !c.opened.ok) return;
+    Vec<cook::TextureRef> const& t = c.result->textures;
+    KILN_REQUIRE_EQ(t.size(), usize(4));
+    struct Want {
+        char const* path;
+        cook::SlotHint slot;
+        bool srgb;
+    } const want[4] = {
+        {"meshes/pbr_textures/hull_albedo",   cook::SlotHint::BaseColor,         true },
+        {"meshes/pbr_textures/hull_normal",   cook::SlotHint::Normal,            false},
+        {"meshes/pbr_textures/hull_orm",      cook::SlotHint::MetallicRoughness, false},
+        {"meshes/pbr_textures/hull_emissive", cook::SlotHint::Emissive,          true },
+    };
+    for (u32 i = 0; i < 4; ++i) {
+        KILN_CHECK_EQ(t[i].assetPath, StrView(want[i].path));
+        KILN_CHECK_EQ(t[i].slot, want[i].slot);
+        KILN_CHECK_EQ(t[i].srgb, want[i].srgb);
+        KILN_CHECK(t[i].uri.empty());
+        KILN_CHECK(t[i].embedded.size > 8 && t[i].embedded[1] == 'P' && t[i].embedded[2] == 'N');
+        KILN_CHECK_EQ(t[i].mimeType, StrView("image/png"));
+    }
+    mesh::MeshView const& v = c.opened.view;
+    KILN_REQUIRE_EQ(v.textures().size(), 5u); // ORM bound twice
+    KILN_CHECK_EQ(v.materials()[0].textureCount, 5u);
+    KILN_CHECK_EQ(v.textures()[2].textureId, v.textures()[3].textureId);
+    KILN_CHECK_EQ(c.diags.count_of(cook::kDiagGltfUsageConflict, Severity::Warning),
+                  0); // MR and AO: both Orm
+}
+
+KILN_TEST(MeshCook, CorpusRejects) {
+    CorpusCook draco;
+    if (!cook_corpus("generated/draco_required.glb", draco)) return;
+    KILN_CHECK_EQ(draco.result.code(), Code::Unsupported);
+    KILN_CHECK_EQ(draco.diags.firstErr, u32(cook::kDiagGltfUnsupportedExt));
+    CorpusCook sparse;
+    if (!cook_corpus("generated/sparse_accessor.glb", sparse)) return;
+    KILN_CHECK_EQ(sparse.result.code(), Code::Unsupported);
+    KILN_CHECK_EQ(sparse.diags.firstErr, u32(cook::kDiagGltfSparseAccessor));
+}
+
+KILN_TEST(MeshCook, CorpusNonTriangle) {
+    CorpusCook c;
+    if (!cook_corpus("generated/non_triangle.glb", c) || !c.opened.ok) return;
+    KILN_CHECK_EQ(c.diags.count_of(cook::kDiagGltfPrimitiveSkipped, Severity::Warning), 1);
+    KILN_CHECK_EQ(c.opened.view.lods().size(), 1u);
+    KILN_CHECK_EQ(c.opened.view.lods()[0].submeshCount, 1u);
+}
+
+KILN_TEST(MeshCook, CorpusExternalUri) {
+    CorpusCook c;
+    if (!cook_corpus("generated/external_uri.gltf", c)) return;
+    if (!KILN_CHECK_MSG(c.result.ok(), "%s", c.diags.msg)) return;
+    KILN_REQUIRE(c.opened.ok);
+    KILN_REQUIRE_EQ(c.result->textures.size(), usize(1));
+    cook::TextureRef const& t = c.result->textures[0];
+    KILN_CHECK_EQ(t.uri, StrView("external_uri_albedo.png"));
+    KILN_CHECK(t.embedded.empty());
+    KILN_CHECK_EQ(t.assetPath, StrView("meshes/external_uri/external_uri_albedo"));
+    KILN_CHECK_EQ(t.mimeType, StrView("image/png"));
+
+    CorpusCook none;
+    if (!cook_corpus("generated/external_uri.gltf", none, false)) return;
+    KILN_CHECK_EQ(none.result.code(), Code::NotFound);
+    KILN_CHECK_EQ(none.diags.firstErr, u32(cook::kDiagGltfExternalMissing));
+
+    // Same bytes cooked through the resolver are deterministic too.
+    CorpusCook again;
+    if (cook_corpus("generated/external_uri.gltf", again) && again.result.ok())
+        KILN_CHECK(same_bytes(c.result->file.span(), again.result->file.span()));
+}

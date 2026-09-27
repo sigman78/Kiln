@@ -8,7 +8,7 @@ Proposed answers wait for owner sign-off. When the owner decides, replace "Propo
 | # | Question | Proposed answer | Reason |
 |---|---|---|---|
 | 1 | Project name and license | Name **kiln**, license **MIT** | Already in `LICENSE`; changing before the first release is trivial. |
-| 2 | C++20 or C++23 | **C++20** baseline; C++23 features only when MSVC, clang and gcc all support them | MSVC is the constraint; nothing in v0.5 needs C++23. |
+| 2 | C++20 or C++23 | **Decided (owner, 2026-09-27): C++23 baseline.** Compiler friction is solved by updating local toolchains, not by shims | MSVC is the constraint; nothing in v0.5 needs C++23. |
 | 3 | Own threading wrapper vs std | **`<thread>`/`<mutex>` in `.cpp` files only**; thin OS wrapper only for file IO, directory listing, file times, atomic rename, native watchers later | Portable today, no header cost. See `design/threading-and-io.md`. |
 | 4 | fastgltf vs cgltf | **cgltf** | C99, no exceptions, easy to isolate; parse speed does not matter on the cook side. See `design/dependencies.md`. |
 | 5 | Format enum | **Compact enum with values equal to `VkFormat`**, plus a constexpr `format_info()` table | KTX2 and `.mesh` already store VkFormat numbers; Vulkan adapter is a cast. See `design/adapter.md`. |

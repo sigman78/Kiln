@@ -7,8 +7,23 @@
 #
 # The KTX2 corpus (corpus/ktx2, see its manifest.txt) is read in both configurations;
 # the writer round trip over it (test_ktx2_corpus_rt.cpp) needs kiln_cook.
+#
+# Golden-file tests (test_mesh_golden.cpp, test_texture_golden.cpp; HANDOFF.md §10,
+# tests/golden/README.md) are cook-only and always get `--golden <dir>` (harmless
+# in the reader-only build: it just has no golden tests to consume it). Set
+# -DKILN_UPDATE_GOLDEN=ON to regenerate the committed goldens instead of comparing
+# against them — inspect the diff, then commit deliberately (bump
+# kiln::cook::kCookerVersion first if the cooked bytes are meant to change for the
+# same input/settings). Equivalent to passing `--update-golden` directly.
 
 set(KILN_KTX2_CORPUS ${CMAKE_CURRENT_SOURCE_DIR}/corpus/ktx2)
+set(KILN_GOLDEN_DIR ${CMAKE_CURRENT_SOURCE_DIR}/golden)
+
+option(KILN_UPDATE_GOLDEN "Write tests/golden/* instead of comparing against them" OFF)
+set(KILN_TEST_ARGS --golden ${KILN_GOLDEN_DIR})
+if(KILN_UPDATE_GOLDEN)
+    list(APPEND KILN_TEST_ARGS --update-golden)
+endif()
 
 add_executable(kiln_tests
     kiln_test.h
@@ -29,13 +44,16 @@ target_include_directories(kiln_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(kiln_tests PRIVATE kiln_core kiln_runtime)
 
 if(TARGET kiln_cook)
-    target_sources(kiln_tests PRIVATE test_mesh.cpp test_ktx2.cpp test_ktx2_corpus_rt.cpp)
+    target_sources(kiln_tests PRIVATE test_mesh.cpp test_ktx2.cpp test_ktx2_corpus_rt.cpp
+                                       test_settings.cpp test_store.cpp
+                                       png_writer.h test_image.cpp test_texture_cook.cpp
+                                       test_mesh_cook.cpp test_mesh_golden.cpp test_texture_golden.cpp)
     target_link_libraries(kiln_tests PRIVATE kiln_cook)
 
     file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/samples)
 
     add_test(NAME kiln_tests COMMAND kiln_tests --samples ${CMAKE_CURRENT_BINARY_DIR}/samples
-                                            --corpus ${KILN_KTX2_CORPUS})
+                                            --corpus ${KILN_KTX2_CORPUS} ${KILN_TEST_ARGS})
     set_tests_properties(kiln_tests PROPERTIES FIXTURES_SETUP kiln_samples)
 
     # kiln-info coverage: feed it the sample .mesh/.ktx2 files kiln_tests just wrote.
@@ -72,7 +90,7 @@ if(TARGET kiln_cook)
             PASS_REGULAR_EXPRESSION "transfer sRGB;check: 3 levels")
     endif()
 else()
-    add_test(NAME kiln_tests COMMAND kiln_tests --corpus ${KILN_KTX2_CORPUS})
+    add_test(NAME kiln_tests COMMAND kiln_tests --corpus ${KILN_KTX2_CORPUS} ${KILN_TEST_ARGS})
 endif()
 
 # ---------------------------------------------------------------------------
@@ -119,6 +137,12 @@ if(KILN_KTX_TOOL)
             get_filename_component(_stem ${_base} NAME_WE)
             add_test(NAME ktx_validate_rt_${_stem} COMMAND ${KILN_KTX_TOOL} validate samples/rt_${_base})
             list(APPEND _kiln_validate_tests ktx_validate_rt_${_stem})
+        endforeach()
+        # cook_texture output (test_texture_cook.cpp writes samples/cooked_<case>.ktx2)
+        foreach(_case color_srgb color_linear normal height16 mask_rg nomips maxsize)
+            add_test(NAME ktx_validate_cooked_${_case}
+                     COMMAND ${KILN_KTX_TOOL} validate samples/cooked_${_case}.ktx2)
+            list(APPEND _kiln_validate_tests ktx_validate_cooked_${_case})
         endforeach()
         set_tests_properties(${_kiln_validate_tests} PROPERTIES
             FIXTURES_REQUIRED kiln_samples

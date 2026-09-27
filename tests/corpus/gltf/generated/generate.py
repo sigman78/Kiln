@@ -1,0 +1,857 @@
+#!/usr/bin/env python3
+"""Generates the hand-made glTF/GLB edge-case corpus for kiln's M2 cooker (glb -> .mesh).
+
+Standard library only (json, struct, math, zlib, os). Deterministic: no timestamps, no
+random numbers, sorted JSON keys, fixed-precision floats. Re-run to regenerate every file
+byte-identically (embedded PNG bytes depend only on zlib's deflate output for fixed input,
+which is stable for a given Python/zlib build).
+
+Run from anywhere:  python tests/corpus/gltf/generated/generate.py
+Output: tests/corpus/gltf/generated/*.glb (+ external_uri.gltf/.bin/.png)
+
+See README.md in this directory for what each file exercises and what the cooker is
+expected to do with it. See ../manifest.txt for the machine-readable expectations table.
+"""
+import json
+import math
+import os
+import struct
+import sys
+import zlib
+
+OUT_DIR = os.path.dirname(os.path.abspath(__file__))
+GENERATOR = "kiln-corpus-generate.py"
+
+# --------------------------------------------------------------------------------------
+# Float formatting: round to 6 decimal digits so re-runs are byte-identical and diffs are
+# readable. json.dumps then uses Python's shortest round-tripping repr for the rounded
+# value, which is stable for a fixed Python version.
+# --------------------------------------------------------------------------------------
+
+
+def f(x):
+    return round(float(x), 6)
+
+
+def fv(vec):
+    return [f(x) for x in vec]
+
+
+# --------------------------------------------------------------------------------------
+# GLB container (chunk 0 = JSON, chunk 1 = BIN), little-endian, 4-byte padded.
+# --------------------------------------------------------------------------------------
+
+GLB_MAGIC = 0x46546C67
+CHUNK_JSON = 0x4E4F534A
+CHUNK_BIN = 0x004E4942
+
+
+def pad4(data, fill):
+    n = (4 - (len(data) % 4)) % 4
+    return data + fill * n
+
+
+def build_glb(doc_json, bin_bytes):
+    json_bytes = json.dumps(doc_json, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    json_bytes = pad4(json_bytes, b" ")
+    bin_bytes = pad4(bytes(bin_bytes), b"\x00")
+    chunks = struct.pack("<II", len(json_bytes), CHUNK_JSON) + json_bytes
+    if bin_bytes:
+        chunks += struct.pack("<II", len(bin_bytes), CHUNK_BIN) + bin_bytes
+    total = 12 + len(chunks)
+    return struct.pack("<III", GLB_MAGIC, 2, total) + chunks
+
+
+def validate_glb_bytes(data):
+    """Structural self-check: re-parse our own output (no external gltf-validator on PATH)."""
+    assert len(data) >= 12, "file shorter than GLB header"
+    magic, version, length = struct.unpack_from("<III", data, 0)
+    assert magic == GLB_MAGIC, "bad magic"
+    assert version == 2, "bad version"
+    assert length == len(data), f"header length {length} != file size {len(data)}"
+    off = 12
+    saw_json = False
+    while off < length:
+        assert off + 8 <= length, "truncated chunk header"
+        clen, ctype = struct.unpack_from("<II", data, off)
+        assert clen % 4 == 0, f"chunk at {off} not 4-byte aligned ({clen})"
+        assert off + 8 + clen <= length, f"chunk at {off} overruns file"
+        cdata = data[off + 8 : off + 8 + clen]
+        if ctype == CHUNK_JSON:
+            doc = json.loads(cdata.decode("utf-8"))
+            assert "asset" in doc and doc["asset"].get("version") == "2.0"
+            saw_json = True
+        elif ctype == CHUNK_BIN:
+            pass
+        else:
+            raise AssertionError(f"unknown chunk type 0x{ctype:08x}")
+        off += 8 + clen
+    assert off == length, "chunks do not exactly fill the declared file length"
+    assert saw_json, "missing JSON chunk"
+    return len(data)
+
+
+def write_glb(name, doc_json, bin_bytes):
+    data = build_glb(doc_json, bin_bytes)
+    validate_glb_bytes(data)
+    path = os.path.join(OUT_DIR, name)
+    with open(path, "wb") as fh:
+        fh.write(data)
+    print(f"  {name}: {len(data)} bytes")
+    return len(data)
+
+
+# --------------------------------------------------------------------------------------
+# Tiny pure-python PNG writer (IHDR + one IDAT + IEND, filter type 0 per scanline).
+# --------------------------------------------------------------------------------------
+
+
+def write_png_bytes(width, height, get_pixel, bitdepth=8, color_type=6):
+    channels = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}[color_type]
+    raw = bytearray()
+    for y in range(height):
+        raw.append(0)  # filter type: None
+        for x in range(width):
+            px = get_pixel(x, y)
+            if bitdepth == 8:
+                raw.extend(bytes(v & 0xFF for v in px))
+            elif bitdepth == 16:
+                for v in px:
+                    raw.extend(struct.pack(">H", v & 0xFFFF))
+            else:
+                raise ValueError("unsupported bitdepth")
+
+    def chunk(tag, payload):
+        body = tag + payload
+        return struct.pack(">I", len(payload)) + body + struct.pack(">I", zlib.crc32(body) & 0xFFFFFFFF)
+
+    sig = b"\x89PNG\r\n\x1a\n"
+    ihdr = struct.pack(">IIBBBBB", width, height, bitdepth, color_type, 0, 0, 0)
+    idat = zlib.compress(bytes(raw), 9)
+    return sig + chunk(b"IHDR", ihdr) + chunk(b"IDAT", idat) + chunk(b"IEND", b"")
+
+
+def validate_png_bytes(data):
+    assert data[:8] == b"\x89PNG\r\n\x1a\n", "bad PNG signature"
+    assert data[12:16] == b"IHDR", "missing IHDR"
+    assert data[-8:-4] == b"IEND"[0:0] or True  # IEND crc trailer check below
+    assert b"IEND" in data[-12:], "missing IEND"
+    return len(data)
+
+
+def solid_rgba(color):
+    return lambda x, y: color
+
+
+def gradient_rgba(w, h, c00, c11):
+    def get(x, y):
+        sx = x / max(1, w - 1)
+        sy = y / max(1, h - 1)
+        return tuple(int(round(c00[i] + (c11[i] - c00[i]) * ((sx + sy) / 2))) for i in range(4))
+
+    return get
+
+
+def gradient_gray16(w, h, lo=0, hi=65535):
+    def get(x, y):
+        sx = x / max(1, w - 1)
+        sy = y / max(1, h - 1)
+        t = (sx + sy) / 2
+        return (int(round(lo + (hi - lo) * t)),)
+
+    return get
+
+
+# --------------------------------------------------------------------------------------
+# Geometry builders. All boxes are centered at the origin, Y-up, CCW winding viewed from
+# outside. box_flat gives 24 verts (4 per face, flat per-face normals, box-mapped UVs) --
+# the general-purpose "cube" used across most files. box_welded gives 8 shared corner
+# verts and no normals/UVs, for the "positions only" and "sparse accessor" cases.
+# --------------------------------------------------------------------------------------
+
+
+def _box_faces(hx, hy, hz):
+    # (normal, a, b, c, d) CCW seen from outside along +normal.
+    return [
+        ((1, 0, 0), (hx, -hy, -hz), (hx, hy, -hz), (hx, hy, hz), (hx, -hy, hz)),
+        ((-1, 0, 0), (-hx, -hy, hz), (-hx, hy, hz), (-hx, hy, -hz), (-hx, -hy, -hz)),
+        ((0, 1, 0), (-hx, hy, -hz), (-hx, hy, hz), (hx, hy, hz), (hx, hy, -hz)),
+        ((0, -1, 0), (-hx, -hy, hz), (-hx, -hy, -hz), (hx, -hy, -hz), (hx, -hy, hz)),
+        ((0, 0, 1), (-hx, -hy, hz), (hx, -hy, hz), (hx, hy, hz), (-hx, hy, hz)),
+        ((0, 0, -1), (hx, -hy, -hz), (-hx, -hy, -hz), (-hx, hy, -hz), (hx, hy, -hz)),
+    ]
+
+
+def box_flat(hx=0.5, hy=0.5, hz=0.5):
+    positions, normals, uvs, indices = [], [], [], []
+    for n, a, b, c, d in _box_faces(hx, hy, hz):
+        base = len(positions)
+        positions += [a, b, c, d]
+        normals += [n, n, n, n]
+        uvs += [(0.0, 1.0), (1.0, 1.0), (1.0, 0.0), (0.0, 0.0)]
+        indices += [base, base + 1, base + 2, base, base + 2, base + 3]
+    return positions, normals, uvs, indices
+
+
+def _lerp3(p, q, t):
+    return (p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t, p[2] + (q[2] - p[2]) * t)
+
+
+def _bilerp(a, b, c, d, s, t):
+    top = _lerp3(a, b, s)
+    bot = _lerp3(d, c, s)
+    return _lerp3(top, bot, t)
+
+
+def box_subdivided(hx=0.5, hy=0.5, hz=0.5, segs=2):
+    """Higher-resolution stand-in for an authored LOD0: each face split into segs x segs
+    flat quads (still one plane per face; a real high-poly mesh would round the edges,
+    but vertex/triangle count is what the LOD-chain test cares about)."""
+    positions, normals, uvs, indices = [], [], [], []
+    for n, a, b, c, d in _box_faces(hx, hy, hz):
+        base = len(positions)
+        for j in range(segs + 1):
+            for i in range(segs + 1):
+                s, t = i / segs, j / segs
+                positions.append(_bilerp(a, b, c, d, s, t))
+                normals.append(n)
+                uvs.append((s, 1.0 - t))
+        for j in range(segs):
+            for i in range(segs):
+                v0 = base + j * (segs + 1) + i
+                v1 = v0 + 1
+                v2 = v0 + (segs + 1) + 1
+                v3 = v0 + (segs + 1)
+                indices += [v0, v1, v2, v0, v2, v3]
+    return positions, normals, uvs, indices
+
+
+def box_welded(hx=0.5, hy=0.5, hz=0.5):
+    positions = [
+        (-hx, -hy, -hz),
+        (hx, -hy, -hz),
+        (hx, hy, -hz),
+        (-hx, hy, -hz),
+        (-hx, -hy, hz),
+        (hx, -hy, hz),
+        (hx, hy, hz),
+        (-hx, hy, hz),
+    ]
+    indices = [
+        0, 2, 1, 0, 3, 2,  # -Z
+        5, 7, 4, 5, 6, 7,  # +Z
+        4, 3, 0, 4, 7, 3,  # -X
+        1, 6, 5, 1, 2, 6,  # +X
+        3, 6, 2, 3, 7, 6,  # +Y
+        4, 1, 5, 4, 0, 1,  # -Y
+    ]
+    return positions, indices
+
+
+def corner_normal(p):
+    v = [1.0 if c > 0 else -1.0 for c in p]
+    n = math.sqrt(sum(c * c for c in v))
+    return tuple(c / n for c in v)
+
+
+def quad(hx=0.5, hz=0.5, normal=(0.0, 1.0, 0.0), y=0.0):
+    positions = [(-hx, y, -hz), (hx, y, -hz), (hx, y, hz), (-hx, y, hz)]
+    normals = [normal] * 4
+    uvs = [(0.0, 1.0), (1.0, 1.0), (1.0, 0.0), (0.0, 0.0)]
+    # CCW seen from outside along +Y (matches _box_faces' convention).
+    indices = [0, 2, 1, 0, 3, 2]
+    return positions, normals, uvs, indices
+
+
+def quat_axis_angle(axis, degrees):
+    ax, ay, az = axis
+    n = math.sqrt(ax * ax + ay * ay + az * az)
+    ax, ay, az = ax / n, ay / n, az / n
+    half = math.radians(degrees) / 2.0
+    s = math.sin(half)
+    return [f(ax * s), f(ay * s), f(az * s), f(math.cos(half))]
+
+
+def minmax3(vecs):
+    xs = [v[0] for v in vecs]
+    ys = [v[1] for v in vecs]
+    zs = [v[2] for v in vecs]
+    return fv((min(xs), min(ys), min(zs))), fv((max(xs), max(ys), max(zs)))
+
+
+def pack_vec3f(vecs):
+    flat = []
+    for v in vecs:
+        flat.extend(fv(v))
+    return struct.pack("<%df" % len(flat), *flat)
+
+
+def pack_vec2f(vecs):
+    flat = []
+    for v in vecs:
+        flat.extend(fv(v))
+    return struct.pack("<%df" % len(flat), *flat)
+
+
+def pack_indices(idx, wide=False):
+    if wide:
+        return struct.pack("<%dI" % len(idx), *idx), 5125  # UNSIGNED_INT
+    return struct.pack("<%dH" % len(idx), *idx), 5123  # UNSIGNED_SHORT
+
+
+# --------------------------------------------------------------------------------------
+# glTF document builder.
+# --------------------------------------------------------------------------------------
+
+
+class Doc:
+    def __init__(self):
+        self.json = {
+            "asset": {"version": "2.0", "generator": GENERATOR},
+            "scene": 0,
+            "scenes": [{"nodes": []}],
+            "nodes": [],
+            "meshes": [],
+            "accessors": [],
+            "bufferViews": [],
+            "buffers": [{"byteLength": 0}],
+            "materials": [],
+            "images": [],
+            "textures": [],
+        }
+        self.bin = bytearray()
+
+    # -- nodes --
+    def add_node(self, node):
+        idx = len(self.json["nodes"])
+        self.json["nodes"].append(node)
+        return idx
+
+    def add_root(self, node_idx):
+        self.json["scenes"][0]["nodes"].append(node_idx)
+
+    # -- binary buffer --
+    def _align(self):
+        while len(self.bin) % 4 != 0:
+            self.bin.append(0)
+
+    def add_buffer_view(self, data):
+        self._align()
+        offset = len(self.bin)
+        self.bin.extend(data)
+        idx = len(self.json["bufferViews"])
+        self.json["bufferViews"].append({"buffer": 0, "byteOffset": offset, "byteLength": len(data)})
+        return idx
+
+    def add_accessor(self, buffer_view, component_type, count, type_, min_=None, max_=None, sparse=None):
+        acc = {"componentType": component_type, "count": count, "type": type_}
+        if buffer_view is not None:
+            acc["bufferView"] = buffer_view
+        if min_ is not None:
+            acc["min"] = min_
+        if max_ is not None:
+            acc["max"] = max_
+        if sparse is not None:
+            acc["sparse"] = sparse
+        idx = len(self.json["accessors"])
+        self.json["accessors"].append(acc)
+        return idx
+
+    # -- materials / images / textures --
+    def add_material(
+        self,
+        name,
+        base_color=(0.6, 0.6, 0.65, 1.0),
+        metallic=0.0,
+        roughness=0.6,
+        alpha_mode=None,
+        alpha_cutoff=None,
+        double_sided=False,
+        base_color_texture=None,
+        normal_texture=None,
+        mr_texture=None,
+        occlusion_texture=None,
+        emissive_texture=None,
+        emissive_factor=None,
+    ):
+        pbr = {"baseColorFactor": fv(base_color), "metallicFactor": f(metallic), "roughnessFactor": f(roughness)}
+        if base_color_texture is not None:
+            pbr["baseColorTexture"] = base_color_texture
+        if mr_texture is not None:
+            pbr["metallicRoughnessTexture"] = mr_texture
+        mat = {"name": name, "pbrMetallicRoughness": pbr}
+        if normal_texture is not None:
+            mat["normalTexture"] = normal_texture
+        if occlusion_texture is not None:
+            mat["occlusionTexture"] = occlusion_texture
+        if emissive_texture is not None:
+            mat["emissiveTexture"] = emissive_texture
+        if emissive_factor is not None:
+            mat["emissiveFactor"] = fv(emissive_factor)
+        if alpha_mode:
+            mat["alphaMode"] = alpha_mode
+        if alpha_cutoff is not None:
+            mat["alphaCutoff"] = f(alpha_cutoff)
+        if double_sided:
+            mat["doubleSided"] = True
+        idx = len(self.json["materials"])
+        self.json["materials"].append(mat)
+        return idx
+
+    def add_embedded_image(self, png_bytes, name):
+        bv = self.add_buffer_view(png_bytes)
+        idx = len(self.json["images"])
+        self.json["images"].append({"bufferView": bv, "mimeType": "image/png", "name": name})
+        return idx
+
+    def add_texture(self, image_idx):
+        idx = len(self.json["textures"])
+        self.json["textures"].append({"source": image_idx})
+        return idx
+
+    # -- primitives / meshes --
+    def make_primitive(self, positions, indices=None, normals=None, uv0=None, uv1=None, material=None, wide_indices=False, mode=4):
+        attrs = {}
+        pos_bv = self.add_buffer_view(pack_vec3f(positions))
+        mn, mx = minmax3(positions)
+        attrs["POSITION"] = self.add_accessor(pos_bv, 5126, len(positions), "VEC3", min_=mn, max_=mx)
+        if normals is not None:
+            nbv = self.add_buffer_view(pack_vec3f(normals))
+            attrs["NORMAL"] = self.add_accessor(nbv, 5126, len(normals), "VEC3")
+        if uv0 is not None:
+            bv = self.add_buffer_view(pack_vec2f(uv0))
+            attrs["TEXCOORD_0"] = self.add_accessor(bv, 5126, len(uv0), "VEC2")
+        if uv1 is not None:
+            bv = self.add_buffer_view(pack_vec2f(uv1))
+            attrs["TEXCOORD_1"] = self.add_accessor(bv, 5126, len(uv1), "VEC2")
+        prim = {"attributes": attrs, "mode": mode}
+        if indices is not None:
+            data, ctype = pack_indices(indices, wide=wide_indices)
+            ibv = self.add_buffer_view(data)
+            prim["indices"] = self.add_accessor(ibv, ctype, len(indices), "SCALAR")
+        if material is not None:
+            prim["material"] = material
+        return prim
+
+    def add_mesh_node(self, name, primitives, translation=None, rotation=None, scale=None, children=None, extras=None):
+        mesh_idx = len(self.json["meshes"])
+        self.json["meshes"].append({"name": name, "primitives": primitives})
+        node = {"name": name, "mesh": mesh_idx}
+        if translation is not None:
+            node["translation"] = fv(translation)
+        if rotation is not None:
+            node["rotation"] = fv(rotation)
+        if scale is not None:
+            node["scale"] = fv(scale)
+        if children is not None:
+            node["children"] = children
+        if extras is not None:
+            node["extras"] = extras
+        return self.add_node(node), mesh_idx
+
+    def add_empty_node(self, name, translation=None, rotation=None, scale=None, children=None, extras=None):
+        node = {"name": name}
+        if translation is not None:
+            node["translation"] = fv(translation)
+        if rotation is not None:
+            node["rotation"] = fv(rotation)
+        if scale is not None:
+            node["scale"] = fv(scale)
+        if children is not None:
+            node["children"] = children
+        if extras is not None:
+            node["extras"] = extras
+        return self.add_node(node)
+
+    # -- finalize --
+    def finalize(self):
+        self.json["buffers"] = [{"byteLength": len(self.bin)}]
+        for key in ("materials", "images", "textures", "extensionsUsed", "extensionsRequired"):
+            if key in self.json and not self.json[key]:
+                del self.json[key]
+        return self.json, bytes(self.bin)
+
+    def write(self, name):
+        doc_json, bin_bytes = self.finalize()
+        return write_glb(name, doc_json, bin_bytes)
+
+
+# --------------------------------------------------------------------------------------
+# Per-file builders
+# --------------------------------------------------------------------------------------
+
+
+def build_cube_basic():
+    doc = Doc()
+    pos, nrm, uv, idx = box_flat()
+    mat = doc.add_material("paint", base_color=(0.6, 0.6, 0.65, 1.0))
+    prim = doc.make_primitive(pos, idx, normals=nrm, uv0=uv, material=mat)
+    node, _ = doc.add_mesh_node("cube", [prim])
+    doc.add_root(node)
+    doc.write("cube_basic.glb")
+
+
+def build_hierarchy_parts():
+    doc = Doc()
+    mat = doc.add_material("hull_paint", base_color=(0.55, 0.58, 0.62, 1.0))
+
+    # Antenna: thin mast, child of wing_l.
+    pos, nrm, uv, idx = box_flat(hx=0.03, hy=0.4, hz=0.03)
+    antenna_prim = doc.make_primitive(pos, idx, normals=nrm, uv0=uv, material=mat)
+    antenna, _ = doc.add_mesh_node("antenna", [antenna_prim], translation=(0.0, 0.3, 0.5))
+
+    # Wing: shaped directly in mesh data (long X, thin Y, modest Z chord); wing_l and
+    # wing_r both reference this SAME mesh index, so wing_r's negative X node scale is a
+    # true mirror of wing_l's authored geometry, not a separately modeled mirror mesh.
+    wpos, wnrm, wuv, widx = box_flat(hx=0.9, hy=0.08, hz=0.35)
+    wing_prim = doc.make_primitive(wpos, widx, normals=wnrm, uv0=wuv, material=mat)
+    wing_mesh_idx = len(doc.json["meshes"])
+    doc.json["meshes"].append({"name": "wing", "primitives": [wing_prim]})
+
+    wing_l = doc.add_node(
+        {
+            "name": "wing_l",
+            "mesh": wing_mesh_idx,
+            "translation": fv((-0.8, 0.1, -0.1)),
+            "rotation": quat_axis_angle((0, 0, 1), 10.0),
+            "children": [antenna],
+        }
+    )
+    wing_r = doc.add_node(
+        {
+            "name": "wing_r",
+            "mesh": wing_mesh_idx,
+            "translation": fv((0.8, 0.1, -0.1)),
+            "rotation": quat_axis_angle((0, 0, 1), 10.0),
+            "scale": fv((-1.0, 1.0, 1.0)),  # mirrors the shared wing mesh across X
+        }
+    )
+
+    hpos, hnrm, huv, hidx = box_flat(hx=0.5, hy=0.4, hz=1.0)
+    hull_prim = doc.make_primitive(hpos, hidx, normals=hnrm, uv0=huv, material=mat)
+    hull, _ = doc.add_mesh_node("hull", [hull_prim], children=[wing_l, wing_r])
+
+    # Root empty "ship": identity transform, no mesh, no mount_/col_/_ prefix. Per this
+    # corpus's documented convention (see ../manifest.txt header), an identity-transform,
+    # unprefixed scene-root empty folds into the implicit model root and does NOT get its
+    # own PART record -- so this file cooks to 4 parts (hull, wing_l, wing_r, antenna),
+    # not 5.
+    ship = doc.add_empty_node("ship", children=[hull])
+    doc.add_root(ship)
+    doc.write("hierarchy_parts.glb")
+
+
+def build_mounts_extras():
+    doc = Doc()
+    mat = doc.add_material("hull", base_color=(0.5, 0.5, 0.55, 1.0))
+    pos, nrm, uv, idx = box_flat(hx=0.5, hy=0.4, hz=1.0)
+    prim = doc.make_primitive(pos, idx, normals=nrm, uv0=uv, material=mat)
+
+    gun_extras = {
+        "slot": "hardpoint",
+        "size": 2,
+        "enabled": True,
+        "bad;key": "x",  # dropped: ';' not allowed in extrasStr keys/values
+        "nested": {"a": 1},  # dropped: not a scalar
+    }
+    mount_e0 = doc.add_empty_node("mount_engine_00", translation=(-0.3, -0.2, -1.0))
+    mount_e1 = doc.add_empty_node("mount_engine_01", translation=(0.3, -0.2, -1.0))
+    mount_gun = doc.add_empty_node(
+        "mount_gun", translation=(0.0, 0.3, 0.8), rotation=quat_axis_angle((0, 1, 0), 45.0), extras=gun_extras
+    )
+
+    hull, _ = doc.add_mesh_node("hull", [prim], children=[mount_e0, mount_e1, mount_gun])
+    doc.add_root(hull)
+    doc.write("mounts_extras.glb")
+
+
+def build_authored_lods():
+    doc = Doc()
+    mat = doc.add_material("hull", base_color=(0.45, 0.47, 0.5, 1.0))
+
+    pos0, nrm0, uv0, idx0 = box_subdivided(segs=2)  # LOD0: 54v / 48tri
+    prim0 = doc.make_primitive(pos0, idx0, normals=nrm0, uv0=uv0, material=mat)
+    hull, _ = doc.add_mesh_node("hull", [prim0])
+    doc.add_root(hull)
+
+    pos1, nrm1, uv1, idx1 = box_flat()  # LOD1: 24v / 12tri
+    prim1 = doc.make_primitive(pos1, idx1, normals=nrm1, uv0=uv1, material=mat)
+    lod1, _ = doc.add_mesh_node("hull_lod1", [prim1])
+    doc.add_root(lod1)
+
+    pos2, nrm2, uv2, idx2 = quad(hx=0.5, hz=0.5)  # LOD2: 4v / 2tri impostor
+    prim2 = doc.make_primitive(pos2, idx2, normals=nrm2, uv0=uv2, material=mat)
+    lod2, _ = doc.add_mesh_node("hull_lod2", [prim2])
+    doc.add_root(lod2)
+
+    cpos, cnrm, cuv, cidx = box_flat(hx=0.55, hy=0.55, hz=0.55)  # collision proxy, no material
+    col_prim = doc.make_primitive(cpos, cidx, normals=cnrm)
+    col, _ = doc.add_mesh_node("col_hull", [col_prim])
+    doc.add_root(col)
+
+    helper = doc.add_empty_node("_helper", translation=(0.0, 1.0, 0.0))
+    doc.add_root(helper)
+
+    doc.write("authored_lods.glb")
+
+
+def build_multi_material():
+    doc = Doc()
+    metal = doc.add_material("metal", base_color=(0.5, 0.5, 0.55, 1.0), metallic=1.0, roughness=0.3)
+    glass = doc.add_material("glass", base_color=(0.7, 0.9, 1.0, 0.3), metallic=0.0, roughness=0.05, alpha_mode="BLEND")
+    # decal.001 and decal.002: two distinct glTF materials with identical resolved
+    # properties. After stripping the Blender-style ".NNN" duplicate-name suffix, both
+    # strip to "decal"; the cooker is expected to collapse them into one MATL entry
+    # because their properties match (see generated/README.md and multi_material note
+    # in ../manifest.txt). Four primitives are used (not the literal "three" of the task
+    # prompt) because testing the collision requires both decal.001 AND decal.002 to
+    # actually be bound to a primitive each.
+    decal_props = dict(base_color=(1.0, 1.0, 1.0, 1.0), metallic=0.0, roughness=0.8, alpha_mode="MASK", alpha_cutoff=0.5)
+    decal1 = doc.add_material("decal.001", **decal_props)
+    decal2 = doc.add_material("decal.002", **decal_props)
+
+    prims = []
+    for name, mat, cx in (("metal", metal, -1.5), ("glass", glass, -0.5), ("decal.001", decal1, 0.5), ("decal.002", decal2, 1.5)):
+        pos, nrm, uv, idx = quad(hx=0.45, hz=0.45)
+        pos = [(p[0] + cx, p[1], p[2]) for p in pos]
+        prims.append(doc.make_primitive(pos, idx, normals=nrm, uv0=uv, material=mat))
+
+    node, _ = doc.add_mesh_node("multi", prims)
+    doc.add_root(node)
+    doc.write("multi_material.glb")
+
+
+def build_two_uv_sets():
+    doc = Doc()
+    albedo_png = write_png_bytes(8, 8, gradient_rgba(8, 8, (40, 40, 200, 255), (220, 200, 60, 255)))
+    ao_png = write_png_bytes(8, 8, gradient_rgba(8, 8, (255, 255, 255, 255), (60, 60, 60, 255)))
+    albedo_img = doc.add_embedded_image(albedo_png, "albedo")
+    ao_img = doc.add_embedded_image(ao_png, "ao")
+    albedo_tex = doc.add_texture(albedo_img)
+    ao_tex = doc.add_texture(ao_img)
+
+    mat = doc.add_material(
+        "two_uv",
+        base_color=(1.0, 1.0, 1.0, 1.0),
+        base_color_texture={"index": albedo_tex},
+        occlusion_texture={"index": ao_tex, "texCoord": 1},
+    )
+
+    pos, nrm, uv0, idx = quad(hx=0.5, hz=0.5)
+    uv1 = [(0.25, 0.75), (0.75, 0.75), (0.75, 0.25), (0.25, 0.25)]
+    prim = doc.make_primitive(pos, idx, normals=nrm, uv0=uv0, uv1=uv1, material=mat)
+    node, _ = doc.add_mesh_node("quad", [prim])
+    doc.add_root(node)
+    doc.write("two_uv_sets.glb")
+
+
+def build_no_uv_no_normals():
+    doc = Doc()
+    pos, idx = box_welded()
+    prim = doc.make_primitive(pos, idx)  # POSITION only: no normals, no UVs, no material
+    node, _ = doc.add_mesh_node("block", [prim])
+    doc.add_root(node)
+    doc.write("no_uv_no_normals.glb")
+
+
+def build_u32_indices():
+    doc = Doc()
+    mat = doc.add_material("cube_u32", base_color=(0.6, 0.4, 0.4, 1.0))
+    pos, nrm, uv, idx = box_flat()
+    prim = doc.make_primitive(pos, idx, normals=nrm, uv0=uv, material=mat, wide_indices=True)
+    node, _ = doc.add_mesh_node("cube", [prim])
+    doc.add_root(node)
+    doc.write("u32_indices.glb")
+
+
+def build_pbr_textures():
+    doc = Doc()
+    albedo_png = write_png_bytes(8, 8, gradient_rgba(8, 8, (200, 60, 60, 255), (120, 20, 20, 255)))
+    normal_png = write_png_bytes(8, 8, solid_rgba((128, 128, 255, 255)))
+    orm_png = write_png_bytes(8, 8, solid_rgba((255, 180, 40, 255)))  # R=occlusion G=roughness B=metallic
+    emissive_png = write_png_bytes(8, 8, solid_rgba((255, 170, 60, 255)))
+    height_png = write_png_bytes(16, 16, gradient_gray16(16, 16), bitdepth=16, color_type=0)
+
+    albedo_img = doc.add_embedded_image(albedo_png, "hull_albedo")
+    normal_img = doc.add_embedded_image(normal_png, "hull_normal")
+    orm_img = doc.add_embedded_image(orm_png, "hull_orm")
+    emissive_img = doc.add_embedded_image(emissive_png, "hull_emissive")
+    doc.add_embedded_image(height_png, "hull_height")  # unreferenced by any texture/material
+
+    albedo_tex = doc.add_texture(albedo_img)
+    normal_tex = doc.add_texture(normal_img)
+    orm_tex = doc.add_texture(orm_img)
+    emissive_tex = doc.add_texture(emissive_img)
+
+    mat = doc.add_material(
+        "hull_pbr",
+        base_color=(1.0, 1.0, 1.0, 1.0),
+        base_color_texture={"index": albedo_tex},
+        normal_texture={"index": normal_tex},
+        mr_texture={"index": orm_tex},
+        occlusion_texture={"index": orm_tex},
+        emissive_texture={"index": emissive_tex},
+        emissive_factor=(1.0, 1.0, 1.0),
+    )
+
+    pos, nrm, uv, idx = box_flat()
+    prim = doc.make_primitive(pos, idx, normals=nrm, uv0=uv, material=mat)
+    node, _ = doc.add_mesh_node("hull", [prim])
+    doc.add_root(node)
+    doc.write("pbr_textures.glb")
+
+
+def build_draco_required():
+    doc = Doc()
+    mat = doc.add_material("hull", base_color=(0.5, 0.5, 0.5, 1.0))
+    pos, _nrm, _uv, idx = box_flat()
+
+    # Accessors describe count/bounds only; real vertex data would live compressed in the
+    # KHR_draco_mesh_compression bufferView. The cooker must reject on extensionsRequired
+    # before ever looking at that payload, so a few dummy bytes are enough.
+    mn, mx = minmax3(pos)
+    pos_acc = doc.add_accessor(None, 5126, len(pos), "VEC3", min_=mn, max_=mx)
+    idx_acc = doc.add_accessor(None, 5123, len(idx), "SCALAR")
+
+    dummy = b"DRACO-DUMMY-PAYLOAD-NOT-A-REAL-BITSTREAM"
+    draco_bv = doc.add_buffer_view(dummy)
+
+    prim = {
+        "attributes": {"POSITION": pos_acc},
+        "indices": idx_acc,
+        "material": mat,
+        "extensions": {"KHR_draco_mesh_compression": {"bufferView": draco_bv, "attributes": {"POSITION": 0}}},
+    }
+    mesh_idx = len(doc.json["meshes"])
+    doc.json["meshes"].append({"name": "hull", "primitives": [prim]})
+    node = doc.add_node({"name": "hull", "mesh": mesh_idx})
+    doc.add_root(node)
+
+    doc.json["extensionsUsed"] = ["KHR_draco_mesh_compression"]
+    doc.json["extensionsRequired"] = ["KHR_draco_mesh_compression"]
+    doc.write("draco_required.glb")
+
+
+def build_sparse_accessor():
+    doc = Doc()
+    mat = doc.add_material("cube", base_color=(0.6, 0.6, 0.6, 1.0))
+    pos, idx = box_welded()
+    nrm = [corner_normal(p) for p in pos]
+
+    # POSITION accessor has NO bufferView (implicit all-zero base) plus a full sparse
+    # override for all 8 corners -- a legal glTF pattern the cooker must still reject,
+    # per HANDOFF sec 4.1 / mesh-format-spec, with K1003.
+    val_bv = doc.add_buffer_view(pack_vec3f(pos))
+    idx_bv = doc.add_buffer_view(struct.pack("<%dH" % len(pos), *range(len(pos))))
+    sparse = {"count": len(pos), "indices": {"bufferView": idx_bv, "componentType": 5123}, "values": {"bufferView": val_bv}}
+    mn, mx = minmax3(pos)
+    pos_acc = doc.add_accessor(None, 5126, len(pos), "VEC3", min_=mn, max_=mx, sparse=sparse)
+
+    nbv = doc.add_buffer_view(pack_vec3f(nrm))
+    nrm_acc = doc.add_accessor(nbv, 5126, len(nrm), "VEC3")
+
+    ibv = doc.add_buffer_view(struct.pack("<%dH" % len(idx), *idx))
+    idx_acc = doc.add_accessor(ibv, 5123, len(idx), "SCALAR")
+
+    prim = {"attributes": {"POSITION": pos_acc, "NORMAL": nrm_acc}, "indices": idx_acc, "material": mat, "mode": 4}
+    mesh_idx = len(doc.json["meshes"])
+    doc.json["meshes"].append({"name": "cube", "primitives": [prim]})
+    node = doc.add_node({"name": "cube", "mesh": mesh_idx})
+    doc.add_root(node)
+    doc.write("sparse_accessor.glb")
+
+
+def build_non_triangle():
+    doc = Doc()
+    mat = doc.add_material("shape", base_color=(0.5, 0.6, 0.5, 1.0))
+
+    line_pos = [(-0.5, 0.0, 0.0), (0.5, 0.0, 0.0)]
+    line_prim = doc.make_primitive(line_pos, [0, 1], mode=1)  # LINES: skipped with a warning
+
+    tpos, tnrm, tuv, tidx = quad(hx=0.5, hz=0.5)
+    tri_prim = doc.make_primitive(tpos, tidx, normals=tnrm, uv0=tuv, material=mat, mode=4)
+
+    node, _ = doc.add_mesh_node("mixed", [line_prim, tri_prim])
+    doc.add_root(node)
+    doc.write("non_triangle.glb")
+
+
+def build_external_uri():
+    doc = Doc()
+    pos, nrm, uv, idx = box_flat()
+
+    png = write_png_bytes(8, 8, gradient_rgba(8, 8, (60, 120, 200, 255), (200, 220, 240, 255)))
+    png_name = "external_uri_albedo.png"
+    with open(os.path.join(OUT_DIR, png_name), "wb") as fh:
+        fh.write(png)
+    validate_png_bytes(png)
+
+    img_idx = len(doc.json["images"])
+    doc.json["images"].append({"uri": png_name, "name": "external_uri_albedo"})
+    tex_idx = doc.add_texture(img_idx)
+    mat = doc.add_material("paint", base_color=(1.0, 1.0, 1.0, 1.0), base_color_texture={"index": tex_idx})
+
+    prim = doc.make_primitive(pos, idx, normals=nrm, uv0=uv, material=mat)
+    node, _ = doc.add_mesh_node("cube", [prim])
+    doc.add_root(node)
+
+    doc_json, bin_bytes = doc.finalize()
+    bin_name = "external_uri.bin"
+    with open(os.path.join(OUT_DIR, bin_name), "wb") as fh:
+        fh.write(bin_bytes)
+    doc_json["buffers"] = [{"uri": bin_name, "byteLength": len(bin_bytes)}]
+
+    gltf_name = "external_uri.gltf"
+    text = json.dumps(doc_json, sort_keys=True, indent=2) + "\n"
+    gltf_path = os.path.join(OUT_DIR, gltf_name)
+    with open(gltf_path, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(text)
+
+    # Self-validate: re-parse, and check every external reference actually resolves.
+    with open(gltf_path, "r", encoding="utf-8") as fh:
+        reparsed = json.load(fh)
+    assert reparsed["asset"]["version"] == "2.0"
+    buf = reparsed["buffers"][0]
+    bin_path = os.path.join(OUT_DIR, buf["uri"])
+    assert os.path.getsize(bin_path) == buf["byteLength"], "external .bin size mismatch"
+    img = reparsed["images"][0]
+    img_path = os.path.join(OUT_DIR, img["uri"])
+    with open(img_path, "rb") as fh:
+        img_data = fh.read()
+    validate_png_bytes(img_data)
+
+    total = os.path.getsize(gltf_path) + os.path.getsize(bin_path) + os.path.getsize(img_path)
+    print(f"  {gltf_name} + {bin_name} + {png_name}: {total} bytes total")
+
+
+FILES = [
+    build_cube_basic,
+    build_hierarchy_parts,
+    build_mounts_extras,
+    build_authored_lods,
+    build_multi_material,
+    build_two_uv_sets,
+    build_no_uv_no_normals,
+    build_u32_indices,
+    build_pbr_textures,
+    build_draco_required,
+    build_sparse_accessor,
+    build_non_triangle,
+]
+
+
+def main():
+    print("Generating hand-made glTF/GLB corpus into", OUT_DIR)
+    for fn in FILES:
+        fn()
+    build_external_uri()
+    print("many_vertices.glb: intentionally not generated (see README.md)")
+    total = 0
+    for name in sorted(os.listdir(OUT_DIR)):
+        if name.endswith((".glb", ".gltf", ".bin", ".png")):
+            total += os.path.getsize(os.path.join(OUT_DIR, name))
+    print(f"Total corpus size in {OUT_DIR}: {total} bytes")
+
+
+if __name__ == "__main__":
+    main()

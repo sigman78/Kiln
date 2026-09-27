@@ -1,6 +1,6 @@
 # Kiln
 
-Kiln is a graphics-API-agnostic asset cook/load library for C++20. It sits between **source
+Kiln is a graphics-API-agnostic asset cook/load library for C++23. It sits between **source
 assets** (`.glb`, `.png`, `.ktx2`) and **any renderer**: it cooks sources into GPU-ready,
 API-agnostic runtime formats (the `.mesh` format and KTX2), loads them asynchronously and directly
 into memory the renderer provides, and optionally hot-reloads them on source change. The library
@@ -22,7 +22,8 @@ renderer (Vulkan / sokol / bgfx / custom) ◄── adapter ◄── async runt
 **Requirements:**
 
 - CMake ≥ 3.25
-- A C++20 compiler: MSVC 2022+, clang-cl, clang 16+, or gcc 12+
+- A C++23 compiler: MSVC 2022 17.10+ (or 2026), clang-cl / clang 17+, or gcc 13+. The baseline is deliberately
+  recent; when a compiler lags, the answer is to update the compiler, not to add workarounds.
 
 **Commands:**
 
@@ -79,6 +80,13 @@ target_link_libraries(app PRIVATE kiln::runtime kiln::cook)
 
 See [`docs/design/shipping-split.md`](docs/design/shipping-split.md) for the full read-only
 shipping contract.
+
+## Tools
+
+- `kiln-cook <input>... -o <store>`: cook `.glb`/`.gltf`/`.png`/`.ktx2` sources (files or directories) into the
+  content-hashed store; `--check` validates only, `--named` writes human-readable names, `--map` records
+  asset path -> file. Dev/CI only (needs `kiln_cook`).
+- `kiln-info <file> [--blobs] [--check]`: dump a `.mesh` or `.ktx2`; read-only, ships with the runtime side.
 
 ## Docs
 

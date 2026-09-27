@@ -4,3 +4,6 @@
 *.png binary
 *.ktx2 binary
 *.mesh binary
+*.bin binary
+
+third_party/** linguist-vendored

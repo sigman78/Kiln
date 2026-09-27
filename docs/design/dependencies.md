@@ -168,10 +168,8 @@ contract in `shipping-split.md` (M1.5).
 
 ## Open points for the owner
 
-- Confirm cgltf over fastgltf.
-- Confirm wuffs as first choice for PNG (and accept stb_image as a no-further-approval fallback).
+- Lets go with cgltf
+- Use wuffs as first choice for PNG
 - Confirm "own KTX2 reader and writer" for v0.5.
-- Confirm the viewer uses raw Vulkan 1.4 + volk (or defer to M4).
-- Window library for the viewer (GLFW vs SDL3) can wait until M4.
-- Confirm the later plan: zstd decoder-only and (if chosen) meshoptimizer decoder sources in
-  `kiln_runtime`, each behind a CMake option. Nothing is added in v0.5.
+- Defer: viewer uses raw Vulkan 1.4 + volk
+- Defer: Window library for the viewer (GLFW vs SDL3)

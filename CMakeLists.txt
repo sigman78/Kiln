@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.25)
 project(kiln
     VERSION 0.0.1
     DESCRIPTION "Graphics-API-agnostic asset cooking and async loading library"
-    LANGUAGES CXX)
+    LANGUAGES CXX C)
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(kiln_warnings)
@@ -58,7 +58,7 @@ kiln_apply_defaults(kiln_core)
 target_include_directories(kiln_core PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
-target_compile_features(kiln_core PUBLIC cxx_std_20)
+target_compile_features(kiln_core PUBLIC cxx_std_23)
 
 # ---------------------------------------------------------------------------
 # kiln_runtime — loading, .mesh/KTX2 readers, IO. Ships in release builds.
@@ -84,17 +84,34 @@ endif()
 # kiln_cook — importers, encoders, settings, store writer. Dev builds and tools.
 # ---------------------------------------------------------------------------
 if(KILN_BUILD_COOK)
+    # Cook-only third-party deps (cgltf, MikkTSpace, wuffs, meshoptimizer):
+    # see docs/design/dependencies.md and third_party/CMakeLists.txt. Never
+    # evaluated in a shipping configure (KILN_BUILD_COOK=OFF).
+    add_subdirectory(third_party)
+
     add_library(kiln_cook STATIC
         include/kiln/cook/mesh_writer.h
         src/formats/mesh_write.cpp
         include/kiln/cook/ktx2_writer.h
         src/formats/ktx2_write.cpp
+        include/kiln/cook/settings.h
+        src/cook/settings.cpp
+        include/kiln/cook/cook.h
         src/cook/cook.cpp
+        src/cook/store.cpp
+        include/kiln/cook/image.h
+        src/cook/image.cpp
+        src/cook/png_decode.cpp
+        src/cook/texture_cook.cpp
+        src/cook/cook_internal.h
+        src/cook/gltf_import.cpp
+        src/cook/mesh_cook.cpp
     )
     add_library(kiln::cook ALIAS kiln_cook)
 set_target_properties(kiln_cook PROPERTIES EXPORT_NAME cook)
     kiln_apply_defaults(kiln_cook)
     target_link_libraries(kiln_cook PUBLIC kiln_runtime)
+    target_link_libraries(kiln_cook PRIVATE kiln_third_party_cook)
 endif()
 
 # ---------------------------------------------------------------------------

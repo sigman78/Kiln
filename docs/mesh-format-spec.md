@@ -1,6 +1,6 @@
 # kiln `.mesh` — Cooked Runtime Mesh Format
 
-**Status:** draft v0.3 · **Target:** Vulkan 1.4, C++20, little-endian only
+**Status:** draft v0.3 · **Target:** Vulkan 1.4, C++23, little-endian only
 **Produced by:** `kiln-cook` from glTF 2.0 sources (`.glb`, or `.gltf` with external or data-URI buffers and images). **Never** hand-authored, never edited.
 
 The format originated as Orbital's `.mesh` (magic `OMSH`); kiln adopts it under its own magic and namespace, and no `OMSH` files need to be read.

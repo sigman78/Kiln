@@ -54,23 +54,101 @@ is dropped entirely and the sink prints just `<asset> <where>: <message> (<statu
 
 | Range | Area | Milestone | Status |
 |---|---|---|---|
-| K1000-1999 | glTF import (unsupported extensions, sparse accessors, Draco, bad node names, missing UVs) | M2 | not yet populated |
-| K2000-2999 | Image import and encode (PNG decode, KTX2 pass-through, size and channel checks) | M2 | not yet populated |
-| K3000-3999 | Settings resolution (invalid combinations, unknown keys) | M2 | not yet populated |
-| K4000-4099 | `.mesh` validation and decode | M1 | populated, see §3.1 |
-| K4100-4199 | KTX2 validation | M1 | populated, see §3.2 |
+| K1000-1999 | glTF import (unsupported extensions, sparse accessors, Draco, bad node names, missing UVs) | M2 | populated, see §3.1 |
+| K2000-2999 | Image import and encode (PNG decode, KTX2 pass-through, size and channel checks) | M2 | populated, see §3.2 |
+| K3000-3999 | Settings resolution (invalid combinations, unknown keys) | M2 | populated, see §3.3 |
+| K4000-4099 | `.mesh` validation and decode | M1 | populated, see §3.4 |
+| K4100-4199 | KTX2 validation | M1 | populated, see §3.5 |
 | K4200-4999 | Reserved for other cooked formats | — | unassigned |
-| K5000-5999 | Runtime and store (store miss, corrupt entry, adapter failures, placeholder served) | M3 | not yet populated |
+| K5000-5999 | Runtime and store (store miss, corrupt entry, adapter failures, placeholder served) | M3 | not yet populated, see §3.6 |
 | K6000-9999 | Unassigned | — | unassigned |
 
-Only K4000-4099 and K4100-4199 have codes defined today, in `include/kiln/mesh.h`
-(`kiln::mesh::DiagCode`) and `include/kiln/ktx2.h` (`kiln::ktx2::DiagCode`) respectively. The
-other ranges are reserved by `docs/design/error-model.md` for work that has not landed yet;
-when it does, its codes are added to this file in the same change (see §4).
+K1000-1999, K2000-2999, K3000-3999, K4000-4099 and K4100-4199 all have codes defined today, in
+`include/kiln/cook/cook.h` (`kiln::cook::GltfDiagCode`), `include/kiln/cook/image.h`
+(`kiln::cook::ImageDiagCode`), `include/kiln/cook/settings.h` (`kiln::cook::SettingsDiagCode`),
+`include/kiln/mesh.h` (`kiln::mesh::DiagCode`) and `include/kiln/ktx2.h`
+(`kiln::ktx2::DiagCode`) respectively. K4200-4999 and K5000-5999 are reserved by
+`docs/design/error-model.md` for work that has not landed yet; when it does, its codes are
+added to this file in the same change (see §4).
 
 ## 3. Codes
 
-### 3.1 K4000-4099 — `.mesh` validation and decode
+### 3.1 K1000-1999 — glTF import
+
+Source: `kiln::cook::GltfDiagCode` in `include/kiln/cook/cook.h`. Emitted by the glTF/GLB
+importer (`src/cook/gltf_import.cpp`) and the mesh cooker (`src/cook/mesh_cook.cpp`). Where a
+code is emitted with more than one `Status` or `Severity`, both are listed; which one applies
+depends on the specific check that failed (see "Meaning").
+
+| Code | Name | Status | Severity | Meaning | Typical cause / fix |
+|---|---|---|---|---|---|
+| K1001 | `kDiagGltfParseFailed` | ParseError | Error | The source is not a valid glTF/GLB: empty input, a `cgltf_parse` failure, or a GLB buffer-load failure. | Not a valid glTF/GLB, or the file is truncated/corrupted. Re-export from the source scene, or re-fetch the asset. |
+| K1002 | `kDiagGltfUnsupportedExt` | Unsupported | Error | A required extension is not supported: `KHR_draco_mesh_compression` (declared in `extensionsRequired`, or Draco compression on a primitive) or `EXT_meshopt_compression`. | Re-export without Draco/meshopt compression. `EXT_meshopt_compression` input is planned but not implemented (HANDOFF §4.1); Draco is rejected by design. |
+| K1003 | `kDiagGltfSparseAccessor` | Unsupported | Error | An accessor uses sparse storage, which the importer rejects. | Re-export with dense accessors (disable the sparse-accessor optimization in the exporter). |
+| K1004 | `kDiagGltfBadAccessor` | ValidationFailed | Error | An accessor, buffer view, or primitive is malformed or out of range: wrong type/component type, an out-of-bounds or missing buffer view, a primitive without `POSITION`, mismatched attribute counts, an out-of-range vertex index, an external buffer shorter than declared, a node hierarchy deeper than 256, or `cgltf_validate` failing outright. | Corrupted or hand-edited glTF. Re-export from the source scene. |
+| K1005 | `kDiagGltfExternalMissing` | NotFound | Error | An external buffer URI could not be resolved: no `UriResolver` was supplied, or the resolver failed to find/read the referenced file. | Supply a `UriResolver` that can reach the URI, or embed buffers by exporting `.glb` instead of `.gltf`. |
+| K1006 | `kDiagGltfNoScene` | ValidationFailed | Error | No mesh nodes remain after applying the naming conventions (§3.1.1): either the source has no triangle geometry at all, or everything was excluded by the `col_`/`_` conventions or ended up with zero triangles. | Check the source scene has visible mesh geometry not excluded by the collision/hidden naming conventions. |
+| K1007 | `kDiagGltfPrimitiveSkipped` | kOk | Warning | A primitive is not a triangle list (points/lines/strips/fans) and was skipped. | Triangulate the mesh in the source tool before export, or accept the geometry loss. |
+| K1008 | `kDiagGltfNoNormals` | kOk | Info | A primitive had no `NORMAL` attribute; smooth normals were generated. | Informational. Export normals from the source tool if specific hard edges matter. |
+| K1009 | `kDiagGltfNoTangentSource` | kOk | Warning | Tangents were requested (`genTangents`) but could not be produced: no `TEXCOORD_0` to derive them from, or MikkTSpace generation itself failed. | Provide UV0, or set `genTangents = false` if the material has no normal map. |
+| K1010 | `kDiagGltfLodConvention` | kOk | Warning | An `_lodN` naming-convention issue: a mesh present on a `mount_` node (ignored), an `_lodN` node without a mesh (ignored), an `_lodN` node with no matching base part (ignored), a duplicate LOD number for a part (ignored), or gaps in the LOD numbering (compacted in ascending order). | Fix node naming/hierarchy per the `_lodN` convention (§3.1.1), or accept the automatic drop/compaction. |
+| K1011 | `kDiagGltfScaleBaked` | kOk | Info (ordinary part node) / Warning (`mount_` node) | A node's transform could not be carried losslessly: a part node had non-uniform or negative scale baked into its vertices (Info), or a `mount_` node had a non-identity scale that was ignored because mounts have no scale of their own (Warning). | Informational for parts. For mounts, remove the scale in the source tool if it matters downstream. |
+| K1012 | `kDiagGltfMaterialRenamed` | kOk | Info (suffix stripped) / Warning (renamed after a name collision) | A material's Blender-style `.NNN` duplicate suffix was stripped (Info; §3.1.1), or two distinct materials collided on the same stripped name and one was given a fresh numeric suffix instead (Warning). | Informational for the common case. Rename materials in the source scene to avoid the collision case. |
+| K1013 | `kDiagGltfImageUnresolvable` | kOk | Warning | A texture slot referenced an image with no usable source (missing or undecodable); the binding was dropped. | Fix or re-embed the referenced image, or remove the texture reference from the material. |
+| K1014 | `kDiagGltfLimit` | Unsupported | Error | A mesh or LOD exceeds a format limit: an accessor has more vertices than fit a 32-bit count, or a LOD's total vertex/index count reaches the `.mesh` format's 32-bit index sentinel. | Reduce vertex/index count (split the mesh, decimate); the format's index space is exhausted. |
+| K1015 | `kDiagGltfExtrasDropped` | kOk | Warning | A mount's `extras` JSON was dropped in whole or in part: not a JSON object, a non-scalar value for a key, a key/value containing the `;`/`=` separators (or an empty key), or the JSON itself malformed. | Keep mount `extras` to flat scalar key/value pairs with no `;` or `=` characters. |
+| K1016 | `kDiagGltfEmptyMesh` | kOk | Warning | A part or LOD ended up with zero triangles after import. An empty LOD0 drops all of the part's LODs; an empty coarser LOD just drops that LOD. | Check the source node actually has triangle geometry, or remove genuinely empty nodes. |
+| K1017 | `kDiagGltfUsageConflict` | kOk | Warning | The same image is bound to texture slots implying different usages (e.g. both base color and normal); the first usage encountered wins. | Use separate image files per usage in the source material. |
+| K1018 | `kDiagGltfQuantFallback` | kOk | Info | Positions or a UV set fell back to float (the precise profile) because the quantized range/tolerance was exceeded: model extent exceeds 16-bit precision at the configured `posTolMm`, or UV values fall outside +-2048. | Informational. Tighten expectations around `posTolMm`, or accept float storage for that attribute. |
+
+#### 3.1.1 glTF naming conventions
+
+The codes above refer to naming conventions the importer applies to node and material names
+(`docs/HANDOFF.md` §4.1). A node named with the `mount_` prefix becomes an attachment point
+rather than visible geometry, so any mesh on it is ignored and its scale is not carried into the
+cooked asset (K1010, K1011). A node named `<base>_lodN` (N >= 1) supplies an authored LOD for
+the part named `<base>`, and is matched, ordered and gap-compacted by that convention (K1010). A
+node named with the `col_` prefix marks a collision-proxy subtree that is excluded from the
+cooked mesh entirely. A node named with a bare `_` prefix marks a hidden/utility subtree,
+excluded the same way as `col_`. A material name carrying a Blender-style `.NNN` numeric suffix
+(e.g. `hull_paint.002`) has that suffix stripped as a duplicate marker, unless stripping it would
+collide with another material's name (K1012).
+
+### 3.2 K2000-2999 — Image import and encode
+
+Source: `kiln::cook::ImageDiagCode` in `include/kiln/cook/image.h`. Emitted by the PNG decoder
+(`src/cook/png_decode.cpp`) and the texture cooker (`src/cook/texture_cook.cpp`);
+`src/cook/image.cpp`'s pixel operations (`convert_image`, `downsample_2x`, ...) take no
+`DiagSink` and never emit diagnostics themselves, but their `InvalidArgument` failures surface
+under K2002 when the texture cooker wraps them. Where a code is emitted with more than one
+`Status`, both are listed.
+
+| Code | Name | Status | Severity | Meaning | Typical cause / fix |
+|---|---|---|---|---|---|
+| K2001 | `kDiagImageDecodeFailed` | ParseError | Error | The PNG stream is malformed or truncated: bad signature, missing/truncated IHDR, invalid extent, invalid color type/bit depth, an IHDR/decoder extent mismatch, or a wuffs decode failure not recognized as "unsupported". | Re-export/re-save the PNG, or re-fetch it if the file is truncated in transit. |
+| K2002 | `kDiagImageUnsupported` | Unsupported (a PNG feature wuffs reports as unsupported), InvalidArgument (the post-decode channel/bit-depth conversion, `convert_image`, rejected the image) | Error | A PNG feature this build cannot decode, or the conversion to the target channel count/bit depth failed. | Re-export the PNG with a supported color type/bit depth (8/16-bit gray, gray+alpha, RGB, RGBA, or palette). |
+| K2003 | `kDiagImageUnknownFormat` | Unsupported | Error | The source bytes are neither a PNG signature nor a KTX2 identifier. | Supply a PNG or KTX2 file; check the asset was not corrupted or mislabeled. |
+| K2004 | `kDiagImagePassthroughBad` | (whatever `Ktx2View::open` reported, e.g. Corrupt/Unsupported — see K4100-4199), Unsupported, Corrupt | Error | A KTX2 source was rejected for pass-through: the reader itself rejected it, it is supercompressed, it is not a plain 2D texture (has depth, is an array, or is a cube), it is missing level data (Corrupt), or its extent exceeds the size cap and pass-through cannot downscale (Unsupported). | Recook the KTX2 as a plain, non-supercompressed 2D texture under the size cap, or supply a PNG source instead so the cooker can re-encode it. |
+| K2005 | `kDiagImageDownscaled` | kOk | Info | The source image exceeds the resolved size cap (settings `maxSize` and/or the target's cap); the top mip level(s) were dropped before building the chain. | Informational. Lower the source resolution, or raise `maxSize`/the target cap if the drop is unwanted. |
+| K2006 | `kDiagImageNpotMips` | kOk | Info | A non-power-of-two image is building a mip chain; levels use floor halving instead of exact halving. | Informational. Use power-of-two dimensions if exact mip alignment matters. |
+| K2007 | `kDiagImageChannelMismatch` | kOk | Warning | The channel count is unusual for the usage: fewer than 3 channels for a Normal map (expanded to RGBA), or more than 2 channels for a Mask/Height texture (only the first channel is kept). | Author the source image with the channel count the usage expects, or accept the automatic expansion/truncation. |
+| K2008 | `kDiagImageTooLarge` | Unsupported | Error | A PNG dimension exceeds 16384, the decoded byte size would exceed 2^32, or the decoder's required work buffer would exceed twice that limit. | Downscale the source image before cooking. |
+
+### 3.3 K3000-3999 — Settings resolution
+
+Source: `kiln::cook::SettingsDiagCode` in `include/kiln/cook/settings.h`. Emitted by
+`resolve_texture()` and `resolve_mesh()` in `src/cook/settings.cpp`. Where a code is emitted with
+more than one `Status`/`Severity` pair, both are listed; which one applies depends on which
+check failed.
+
+| Code | Name | Status | Severity | Meaning | Typical cause / fix |
+|---|---|---|---|---|---|
+| K3001 | `kDiagSettingsUnsupported` | Unsupported | Error | A feature reserved for v0.6 was requested in v0.5: `genLods = true`, `compression != None`, or `blobChunkSize != 0`. | Use `useAuthoredLods` instead of `genLods`; leave `compression` at `None` and `blobChunkSize` at 0 until v0.6. |
+| K3002 | `kDiagSettingsInvalidCombo` | kOk (a contradictory field is silently ignored/cleared), InvalidArgument (the value itself is invalid) | Warning (ignored field), Error (invalid value) | A field contradicts another, or is out of its valid domain: `flipGreen` set for a non-Normal texture usage (Warning, cleared), `zstdLevel` set while `compression` is `None` (Warning, ignored), `posTolMm` not a positive finite number (Error), or `weldTol` negative or NaN (Error). | Warning cases are informational; the field is cleared/ignored automatically. Error cases: fix `posTolMm`/`weldTol` to a valid value before cooking. |
+| K3003 | `kDiagSettingsClampedByTarget` | kOk | Warning | A resolved value exceeded what the target profile allows and was clamped: texture `maxSize` above the target's `maxTextureSize`, or mesh `profile` above the target's `maxVertexProfile`. | Informational. Lower the requested setting to match the target, or accept the clamp. |
+| K3004 | `kDiagSettingsEnumRange` | InvalidArgument | Error | An enum-typed settings field holds a value outside its valid range: texture `usage`/`colorSpace`, or mesh `profile`/`compression`. | Caller bug: the settings struct was built with a raw/unchecked enum value (e.g. from deserialization). Fix the caller. |
+
+### 3.4 K4000-4099 — `.mesh` validation and decode
 
 Source: `kiln::mesh::DiagCode` in `include/kiln/mesh.h`. Emitted by `MeshView::open()`,
 `decode_blob()`, `decode_payload()` and `check_indices()` in `src/formats/mesh_read.cpp`, all at
@@ -103,7 +181,7 @@ one applies depends on the specific check that failed (see "Meaning").
 | K4022 | `kDiagTruncated` | Corrupt, InvalidArgument | The supplied buffer is shorter than the header, section table, or `gpuDataOffset` require (Corrupt); or the buffer pointer is not 8-byte aligned (InvalidArgument). | Corrupt: file is truncated, re-fetch or recook. InvalidArgument: fix the caller to hand `MeshView::open()` an 8-byte-aligned buffer. |
 | K4023 | `kDiagBufferAlignment` | `InvalidArgument` | Error | The buffer passed to `MeshView::open` is not 8-byte aligned. | Allocate the CPU region with at least 8-byte alignment (any `Allocator` result or `Vec<u8>` qualifies). |
 
-### 3.2 K4100-4199 — KTX2 validation
+### 3.5 K4100-4199 — KTX2 validation
 
 Source: `kiln::ktx2::DiagCode` in `include/kiln/ktx2.h`. Emitted by `Ktx2View::open()` in
 `src/formats/ktx2_read.cpp`, at `Severity::Error` unless noted otherwise.
@@ -119,6 +197,18 @@ Source: `kiln::ktx2::DiagCode` in `include/kiln/ktx2.h`. Emitted by `Ktx2View::o
 | K4107 | `kDiagKtxSupercompression` | Unsupported, Corrupt | `supercompressionScheme` is not `None` (Unsupported: v0.5 has no supercompression support); or `sgdByteLength` is non-zero despite no supercompression scheme (Corrupt). | Unsupported: recook without supercompression, or wait for scheme support. Corrupt: recook from source. |
 | K4108 | `kDiagKtxDfd` | Corrupt (Error), kOk (Warning) | Malformed data format descriptor: `dfdByteLength` too small, `dfdByteOffset` misaligned or overlapping the level index, truncated, `totalSize` field disagreeing with `dfdByteLength`, or a basic block size that does not fit (Corrupt/Error). Separately, a non-failing Warning is emitted when the DFD's `transferFunction` disagrees with the sRGB-ness implied by `vkFormat`; the reader trusts `vkFormat` and continues. | Error case: recook from source. Warning case: informational only; the cooker/writer that produced the DFD should be checked for sRGB-flag consistency, but the file loads fine. |
 | K4109 | `kDiagKtxKvd` | Corrupt | `kvdByteOffset`/`kvdByteLength` misaligned, truncated, overlapping the DFD, or the key/value entries themselves are malformed. | Corrupted file or a writer bug. Recook from source. |
+
+### 3.6 K5000-5999 — Runtime and store (reserved for M3)
+
+No `DiagCode` enum exists for this range yet; it is reserved by `docs/design/error-model.md` for
+the runtime and store work landing in M3 (store miss, corrupt entry, adapter failures,
+placeholder served). Today, `store_write()` (`src/cook/store.cpp`) already reports failures
+through the same `Diagnostic`/`DiagSink` machinery but with no catalogue code: it emits code `0`
+(no catalogue entry, printed without the `Kxxxx` prefix) at `Severity::Error`, with `Status`
+`IoError` for filesystem failures (`mkdir`/`fopen`/write/rename, detail = errno) or
+`InvalidArgument` for a path that does not fit the function's fixed-size buffers. When the M3
+store work lands, these call sites are expected to move onto real K5xxx codes added to this file
+in the same change (see §4).
 
 ## 4. Adding a code
 
