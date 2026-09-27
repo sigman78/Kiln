@@ -18,6 +18,8 @@
 #include <windows.h>
 #elif defined(KILN_OS_LINUX)
 #include <pthread.h>
+#include <sys/resource.h>
+#include <unistd.h>
 #endif
 
 namespace kiln {
@@ -42,8 +44,9 @@ struct Pool {
     u32 inFlight  = 0; ///< queued + currently running; 0 == idle
     bool stopping = false;
 
-    std::thread* workers = nullptr;
-    u32 workerCount      = 0;
+    std::thread* workers    = nullptr;
+    u32 workerCount         = 0;
+    ThreadPriority priority = ThreadPriority::Normal;
 
     std::mutex mutex;
     std::condition_variable notEmpty; ///< signalled when a job is queued or stopping begins
@@ -71,14 +74,28 @@ void set_worker_thread_name(u32 index) noexcept {
     wname[i] = L'\0';
     fn(GetCurrentThread(), wname);
 }
+
+void apply_worker_priority(ThreadPriority prio) noexcept {
+    if (prio == ThreadPriority::Normal) return;
+    (void)SetThreadPriority(GetCurrentThread(), prio == ThreadPriority::Low ? THREAD_PRIORITY_BELOW_NORMAL
+                                                                            : THREAD_PRIORITY_ABOVE_NORMAL);
+}
 #elif defined(KILN_OS_LINUX)
 void set_worker_thread_name(u32 index) noexcept {
     char name[16]; // Linux pthread name limit is 16 bytes including the NUL.
     format(name, sizeof name, "kiln.wrk%u", index);
     (void)pthread_setname_np(pthread_self(), name);
 }
+
+/// SCHED_OTHER has no per-thread priority, so the hint becomes a nice value for this
+/// thread only. Raising above 0 needs privileges; a failure is ignored.
+void apply_worker_priority(ThreadPriority prio) noexcept {
+    if (prio == ThreadPriority::Normal) return;
+    (void)setpriority(PRIO_PROCESS, static_cast<id_t>(gettid()), prio == ThreadPriority::Low ? 5 : -5);
+}
 #else
 void set_worker_thread_name(u32) noexcept {}
+void apply_worker_priority(ThreadPriority) noexcept {}
 #endif
 
 u32 resolve_thread_count(u32 requested) noexcept {
@@ -90,6 +107,7 @@ u32 resolve_thread_count(u32 requested) noexcept {
 
 void worker_main(Pool* p, u32 index) {
     set_worker_thread_name(index);
+    apply_worker_priority(p->priority);
     for (;;) {
         Job job{};
         {
@@ -137,14 +155,13 @@ void pool_wait_idle(void* user) {
 
 Result<JobSystem> create_thread_pool(ThreadPoolDesc const& desc) noexcept {
     KILN_VERIFY(desc.queueCapacity > 0);
-    // desc.priority is not applied: the pool stays on std::thread defaults until a
-    // platform backend maps it (threading-and-io.md, "Worker priority").
     Allocator const* a    = desc.alloc ? desc.alloc : default_allocator();
     u32 const threadCount = resolve_thread_count(desc.threads);
 
     Pool* p     = new_object<Pool>(a, Tag::Jobs);
     p->alloc    = a;
     p->capacity = desc.queueCapacity;
+    p->priority = desc.priority;
     p->ring     = alloc_array<Job>(a, p->capacity, Tag::Jobs);
     p->workers  = alloc_array<std::thread>(a, threadCount, Tag::Jobs);
 

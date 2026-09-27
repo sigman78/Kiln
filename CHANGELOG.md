@@ -9,8 +9,8 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
 
 ### Added
 - `ThreadPoolDesc::priority` (`ThreadPriority::Normal` / `Low` / `High`): the host's hint for where
-  kiln's workers sit relative to its own threads. The built-in compat pool accepts it without
-  applying it; platform backends will map it.
+  kiln's workers sit relative to its own threads. The built-in pool applies it per worker on
+  Windows (`SetThreadPriority`) and Linux (per-thread nice); other platforms ignore it for now.
 - Cook thread budget: `CookEnv::maxThreads` (default 3, caller included; 1 = inline, 0 = no cap)
   limits how many pool threads one cook may occupy; the image functions take `JobBudget { jobs,
   maxThreads }` in place of the bare `JobSystem const*`. `kiln-cook --threads <n>` sets both the

@@ -24,7 +24,7 @@ struct ThreadPoolDesc {
     Allocator const* alloc  = nullptr;                ///< nullptr = default allocator
     u32 threads             = 0;                      ///< 0 = hardware_concurrency - 1, clamped to [1, 16]
     u32 queueCapacity       = 4096;                   ///< max queued jobs; submit blocks when full
-    ThreadPriority priority = ThreadPriority::Normal; ///< accepted; the built-in pool does not apply it yet
+    ThreadPriority priority = ThreadPriority::Normal; ///< applied on Windows and Linux; ignored elsewhere
 };
 
 /// The built-in pool. `destroy` waits for idle, joins the threads and frees the pool.

@@ -18,6 +18,9 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#elif defined(KILN_OS_LINUX)
+#include <sys/resource.h>
+#include <unistd.h>
 #endif
 
 using namespace kiln;
@@ -50,6 +53,40 @@ KILN_TEST(IoThreadPool, RunsAllJobsThenWaitIdleSettles) {
     jobs.wait_idle(jobs.user);
 
     KILN_CHECK_EQ(counter.load(), 1000);
+    destroy_thread_pool(jobs);
+}
+
+namespace {
+/// What the OS reports for the current thread, in the pool's own terms.
+struct ObservedPriority {
+    std::atomic<int> value{0};
+    static void job(void* arg) {
+        auto* self = static_cast<ObservedPriority*>(arg);
+#if defined(KILN_OS_WINDOWS)
+        self->value.store(GetThreadPriority(GetCurrentThread()));
+#elif defined(KILN_OS_LINUX)
+        self->value.store(getpriority(PRIO_PROCESS, static_cast<id_t>(gettid())));
+#else
+        self->value.store(1);
+#endif
+    }
+};
+} // namespace
+
+KILN_TEST(IoThreadPool, LowPriorityAppliesToWorkers) {
+    Result<JobSystem> r = create_thread_pool(ThreadPoolDesc{.threads = 1, .priority = ThreadPriority::Low});
+    KILN_REQUIRE(r.ok());
+    JobSystem jobs = r.value();
+    ObservedPriority seen;
+    jobs.submit(jobs.user, &ObservedPriority::job, &seen);
+    jobs.wait_idle(jobs.user);
+#if defined(KILN_OS_WINDOWS)
+    KILN_CHECK_EQ(seen.value.load(), int(THREAD_PRIORITY_BELOW_NORMAL));
+#elif defined(KILN_OS_LINUX)
+    KILN_CHECK_EQ(seen.value.load(), 5);
+#else
+    KILN_CHECK_EQ(seen.value.load(), 1);
+#endif
     destroy_thread_pool(jobs);
 }
 
