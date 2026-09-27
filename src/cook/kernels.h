@@ -371,13 +371,13 @@ KILN_FORCEINLINE void box_px(u8 const* r0, u8 const* r1, usize colStep, u32* out
     constexpr u32 bpc    = Bits / 8;
     constexpr u32 srgbCh = Mode == DownsampleMode::Srgb ? (Channels < 3 ? Channels : 3) : 0;
     for (u32 c = 0; c < srgbCh; ++c) {
-        u32 const sum = 2 + kSrgbToLinear16[r0[c]] + kSrgbToLinear16[r0[colStep + c]] +
+        u32 const sum = 2u + kSrgbToLinear16[r0[c]] + kSrgbToLinear16[r0[colStep + c]] +
                         kSrgbToLinear16[r1[c]] + kSrgbToLinear16[r1[colStep + c]];
         out[c] = kLinear16ToSrgb8.v[sum / 4];
     }
     for (u32 c = srgbCh; c < Channels; ++c) {
         u32 const off = c * bpc;
-        u32 const sum = 2 + load<Bits>(r0 + off) + load<Bits>(r0 + colStep + off) + load<Bits>(r1 + off) +
+        u32 const sum = 2u + load<Bits>(r0 + off) + load<Bits>(r0 + colStep + off) + load<Bits>(r1 + off) +
                         load<Bits>(r1 + colStep + off);
         out[c] = sum / 4; // the +2 rounds to nearest
     }
