@@ -35,7 +35,9 @@ constexpr unsigned long long ull(u64 v) noexcept { return v; }
 constexpr u32 kMaxMeshes       = 64;
 constexpr u32 kWarmupFrames    = 10; ///< frames excluded from the running average and the spike check
 constexpr u32 kBootTimeoutMs   = 30000;
-constexpr double kSpikeFloorMs = 1.0; ///< frames faster than this are never reported as spikes
+constexpr f32 kFitRadius       = 1.0f; ///< bounding radius every boot model is scaled to (unless --no-fit)
+constexpr f32 kFitSpacing      = 2.5f; ///< distance between model centers in the fitted row
+constexpr double kSpikeFloorMs = 1.0;  ///< frames faster than this are never reported as spikes
 constexpr f32 kPi              = 3.14159265358979f;
 constexpr f32 kFovY            = 60.0f * kPi / 180.0f;
 
@@ -78,7 +80,11 @@ struct MeshItem {
     StrView path; ///< store-relative, extension stripped
     MeshHandle handle;
     State last = State::Unloaded;
-    Vec3 offset; ///< where the model sits in the row of boot meshes
+    Mat4 place;              ///< model root -> world: the slot in the row, the fit scale, the recentering
+    f32 nativeRadius = 0.0f; ///< ModelInfo bounds radius
+    f32 scale        = 1.0f; ///< uniform scale applied (1 with --no-fit)
+    Vec3 worldCenter;        ///< bounding sphere after placement, for camera framing
+    f32 worldRadius = 0.0f;  ///< 0 = not placed (no metadata)
 };
 
 struct TextureItem {
@@ -94,6 +100,7 @@ struct Options {
     char const* dump   = nullptr;
     bool validate      = false;
     bool offscreen     = false;
+    bool noFit         = false;
     u32 width          = 1280;
     u32 height         = 720;
     u32 budgetMiB      = 8;
@@ -198,33 +205,44 @@ void handle_event(Scene& s, Event const& e) {
     KILN_WARN("viewer", "event %s for an unknown handle", event_name(e.kind));
 }
 
-/// Lays the boot meshes out in a row along +X (they are usually all centered at the origin)
-/// and computes a sphere around all of them for the camera.
-void place_meshes(Scene& s) {
-    f32 cursor = 0;
+/// Lays the boot meshes out in a row along +X and computes a sphere around the row for the
+/// camera. By default each model is scaled uniformly so its bounding radius is kFitRadius and
+/// centers are kFitSpacing apart; with `fit` false models keep their native size and are
+/// spaced by their radii. Either way each model's bounds center lands on its slot.
+void place_meshes(Scene& s, bool fit) {
+    // Slot centers along X, starting at 0; recentered on the origin below.
+    f32 slots[kMaxMeshes]{};
+    f32 cursor = 0, prevRadius = 0;
     u32 placed = 0;
     for (u32 i = 0; i < s.meshCount; ++i) {
         MeshItem& m             = s.meshes[i];
         mesh::MeshView const* v = mesh_view(s.ctx, m.handle);
         if (!v) continue;
         mesh::Bounds const& b = v->model().bounds;
-        f32 const r           = b.radius > 0 ? b.radius : 1.0f;
-        m.offset              = Vec3{cursor + r - b.center[0], -b.center[1], -b.center[2]};
-        cursor += (placed + 1 < s.meshCount ? 2.4f : 2.0f) * r;
+        m.nativeRadius        = b.radius;
+        m.scale               = fit && b.radius > 0 ? kFitRadius / b.radius : 1.0f;
+        f32 const r           = b.radius > 0 ? b.radius * m.scale : 1.0f;
+        if (placed > 0) cursor += fit ? kFitSpacing : 1.2f * (prevRadius + r);
+        slots[i]   = cursor;
+        prevRadius = r;
         ++placed;
     }
     if (placed == 0) return;
-    // Center the row on the origin; the sphere's radius reaches the farthest model's sphere.
-    Vec3 const mid{cursor * 0.5f, 0, 0};
-    f32 radius = 1e-3f;
+    f32 const mid = cursor * 0.5f;
+    f32 radius    = 1e-3f;
     for (u32 i = 0; i < s.meshCount; ++i) {
         MeshItem& m             = s.meshes[i];
         mesh::MeshView const* v = mesh_view(s.ctx, m.handle);
         if (!v) continue;
         mesh::Bounds const& b = v->model().bounds;
-        m.offset              = m.offset - mid;
-        Vec3 const c          = Vec3{b.center[0], b.center[1], b.center[2]} + m.offset;
-        radius                = max(radius, vkx::length(c) + (b.radius > 0 ? b.radius : 1.0f));
+        Vec3 const slot{slots[i] - mid, 0, 0};
+        m.place = vkx::translation(slot) * vkx::scaling(m.scale) *
+                  vkx::translation(Vec3{-b.center[0], -b.center[1], -b.center[2]});
+        m.worldCenter = slot;
+        m.worldRadius = b.radius > 0 ? b.radius * m.scale : 1.0f;
+        radius        = max(radius, vkx::length(slot) + m.worldRadius);
+        KILN_INFO("viewer", "model %.*s: native radius %.4g, scale %.4g, at x %.3f", KILN_SV(m.path),
+                  double(m.nativeRadius), double(m.scale), double(slot.x));
     }
     s.center = Vec3{};
     s.radius = radius;
@@ -266,7 +284,7 @@ void draw_scene(Scene& s, VkCommandBuffer cmd) {
         if (!v || !payload.buffer) continue;
         u32 const partCount = v->parts().size();
         if (s.world.size() < partCount) s.world.resize(partCount);
-        Mat4 const place = vkx::translation(m.offset);
+        Mat4 const& place = m.place;
 
         for (u32 p = 0; p < partCount; ++p) {
             mesh::MeshPart const& part = v->parts()[p];
@@ -348,15 +366,37 @@ struct Input {
     vkx::Renderer* ren = nullptr;
 };
 
+/// Distance along `dir` (target -> eye) at which every placed model's bounding sphere is inside
+/// the view frustum: per sphere, its offset across the view plus r / cos(half angle), over
+/// tan(half angle), in front of the sphere's depth; the largest over both axes and all models.
+f32 framing_distance(Scene const& s, Vec3 dir, f32 aspect) {
+    Vec3 const right = vkx::normalize(vkx::cross(Vec3{0, 1, 0}, dir));
+    Vec3 const up    = vkx::cross(dir, right);
+    f32 const tanV   = std::tan(kFovY * 0.5f);
+    f32 const tanH   = tanV * aspect;
+    f32 const secV   = std::sqrt(1.0f + tanV * tanV);
+    f32 const secH   = std::sqrt(1.0f + tanH * tanH);
+    f32 dist         = 0.0f;
+    for (u32 i = 0; i < s.meshCount; ++i) {
+        MeshItem const& m = s.meshes[i];
+        if (m.worldRadius <= 0) continue;
+        Vec3 const c  = m.worldCenter - s.center;
+        f32 const x   = std::fabs(vkx::dot(c, right));
+        f32 const y   = std::fabs(vkx::dot(c, up));
+        f32 const fit = max((x + m.worldRadius * secH) / tanH, (y + m.worldRadius * secV) / tanV);
+        dist          = max(dist, vkx::dot(c, dir) + fit);
+    }
+    return dist > 0 ? dist : s.radius / std::sin(kFovY * 0.5f);
+}
+
 void write_uniforms(Scene const& s, Camera const& cam, VkExtent2D extent, vkx::FrameUniforms* u) {
-    f32 const dist = s.radius / std::sin(kFovY * 0.5f) * 1.1f * cam.zoom;
-    f32 const ce   = std::cos(cam.elevation);
-    Vec3 const eye =
-        s.center +
-        Vec3{ce * std::sin(cam.azimuth), std::sin(cam.elevation), ce * std::cos(cam.azimuth)} * dist;
-    f32 const nearZ  = max(dist - s.radius * 2.0f, dist * 0.01f);
-    f32 const farZ   = dist + s.radius * 2.0f;
     f32 const aspect = extent.height ? f32(extent.width) / f32(extent.height) : 1.0f;
+    Vec3 const dir{std::cos(cam.elevation) * std::sin(cam.azimuth), std::sin(cam.elevation),
+                   std::cos(cam.elevation) * std::cos(cam.azimuth)};
+    f32 const dist  = framing_distance(s, dir, aspect) * 1.05f * cam.zoom;
+    Vec3 const eye  = s.center + dir * dist;
+    f32 const nearZ = max(dist - s.radius * 2.0f, dist * 0.01f);
+    f32 const farZ  = dist + s.radius * 2.0f;
     Mat4 const vp = vkx::perspective(kFovY, aspect, nearZ, farZ) * vkx::look_at(eye, s.center, Vec3{0, 1, 0});
     std::memcpy(u->viewProj, vp.m, sizeof u->viewProj);
     u->cameraPos[0]  = eye.x;
@@ -476,6 +516,9 @@ int main(int argc, char** argv) {
          .number = &o.budgetMiB,
          .max    = 4096},
         {.name = "--offscreen", .help = "render into an image with no window", .flag = &o.offscreen},
+        {.name = "--no-fit",
+         .help = "keep native model sizes (default: scale each model to radius 1, 2.5 units apart)",
+         .flag = &o.noFit},
         {.name   = "--frames",
          .arg    = "<n>",
          .help   = "frames to render, then exit (default: 60 offscreen, until closed in a window)",
@@ -644,9 +687,11 @@ int main(int argc, char** argv) {
         ensure_pipelines(scene, o.meshes[i].handle);
         request_textures(scene, o.meshes[i]);
     }
-    place_meshes(scene);
-    KILN_INFO("viewer", "scene: %u mesh(es), radius %.3f, %u texture(s) streaming, budget %u MiB per frame",
-              o.meshCount, double(scene.radius), u32(scene.textures.size()), o.budgetMiB);
+    place_meshes(scene, !o.noFit);
+    KILN_INFO("viewer",
+              "scene: %u mesh(es)%s, row radius %.3f, %u texture(s) streaming, budget %u MiB per frame",
+              o.meshCount, o.noFit ? " at native size" : " fitted to radius 1", double(scene.radius),
+              u32(scene.textures.size()), o.budgetMiB);
 
     // 4. Frames.
     PumpOptions const pumpOpt{.uploadBytes = u64(o.budgetMiB) << 20};
@@ -724,7 +769,9 @@ int main(int argc, char** argv) {
     vkx::AdapterStats const as = vkx::adapter_stats(app.vka);
     KILN_INFO("viewer", "%u frames, CPU (pump + record + submit) avg %.2f ms, worst %.2f ms (frame %u)",
               frames, frames ? totalMs / frames : 0.0, worstMs, worstFrame);
-    KILN_INFO("viewer", "pump: %llu uploads committed, %llu bytes, %u busy retries; textures ready %u/%u",
+    KILN_INFO("viewer",
+              "pump: %llu uploads committed, %llu bytes started (counts Busy retries again), %u busy "
+              "retries; textures ready %u/%u",
               ull(uploads), ull(uploadBytes), busyRetries, texturesReady, u32(scene.textures.size()));
     KILN_INFO("viewer",
               "adapter: %u uploads in flight, %u busy, %llu bytes uploaded, %u live objects, %u slots, %llu "

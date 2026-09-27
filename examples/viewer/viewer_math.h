@@ -50,6 +50,12 @@ struct Mat4 {
     return r;
 }
 
+[[nodiscard]] inline Mat4 scaling(f32 s) noexcept {
+    Mat4 r;
+    r.m[0] = r.m[5] = r.m[10] = s;
+    return r;
+}
+
 /// Rotation by the unit quaternion (x, y, z, w), then translation by t.
 [[nodiscard]] inline Mat4 from_rt(f32 const t[3], f32 const q[4]) noexcept {
     f32 const x = q[0], y = q[1], z = q[2], w = q[3];
