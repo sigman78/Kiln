@@ -122,6 +122,17 @@ Repeated from HANDOFF §8, plus kiln-specific header rules.
   In v0.5 there are none. Planned later: zstd (decoder only) and possibly meshoptimizer's decoder
   sources, both for `.mesh` blob codecs (see above).
 
+### Runtime-side dependency rule
+
+`kiln_runtime` accepts third-party code only as **decoders**: matching an encoder or writer that
+already lives in `kiln_cook`, built from source with kiln's own compiler flags (never a prebuilt
+binary), and never able to write files or import a source format (glTF, PNG). In v0.5 there are
+none. The only candidates on the table are zstd (decode-only build) and, if a meshopt-based
+`.mesh` payload scheme is chosen, meshoptimizer's vertex/index decoder sources; both keep an
+encoder side in `kiln_cook`. This rule, the `include/kiln/cook/` header boundary, and the CI job
+that checks `kiln_runtime` builds and links without `kiln_cook`, are the read-only shipping
+contract in `shipping-split.md` (M1.5).
+
 ## Rationale
 
 - Every v0.5 pick is small, C or C-style C++, and exception-free, which keeps the

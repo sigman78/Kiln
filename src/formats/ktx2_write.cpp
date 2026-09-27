@@ -1,5 +1,5 @@
 // KTX2 writer for raw (uncompressed, non-supercompressed) 2D textures.
-#include "kiln/ktx2_writer.h"
+#include "kiln/cook/ktx2_writer.h"
 
 namespace kiln::ktx2 {
 

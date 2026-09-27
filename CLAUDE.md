@@ -29,6 +29,8 @@ Every change must build on MSVC, clang-cl and gcc/clang (Linux) with warnings as
 - Recoverable errors return `Status`/`Result<T>` and emit a `Diagnostic`; broken invariants
   and API misuse use `KILN_VERIFY`/`KILN_PANIC`; `KILN_ASSERT` is debug only.
 - `kiln_core` depends on nothing else in kiln. `kiln_runtime` never depends on `kiln_cook`.
+- Cook-only headers go in `include/kiln/cook/`; `kiln_runtime` never includes them or writes
+  files; the shipping preset must stay green.
 - Declarative POD descriptor structs with defaults + designated initializers, not builders or
   long parameter lists. Function pointer + `void* user` instead of owning callables.
 - Everything in `namespace kiln`; no `using namespace` in headers; `.clang-format` is law.

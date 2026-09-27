@@ -25,7 +25,7 @@ It loads glTF 2.0 (`.glb`, optionally `.gltf`), KTX2 and PNG sources. It cooks t
 
 1. **The library never calls a graphics API.** All GPU interaction goes through a small **adapter interface** the renderer implements (§6.4). This boundary is the central design constraint; don't erode it for convenience.
 2. **The runtime consumes only cooked formats, or data the host hands it directly.** It never reads raw source files. In dev builds this is transparent: requesting an asset whose cooked form is missing triggers cook-on-miss behind the handle. Procedural and runtime-generated data enters through **in-memory registration** (§6.3), with the same handles, states, events and upload path.
-3. **Cooking is a host-side activity.** Shipping builds, and any device other than the dev host (mobile, consoles), contain only cooked data for their target and link only `kiln_core` + `kiln_runtime`. The cooker is a **cross-cooker**: it runs on the dev machine or CI and produces output for a target profile (§5.3).
+3. **Cooking is a host-side activity.** Shipping builds, and any device other than the dev host (mobile, consoles), contain only cooked data for their target and link only `kiln_core` + `kiln_runtime`. The cooker is a **cross-cooker**: it runs on the dev machine or CI and produces output for a target profile (§5.3). `kiln_runtime` has no write path: it never writes files and has no dependency, source or link, on `kiln_cook`. A CI job builds a shipping preset and proves this continuously by installing the package and building a `find_package(kiln)` consumer against `kiln::runtime` alone (`docs/design/shipping-split.md`, M1.5).
 
 ### 1.2 Goals
 
@@ -136,7 +136,8 @@ kiln/
   CMakeLists.txt  CMakePresets.json  LICENSE  README.md  HANDOFF.md  CHANGELOG.md
   docs/            mesh-format-spec.md, cook-settings.md, design notes, open-questions.md, api-friction.md
   include/kiln/    core.h  alloc.h  result.h  containers.h  hash.h  log.h
-                   io.h  formats.h  mesh.h  texture.h  settings.h  cook.h  assets.h  adapter.h
+                   io.h  formats.h  mesh.h  texture.h  assets.h  adapter.h
+  include/kiln/cook/  mesh_writer.h  ktx2_writer.h  settings.h  cook.h  importers (cook-only; not installed in a shipping package, §1.1 rule 3)
   src/core/        allocators, panic, log, containers impl, OS wrappers
   src/io/          compat file backend, read queue, polling file watcher
   src/formats/     .mesh read/write, KTX2 read (+write in cook), png decode
@@ -150,13 +151,13 @@ kiln/
 
 **Split into CMake targets:**
 
-| Target | Contents | Linked by |
-|---|---|---|
-| `kiln_core` | core types, allocators, logging | everything |
-| `kiln_runtime` | runtime loading, `.mesh` + KTX2 readers, IO | all builds, incl. shipping |
-| `kiln_cook` | glTF / PNG / encoders / settings / validation / store writer | dev builds and tools only |
+| Target | Contents | Linked by | Install component |
+|---|---|---|---|
+| `kiln_core` | core types, allocators, logging | everything | default (`kiln::core`) |
+| `kiln_runtime` | runtime loading, `.mesh` + KTX2 readers, IO | all builds, incl. shipping | default (`kiln::runtime`) |
+| `kiln_cook` | glTF / PNG / encoders / settings / validation / store writer | dev builds and tools only | `cook` (`find_package(kiln COMPONENTS cook)`) |
 
-`kiln_runtime` must build and link **without** `kiln_cook` or its dependencies. Cook-on-miss works through a **cook provider** that `kiln_cook` registers with the runtime at startup, so the runtime has no hard dependency on it.
+`kiln_runtime` must build and link **without** `kiln_cook` or its dependencies. Cook-on-miss works through a **cook provider** that `kiln_cook` registers with the runtime at startup, so the runtime has no hard dependency on it. The runtime/cook boundary, the `include/kiln/cook/` header split and the components above are the read-only shipping contract; see `docs/design/shipping-split.md` (M1.5).
 
 ---
 
@@ -487,6 +488,7 @@ kiln::destroy(ctx);
   - `win-clangcl`
   - `linux-clang`, `linux-gcc`
   - `mac-appleclang` (post-v0.5)
+  - `win-msvc-shipping`, `win-clangcl-shipping`, `linux-clang-shipping`, `linux-gcc-shipping` (M1.5, read-only: Release, `KILN_BUILD_COOK=OFF`, `KILN_HOT_RELOAD=OFF`, `KILN_BUILD_TOOLS=OFF`, tests on; see `docs/design/shipping-split.md`)
 - **Options:**
   - `KILN_BUILD_COOK` (ON)
   - `KILN_BUILD_TOOLS` (ON)
@@ -495,7 +497,7 @@ kiln::destroy(ctx);
   - `KILN_BUILD_EXAMPLES`
   - `KILN_BUILD_VIEWER` (requires Vulkan SDK)
 - **Installable package:** `find_package(kiln)` plus `add_subdirectory` friendly. The external battle-test project will consume it this way from day one.
-- **CI (GitHub Actions):** Windows (MSVC, clang-cl) primary; Linux build + tests from M0 to keep the code portable; macOS post-v0.5. Runs build, tests, golden-file checks and the compile-time report.
+- **CI (GitHub Actions):** Windows (MSVC, clang-cl) primary; Linux build + tests from M0 to keep the code portable; macOS post-v0.5. Runs build, tests, golden-file checks and the compile-time report. A `shipping` job (M1.5) builds one Windows and one Linux shipping preset, runs the reader-only test suite, installs the package, and builds and runs `tests/shipping_consumer` — a `find_package(kiln)` consumer linking `kiln::runtime` only — to keep the §11.3 shipping exit criterion continuously true (`docs/design/shipping-split.md`).
 
 ---
 

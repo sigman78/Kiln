@@ -1,4 +1,4 @@
-// kiln/ktx2_writer.h — KTX2 writer for raw 2D textures (kiln_cook).
+// kiln/cook/ktx2_writer.h — KTX2 writer for raw 2D textures (kiln_cook).
 //
 // Writes uncompressed, non-supercompressed 2D textures with a mip chain. Output is
 // byte-identical for identical input: no timestamps, every padding byte is zero.

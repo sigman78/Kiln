@@ -5,7 +5,7 @@
 // Output is deterministic: the image starts zeroed, every record is built from a
 // value-initialized local with its _pad/_reserved fields cleared, strings are
 // deduplicated in first-seen order and mounts are sorted by (nameHash, input index).
-#include "kiln/mesh_writer.h"
+#include "kiln/cook/mesh_writer.h"
 
 #include <algorithm>
 

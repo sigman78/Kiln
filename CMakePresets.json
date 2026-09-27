@@ -138,6 +138,62 @@
                 "CMAKE_C_COMPILER": "clang",
                 "CMAKE_BUILD_TYPE": "Debug"
             }
+        },
+        {
+            "name": "win-msvc-shipping",
+            "displayName": "Windows / MSVC / Shipping (read-only runtime)",
+            "inherits": "windows-base",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "KILN_BUILD_COOK": "OFF",
+                "KILN_HOT_RELOAD": "OFF",
+                "KILN_BUILD_TOOLS": "OFF",
+                "KILN_BUILD_TESTS": "ON",
+                "CMAKE_CXX_COMPILER": "cl",
+                "CMAKE_C_COMPILER": "cl"
+            }
+        },
+        {
+            "name": "win-clangcl-shipping",
+            "displayName": "Windows / clang-cl / Shipping (read-only runtime)",
+            "inherits": "windows-base",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "KILN_BUILD_COOK": "OFF",
+                "KILN_HOT_RELOAD": "OFF",
+                "KILN_BUILD_TOOLS": "OFF",
+                "KILN_BUILD_TESTS": "ON",
+                "CMAKE_CXX_COMPILER": "clang-cl",
+                "CMAKE_C_COMPILER": "clang-cl"
+            }
+        },
+        {
+            "name": "linux-clang-shipping",
+            "displayName": "Linux / clang / Shipping (read-only runtime)",
+            "inherits": "linux-base",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "KILN_BUILD_COOK": "OFF",
+                "KILN_HOT_RELOAD": "OFF",
+                "KILN_BUILD_TOOLS": "OFF",
+                "KILN_BUILD_TESTS": "ON",
+                "CMAKE_CXX_COMPILER": "clang++",
+                "CMAKE_C_COMPILER": "clang"
+            }
+        },
+        {
+            "name": "linux-gcc-shipping",
+            "displayName": "Linux / gcc / Shipping (read-only runtime)",
+            "inherits": "linux-base",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "KILN_BUILD_COOK": "OFF",
+                "KILN_HOT_RELOAD": "OFF",
+                "KILN_BUILD_TOOLS": "OFF",
+                "KILN_BUILD_TESTS": "ON",
+                "CMAKE_CXX_COMPILER": "g++",
+                "CMAKE_C_COMPILER": "gcc"
+            }
         }
     ],
     "buildPresets": [
@@ -176,6 +232,22 @@
         {
             "name": "mac-appleclang-debug",
             "configurePreset": "mac-appleclang-debug"
+        },
+        {
+            "name": "win-msvc-shipping",
+            "configurePreset": "win-msvc-shipping"
+        },
+        {
+            "name": "win-clangcl-shipping",
+            "configurePreset": "win-clangcl-shipping"
+        },
+        {
+            "name": "linux-clang-shipping",
+            "configurePreset": "linux-clang-shipping"
+        },
+        {
+            "name": "linux-gcc-shipping",
+            "configurePreset": "linux-gcc-shipping"
         }
     ],
     "testPresets": [
@@ -262,6 +334,46 @@
         {
             "name": "mac-appleclang-debug",
             "configurePreset": "mac-appleclang-debug",
+            "output": {
+                "outputOnFailure": true
+            },
+            "execution": {
+                "noTestsAction": "error"
+            }
+        },
+        {
+            "name": "win-msvc-shipping",
+            "configurePreset": "win-msvc-shipping",
+            "output": {
+                "outputOnFailure": true
+            },
+            "execution": {
+                "noTestsAction": "error"
+            }
+        },
+        {
+            "name": "win-clangcl-shipping",
+            "configurePreset": "win-clangcl-shipping",
+            "output": {
+                "outputOnFailure": true
+            },
+            "execution": {
+                "noTestsAction": "error"
+            }
+        },
+        {
+            "name": "linux-clang-shipping",
+            "configurePreset": "linux-clang-shipping",
+            "output": {
+                "outputOnFailure": true
+            },
+            "execution": {
+                "noTestsAction": "error"
+            }
+        },
+        {
+            "name": "linux-gcc-shipping",
+            "configurePreset": "linux-gcc-shipping",
             "output": {
                 "outputOnFailure": true
             },

@@ -1,4 +1,4 @@
-// kiln/mesh_writer.h — deterministic .mesh writer (kiln_cook). Takes fully
+// kiln/cook/mesh_writer.h — deterministic .mesh writer (kiln_cook). Takes fully
 // resolved records plus raw stream/index bytes, lays out the payload and blob
 // table per spec v0.3 §5.9, and returns the complete file image.
 //

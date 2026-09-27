@@ -35,13 +35,18 @@ ctest --preset win-msvc-debug
 Other presets (`win-clangcl-*`, `linux-clang-*`, `linux-gcc-*`, `mac-appleclang-debug`) follow the
 same pattern — see `CMakePresets.json`.
 
+**Shipping presets** (read-only: Release, `KILN_BUILD_COOK=OFF`, `KILN_HOT_RELOAD=OFF`,
+`KILN_BUILD_TOOLS=OFF`, tests on): `win-msvc-shipping`, `win-clangcl-shipping`,
+`linux-clang-shipping`, `linux-gcc-shipping`. See
+[`docs/design/shipping-split.md`](docs/design/shipping-split.md).
+
 ### CMake targets
 
-| Target | Contents |
-|---|---|
-| `kiln_core` | Core vocabulary types, allocators, logging |
-| `kiln_runtime` | Async runtime loading, `.mesh` + KTX2 readers, IO |
-| `kiln_cook` | glTF / PNG import, encoders, settings resolution, validation, store writer |
+| Target | Contents | Ships in product |
+|---|---|---|
+| `kiln_core` | Core vocabulary types, allocators, logging | yes |
+| `kiln_runtime` | Async runtime loading, `.mesh` + KTX2 readers, IO | yes |
+| `kiln_cook` | glTF / PNG import, encoders, settings resolution, validation, store writer | no |
 
 ### CMake options
 
@@ -54,6 +59,26 @@ same pattern — see `CMakePresets.json`.
 | `KILN_BUILD_EXAMPLES` | `OFF` |
 | `KILN_BUILD_VIEWER` | `OFF` |
 | `KILN_WARNINGS_AS_ERRORS` | `ON` when top-level |
+
+## Consuming kiln
+
+A product that ships pre-cooked assets links `kiln::core` + `kiln::runtime` only:
+
+```cmake
+find_package(kiln CONFIG REQUIRED)
+target_link_libraries(app PRIVATE kiln::runtime)
+```
+
+A dev build or tool that also needs to cook assets asks for the `cook` component, which fails
+clearly if the kiln install was built with `KILN_BUILD_COOK=OFF` (any shipping preset):
+
+```cmake
+find_package(kiln CONFIG REQUIRED COMPONENTS cook)
+target_link_libraries(app PRIVATE kiln::runtime kiln::cook)
+```
+
+See [`docs/design/shipping-split.md`](docs/design/shipping-split.md) for the full read-only
+shipping contract.
 
 ## Docs
 

@@ -1,7 +1,7 @@
 #include "kiln_test.h"
 
+#include "kiln/cook/mesh_writer.h"
 #include "kiln/mesh.h"
-#include "kiln/mesh_writer.h"
 
 #include <cstddef>
 #include <cstdio>
@@ -11,35 +11,17 @@ using namespace kiln;
 using namespace kiln::mesh;
 
 // ---------------------------------------------------------------------------
-// Compile-time facts (documentation; mesh.h asserts the sizes too)
+// Compile-time facts. split_unit() lives in kiln/cook/mesh_writer.h (the writer
+// header), so it can only be asserted here; every reader-side static_assert
+// (struct sizes, kMagic, index_size, is_allowed_blob_encoding) lives in
+// test_mesh_read.cpp instead, next to the hand-built file it validates against.
 // ---------------------------------------------------------------------------
 
-static_assert(sizeof(FileHeader) == 80);
-static_assert(sizeof(SectionEntry) == 32);
-static_assert(sizeof(Bounds) == 32);
-static_assert(sizeof(ModelInfo) == 48);
-static_assert(sizeof(VertexAttrib) == 12);
-static_assert(sizeof(VertexLayout) == 160);
-static_assert(sizeof(MeshPart) == 112);
-static_assert(sizeof(MeshLod) == 48);
-static_assert(sizeof(Submesh) == 48);
-static_assert(sizeof(MaterialSlot) == 32);
-static_assert(sizeof(TextureBinding) == 16);
-static_assert(sizeof(Mount) == 48);
-static_assert(sizeof(PayloadBlob) == 32);
-
-static_assert(kMagic == fourcc("KMSH"));
 static_assert(split_unit(24) == 48u);
 static_assert(split_unit(6) == 48u);
 static_assert(split_unit(16) == 16u);
 static_assert(split_unit(4) == 16u);
 static_assert(split_unit(12) == 48u);
-static_assert(index_size(IndexType::U8) == 1u);
-static_assert(index_size(IndexType::U16) == 2u);
-static_assert(index_size(IndexType::U32) == 4u);
-static_assert(is_allowed_blob_encoding(Codec::MeshoptIndex, Filter::None));
-static_assert(!is_allowed_blob_encoding(Codec::None, Filter::MeshoptOct));
-static_assert(is_allowed_blob_encoding(Codec::Zstd, Filter::ByteShuffle));
 
 namespace {
 

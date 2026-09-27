@@ -85,9 +85,9 @@ endif()
 # ---------------------------------------------------------------------------
 if(KILN_BUILD_COOK)
     add_library(kiln_cook STATIC
-        include/kiln/mesh_writer.h
+        include/kiln/cook/mesh_writer.h
         src/formats/mesh_write.cpp
-        include/kiln/ktx2_writer.h
+        include/kiln/cook/ktx2_writer.h
         src/formats/ktx2_write.cpp
         src/cook/cook.cpp
     )
@@ -117,20 +117,33 @@ endif()
 # Install / export: find_package(kiln) and add_subdirectory both work.
 # ---------------------------------------------------------------------------
 if(KILN_INSTALL)
-    set(kiln_targets kiln_core kiln_runtime)
-    if(KILN_BUILD_COOK)
-        list(APPEND kiln_targets kiln_cook)
-    endif()
-
-    install(TARGETS ${kiln_targets}
-        EXPORT kilnTargets
+    # Two export sets so a shipping install carries only the read-only side:
+    #   kilnRuntimeTargets: kiln::core, kiln::runtime          (always)
+    #   kilnCookTargets:    kiln::cook                         (component "cook")
+    install(TARGETS kiln_core kiln_runtime
+        EXPORT kilnRuntimeTargets
         ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
         LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
         RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
-    install(DIRECTORY include/kiln DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
-    install(EXPORT kilnTargets
+    install(DIRECTORY include/kiln DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+        PATTERN "cook" EXCLUDE)
+    install(EXPORT kilnRuntimeTargets
         NAMESPACE kiln::
         DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/kiln)
+
+    if(KILN_BUILD_COOK)
+        install(TARGETS kiln_cook
+            EXPORT kilnCookTargets
+            COMPONENT cook
+            ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+            LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+            RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+        install(DIRECTORY include/kiln/cook DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/kiln COMPONENT cook)
+        install(EXPORT kilnCookTargets
+            NAMESPACE kiln::
+            COMPONENT cook
+            DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/kiln)
+    endif()
 
     configure_package_config_file(
         cmake/kiln-config.cmake.in

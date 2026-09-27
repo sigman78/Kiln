@@ -90,6 +90,61 @@ jobs:
       - name: Test
         run: ctest --preset ${{ matrix.preset }}
 
+  # Read-only shipping contract (docs/design/shipping-split.md): build with
+  # KILN_BUILD_COOK=OFF, run the reader-only tests, install, then build and run a
+  # consumer that uses find_package(kiln) with kiln::runtime only.
+  shipping:
+    name: shipping (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: linux-gcc, os: ubuntu-24.04, preset: linux-gcc-shipping }
+          - { name: win-msvc, os: windows-latest, preset: win-msvc-shipping }
+    steps:
+      - uses: actions/checkout@v4
+
+      - if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - if: runner.os == 'Windows'
+        uses: seanmiddleditch/gha-setup-ninja@v5
+
+      - if: runner.os == 'Linux'
+        name: Install Ninja
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build
+
+      - name: Configure
+        run: cmake --preset ${{ matrix.preset }}
+
+      - name: Build
+        run: cmake --build --preset ${{ matrix.preset }}
+
+      - name: Test (reader-only suite)
+        run: ctest --preset ${{ matrix.preset }}
+
+      - name: Install
+        run: cmake --install build/${{ matrix.preset }} --prefix ${{ github.workspace }}/prefix
+
+      - name: Installed headers exclude cook
+        shell: bash
+        run: |
+          test -f prefix/include/kiln/mesh.h
+          test ! -e prefix/include/kiln/cook
+          test ! -e prefix/lib/cmake/kiln/kilnCookTargets.cmake
+
+      - name: Consumer configure
+        run: cmake -G Ninja -S tests/shipping_consumer -B build/consumer -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=${{ github.workspace }}/prefix
+
+      - name: Consumer build and run
+        shell: bash
+        run: |
+          cmake --build build/consumer
+          if [ "$RUNNER_OS" = "Windows" ]; then ./build/consumer/shipping_consumer.exe; else ./build/consumer/shipping_consumer; fi
+
   compile-time:
     name: compile-time
     runs-on: ubuntu-24.04

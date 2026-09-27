@@ -1,7 +1,7 @@
 // kiln/mesh.h — the cooked .mesh runtime format: on-disk records (spec v0.3,
 // docs/mesh-format-spec.md), zero-copy reader (MeshView), validation and the
 // payload decode loop. Everything here is in kiln_runtime; the writer lives in
-// kiln_cook (kiln/mesh_writer.h).
+// kiln_cook (kiln/cook/mesh_writer.h).
 #pragma once
 
 #include "kiln/alloc.h" // Arena (decode scratch)

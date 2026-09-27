@@ -18,6 +18,7 @@ mesh-format-spec draft v0.3 (magic `KMSH`, namespace `kiln::mesh`, exact-minor v
 | [adapter.md](adapter.md) | `Format` enum, the renderer adapter interface (`acquire`, `publish`, `caps`), `GpuObject`, binding models, threading contract |
 | [settings.md](settings.md) | v0.5 cook settings structs, resolution layers, settings hashing and store key |
 | [threading-and-io.md](threading-and-io.md) | std threading in `.cpp` files, `JobSystem`, `IoBackend`, `pump()` as the only surface |
+| [shipping-split.md](shipping-split.md) | The read-only shipping contract (M1.5): the `kiln_runtime` / `kiln_cook` boundary, the `include/kiln/cook/` header split, install components, shipping presets and the shipping CI job |
 
 Related documents:
 
@@ -38,3 +39,4 @@ The owner ticks each item after reading the note and its "Open points" section.
 - [ ] threading-and-io.md
 - [ ] open-questions.md section A (HANDOFF §13 answers)
 - [ ] open-questions.md section B (mesh-format-spec resolutions, folded into spec v0.3 on 2026-09-27; B1 magic and namespace and B13-B26 blob table in particular)
+- [ ] shipping-split.md (Decided 2026-09-27; the mechanism choice in its Decision 2 is still Proposed, awaiting sign-off)
