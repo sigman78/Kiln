@@ -10,6 +10,9 @@ include(kiln_warnings)
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 
+set(THREADS_PREFER_PTHREAD_FLAG ON)
+find_package(Threads REQUIRED) # kiln_runtime's built-in thread pool (src/io/thread_pool.cpp)
+
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     set(KILN_IS_TOP_LEVEL ON)
 else()
@@ -70,12 +73,26 @@ add_library(kiln_runtime STATIC
     src/formats/mesh_read.cpp
     include/kiln/ktx2.h
     src/formats/ktx2_read.cpp
-    src/runtime/runtime.cpp
+    include/kiln/assets.h
+    src/runtime/runtime_internal.h
+    src/runtime/context.cpp
+    src/runtime/registry.cpp
+    src/runtime/loader.cpp
+    src/runtime/pump.cpp
+    src/runtime/register.cpp
+    include/kiln/adapter.h
+    include/kiln/null_adapter.h
+    src/runtime/null_adapter.cpp
+    include/kiln/placeholders.h
+    src/runtime/placeholders.cpp
+    include/kiln/io.h
+    src/io/thread_pool.cpp
+    src/io/compat_io.cpp
 )
 add_library(kiln::runtime ALIAS kiln_runtime)
 set_target_properties(kiln_runtime PROPERTIES EXPORT_NAME runtime)
 kiln_apply_defaults(kiln_runtime)
-target_link_libraries(kiln_runtime PUBLIC kiln_core)
+target_link_libraries(kiln_runtime PUBLIC kiln_core Threads::Threads)
 if(KILN_HOT_RELOAD)
     target_compile_definitions(kiln_runtime PUBLIC KILN_HOT_RELOAD=1)
 endif()
@@ -106,6 +123,8 @@ if(KILN_BUILD_COOK)
         src/cook/cook_internal.h
         src/cook/gltf_import.cpp
         src/cook/mesh_cook.cpp
+        include/kiln/cook/provider.h
+        src/cook/provider.cpp
     )
     add_library(kiln::cook ALIAS kiln_cook)
 set_target_properties(kiln_cook PROPERTIES EXPORT_NAME cook)

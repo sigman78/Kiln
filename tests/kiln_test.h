@@ -48,6 +48,11 @@ int run_all(int argc, char** argv) noexcept;
 /// of comparing against it. See tests/golden/README.md.
 [[nodiscard]] bool update_golden() noexcept;
 
+/// True if the runner's filter argument is exactly `fullName` ("Suite.Name"). Tests
+/// that must only run on request (e.g. ones that panic on purpose and are registered
+/// as separate CTest entries) return early unless this holds.
+[[nodiscard]] bool selected_exactly(char const* fullName) noexcept;
+
 // Value → string helpers for KILN_CHECK_EQ messages.
 usize to_str(char* buf, usize cap, bool v) noexcept;
 usize to_str(char* buf, usize cap, char v) noexcept;

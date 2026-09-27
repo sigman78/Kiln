@@ -17,6 +17,7 @@ char const* g_sampleDir = nullptr;
 char const* g_corpusDir = nullptr;
 char const* g_goldenDir = nullptr;
 bool g_updateGolden     = false;
+char const* g_filter    = nullptr;
 
 } // namespace
 
@@ -24,6 +25,9 @@ char const* sample_dir() noexcept { return g_sampleDir; }
 char const* corpus_dir() noexcept { return g_corpusDir; }
 char const* golden_dir() noexcept { return g_goldenDir; }
 bool update_golden() noexcept { return g_updateGolden; }
+bool selected_exactly(char const* fullName) noexcept {
+    return g_filter && fullName && std::strcmp(g_filter, fullName) == 0;
+}
 
 Registrar::Registrar(TestCase* tc) noexcept {
     tc->next = nullptr;
@@ -107,6 +111,7 @@ int run_all(int argc, char** argv) noexcept {
         else
             filter = argv[i];
     }
+    g_filter = filter;
     set_log_sink({&test_log_sink, nullptr});
     set_panic_handler(&test_panic, nullptr);
 

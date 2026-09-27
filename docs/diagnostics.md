@@ -60,16 +60,18 @@ is dropped entirely and the sink prints just `<asset> <where>: <message> (<statu
 | K4000-4099 | `.mesh` validation and decode | M1 | populated, see §3.4 |
 | K4100-4199 | KTX2 validation | M1 | populated, see §3.5 |
 | K4200-4999 | Reserved for other cooked formats | — | unassigned |
-| K5000-5999 | Runtime and store (store miss, corrupt entry, adapter failures, placeholder served) | M3 | not yet populated, see §3.6 |
+| K5000-5999 | Runtime and store (store miss, cook-on-miss, load/validation failures, adapter rejections, registry limits, event overflow, `wait()` misuse, duplicate registration, placeholder failures) | M3 | populated, see §3.6 |
 | K6000-9999 | Unassigned | — | unassigned |
 
-K1000-1999, K2000-2999, K3000-3999, K4000-4099 and K4100-4199 all have codes defined today, in
-`include/kiln/cook/cook.h` (`kiln::cook::GltfDiagCode`), `include/kiln/cook/image.h`
+K1000-1999, K2000-2999, K3000-3999, K4000-4099, K4100-4199 and K5000-5999 all have codes defined
+today, in `include/kiln/cook/cook.h` (`kiln::cook::GltfDiagCode`), `include/kiln/cook/image.h`
 (`kiln::cook::ImageDiagCode`), `include/kiln/cook/settings.h` (`kiln::cook::SettingsDiagCode`),
-`include/kiln/mesh.h` (`kiln::mesh::DiagCode`) and `include/kiln/ktx2.h`
-(`kiln::ktx2::DiagCode`) respectively. K4200-4999 and K5000-5999 are reserved by
-`docs/design/error-model.md` for work that has not landed yet; when it does, its codes are
-added to this file in the same change (see §4).
+`include/kiln/mesh.h` (`kiln::mesh::DiagCode`), `include/kiln/ktx2.h` (`kiln::ktx2::DiagCode`) and
+`include/kiln/assets.h` (`kiln::RuntimeDiagCode`) respectively. K4200-4999 is still reserved by
+`docs/design/error-model.md` for work that has not landed yet; when it does, its codes are added
+to this file in the same change (see §4). `store_write()` (`src/cook/store.cpp`, cook-side store
+writer) predates K5000-5999 and still reports its failures with code `0` (no catalogue entry) —
+see the note at the end of §3.6.
 
 ## 3. Codes
 
@@ -198,17 +200,43 @@ Source: `kiln::ktx2::DiagCode` in `include/kiln/ktx2.h`. Emitted by `Ktx2View::o
 | K4108 | `kDiagKtxDfd` | Corrupt (Error), kOk (Warning) | Malformed data format descriptor: `dfdByteLength` too small, `dfdByteOffset` misaligned or overlapping the level index, truncated, `totalSize` field disagreeing with `dfdByteLength`, or a basic block size that does not fit (Corrupt/Error). Separately, a non-failing Warning is emitted when the DFD's `transferFunction` disagrees with the sRGB-ness implied by `vkFormat`; the reader trusts `vkFormat` and continues. | Error case: recook from source. Warning case: informational only; the cooker/writer that produced the DFD should be checked for sRGB-flag consistency, but the file loads fine. |
 | K4109 | `kDiagKtxKvd` | Corrupt | `kvdByteOffset`/`kvdByteLength` misaligned, truncated, overlapping the DFD, or the key/value entries themselves are malformed. | Corrupted file or a writer bug. Recook from source. |
 
-### 3.6 K5000-5999 — Runtime and store (reserved for M3)
+### 3.6 K5000-5999 — Runtime and store
 
-No `DiagCode` enum exists for this range yet; it is reserved by `docs/design/error-model.md` for
-the runtime and store work landing in M3 (store miss, corrupt entry, adapter failures,
-placeholder served). Today, `store_write()` (`src/cook/store.cpp`) already reports failures
-through the same `Diagnostic`/`DiagSink` machinery but with no catalogue code: it emits code `0`
-(no catalogue entry, printed without the `Kxxxx` prefix) at `Severity::Error`, with `Status`
-`IoError` for filesystem failures (`mkdir`/`fopen`/write/rename, detail = errno) or
-`InvalidArgument` for a path that does not fit the function's fixed-size buffers. When the M3
-store work lands, these call sites are expected to move onto real K5xxx codes added to this file
-in the same change (see §4).
+Source: `kiln::RuntimeDiagCode` in `include/kiln/assets.h`. Emitted by the runtime context, request
+and pump machinery (`src/runtime/context.cpp`, `registry.cpp`, `loader.cpp`, `pump.cpp`,
+`register.cpp`). Unlike the cook-side ranges, most of these are produced on a worker thread
+(`loader.cpp`) but only *delivered* to the host's `DiagSink` from `pump()`: a worker only fills in
+`Slot::jobDiag`/`jobStatus` and a short capture buffer (`DiagCapture`); `pump()`'s `fail_slot()` is
+what actually calls `diagf()`. All codes in this range are `Severity::Error` except K5006
+(`Warning`); K5007 is delivered as a panic message, not a `Diagnostic` (see its row).
+
+| Code | Name | Status | Severity | Meaning | Typical cause / fix |
+|---|---|---|---|---|---|
+| K5001 | `kDiagStoreMiss` | NotFound | Error | No cooked file exists for the asset and no cook provider is installed, or a cook provider is installed but found no source to cook. | Cook the asset into the store ahead of time, install a `kiln::cook::CookProvider` with a source root that has it, or fix the asset path. |
+| K5002 | `kDiagCookOnMissFailed` | Whatever the cook provider returned (not `NotFound`, which is K5001 instead) | Error | The installed cook provider was asked to produce the asset and returned an error. The provider's own diagnostics (K1xxx-K3xxx from the cooker) are captured on the worker and folded into this message as the first-error text (see §1 and the note below); they are not delivered to the `DiagSink` as separate diagnostics. | Fix whatever the folded message reports (a bad source file, an unsupported feature); see the cooker's own K1xxx-K3xxx catalogue entries for the specific failure. |
+| K5003 | `kDiagAssetLoadFailed` | Varies: `InvalidArgument` (empty/over-255-byte path, or a path whose asset id hashes into the reserved placeholder range 0..15, both rejected at `request_*`/`register_*` time before any IO), or the `Status` the IO backend / `.mesh`/KTX2 reader returned (e.g. `IoEof`, `Corrupt`, `ValidationFailed`, `VersionMismatch`) for a failure while opening or reading the asset. | Error | Catch-all for "the load itself failed": a bad request path, or an IO/validation failure reading the store file, registered bytes, or cook-provider output. Also used as the fallback code in `pump()` if a worker job failed without assigning a more specific K5xxx code. | Fix the path (normalize, keep it under 255 bytes, avoid hashing into ids 0..15 in the vanishingly rare collision case), or fix/recook the underlying `.mesh`/KTX2 file per its own diagnostic (K4xxx) captured in the message. |
+| K5004 | `kDiagAdapterRejected` | `Unsupported` (format not accepted by `Adapter::supports_format`, `begin_upload`'s returned `UploadTarget::rowPitchAlign` does not evenly divide the planned per-level pitches, or `begin_upload` returned no destination memory), or whatever non-`Busy` `Status` `Adapter::acquire`/`begin_upload` returned. | Error | The adapter rejected the asset: an unsupported mesh/texture format, `acquire()` failed on the first `request()`, or `begin_upload` failed with anything other than `Code::Busy` (a `Busy` return is retried on a later pump instead, counted in `PumpStats::busyRetries`, not an error). | Cook to a format the adapter's `supports_format`/`copy_constraints` actually support, or fix the adapter implementation (row-pitch alignment must evenly divide what `copy_constraints` promised; `begin_upload` must hand back a non-null `dst` when `size > 0`). |
+| K5005 | `kDiagRegistryFull` | `Busy` (registry full at runtime), or `InvalidArgument` (`create()`: `maxAssets`/`maxGroups`/`maxEvents` out of range in `ContextDesc`) | Error | The fixed-size registry has no room: every slot is in use (`request_*` when `freeSlotCount == 0`, `maxAssets` reached) or every group record is in use (`group()` when `freeGroupCount == 0`, `maxGroups` reached); or, at `create()`, `ContextDesc::maxAssets`/`maxGroups`/`maxEvents` was 0 (or `maxAssets` exceeded `1u << 24`). | Raise `ContextDesc::maxAssets`/`maxGroups`/`maxEvents`, or release assets/groups the host no longer needs before requesting more. |
+| K5006 | `kDiagEventsDropped` | `Busy` | Warning | The event ring (`ContextDesc::maxEvents`, default 1024) filled up during a `pump()`; the oldest event was dropped to make room for a new one. Emitted once per pump the first time this happens (`PumpStats::eventsDropped` gives the count for that pump). | Drain `events()` more often (every `pump()`), or raise `ContextDesc::maxEvents` if bursts of state changes are expected (e.g. a big group settling at once). |
+| K5007 | `kDiagWaitMisuse` | n/a — **not delivered through `DiagSink`.** `wait()` misuse (called off the pump thread, or the adapter lacks `AdapterCaps::kSelfSubmitting`) calls `KILN_PANIC` directly with a message that starts with the literal text `K5007`, rather than going through `Diagnostic`/`diagf()`. | n/a (panics, never returns) | `wait()` called from a thread other than the one that first called `pump()`/`wait()`, or called on a context whose adapter does not set `kSelfSubmitting` (uploads could never complete without the host recording a frame, so `wait()` would hang forever instead). `pump()` itself called off the pump thread is a separate, debug-build-only `KILN_ASSERT` with no K-code, not this panic. | Only call `wait()` from the pump thread, and only on a context created with a self-submitting adapter; otherwise keep calling `pump()` every frame and poll `progress()`. |
+| K5008 | `kDiagDuplicateRegister` | `AlreadyExists` | Error | `register_mesh`/`register_texture` (or an internal request path that rejects an existing entry) was called with a path that is already registered or requested. | Check `find_mesh`/`find_texture` (or track registration state) before calling `register_*` again for the same path, or `release()` the existing handle first if replacement is intended. |
+| K5009 | `kDiagPlaceholderFailed` | `InvalidArgument` (missing/invalid `ContextDesc::adapter`, or a host `PlaceholderDesc` with the wrong format/extent/pixel-buffer size), `Unsupported` (adapter rejected a placeholder's row pitch, or gave no destination memory), or whatever `Status` `begin_upload` or the built-in thread pool's creation returned. | Error | `create()` itself could not proceed: `ContextDesc::adapter` is missing or fails `adapter_is_valid()`, the built-in thread pool failed to start, a placeholder's pixel data / format / size (host-supplied or built-in) was invalid, or `begin_upload` rejected a placeholder upload (after retrying `Code::Busy` for up to 10 seconds). Note: `ContextDesc::maxAssets`/`maxGroups`/`maxEvents` out of range is a separate `create()` failure reported as K5005 instead (see that row). | Fix the host-supplied `ContextDesc::placeholders` entry (RGBA8, `width * height * 4` bytes, matching format), or fix the adapter (`begin_upload` must accept the declared `copy_constraints` row pitch and hand back real destination memory), or check `ContextDesc::adapter` is valid before calling `create()`. |
+
+`kDiagCookOnMissFailed` (K5002) and `kDiagAssetLoadFailed` (K5003) are the two codes that can carry
+a nested diagnostic: the worker-side reader (`.mesh`/KTX2, K4xxx) or cook provider (K1xxx-K3xxx)
+that actually detected the problem writes into the slot's `DiagCapture` (first diagnostic only,
+preferring the first `Error`); `pump()`'s `fail_slot()` formats that captured text into the K5002/
+K5003 message it emits, so only one diagnostic per failed load reaches the host's `DiagSink`, not
+one per underlying check. See open-questions R5f for the open point (a thread-safe sink that could
+deliver every worker-side diagnostic instead of only the first).
+
+`store_write()` (`src/cook/store.cpp`, the cook-side store writer used by `kiln-cook` and
+`kiln::cook::install_provider`'s disk mode) predates this range and is unchanged by M3: it still
+reports failures through the same `Diagnostic`/`DiagSink` machinery but with no catalogue code — it
+emits code `0` (no catalogue entry, printed without the `Kxxxx` prefix) at `Severity::Error`, with
+`Status` `IoError` for filesystem failures (`mkdir`/`fopen`/write/rename, detail = errno) or
+`InvalidArgument` for a path that does not fit the function's fixed-size buffers. Moving it onto a
+real K5xxx code is still open.
 
 ## 4. Adding a code
 

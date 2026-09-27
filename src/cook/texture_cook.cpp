@@ -4,6 +4,7 @@
 #include "kiln/cook/cook.h"
 #include "kiln/cook/image.h"
 #include "kiln/cook/ktx2_writer.h"
+#include "kiln/log.h"
 
 namespace kiln::cook {
 
@@ -146,9 +147,9 @@ Plan plan_for(Image const& img, TextureUsage usage, ColorSpace cs, DiagSink cons
 
 bool is_pow2(u32 v) noexcept { return v != 0 && (v & (v - 1)) == 0; }
 
-Result<CookedTexture> cook_png(TextureSource const& src, TextureCookSettings const& settings, u32 cap,
-                               Allocator const* alloc, DiagSink const* diag, StrView asset,
-                               u64 sourceHash) noexcept {
+Result<CookedTexture> cook_png(TextureSource const& src, TextureCookSettings const& settings,
+                               TargetProfile const& target, u32 cap, Allocator const* alloc,
+                               DiagSink const* diag, StrView asset, u64 sourceHash) noexcept {
     KILN_TRY_ASSIGN(Image decoded, decode_png(src.bytes, alloc, diag, asset));
 
     TextureUsage const usage = settings.usage == TextureUsage::Auto ? TextureUsage::Color : settings.usage;
@@ -197,13 +198,24 @@ Result<CookedTexture> cook_png(TextureSource const& src, TextureCookSettings con
     for (u32 i = 0; i < levelCount; ++i)
         levels[i] = chain[drop + i].pixels.span();
 
+    // Content identity for invalidation (named store layout, open-questions R4).
+    char sourceHex[17], cookHex[17];
+    format(sourceHex, sizeof sourceHex, "%016llx", static_cast<unsigned long long>(sourceHash));
+    u64 const cookHash =
+        hash_combine(hash_combine(hash_settings(settings), hash_target(target)), u64(kCookerVersion));
+    format(cookHex, sizeof cookHex, "%016llx", static_cast<unsigned long long>(cookHash));
+    ktx2::KeyValue const extra[] = {
+        {"kiln.cookHash",   StrView(cookHex)  },
+        {"kiln.sourceHash", StrView(sourceHex)},
+    };
     ktx2::WriteDesc const wd = {
         .format             = plan.format,
         .width              = topW,
         .height             = topH,
         .levels             = {levels, levelCount},
         .writerTag          = "kiln-cook",
-        .premultipliedAlpha = false
+        .premultipliedAlpha = false,
+        .extraKeys          = extra,
     };
     KILN_TRY_ASSIGN(Vec<u8> file, ktx2::write(wd, alloc, diag));
 
@@ -228,7 +240,7 @@ Result<CookedTexture> cook_texture(TextureSource const& src, TextureCookSettings
     u32 const cap         = min(settingsCap, targetCap);
 
     if (is_ktx2(src.bytes)) return pass_through(src, cap, alloc, diag, asset, sourceHash);
-    if (is_png(src.bytes)) return cook_png(src, settings, cap, alloc, diag, asset, sourceHash);
+    if (is_png(src.bytes)) return cook_png(src, settings, target, cap, alloc, diag, asset, sourceHash);
     return fail(diag, asset, make_status(Code::Unsupported), kDiagImageUnknownFormat,
                 "source is neither PNG nor KTX2 (%llu bytes)", src.bytes.size);
 }

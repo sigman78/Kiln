@@ -1,16 +1,18 @@
-// kiln-cook — cook glTF/GLB, PNG and KTX2 sources into the content-hashed store.
+// kiln-cook — cook glTF/GLB, PNG and KTX2 sources into the store.
 //
-//   kiln-cook <input>... [-o <store>] [--root <dir>] [--check] [--named] [--map <file>]
+//   kiln-cook <input>... [-o <store>] [--root <dir>] [--check] [--hashed] [--map <file>]
 //             [--target <name>] [--profile default|precise] [--no-tangents] [--no-optimize]
 //             [--no-mips] [--no-lods] [--quiet] [--verbose]
 //
 //   <input>       .glb / .gltf / .png / .ktx2 files, or directories (recursed)
-//   -o <store>    store directory (default: ./cooked). Files are <store>/<key>.<ext>
+//   -o <store>    store directory (default: ./cooked). Files are <store>/<assetPath>.<ext>
+//                 (the Named layout the runtime's v0.5 store expects, kiln/assets.h StoreLayout)
 //   --root <dir>  source root for asset paths (default: the input directory, or the
 //                 file's directory for single files). Asset path = relative path,
 //                 forward slashes, extension stripped.
 //   --check       validate only: cook in memory, report diagnostics, write nothing
-//   --named       write <store>/<assetPath>.<ext> instead of content-hash names
+//   --hashed      write content-hash file names instead of <store>/<assetPath>.<ext>
+//                 (kept for the index-based hashed layout arriving in v0.6)
 //   --map <file>  append "<assetPath>\t<file name>\t<key hex>" lines for every output
 //
 // Exit codes: 0 all inputs cooked, 1 usage, 2 IO failure, 3 one or more cook errors.
@@ -47,7 +49,7 @@ struct Options {
     char const* root  = nullptr;
     char const* map   = nullptr;
     bool check        = false;
-    bool named        = false;
+    bool hashed       = false; ///< false (default): Named layout, <store>/<assetPath>.<ext>
     bool quiet        = false;
     bool verbose      = false;
     MeshCookSettings mesh;
@@ -56,7 +58,7 @@ struct Options {
 };
 
 int usage() {
-    std::fputs("usage: kiln-cook <input>... [-o <store>] [--root <dir>] [--check] [--named] [--map <file>]\n"
+    std::fputs("usage: kiln-cook <input>... [-o <store>] [--root <dir>] [--check] [--hashed] [--map <file>]\n"
                "                 [--target <name>] [--profile default|precise] [--no-tangents]\n"
                "                 [--no-optimize] [--no-mips] [--no-lods] [--quiet] [--verbose]\n",
                stderr);
@@ -95,8 +97,8 @@ bool parse_args(int argc, char** argv, Options& o) {
                 return false;
         } else if (std::strcmp(a, "--check") == 0)
             o.check = true;
-        else if (std::strcmp(a, "--named") == 0)
-            o.named = true;
+        else if (std::strcmp(a, "--hashed") == 0)
+            o.hashed = true;
         else if (std::strcmp(a, "--no-tangents") == 0)
             o.mesh.genTangents = false;
         else if (std::strcmp(a, "--no-optimize") == 0)
@@ -325,7 +327,10 @@ Status resolve_uri_fn(void* user, StrView uri, Allocator const* alloc, Vec<u8>* 
 bool emit(Ctx& c, StrView assetPath, char const* ext, u64 key, Span<u8 const> bytes) {
     if (c.opt.check) return true;
     char name[1200];
-    if (c.opt.named) {
+    if (c.opt.hashed) {
+        store_file_name(key, StrView(ext), name, sizeof name);
+    } else {
+        // Named layout (default, kiln/assets.h StoreLayout::Named): <store>/<assetPath>.<ext>.
         format(name, sizeof name, "%.*s.%s", KILN_SV(assetPath), ext);
         // ensure sub directories exist
         char dir[1200];
@@ -334,8 +339,6 @@ bool emit(Ctx& c, StrView assetPath, char const* ext, u64 key, Span<u8 const> by
             *slash = '\0';
             make_dirs(dir);
         }
-    } else {
-        store_file_name(key, StrView(ext), name, sizeof name);
     }
     Status st = store_write(StrView(c.opt.store), StrView(name), bytes, &c.sink);
     if (st.failed()) {

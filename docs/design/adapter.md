@@ -1,6 +1,7 @@
 # Adapter interface (the renderer boundary)
 
 **Status:** Proposed (awaiting owner sign-off)
+**Implementation:** M3 (2026-09-27), see open-questions R5+ for deviations.
 **Milestone:** M0
 **Decides:** The `Format` enum and the concrete shape, calls, binding models and threading contract of the renderer adapter.
 
@@ -230,8 +231,10 @@ models share one query.
 ### Placeholders through the adapter
 
 - At `create()`, kiln uploads each texture placeholder (built-in or host-supplied, see
-  `handles-and-states.md`) through the normal `begin_upload` / `commit_upload` path. Placeholder
-  ids are `1 + TextureKind` (1..4) and 5 for Failed; 6..15 are reserved.
+  `handles-and-states.md`) through the normal `begin_upload` / `commit_upload` path. Kind
+  placeholder ids are `1 + TextureKind` (1..4). **As implemented (M3),** the Failed placeholder is
+  id **15** (`kFailedPlaceholderId = kLastPlaceholderId`, `include/kiln/placeholders.h`), not 5;
+  ids 6..14 are reserved for more built-in placeholders.
 - When a placeholder upload completes, kiln calls `publish(placeholderId, obj, 1)`. A bindless
   adapter records the object per kind, so `acquire()` can write it into new slots.
 - When a texture fails and `devPlaceholders` is on, kiln calls `publish(id, failedPlaceholder,

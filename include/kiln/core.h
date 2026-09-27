@@ -46,6 +46,15 @@
 
 // Unreachable code: use std::unreachable() (C++23, <utility>).
 
+// Whether exceptions are enabled in this translation unit. kiln never throws, but
+// std::thread's constructor can; the one try/catch in the library (thread_pool.cpp)
+// is compiled only when this is 1 (KILN_NO_EXCEPTIONS hardening, v1.0).
+#if defined(__cpp_exceptions) || defined(_CPPUNWIND)
+#define KILN_HAS_EXCEPTIONS 1
+#else
+#define KILN_HAS_EXCEPTIONS 0
+#endif
+
 // Optimizer hint that `cond` holds. Never evaluates `cond` at runtime; a false
 // condition is undefined behavior, so pair hot-path uses with a KILN_ASSERT.
 #if defined(__has_cpp_attribute)

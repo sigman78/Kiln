@@ -12,7 +12,8 @@
 namespace kiln::cook {
 
 /// Bump when cooked output changes for identical input and settings. Part of every store key.
-inline constexpr u32 kCookerVersion = 1;
+inline constexpr u32 kCookerVersion =
+    2; // 2: KTX2 outputs carry kiln.sourceHash / kiln.cookHash key/value entries
 
 // ---------------------------------------------------------------------------
 // Diagnostics (K1000-K1999: glTF import). See docs/diagnostics.md.

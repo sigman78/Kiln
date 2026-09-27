@@ -11,6 +11,13 @@
 
 namespace kiln::ktx2 {
 
+/// Extra key/value entry. The writer appends the terminating NUL to the value
+/// (KTX convention for string values) and sorts entries by key.
+struct KeyValue {
+    StrView key;   ///< ASCII, no NUL, unique
+    StrView value; ///< bytes; a NUL is appended
+};
+
 struct WriteDesc {
     Format format = Format::Undefined; ///< v0.5: uncompressed formats only
     u32 width     = 0;
@@ -22,6 +29,9 @@ struct WriteDesc {
     /// deterministic. Must not contain NUL.
     StrView writerTag       = "kiln-cook";
     bool premultipliedAlpha = false; ///< sets the DFD alpha-premultiplied flag
+    /// Additional key/value entries (e.g. kiln.sourceHash). Keys must not collide
+    /// with KTXwriter or each other. At most 15.
+    Span<KeyValue const> extraKeys = {};
 };
 
 /// Serialize a KTX2 file into a new buffer allocated from `alloc` (Tag::Cook;

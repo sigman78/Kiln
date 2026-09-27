@@ -38,6 +38,9 @@ add_executable(kiln_tests
     test_ktx2_read.cpp
     ktx2_corpus.h
     test_ktx2_corpus.cpp
+    test_null_adapter.cpp
+    test_io.cpp
+    test_runtime.cpp
 )
 kiln_apply_defaults(kiln_tests)
 target_include_directories(kiln_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
@@ -47,7 +50,8 @@ if(TARGET kiln_cook)
     target_sources(kiln_tests PRIVATE test_mesh.cpp test_ktx2.cpp test_ktx2_corpus_rt.cpp
                                        test_settings.cpp test_store.cpp
                                        png_writer.h test_image.cpp test_texture_cook.cpp
-                                       test_mesh_cook.cpp test_mesh_golden.cpp test_texture_golden.cpp)
+                                       test_mesh_cook.cpp test_mesh_golden.cpp test_texture_golden.cpp
+                                       test_provider.cpp)
     target_link_libraries(kiln_tests PRIVATE kiln_cook)
 
     file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/samples)
@@ -92,6 +96,17 @@ if(TARGET kiln_cook)
 else()
     add_test(NAME kiln_tests COMMAND kiln_tests --corpus ${KILN_KTX2_CORPUS} ${KILN_TEST_ARGS})
 endif()
+
+# wait() misuse must panic (never hang) with a K5007 message (test_runtime.cpp). These
+# cases panic on purpose, so they run as their own processes, selected by exact name.
+# PASS_REGULAR_EXPRESSION alone decides (CTest ignores the exit code then; combining it
+# with WILL_FAIL would invert the match). Without the panic the output has no "K5007".
+foreach(_case WaitOffThread WaitNotSelfSubmitting)
+    add_test(NAME runtime_panic_${_case} COMMAND kiln_tests RuntimePanic.${_case} ${KILN_TEST_ARGS})
+    set_tests_properties(runtime_panic_${_case} PROPERTIES PASS_REGULAR_EXPRESSION "PANIC[^
+]*K5007[^
+]*wait")
+endforeach()
 
 # ---------------------------------------------------------------------------
 # Reference validation with the Khronos `ktx` CLI (KTX-Software 4.x), if installed:

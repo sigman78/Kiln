@@ -81,11 +81,42 @@ target_link_libraries(app PRIVATE kiln::runtime kiln::cook)
 See [`docs/design/shipping-split.md`](docs/design/shipping-split.md) for the full read-only
 shipping contract.
 
+### Runtime in ten lines
+
+```cpp
+kiln::Adapter adapter{};
+kiln::NullAdapter* na = *kiln::null_adapter_create({}, &adapter); // or a real renderer adapter
+
+kiln::Context* ctx = *kiln::create({.adapter = &adapter, .storeDir = "cooked/"});
+
+kiln::MeshHandle ship = kiln::request_mesh(ctx, "meshes/ship_hauler_a");
+
+kiln::pump(ctx);                                  // call once per frame
+if (kiln::has_meta(ctx, ship)) {
+    kiln::mesh::MeshView const* v = kiln::mesh_view(ctx, ship); // parts, lods, mounts, bounds
+}
+if (kiln::is_ready(ctx, ship)) { /* draw; kiln::gpu(ctx, ship) is the payload GpuObject */ }
+for (kiln::Event const& e : kiln::events(ctx)) { /* MetaReady / Ready / Changed / Failed */ }
+
+kiln::release(ctx, ship);
+kiln::destroy(ctx);
+kiln::null_adapter_destroy(na);
+```
+
+Load groups add a `wait()` for a small critical set (fonts, loading-screen art) instead of polling
+frame by frame — only safe on a `kSelfSubmitting` adapter, which the null adapter is:
+
+```cpp
+kiln::Group boot     = kiln::group(ctx);
+kiln::TextureHandle font = kiln::request_texture(ctx, "ui/font", {.group = boot});
+kiln::GroupStatus st = kiln::wait(ctx, boot, {.timeoutMs = 5000});
+```
+
 ## Tools
 
 - `kiln-cook <input>... -o <store>`: cook `.glb`/`.gltf`/`.png`/`.ktx2` sources (files or directories) into the
-  content-hashed store; `--check` validates only, `--named` writes human-readable names, `--map` records
-  asset path -> file. Dev/CI only (needs `kiln_cook`).
+  store, writing `<store>/<assetPath>.<ext>` (Named layout) by default; `--check` validates only, `--hashed`
+  writes content-hash file names instead, `--map` records asset path -> file. Dev/CI only (needs `kiln_cook`).
 - `kiln-info <file> [--blobs] [--check]`: dump a `.mesh` or `.ktx2`; read-only, ships with the runtime side.
 
 ## Docs

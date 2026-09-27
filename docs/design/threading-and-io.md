@@ -1,6 +1,7 @@
 # Threading and IO
 
 **Status:** Proposed (awaiting owner sign-off)
+**Implementation:** M3 (2026-09-27), see open-questions R5+ for deviations.
 **Milestone:** M0
 **Decides:** Which threading primitives kiln uses, the job and IO interfaces, and where results surface.
 
@@ -97,8 +98,12 @@ struct IoBackend {
   and called from worker threads.
 - Reads always target **caller-provided memory**, so the runtime can read straight into adapter
   staging.
-- **Mountable roots:** the context holds an ordered list of `{prefix, IoBackend, rootPath}`.
-  Lookups try mounts in order. v0.5 mounts directories only. Pack files would be another backend.
+- **As implemented (M3):** there is no mount list. `ContextDesc` holds exactly one `IoBackend const*
+  io` (null = the compat backend) for the whole store, plus one `storeDir` root the loader
+  concatenates with the asset path (`<storeDir>/<assetPath>.mesh|.ktx2`); `sourceRoots` is a
+  separate, cook-provider-only list of directories searched for *source* files (`.glb`/`.png`), not
+  an `IoBackend` mount table. The `{prefix, IoBackend, rootPath}` ordered-mount design below did not
+  land in M3; a pack-file backend would need it added later.
 
 ### Path to true async IO
 

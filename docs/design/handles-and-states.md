@@ -1,6 +1,7 @@
 # Handles, asset ids and states
 
 **Status:** Proposed (awaiting owner sign-off)
+**Implementation:** M3 (2026-09-27), see open-questions R5+ for deviations.
 **Milestone:** M0
 **Decides:** Handle identity, asset ids, load states and transitions (including hot reload), request refcounting, events, placeholders and load groups.
 
@@ -112,6 +113,12 @@ TextureView view    (Context*, Handle<Texture>);
 GpuObject   gpu     (Context*, Handle<T>);   // see adapter.md
 ```
 
+**As implemented (M3):** the mesh query is `mesh::MeshView const* mesh_view(Context*, MeshHandle)`
+(nullptr unless `has_meta()`), and there is no separate `TextureView` type: texture metadata comes
+from `TextureInfo texture_info(Context*, TextureHandle)`, which bundles `ktx2::TextureDesc desc`,
+the per-level `levelOffsets`/`levelRowPitches` computed by the upload layout, `gpu`, `version` and
+`isPlaceholder` in one struct. There is no generic `view()` name in `kiln/assets.h`.
+
 - All are table lookups: allocation-free and callable every frame.
 - They read state as of the last `pump()`. Nothing changes between two pumps.
 - `is_ready` stays true during a hot reload, because the old payload keeps being served.
@@ -154,7 +161,14 @@ All transitions become visible **only in `pump()`**, on the pumping thread.
 ```cpp
 Handle<Mesh> request<Mesh>(Context*, AssetId or StrView path, RequestOptions const& = {});
 void         release(Context*, Handle<Mesh>);
+```
 
+**As implemented (M3):** there is no id-or-path overload. `request_mesh(Context*, StrView path,
+RequestOptions const& = {})` / `request_texture(...)` take a path only, and separately
+`find_mesh(Context*, AssetId id)` / `find_texture(Context*, AssetId id)` look up an already-live
+asset by id only (null handle if not live). Neither direction (request by id, find by path) exists.
+
+```cpp
 struct RequestOptions {
     Priority    priority    = Priority::Normal;       // Normal, High
     Group       group       = {};                     // null = no group
@@ -173,7 +187,9 @@ struct RequestOptions {
   Later versions may defer or keep an LRU of released assets.
 - Releasing a `Pending` or `MetaReady` asset cancels in-flight work where possible (IO and cook
   work finishes but its result is discarded).
-- Priority has two levels in v0.5 (`Normal`, `High`), plus an internal **boost** used by `wait()`.
+- Priority has two levels in v0.5 (`Normal`, `High`). **As implemented (M3),** `wait()`'s boost is
+  not a separate internal level: it promotes a member straight to `Priority::High` and never
+  reverts it (see Load groups below).
 
 ### Events
 
@@ -192,8 +208,14 @@ struct Event {
 
 - Produced only inside `pump()`, on the pumping thread. `events(ctx)` returns a `Span<Event const>`
   valid until the next `pump()`. The host drains it each frame.
-- The event buffer is a preallocated ring sized to **two events per slot**: an asset produces at
-  most two events per pump (`MetaReady` then `Ready`).
+- **As implemented (M3):** the event buffer is one preallocated array sized to `ContextDesc::maxEvents`
+  (default 1024), shared across every asset, not sized per slot. It behaves as a single buffer
+  valid until the next `pump()` call, which clears it and starts over (`wait()`'s internal pumps are
+  the exception: they accumulate into the same buffer so `events()` after `wait()` sees everything
+  produced by its loop). When the buffer is full, `pump()` drops the *oldest* event to make room and
+  emits one `Severity::Warning` diagnostic (K5006, `kDiagEventsDropped`) the first time that happens
+  in a given pump; `PumpStats::eventsDropped` counts how many were dropped. There is no "two events
+  per slot" sizing rule.
 - `version` is the content version, never the handle generation.
 - Raw `u64` bits are used instead of a typed handle because one event stream carries all kinds.
 
@@ -255,9 +277,12 @@ struct WaitOptions { u32 timeoutMs; };
 ```
 
 - Add requests with `request(..., { .group = g })`.
-- **Membership is tracked per `request()` call, not per asset.** Each call that names a group adds
-  its handle to that group. The same asset can appear in several groups through separate requests.
-  A handle already in the group is not added twice.
+- **As implemented (M3): a slot belongs to the first live group it joins, not one group per
+  `request()` call.** `join_group()` only assigns a slot's group if the slot has no live group yet;
+  a later `request()` of the same already-live asset that names a *different* group is a no-op for
+  that slot's membership (the slot keeps its original group). In practice this makes it one group
+  per asset for the asset's lifetime, not "the same asset can appear in several groups through
+  separate requests" as originally proposed below.
 - One group per `request()` call (HANDOFF §13 Q11, proposed answer: one group per request call is
   enough).
 - A member whose refcount reaches 0 leaves the group.
@@ -269,7 +294,12 @@ struct WaitOptions { u32 timeoutMs; };
 
 **`wait(ctx, g, { .timeoutMs })`:**
 
-1. Raises every unsettled member to boost priority (above `High`). Boost is cleared on return.
+1. Raises every unsettled member's priority. **As implemented (M3):** there is no boost level above
+   `High` — `Priority` has exactly two values (`Normal`, `High`) — so `wait()` simply promotes each
+   member to `Priority::High` (`boost()`/`boost_group()`), the same level a `High`-priority request
+   already has. This is also **never cleared**: a member `wait()` touched keeps `Priority::High` for
+   the rest of its life, even after `wait()` returns. The "internal boost, above High" and "cleared
+   on return" wording below was the M0 proposal and does not match the implementation.
 2. Loops `pump()` plus a short sleep on the calling thread until the group is settled or the
    timeout expires.
 3. Returns the `GroupStatus`. On timeout it returns partial results; it never fails the members.

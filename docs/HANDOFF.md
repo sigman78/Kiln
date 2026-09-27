@@ -212,7 +212,7 @@ cook(...) → blob ─┬─► store      write to disk, reuse later (normal de
 **Design:**
 - **Key:** `hash(source bytes, resolved settings, target profile, cooker version)`. Filenames are the content hash, so invalidation is simply "key not found" and nothing is ever overwritten. Several targets can coexist in one store.
 - **Writes are atomic** (temp file, then rename). A corrupt entry is a recoverable error: re-cook it.
-- *v0.5:* no index file. The key is computed by hashing the source on request, which is fine at demo scale.
+- *v0.5 (as implemented in M3):* no index file, **named layout**: files are `<store>/<assetPath>.mesh|.ktx2`, with the content hash stored inside each file (`.mesh` header `sourceHash`/`cookHash`; KTX2 key/value) for invalidation. The runtime does not hash sources at load; hashed file names return with the index file (see `docs/open-questions.md` R4).
 - *Later:* an index file (asset ID → key, source path, dependencies, timestamps/sizes for fast "unchanged" checks), and garbage collection via `kiln-cook --gc` (never automatic at runtime).
 
 **The store must stay optional in the runtime API.** A host that cooks everything in its build step can treat it as a plain read-only directory.

@@ -1,5 +1,6 @@
 // KTX2 writer for raw (uncompressed, non-supercompressed) 2D textures.
 #include "kiln/cook/ktx2_writer.h"
+#include "kiln/log.h"
 
 namespace kiln::ktx2 {
 
@@ -106,6 +107,35 @@ Result<Vec<u8>> write(WriteDesc const& desc, Allocator const* alloc, DiagSink co
                        maxLevels);
     if (desc.writerTag.find('\0') != StrView::kNpos)
         return invalid(diag, kDiagKtxKvd, "writerTag contains a NUL byte");
+    if (desc.extraKeys.size > 15) return invalid(diag, kDiagKtxKvd, "too many extra key/value entries");
+    for (usize i = 0; i < desc.extraKeys.size; ++i) {
+        KeyValue const& kvp = desc.extraKeys[i];
+        if (kvp.key.empty() || kvp.key.find('\0') != StrView::kNpos || kvp.key == StrView(kWriterKey))
+            return invalid(diag, kDiagKtxKvd, "extra key %llu is empty, contains NUL or is KTXwriter",
+                           u64(i));
+        for (usize j = 0; j < i; ++j)
+            if (desc.extraKeys[j].key == kvp.key)
+                return invalid(diag, kDiagKtxKvd, "duplicate key/value key at index %llu", u64(i));
+    }
+    // KVD entries sorted by key bytes (KTX 2.0 3.11.1): KTXwriter plus extras.
+    struct Entry {
+        StrView key;
+        StrView value;
+    };
+    Entry entries[16];
+    u32 entryCount        = 0;
+    entries[entryCount++] = {StrView(kWriterKey), desc.writerTag};
+    for (usize i = 0; i < desc.extraKeys.size; ++i)
+        entries[entryCount++] = {desc.extraKeys[i].key, desc.extraKeys[i].value};
+    for (u32 i = 1; i < entryCount; ++i) { // insertion sort by key
+        Entry e = entries[i];
+        u32 j   = i;
+        while (j > 0 && compare(entries[j - 1].key, e.key) > 0) {
+            entries[j] = entries[j - 1];
+            --j;
+        }
+        entries[j] = e;
+    }
     u32 const levelCount = u32(desc.levels.size);
     for (u32 i = 0; i < levelCount; ++i) {
         u64 const expected =
@@ -121,10 +151,12 @@ Result<Vec<u8>> write(WriteDesc const& desc, Allocator const* alloc, DiagSink co
     u32 const dfdOffset = u32(sizeof(Header) + levelCount * sizeof(LevelIndex));
     u32 const dfdLength = dfd_size(*info);
     u32 const kvdOffset = dfdOffset + dfdLength;
-    u32 const keyBytes  = u32(sizeof(kWriterKey));       // includes NUL
-    u32 const valueSize = u32(desc.writerTag.size) + 1u; // includes NUL
-    u32 const kvLength  = keyBytes + valueSize;
-    u32 const kvdLength = u32(align_up(u64(4) + kvLength, u64(4)));
+    u32 kvdLength       = 0;
+    for (u32 i = 0; i < entryCount; ++i) {
+        u32 const kvLength =
+            u32(entries[i].key.size) + 1u + u32(entries[i].value.size) + 1u; // key NUL value NUL
+        kvdLength += u32(align_up(u64(4) + kvLength, u64(4)));
+    }
 
     u64 const align = lcm(info->bytesPerBlock, 4u);
     LevelIndex index[kMaxLevels]{};
@@ -165,10 +197,15 @@ Result<Vec<u8>> write(WriteDesc const& desc, Allocator const* alloc, DiagSink co
     write_dfd(p + dfdOffset, *info, desc.premultipliedAlpha);
 
     u8* kv = p + kvdOffset;
-    write_unaligned<u32>(kv, kvLength);
-    std::memcpy(kv + 4, kWriterKey, keyBytes);
-    if (desc.writerTag.size) std::memcpy(kv + 4 + keyBytes, desc.writerTag.data, desc.writerTag.size);
-    // the value's NUL and the entry padding are already zero
+    for (u32 i = 0; i < entryCount; ++i) {
+        Entry const& e     = entries[i];
+        u32 const kvLength = u32(e.key.size) + 1u + u32(e.value.size) + 1u;
+        write_unaligned<u32>(kv, kvLength);
+        std::memcpy(kv + 4, e.key.data, e.key.size);
+        if (e.value.size) std::memcpy(kv + 4 + e.key.size + 1, e.value.data, e.value.size);
+        // the key/value NULs and the entry padding are already zero
+        kv += align_up(u64(4) + kvLength, u64(4));
+    }
 
     for (u32 i = 0; i < levelCount; ++i)
         if (desc.levels[i].size)
