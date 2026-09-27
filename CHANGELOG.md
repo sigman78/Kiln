@@ -8,7 +8,15 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
 ## [Unreleased]
 
 ### Added
-- M4 (in progress): `examples/viewer`. Vulkan 1.4 device bring-up (volk, optional validation layer),
+- M4: `kiln-viewer` draws cooked meshes through the example adapter with one pipeline per vertex
+  layout (zero-buffer inputs and specialization constants for attributes a layout lacks), dynamic
+  rendering and synchronization2, two frames in flight, and frame submits that wait on the adapter's
+  upload watermark. Boot meshes are waited on as a group; their base-color textures stream in under
+  `--budget-mib`, so placeholders show first. Orbit camera in the window; `--offscreen --frames N
+  --dump out.png` renders headless; `--source` enables cook-on-miss. Demo models: `viewer-assets`
+  fetches five CC0 Khronos glTF models at a pinned commit with SHA-256 checks into
+  `examples/assets/khronos/` (git-ignored; `examples/assets/README.md`).
+- M4: `examples/viewer`. Vulkan 1.4 device bring-up (volk, optional validation layer),
   the example `kiln::Adapter` (dedicated transfer queue, timeline-semaphore tokens, host-coherent
   staging ring with `Busy` back-pressure, bindless slots with placeholder-then-publish, deferred
   destroy by frames in flight, per-format `static_assert`s against `VkFormat`), and `kiln-vk-smoke`,

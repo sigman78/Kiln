@@ -166,6 +166,20 @@ kiln-headless --store /tmp/store --source tests/corpus/gltf/khronos --latency 30
 
 Every preset builds it (`KILN_BUILD_EXAMPLES=ON`), and CTest runs it against the golden files.
 
+`examples/viewer` is M4: the example Vulkan 1.4 adapter (`vk_adapter.cpp`: dedicated transfer queue,
+timeline-semaphore tokens, staging ring with back-pressure, bindless slots with placeholder-then-publish,
+deferred destroy) and `kiln-viewer`, which draws cooked meshes through it. Boot meshes are waited on as a
+group; their textures stream in under a per-frame budget, so the first frames show placeholders. Built
+with `KILN_BUILD_VIEWER=ON` (every preset; headers, volk and GLFW are fetched, no SDK needed); needs a
+Vulkan 1.4 driver to run. `docs/design/viewer.md` has the design.
+
+```
+cmake --build --preset win-msvc-debug --target viewer-assets     # five CC0 Khronos models, ~40 MiB, not committed
+kiln-viewer --source examples/assets/khronos --store build/demo-store Lantern.mesh WaterBottle.mesh Avocado.mesh
+kiln-viewer --offscreen --frames 60 --dump frame.png --store tests/golden mesh/BoxTextured.mesh
+kiln-vk-smoke --store tests/golden --staging-kib 4 mesh/Box.mesh ktx2/normal.ktx2   # adapter only, no window
+```
+
 ## Docs
 
 - [`docs/HANDOFF.md`](docs/HANDOFF.md) — project hand-off and engineering principles

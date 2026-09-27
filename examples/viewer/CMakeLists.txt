@@ -93,3 +93,10 @@ endif()
 add_executable(kiln-vk-smoke adapter_smoke.cpp vk_device.cpp vk_adapter.cpp)
 kiln_apply_defaults(kiln-vk-smoke)
 target_link_libraries(kiln-vk-smoke PRIVATE kiln_runtime kiln_cli volk)
+
+# Demo models (CC0, Khronos glTF-Sample-Assets, pinned and hash-checked) into
+# examples/assets/khronos/, which git ignores. Never part of ALL; see examples/assets/README.md.
+add_custom_target(viewer-assets
+    COMMAND ${CMAKE_COMMAND} -DOUT_DIR=${CMAKE_SOURCE_DIR}/examples/assets/khronos
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/fetch_assets.cmake
+    COMMENT "Fetching the viewer demo assets")

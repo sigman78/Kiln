@@ -25,3 +25,6 @@ cooked/
 # Claude Code local settings
 .claude/*.local.json
 .claude/.*.local.json
+
+# Demo assets fetched by the viewer-assets target (examples/assets/README.md)
+examples/assets/khronos/
