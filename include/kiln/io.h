@@ -16,10 +16,15 @@ struct JobSystem {
     void* user                                                   = nullptr;
 };
 
+/// Scheduling hint for worker threads relative to the host's own threads. Loading and
+/// cooking belong below render, net and game threads, so Low is the usual choice.
+enum class ThreadPriority : u8 { Normal = 0, Low, High };
+
 struct ThreadPoolDesc {
-    Allocator const* alloc = nullptr; ///< nullptr = default allocator
-    u32 threads            = 0;       ///< 0 = hardware_concurrency - 1, clamped to [1, 16]
-    u32 queueCapacity      = 4096;    ///< max queued jobs; submit blocks when full
+    Allocator const* alloc  = nullptr;                ///< nullptr = default allocator
+    u32 threads             = 0;                      ///< 0 = hardware_concurrency - 1, clamped to [1, 16]
+    u32 queueCapacity       = 4096;                   ///< max queued jobs; submit blocks when full
+    ThreadPriority priority = ThreadPriority::Normal; ///< accepted; the built-in pool does not apply it yet
 };
 
 /// The built-in pool. `destroy` waits for idle, joins the threads and frees the pool.

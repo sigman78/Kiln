@@ -119,9 +119,9 @@ worker priority is the next threading item (open points).
 ## Open points for the owner
 
 - **Worker priority.** Cook helpers should run below the host's render, net and game threads.
-  That belongs to the pool, not the cooker: a `ThreadPoolDesc::priority` (and the same hint for a
-  host `JobSystem`) mapped to `SetThreadPriority` / `pthread_setschedparam`. Not started; the
-  budget above is the interim cap.
+  That belongs to the pool, not the cooker. `ThreadPoolDesc::priority` exists as the user-facing
+  hint (`threading-and-io.md`); the compat pool does not apply it yet, so the budget above is the
+  interim cap.
 
 - Should `bench_image` also run in CI as a smoke build (no timing assertions), or stay manual?
 - Baseline ISA for a future intrinsics path: SSE4.1 on x64 and NEON on arm64, or AVX2 on x64?

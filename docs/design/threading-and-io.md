@@ -31,6 +31,11 @@ struct JobSystem {
 - kiln never assumes jobs run in order or on a specific thread.
 - `wait_idle` is used only by `destroy()` and tests. If null, kiln tracks its own in-flight count
   and spins with a yield.
+- **Worker priority.** `ThreadPoolDesc::priority` (`Normal`, `Low`, `High`) is the host's hint for
+  where kiln's workers sit relative to its render, net and game threads. The built-in pool is a
+  compatibility backend on `std::thread` and accepts the field without applying it; the platform
+  backends (`SetThreadPriority` on Windows, `pthread_setschedparam` / nice on POSIX) map it when
+  they land. A host `JobSystem` decides its own thread priorities.
 
 ### Where results surface
 

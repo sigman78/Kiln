@@ -137,6 +137,8 @@ void pool_wait_idle(void* user) {
 
 Result<JobSystem> create_thread_pool(ThreadPoolDesc const& desc) noexcept {
     KILN_VERIFY(desc.queueCapacity > 0);
+    // desc.priority is not applied: the pool stays on std::thread defaults until a
+    // platform backend maps it (threading-and-io.md, "Worker priority").
     Allocator const* a    = desc.alloc ? desc.alloc : default_allocator();
     u32 const threadCount = resolve_thread_count(desc.threads);
 
