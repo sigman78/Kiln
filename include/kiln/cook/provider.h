@@ -20,6 +20,7 @@ struct ProviderDesc {
 /// `<root>/<assetPath>.png|.ktx2` for textures; a texture with no source file of its
 /// own is produced by cooking its owning mesh (the parent path) which emits its
 /// embedded textures. Returns InvalidArgument if the context has no source roots.
+/// Call install_provider and uninstall_provider on the pump thread.
 KILN_API Status install_provider(Context* ctx, ProviderDesc const& desc) noexcept;
 KILN_API void uninstall_provider(Context* ctx) noexcept;
 

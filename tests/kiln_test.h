@@ -1,10 +1,6 @@
-// Minimal test runner for kiln. No exceptions, no RTTI, no iostreams.
-//
-//   KILN_TEST(suite, name) { KILN_CHECK(x == 1); KILN_CHECK_EQ(a, b); }
-//
+// tests/kiln_test.h — minimal test runner: no exceptions, no RTTI, no iostreams.
 // KILN_CHECK_* record a failure and continue; KILN_REQUIRE_* return from the test.
-// Run: kiln_tests [filter-substring] [--list] [--samples <dir>] [--corpus <dir>]
-//                  [--golden <dir>] [--update-golden]
+// Run: kiln_tests [filter] [--list] [--samples|--corpus|--golden <dir>] [--update-golden]
 #pragma once
 
 #include "kiln/core.h"

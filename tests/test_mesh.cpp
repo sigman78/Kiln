@@ -10,12 +10,8 @@
 using namespace kiln;
 using namespace kiln::mesh;
 
-// ---------------------------------------------------------------------------
-// Compile-time facts. split_unit() lives in kiln/cook/mesh_writer.h (the writer
-// header), so it can only be asserted here; every reader-side static_assert
-// (struct sizes, kMagic, index_size, is_allowed_blob_encoding) lives in
-// test_mesh_read.cpp instead, next to the hand-built file it validates against.
-// ---------------------------------------------------------------------------
+// split_unit() is writer-side (kiln/cook/mesh_writer.h), so it is asserted here.
+// Reader-side static_asserts live in test_mesh_read.cpp, next to the hand-built file.
 
 static_assert(split_unit(24) == 48u);
 static_assert(split_unit(6) == 48u);
@@ -24,10 +20,6 @@ static_assert(split_unit(4) == 16u);
 static_assert(split_unit(12) == 48u);
 
 namespace {
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 struct DiagCapture {
     u32 code          = 0;
@@ -320,10 +312,6 @@ void write_sample_file(char const* dir, char const* name, Span<u8 const> bytes) 
 
 } // namespace
 
-// ---------------------------------------------------------------------------
-// Round trips
-// ---------------------------------------------------------------------------
-
 KILN_TEST(Mesh, RoundTripRaw) {
     TestMesh m;
     WriteStats stats;
@@ -615,10 +603,6 @@ KILN_TEST(Mesh, ChecksumMismatch) {
     KILN_CHECK(decode_payload(*rp, rp->encoded(), dst.span(), DecodeOptions{false}).ok());
 }
 
-// ---------------------------------------------------------------------------
-// Corruptions detected by MeshView::open
-// ---------------------------------------------------------------------------
-
 KILN_TEST(Mesh, CorruptionsDetected) {
     TestMesh m;
     Vec<u8> const good = write_ok(m.desc());
@@ -705,10 +689,6 @@ KILN_TEST(Mesh, CorruptionsDetected) {
         expect_open_fails(b, Code::Corrupt, kDiagStringOffset, "STRS without final NUL");
     }
 }
-
-// ---------------------------------------------------------------------------
-// Writer input validation
-// ---------------------------------------------------------------------------
 
 namespace {
 void expect_write_fails(WriteDesc const& d, u32 diagCode, char const* what, WriteOptions const& opt = {}) {
@@ -855,10 +835,7 @@ KILN_TEST(Mesh, NoIndicesNoTextures) {
     KILN_CHECK(check_indices(v, dst.span()).ok());
 }
 
-// ---------------------------------------------------------------------------
-// Sample files for kiln-info's CTest coverage (tests/CMakeLists.txt)
-// ---------------------------------------------------------------------------
-
+// Writes the sample files that kiln-info's CTest entries read (tests/CMakeLists.txt).
 KILN_TEST(Mesh, WriteSampleFiles) {
     char const* dir = kiln::test::sample_dir();
     if (!dir) return; // no --samples <dir> given: nothing to do

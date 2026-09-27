@@ -1,6 +1,5 @@
 // kiln/cook/settings.h — v0.5 cook settings structs, resolution and hashing.
-// Design: docs/design/settings.md. Only the C++ structs exist in v0.5; config
-// files, presets, rules and sidecars land in v0.6 on top of them.
+// Design: docs/design/settings.md.
 #pragma once
 
 #include "kiln/hash.h"
@@ -84,19 +83,19 @@ struct CookSession {
 enum SettingsDiagCode : u32 {
     kDiagSettingsUnsupported =
         3001, ///< a reserved feature was requested (genLods, compression != None, blobChunkSize)
-    kDiagSettingsInvalidCombo = 3002,    ///< fields contradict each other (e.g. normalRenormalize with a
-                                         ///< non-normal usage is ignored: Warning)
+    kDiagSettingsInvalidCombo = 3002,    ///< fields contradict each other or hold invalid values (e.g.
+                                         ///< flipGreen with a non-Normal usage: Warning)
     kDiagSettingsClampedByTarget = 3003, ///< profile or size clamped by the target (Warning)
     kDiagSettingsEnumRange       = 3004, ///< an enum field holds a value outside its range
 };
 
 // ---------------------------------------------------------------------------
-// Resolution (HANDOFF §5.1 layers 1, 2 and 7 exist in v0.5)
+// Resolution (v0.5 layers: defaults, slot inference, session overrides)
 // ---------------------------------------------------------------------------
 
 /// Resolve texture settings: defaults <- inference from `hint` <- explicit non-Auto
 /// fields of `overrides` <- session <- target caps. Every Auto field is concrete on
-/// return. Invalid combinations return InvalidArgument with a K3xxx diagnostic.
+/// return. An enum value out of range returns InvalidArgument (K3004).
 KILN_API Result<TextureCookSettings> resolve_texture(TextureCookSettings const& overrides, SlotHint hint,
                                                      TargetProfile const& target, CookSession const& session,
                                                      DiagSink const* diag = nullptr,
@@ -125,7 +124,7 @@ KILN_API Result<MeshCookSettings> resolve_mesh(MeshCookSettings const& overrides
 }
 
 // ---------------------------------------------------------------------------
-// Hashing (field by field, schema-versioned; never memcpy of a struct)
+// Hashing (field by field, schema-versioned)
 // ---------------------------------------------------------------------------
 
 inline constexpr u32 kTextureSettingsSchema = 1; ///< bump when a field is added or changes meaning

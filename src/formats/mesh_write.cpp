@@ -1,10 +1,6 @@
-// .mesh writer (kiln_cook): validates fully resolved input records, builds STRS,
-// lays out the decoded payload and the blob table, and emits the file image.
-// Spec: docs/mesh-format-spec.md v0.3 (§2 invariants, §4 header, §5.9 BLOB).
-//
-// Output is deterministic: the image starts zeroed, every record is built from a
-// value-initialized local with its _pad/_reserved fields cleared, strings are
-// deduplicated in first-seen order and mounts are sorted by (nameHash, input index).
+// .mesh writer. Spec: docs/mesh-format-spec.md v0.3 (§2 invariants, §4 header, §5.9 BLOB).
+// For determinism the image starts zeroed and every record starts as a value-initialized
+// local, so _pad/_reserved fields are always 0.
 #include "kiln/cook/mesh_writer.h"
 
 #include <algorithm>
@@ -142,10 +138,7 @@ Status validate(WriteDesc const& d, WriteOptions const& opt, DiagSink const* dia
     return kOk;
 }
 
-// ---------------------------------------------------------------------------
-// STRS builder
-// ---------------------------------------------------------------------------
-
+// Builds the STRS section.
 class StringTable {
 public:
     explicit StringTable(Allocator const* a) noexcept : bytes_(a, Tag::Cook), map_(a, Tag::Cook) {
@@ -188,10 +181,6 @@ struct SectionOut {
 void clear_bounds_pad(Bounds& b) noexcept { b._pad = 0; }
 
 } // namespace
-
-// ---------------------------------------------------------------------------
-// write
-// ---------------------------------------------------------------------------
 
 Result<Vec<u8>> write(WriteDesc const& desc, WriteOptions const& opt, Allocator const* alloc,
                       DiagSink const* diag, WriteStats* stats) noexcept {

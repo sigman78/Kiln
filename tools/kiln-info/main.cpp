@@ -1,14 +1,5 @@
-// kiln-info — dump a cooked .mesh or .ktx2 file.
-//
-//   kiln-info <file> [--blobs] [--check] [--quiet]
-//
-//   --blobs   print the full BLOB table (default: summary only)
-//   --check   .mesh: decode the payload, verify checksums and index values
-//             .ktx2: verify every level is present with the expected size
-//   --quiet   errors only (exit code still reports the result)
-//
-// Exit codes: 0 ok, 1 usage, 2 file could not be read, 3 open/validation failed,
-// 4 --check failed.
+// tools/kiln-info/main.cpp — dump a cooked .mesh or .ktx2 file. Options: README.md.
+// Exit codes: 0 ok, 1 usage, 2 file could not be read, 3 open/validation failed, 4 --check failed.
 #include "kiln/containers.h"
 #include "kiln/ktx2.h"
 #include "kiln/log.h"

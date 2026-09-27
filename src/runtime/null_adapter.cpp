@@ -1,11 +1,4 @@
-// kiln/null_adapter.cpp — CPU-only adapter for tests and tools. See
-// include/kiln/null_adapter.h and docs/design/adapter.md ("Null adapter").
-//
-// Threading (adapter.md): begin_upload/commit_upload may run on worker threads,
-// so the busy/fail call counters are atomics and every table/slot/stat mutation
-// is guarded by one mutex. `table` is reserved to `maxObjects` up front and never
-// regrows, so the TextureDesc/MeshPayloadDesc owned by each entry (pointed to by
-// that same entry's UploadDesc copy) never moves.
+// null_adapter.cpp — CPU-only adapter for tests and tools (docs/design/adapter.md).
 #include "kiln/null_adapter.h"
 
 #include "kiln/containers.h"
@@ -33,6 +26,8 @@ struct ObjectEntry {
 
 } // namespace
 
+// begin_upload/commit_upload may run on workers: one mutex guards all state; the call
+// counters are atomics. `table` never regrows, so each entry's self-pointing desc stays valid.
 struct NullAdapter {
     Allocator const* allocator = nullptr;
     NullAdapterDesc desc{};

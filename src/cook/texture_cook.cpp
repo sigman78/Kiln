@@ -1,6 +1,5 @@
-// Texture cooking: PNG -> KTX2 (decode, convert per usage, mips) or KTX2 pass-through.
-// Deterministic: the image pipeline (kiln/cook/image.h) is integer-exact apart from
-// IEEE sqrt in normal renormalization, and the KTX2 writer emits no timestamps.
+// src/cook/texture_cook.cpp — texture cooking: PNG -> KTX2 (decode, convert per usage,
+// mips) or KTX2 pass-through.
 #include "kiln/cook/cook.h"
 #include "kiln/cook/image.h"
 #include "kiln/cook/ktx2_writer.h"
@@ -22,10 +21,6 @@ void note(DiagSink const* diag, StrView asset, Severity sev, u32 code, char cons
           unsigned long long d = 0) noexcept {
     (void)diagf(diag, kOk, code, sev, asset, "texture", fmt, a, b, c, d);
 }
-
-// ---------------------------------------------------------------------------
-// KTX2 pass-through
-// ---------------------------------------------------------------------------
 
 Result<CookedTexture> pass_through(TextureSource const& src, u32 cap, Allocator const* alloc,
                                    DiagSink const* diag, StrView asset, u64 sourceHash) noexcept {
@@ -58,10 +53,6 @@ Result<CookedTexture> pass_through(TextureSource const& src, u32 cap, Allocator 
     out.sourceHash  = sourceHash;
     return out;
 }
-
-// ---------------------------------------------------------------------------
-// PNG
-// ---------------------------------------------------------------------------
 
 /// Gray + alpha (2 channels) -> RGBA8 as (Y, Y, Y, A). convert_image's generic
 /// rule treats 2 channels as RG, which is wrong for a PNG gray+alpha source.
@@ -172,7 +163,7 @@ Result<CookedTexture> cook_png(TextureSource const& src, TextureCookSettings con
         }
     }
 
-    // --- Size cap: drop leading levels until the top fits ----------------------------
+    // Size cap: drop leading levels until the top fits.
     u32 const srcW = img.width, srcH = img.height;
     u32 drop = 0;
     while (max(srcW >> drop, 1u) > cap || max(srcH >> drop, 1u) > cap)

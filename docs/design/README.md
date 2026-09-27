@@ -18,6 +18,7 @@ mesh-format-spec draft v0.3 (magic `KMSH`, namespace `kiln::mesh`, exact-minor v
 | [adapter.md](adapter.md) | `Format` enum, the renderer adapter interface (`acquire`, `publish`, `caps`), `GpuObject`, binding models, threading contract |
 | [settings.md](settings.md) | v0.5 cook settings structs, resolution layers, settings hashing and store key |
 | [threading-and-io.md](threading-and-io.md) | std threading in `.cpp` files, `JobSystem`, `IoBackend`, `pump()` as the only surface |
+| [mesh-cook.md](mesh-cook.md) | The glTF to `.mesh` cooker stage order and its determinism rules |
 | [shipping-split.md](shipping-split.md) | The read-only shipping contract (M1.5): the `kiln_runtime` / `kiln_cook` boundary, the `include/kiln/cook/` header split, install components, shipping presets and the shipping CI job |
 
 Related documents:

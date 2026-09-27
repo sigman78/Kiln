@@ -1,7 +1,6 @@
-// Minimal PNG encoder for tests: stored (uncompressed) deflate blocks inside a zlib
-// stream, filter type 0 on every row, correct CRC-32 and Adler-32. Supports bit
-// depths 8 and 16 for every color type, palettes with tRNS, and Adam7 interlacing.
-// Used to feed kiln::cook::decode_png / cook_texture with known pixels.
+// tests/png_writer.h — minimal PNG encoder that feeds decode_png / cook_texture known pixels.
+// Stored deflate blocks in a zlib stream, filter 0 on every row, real CRC-32 and Adler-32.
+// Depths 8 and 16 for every color type, palettes with tRNS, Adam7 interlacing.
 #pragma once
 
 #include "kiln/containers.h"

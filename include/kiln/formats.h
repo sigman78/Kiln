@@ -1,7 +1,5 @@
-// kiln/formats.h — engine-neutral pixel/vertex format enum and its constexpr
-// property table. Values are numerically equal to VkFormat, so KTX2 files and
-// .mesh vertex layouts store them as-is and a Vulkan adapter casts directly;
-// other backends map through format_info(). See docs/design/adapter.md.
+// kiln/formats.h — engine-neutral pixel/vertex format enum and its constexpr property table.
+// Values equal VkFormat; other backends map through format_info(). See docs/design/adapter.md.
 #pragma once
 
 #include "kiln/core.h"
@@ -38,7 +36,7 @@ enum class Format : u32 {
     R32G32B32_SFLOAT    = 106,
     R32G32B32A32_SFLOAT = 109,
 
-    // Block compressed (post-v0.5 cooker output; readable/pass-through now)
+    // Block compressed (BC)
     BC1_RGB_UNORM  = 131,
     BC1_RGB_SRGB   = 132,
     BC1_RGBA_UNORM = 133,
@@ -56,7 +54,7 @@ enum class Format : u32 {
     BC7_UNORM      = 145,
     BC7_SRGB       = 146,
 
-    // ETC2 / EAC (mobile; readable/pass-through, cooker output post-v0.5)
+    // ETC2 / EAC (mobile)
     ETC2_R8G8B8_UNORM   = 147,
     ETC2_R8G8B8_SRGB    = 148,
     ETC2_R8G8B8A1_UNORM = 149,
@@ -68,7 +66,7 @@ enum class Format : u32 {
     EAC_R11G11_UNORM    = 155,
     EAC_R11G11_SNORM    = 156,
 
-    // ASTC LDR (mobile; readable/pass-through, cooker output post-v0.5)
+    // ASTC LDR (mobile)
     ASTC_4x4_UNORM   = 157,
     ASTC_4x4_SRGB    = 158,
     ASTC_5x4_UNORM   = 159,
@@ -103,7 +101,7 @@ enum class Format : u32 {
 enum class FormatKind : u8 {
     UNorm = 0,
     SNorm,
-    UFloat, ///< unsigned float (BC6H_UFLOAT)
+    UFloat, ///< e.g. BC6H_UFLOAT
     SFloat,
 };
 

@@ -1,7 +1,5 @@
 // kiln/alloc.h — allocator interface, allocation tags and statistics, arena.
-//
-// All allocation in kiln goes through an `Allocator`. There are no hidden globals
-// except the default allocator returned by default_allocator().
+// All kiln allocation goes through an `Allocator`. The only global one is default_allocator().
 #pragma once
 
 #include "kiln/core.h"
@@ -25,14 +23,10 @@ enum class Tag : u8 {
 
 inline constexpr usize kDefaultAlign = alignof(std::max_align_t);
 
-/// The allocator interface: a plain struct of function pointers plus a user pointer,
-/// so hosts can wire in any allocator without deriving from anything.
-///
-/// Contract:
-///  - `alloc` returns memory of at least `size` bytes aligned to `align` (a power of
-///    two), or nullptr on failure. `size == 0` is allowed and may return nullptr.
-///  - `free` receives the same size/align/tag that were passed to `alloc`, so
-///    size-aware allocators need no header.
+/// Allocator interface: function pointers plus a user pointer. Hosts derive from nothing.
+///  - `alloc` returns at least `size` bytes aligned to `align` (a power of two), or
+///    nullptr on failure. `size == 0` is allowed and may return nullptr.
+///  - `free` receives the size, align and tag passed to `alloc`. Size-aware allocators need no header.
 ///  - Both must be thread-safe.
 struct Allocator {
     void* (*alloc)(void* user, usize size, usize align, Tag tag)          = nullptr;
@@ -54,17 +48,13 @@ struct AllocStats {
 /// Stats for one tag, or the sum over all tags when `tag == Tag::Count`.
 [[nodiscard]] KILN_API AllocStats default_alloc_stats(Tag tag = Tag::Count) noexcept;
 
-// ---------------------------------------------------------------------------
-// Convenience wrappers
-// ---------------------------------------------------------------------------
-
 /// Allocate or return nullptr.
 [[nodiscard]] inline void* try_alloc(Allocator const* a, usize size, usize align, Tag tag) noexcept {
     KILN_ASSERT(a && a->alloc);
     return a->alloc(a->user, size, align, tag);
 }
 
-/// Allocate or panic. Out-of-memory is non-recoverable by policy (HANDOFF §2).
+/// Allocate or panic. Out-of-memory is not recoverable.
 [[nodiscard]] KILN_API void* alloc(Allocator const* a, usize size, usize align, Tag tag) noexcept;
 
 inline void free(Allocator const* a, void* ptr, usize size, usize align, Tag tag) noexcept {
@@ -94,13 +84,9 @@ template <class T> void free_array(Allocator const* a, T* p, usize count, Tag ta
     free(a, p, count * sizeof(T), alignof(T), tag);
 }
 
-// ---------------------------------------------------------------------------
-// Arena: linear allocator for per-cook / per-load temporaries, reset in bulk
-// ---------------------------------------------------------------------------
-
-/// Bump allocator over blocks obtained from a backing Allocator. Individual frees
-/// are no-ops; `reset()` reclaims everything at once and keeps the first block.
-/// Not thread-safe: one arena per job.
+/// Bump allocator for per-cook / per-load temporaries, over blocks from a backing
+/// Allocator. Individual frees are no-ops. `reset()` frees everything at once.
+/// Not thread-safe: use one arena per job.
 class KILN_API Arena {
 public:
     struct Desc {

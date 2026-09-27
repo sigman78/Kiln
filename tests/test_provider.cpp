@@ -1,10 +1,6 @@
-// Tests for the cook-on-miss provider (kiln/cook/provider.h). Cook-only; needs a
-// runtime Context (kiln/assets.h) with the null adapter (kiln/null_adapter.h).
-//
-// Needs both `--samples <dir>` (a scratch store directory) and `--corpus <dir>`
-// (the KTX2 corpus root; the glTF corpus used here is its sibling
-// `<dir>/../gltf/generated`, see tests/test_mesh_cook.cpp); every test no-ops
-// when either flag is missing, same convention as the rest of the cook suite.
+// tests/test_provider.cpp — cook-on-miss provider (kiln/cook/provider.h) on a null-adapter Context;
+// cook-only. Needs `--samples <dir>` (scratch store) and `--corpus <dir>` (uses `<dir>/../gltf/generated`).
+// Every test no-ops when either flag is missing.
 #include "kiln_test.h"
 
 #include "kiln/assets.h"
@@ -18,10 +14,6 @@
 using namespace kiln;
 
 namespace {
-
-// ---------------------------------------------------------------------------
-// Small helpers
-// ---------------------------------------------------------------------------
 
 bool file_exists(char const* path) {
     std::FILE* f = std::fopen(path, "rb");
@@ -109,10 +101,6 @@ template <class Handle> State pump_until_settled(Context* ctx, Handle h, int max
 
 } // namespace
 
-// ---------------------------------------------------------------------------
-// install_provider validation
-// ---------------------------------------------------------------------------
-
 KILN_TEST(Provider, EmptySourceRootsIsInvalidArgument) {
     char storeDir[1024];
     if (!scratch_dir("provider_store_empty_roots", storeDir, sizeof storeDir)) return;
@@ -125,11 +113,7 @@ KILN_TEST(Provider, EmptySourceRootsIsInvalidArgument) {
     KILN_CHECK_EQ(st.code, Code::InvalidArgument);
 }
 
-// ---------------------------------------------------------------------------
-// Disk mode: cook-on-miss writes the Named store layout; a second context
-// without a provider then loads the same files straight from the store.
-// ---------------------------------------------------------------------------
-
+// Disk mode writes the Named store layout; a second context without a provider loads those files.
 KILN_TEST(Provider, DiskModeCooksAndWritesNamedStoreFiles) {
     char storeDir[1024];
     char gltfDir[1024];
@@ -196,10 +180,7 @@ KILN_TEST(Provider, DiskModeCooksAndWritesNamedStoreFiles) {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Memory mode: cache-less, cooks every miss, never touches the store.
-// ---------------------------------------------------------------------------
-
 KILN_TEST(Provider, MemoryModeNeverWritesTheStore) {
     char storeDir[1024];
     char gltfDir[1024];
@@ -223,10 +204,7 @@ KILN_TEST(Provider, MemoryModeNeverWritesTheStore) {
     KILN_CHECK_MSG(!file_exists(meshPath), "Memory mode must not write %s", meshPath);
 }
 
-// ---------------------------------------------------------------------------
 // Missing source: the asset Fails with a K5001 store-miss diagnostic.
-// ---------------------------------------------------------------------------
-
 KILN_TEST(Provider, MissingSourceFailsWithStoreMiss) {
     char storeDir[1024];
     char gltfDir[1024];

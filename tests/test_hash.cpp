@@ -16,10 +16,6 @@ constexpr u8 kAbc[3] = {'a', 'b', 'c'};
 
 } // namespace
 
-// ---------------------------------------------------------------------------
-// fourcc
-// ---------------------------------------------------------------------------
-
 static_assert(fourcc('O', 'M', 'S', 'H') == 0x48534D4Fu);
 static_assert(fourcc("OMSH") == fourcc('O', 'M', 'S', 'H'));
 
@@ -32,10 +28,6 @@ KILN_TEST(Hash, FourccStrRoundTrip) {
     fourcc_str(fourcc("TEST"), buf2);
     KILN_CHECK(std::strcmp(buf2, "TEST") == 0);
 }
-
-// ---------------------------------------------------------------------------
-// FNV-1a 64
-// ---------------------------------------------------------------------------
 
 static_assert(fnv1a64(""_sv) == 0xcbf29ce484222325ull);
 static_assert(fnv1a64("a"_sv) == 0xaf63dc4c8601ec8cull);
@@ -53,10 +45,6 @@ KILN_TEST(Hash, Fnv1a64KnownVectors) {
 KILN_TEST(Hash, HashNameMatchesFnv1a64) {
     KILN_CHECK_EQ(hash_name("meshes/ship"_sv), fnv1a64("meshes/ship"_sv));
 }
-
-// ---------------------------------------------------------------------------
-// XXH64
-// ---------------------------------------------------------------------------
 
 // Regression: constexpr evaluation over buffers shorter than 8 bytes (the tail
 // loops must not form pointers more than one past the end).
@@ -140,10 +128,6 @@ KILN_TEST(Hash, Xxh64StreamingConsistency) {
         KILN_CHECK_MSG(chunk33.digest() == expected, "chunk33 mismatch at len=%zu", len);
     }
 }
-
-// ---------------------------------------------------------------------------
-// mix64 / hash_combine / hash_of
-// ---------------------------------------------------------------------------
 
 KILN_TEST(Hash, Mix64Distinct) {
     KILN_CHECK_NE(mix64(u64(1)), mix64(u64(2)));

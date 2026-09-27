@@ -4,10 +4,6 @@
 
 using namespace kiln;
 
-// ---------------------------------------------------------------------------
-// Format table (compile time)
-// ---------------------------------------------------------------------------
-
 static_assert(is_known_format(Format::R8G8B8A8_SRGB));
 static_assert(u32(Format::R8G8B8_SRGB) == 29 && format_info(Format::R8G8B8_SRGB)->bytesPerBlock == 3);
 static_assert(u32(Format::ETC2_R8G8B8A8_SRGB) == 152 &&

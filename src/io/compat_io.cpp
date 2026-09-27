@@ -1,8 +1,6 @@
-// kiln/io.h — the compatibility IO backend (docs/design/threading-and-io.md).
-//
-// Thread-safe, positional (no seek-then-read on shared state) reads over C/POSIX
-// or Win32 file handles. Paths are UTF-8 StrViews, not necessarily NUL-terminated;
-// this is the one place kiln converts to UTF-16 for the Windows W APIs.
+// Compatibility IO backend over Win32 or POSIX file handles (docs/design/threading-and-io.md).
+// Paths arrive as UTF-8 StrViews without a NUL, so each call copies them into a stack buffer.
+// This is the one place kiln converts paths to UTF-16 for the Windows W APIs.
 #include "kiln/io.h"
 
 #include <cstring>
@@ -26,7 +24,7 @@ namespace kiln {
 
 namespace {
 
-// Paths this backend accepts, including the NUL terminator it adds.
+// Longest accepted path, including the NUL terminator this backend adds.
 constexpr usize kMaxPath = 1024;
 
 #if defined(KILN_OS_WINDOWS)
@@ -73,11 +71,9 @@ Status compat_size(void*, IoFile f, u64* out) {
     return kOk;
 }
 
-// ReadFile on a handle opened *without* FILE_FLAG_OVERLAPPED still honors an
-// OVERLAPPED's Offset/OffsetHigh as the read position, without touching (or
-// being affected by) the handle's shared file pointer, and completes
-// synchronously. That gives positional, concurrency-safe reads on one handle
-// without the complexity of true async IO (deferred to the v0.9 backend).
+// Without FILE_FLAG_OVERLAPPED, ReadFile still reads at OVERLAPPED.Offset, ignores the
+// shared file pointer and completes synchronously. This gives positional reads on one
+// handle without true async IO (planned for the v0.9 backend).
 Status compat_read_range(void*, IoFile f, u64 offset, u64 size, void* dst) {
     HANDLE h = native_handle(f);
     u8* p    = static_cast<u8*>(dst);

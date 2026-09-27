@@ -1,15 +1,5 @@
-// glTF / GLB import for the mesh cooker (kiln_cook). The only translation unit
-// that includes cgltf. Responsibilities:
-//   - parse (GLB or .gltf JSON) with cgltf's memory hooks routed to the cook arena
-//   - buffers: GLB BIN chunk and data: URIs through cgltf, external URIs through
-//     MeshSource::resolver (never the file system directly)
-//   - reject Draco / EXT_meshopt_compression / sparse accessors
-//   - every accessor read goes through resolve_buffer_view() (the future
-//     EXT_meshopt_compression decode hook, docs/design/dependencies.md)
-//   - scene traversal with the naming conventions (col_, _, mount_, _lodN) and
-//     reduction of node transforms to part translation/rotation + baked residual
-//
-// Output: detail::ImportScene (cook_internal.h), all memory in the cook arena.
+// gltf_import.cpp — glTF/GLB -> detail::ImportScene; the only TU that includes cgltf.
+// All memory lives in the cook arena; external URIs go through MeshSource::resolver.
 #include "cook_internal.h"
 
 #include "kiln/log.h"
@@ -299,9 +289,8 @@ template <class T> [[nodiscard]] Span<T const> persist(Arena& arena, Vec<T> cons
 // Buffers and accessors
 // ---------------------------------------------------------------------------
 
-/// The one place buffer-view bytes are obtained. EXT_meshopt_compression decode
-/// (meshopt_decodeVertexBuffer / meshopt_decodeIndexBuffer into the arena) slots
-/// in here later; until then such files are rejected up front (K1002).
+/// The one place buffer-view bytes are obtained: the future EXT_meshopt_compression
+/// decode hook (docs/design/dependencies.md). Until then such files fail with K1002.
 [[nodiscard]] Span<u8 const> resolve_buffer_view(cgltf_buffer_view const* view) noexcept {
     if (!view || !view->buffer || !view->buffer->data) return {};
     cgltf_buffer const* b = view->buffer;
@@ -388,7 +377,7 @@ Status load_buffers(Ctx& c) noexcept {
     return 0;
 }
 
-/// Byte range of accessor element storage, bounds-checked. `elemSize` bytes per element.
+/// Byte range of accessor element storage, bounds-checked.
 Status accessor_bytes(Ctx& c, cgltf_accessor const* acc, StrView where, char const* what, Span<u8 const>& out,
                       usize& stride) noexcept {
     if (acc->is_sparse)
@@ -1139,10 +1128,6 @@ Status build_parts(Ctx& c, Vec<ImportPart>& out) noexcept {
 }
 
 } // namespace
-
-// ---------------------------------------------------------------------------
-// import_gltf
-// ---------------------------------------------------------------------------
 
 Status import_gltf(MeshSource const& src, MeshCookSettings const& settings, Arena& arena,
                    Allocator const* alloc, DiagSink const* diag, ImportScene& out) noexcept {

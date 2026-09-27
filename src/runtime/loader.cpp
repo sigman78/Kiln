@@ -1,11 +1,5 @@
-// kiln runtime — worker-side load pipeline. One job runs one stage of one asset:
-//   Meta:   open the source (store file, registered bytes, or cook-on-miss), read and
-//           validate the metadata (.mesh CPU region / KTX2 prefix), compute the texture
-//           upload layout.
-//   Upload: begin_upload, read / decode the payload straight into the adapter's
-//           destination, commit_upload.
-// Results go into the slot's job-output fields and a Completion is posted; the pump
-// thread applies them (runtime_internal.h, THREADING RULE).
+// loader.cpp — worker side: one job runs the meta or the upload stage of one asset.
+// See docs/design/threading-and-io.md.
 #include "runtime_internal.h"
 
 #include <chrono>
@@ -14,10 +8,7 @@
 namespace kiln::rt {
 namespace {
 
-// ---------------------------------------------------------------------------
-// Diagnostics captured on the worker, emitted by pump()
-// ---------------------------------------------------------------------------
-
+// Worker diagnostics go into the slot's DiagCapture; pump() emits them.
 void capture_fn(void* user, Diagnostic const& d) {
     auto* c = static_cast<DiagCapture*>(user);
     // Keep the first error (or the first diagnostic if no error arrives).
@@ -43,13 +34,9 @@ void note(DiagCapture& c, char const* fmt, ...) noexcept {
     c.severity = Severity::Error;
 }
 
-// ---------------------------------------------------------------------------
-// IO budget (ContextDesc::ioInFlightBytes)
-// ---------------------------------------------------------------------------
-
-/// Holds `n` bytes of the in-flight read budget. Waits while the budget is exhausted;
-/// a read larger than the whole budget proceeds when nothing else is in flight, so
-/// this never deadlocks (holders only read, they never wait on the pump thread).
+/// Holds `n` bytes of the in-flight read budget (ContextDesc::ioInFlightBytes). Waits
+/// while the budget is exhausted. A read larger than the whole budget proceeds when
+/// nothing else is in flight, so this never deadlocks (holders never wait on the pump thread).
 class IoBytes {
 public:
     IoBytes(Context* ctx, u64 n) noexcept : ctx_(ctx), n_(n) {
@@ -73,10 +60,7 @@ private:
     u64 n_;
 };
 
-// ---------------------------------------------------------------------------
-// Sources: a store file or a memory span (registered bytes / cook output)
-// ---------------------------------------------------------------------------
-
+/// A store file or a memory span (registered bytes / cook output).
 struct Source {
     IoBackend const* io = nullptr;
     IoFile file;

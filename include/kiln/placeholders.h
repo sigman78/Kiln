@@ -1,7 +1,6 @@
-// kiln/placeholders.h — built-in placeholder images for texture kinds and the
-// Failed checker. Uploaded through the normal Adapter begin_upload/commit_upload
-// path at context creation, under reserved asset ids 1..15.
-// See docs/design/handles-and-states.md §Placeholders.
+// kiln/placeholders.h — built-in placeholder images per texture kind and the Failed checker.
+// Uploaded through the adapter at create(), under reserved asset ids 1..15.
+// See docs/design/handles-and-states.md (Placeholders).
 #pragma once
 
 #include "kiln/adapter.h"

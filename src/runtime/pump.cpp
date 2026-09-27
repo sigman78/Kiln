@@ -1,6 +1,4 @@
-// kiln runtime — pump(): drain worker completions, poll the adapter, publish, emit
-// events, dispatch queued stages within the IO-job and upload budgets; events(),
-// wait(). Pump thread only; never allocates (runtime_internal.h).
+// pump.cpp — pump(), events() and wait(). Pump thread only; never allocates.
 #include "runtime_internal.h"
 
 #include "kiln/placeholders.h"

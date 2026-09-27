@@ -1,7 +1,5 @@
-// kiln/cook/ktx2_writer.h — KTX2 writer for raw 2D textures (kiln_cook).
-//
-// Writes uncompressed, non-supercompressed 2D textures with a mip chain. Output is
-// byte-identical for identical input: no timestamps, every padding byte is zero.
+// kiln/cook/ktx2_writer.h — KTX2 writer for uncompressed 2D textures with mips.
+// Identical input gives byte-identical output (no timestamps, zeroed padding).
 // The DFD matches what libktx's vk2dfd produces for the same vkFormat.
 #pragma once
 
@@ -25,8 +23,7 @@ struct WriteDesc {
     /// Level 0 (largest) first. Each level holds tightly packed rows and exactly
     /// format_image_bytes(format, max(width >> i, 1), max(height >> i, 1)) bytes.
     Span<Span<u8 const> const> levels;
-    /// Value of the KTXwriter key. A fixed string, never a timestamp, so output is
-    /// deterministic. Must not contain NUL.
+    /// Value of the KTXwriter key. Must not contain NUL.
     StrView writerTag       = "kiln-cook";
     bool premultipliedAlpha = false; ///< sets the DFD alpha-premultiplied flag
     /// Additional key/value entries (e.g. kiln.sourceHash). Keys must not collide

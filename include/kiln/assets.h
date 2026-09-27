@@ -1,9 +1,6 @@
-// kiln/assets.h — the runtime: context, handles, states, requests, pump, events,
-// load groups, in-memory registration and the cook-provider hook.
-// Design: docs/design/handles-and-states.md, adapter.md, threading-and-io.md.
-//
-// Threading: every function here is called on the host's pump thread (the thread
-// that calls pump()), except where noted. Completion is delivered only from pump().
+// kiln/assets.h — the runtime: context, handles, requests, pump, events, groups, registration.
+// Call everything on the pump thread unless noted; completion arrives only from pump().
+// See docs/design/handles-and-states.md and docs/design/threading-and-io.md.
 #pragma once
 
 #include "kiln/adapter.h"
@@ -15,7 +12,7 @@
 
 namespace kiln {
 
-struct Context; ///< opaque
+struct Context;
 
 // Handle tags
 struct Mesh;
@@ -201,10 +198,9 @@ struct WaitOptions {
 [[nodiscard]] KILN_API Group group(Context* ctx) noexcept;
 KILN_API void release(Context* ctx, Group g) noexcept; ///< frees the group record only
 [[nodiscard]] KILN_API GroupStatus progress(Context* ctx, Group g) noexcept;
-/// Loops pump() + a short sleep until every member is Ready or Failed, or the
-/// timeout expires (partial status returned). Raises members to High priority.
-/// Panics (never hangs) when called off the pump thread or when the adapter lacks
-/// kSelfSubmitting.
+/// Loops pump() and a short sleep until every member is Ready or Failed, or the timeout
+/// expires (returns partial status). Raises members to High priority. Panics, never
+/// hangs, when called off the pump thread or when the adapter lacks kSelfSubmitting.
 [[nodiscard]] KILN_API GroupStatus wait(Context* ctx, Group g, WaitOptions const& opt = {}) noexcept;
 
 // ---------------------------------------------------------------------------

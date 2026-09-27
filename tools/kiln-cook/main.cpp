@@ -1,20 +1,4 @@
-// kiln-cook — cook glTF/GLB, PNG and KTX2 sources into the store.
-//
-//   kiln-cook <input>... [-o <store>] [--root <dir>] [--check] [--hashed] [--map <file>]
-//             [--target <name>] [--profile default|precise] [--no-tangents] [--no-optimize]
-//             [--no-mips] [--no-lods] [--quiet] [--verbose]
-//
-//   <input>       .glb / .gltf / .png / .ktx2 files, or directories (recursed)
-//   -o <store>    store directory (default: ./cooked). Files are <store>/<assetPath>.<ext>
-//                 (the Named layout the runtime's v0.5 store expects, kiln/assets.h StoreLayout)
-//   --root <dir>  source root for asset paths (default: the input directory, or the
-//                 file's directory for single files). Asset path = relative path,
-//                 forward slashes, extension stripped.
-//   --check       validate only: cook in memory, report diagnostics, write nothing
-//   --hashed      write content-hash file names instead of <store>/<assetPath>.<ext>
-//                 (kept for the index-based hashed layout arriving in v0.6)
-//   --map <file>  append "<assetPath>\t<file name>\t<key hex>" lines for every output
-//
+// tools/kiln-cook/main.cpp — cook glTF/GLB, PNG and KTX2 sources into the store. Options: README.md.
 // Exit codes: 0 all inputs cooked, 1 usage, 2 IO failure, 3 one or more cook errors.
 #include "kiln/containers.h"
 #include "kiln/cook/cook.h"
@@ -38,10 +22,6 @@ using namespace kiln;
 using namespace kiln::cook;
 
 namespace {
-
-// ---------------------------------------------------------------------------
-// Options
-// ---------------------------------------------------------------------------
 
 struct Options {
     Vec<char const*> inputs{default_allocator(), Tag::General};
@@ -119,10 +99,7 @@ bool parse_args(int argc, char** argv, Options& o) {
     return !o.inputs.empty();
 }
 
-// ---------------------------------------------------------------------------
-// Small path / file helpers (tool-local; the library's IO layer arrives in M3)
-// ---------------------------------------------------------------------------
-
+// Tool-local path and file helpers (they predate the kiln IO layer, kiln/io.h).
 Vec<u8> g_scratch{default_allocator(), Tag::Io};
 
 bool read_file(char const* path, Vec<u8>& out) {
@@ -278,10 +255,6 @@ void asset_path_of(char const* path, char const* root, char* out, usize cap) {
     out[n] = '\0';
 }
 
-// ---------------------------------------------------------------------------
-// Diagnostics
-// ---------------------------------------------------------------------------
-
 struct DiagState {
     bool quiet;
     bool verbose;
@@ -332,7 +305,6 @@ bool emit(Ctx& c, StrView assetPath, char const* ext, u64 key, Span<u8 const> by
     } else {
         // Named layout (default, kiln/assets.h StoreLayout::Named): <store>/<assetPath>.<ext>.
         format(name, sizeof name, "%.*s.%s", KILN_SV(assetPath), ext);
-        // ensure sub directories exist
         char dir[1200];
         format(dir, sizeof dir, "%s/%.*s", c.opt.store, KILN_SV(assetPath));
         if (char* slash = std::strrchr(dir, '/')) {

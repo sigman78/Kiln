@@ -8,10 +8,6 @@ using namespace kiln;
 
 namespace {
 
-// ---------------------------------------------------------------------------
-// Span<T>
-// ---------------------------------------------------------------------------
-
 KILN_TEST(Core, SpanFromArray) {
     int arr[5] = {1, 2, 3, 4, 5};
     Span<int> sp(arr);
@@ -93,10 +89,6 @@ KILN_TEST(Core, SpanAsWritableBytes) {
     KILN_CHECK_EQ(arr[0], u16(0xCDAB));
 }
 
-// ---------------------------------------------------------------------------
-// StrView
-// ---------------------------------------------------------------------------
-
 KILN_TEST(Core, StrViewFromLiteralAndSv) {
     StrView a = "test";
     StrView b = "test"_sv;
@@ -147,15 +139,9 @@ KILN_TEST(Core, StrViewSubstr) {
     KILN_CHECK(s.substr(s.size).empty());
 }
 
-// ---------------------------------------------------------------------------
-// Handle<Tag>
-// ---------------------------------------------------------------------------
-
 struct MeshTag; // phantom tag type, never defined
 
 KILN_TEST(Core, HandleNullByDefault) {
-    // The default-constructed Handle is the all-zero null handle: index == 0,
-    // generation == 0, equal to from_bits(0).
     Handle<MeshTag> h;
     KILN_CHECK(h.is_null());
     KILN_CHECK(!bool(h));
@@ -184,14 +170,7 @@ KILN_TEST(Core, HandleEquality) {
     KILN_CHECK(a != d);
 }
 
-// ---------------------------------------------------------------------------
-// FunctionRef<Sig>
-// ---------------------------------------------------------------------------
-
-int add_ints(int a, int b) { return a + b; }
-
-// NOTE: kept deliberately non-noexcept; see FunctionRefFromNoexceptFunctionPointer
-// below (commented out) for a core-bug repro involving noexcept function pointers.
+int add_ints(int a, int b) { return a + b; } // not noexcept on purpose; add_ints_noexcept covers that case
 
 struct Pair {
     int a;
@@ -243,10 +222,6 @@ KILN_TEST(Core, FunctionRefBoolConversion) {
     KILN_CHECK_EQ(h(21), 42);
 }
 
-// ---------------------------------------------------------------------------
-// align_up / is_aligned / is_pow2 / min / max / clamp (constexpr)
-// ---------------------------------------------------------------------------
-
 static_assert(align_up(u32(5), u32(8)) == u32(8));
 static_assert(align_up(u32(8), u32(8)) == u32(8));
 static_assert(align_up(u64(17), u64(16)) == u64(32));
@@ -273,10 +248,6 @@ KILN_TEST(Core, AlignAndMinMaxClampRuntime) {
     KILN_CHECK_EQ(clamp(100, 0, 10), 10);
 }
 
-// ---------------------------------------------------------------------------
-// read_unaligned / write_unaligned
-// ---------------------------------------------------------------------------
-
 KILN_TEST(Core, ReadWriteUnaligned) {
     alignas(1) u8 buf[9] = {};
     u64 v                = 0x0123456789abcdefull;
@@ -290,20 +261,12 @@ KILN_TEST(Core, ReadWriteUnaligned) {
     KILN_CHECK_EQ(back2, v2);
 }
 
-// ---------------------------------------------------------------------------
-// countof
-// ---------------------------------------------------------------------------
-
 KILN_TEST(Core, Countof) {
     int arr[7] = {};
     KILN_CHECK_EQ(countof(arr), usize(7));
 }
 
 } // namespace
-
-// ---------------------------------------------------------------------------
-// C++23 idioms: KILN_ASSUME compiles and does not evaluate; uz literals
-// ---------------------------------------------------------------------------
 
 KILN_TEST(Core, AssumeAndSizeLiterals) {
     int calls = 0;

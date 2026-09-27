@@ -1,13 +1,5 @@
-// kiln/ktx2.h — minimal KTX2 reader (kiln_runtime).
-//
-// Parses and validates the KTX2 container: header, level index, data format
-// descriptor (DFD) and key/value data (KVD). The reader never allocates and never
-// copies pixel data; a Ktx2View is a small value that points into caller memory.
-//
-// open() accepts either a whole file or just its "metadata prefix" (header + level
-// index + DFD + KVD), so a runtime can read the small prefix first and schedule
-// the level reads afterwards. v0.5 scope: 2D textures (optionally arrays and
-// cubes), no supercompression. See docs/HANDOFF.md §4.2.
+// kiln/ktx2.h — minimal zero-copy KTX2 reader (kiln_runtime): header, level index, DFD, KVD.
+// v0.5 scope: 2D textures, optionally arrays and cubes; no supercompression.
 #pragma once
 
 #include "kiln/core.h"
@@ -16,9 +8,7 @@
 
 namespace kiln::ktx2 {
 
-// ---------------------------------------------------------------------------
-// On-disk structures (little-endian, KTX 2.0 spec §3)
-// ---------------------------------------------------------------------------
+// On-disk structures (little-endian, KTX 2.0 spec §3).
 
 inline constexpr u8 kIdentifier[12] = {0xAB, 'K', 'T', 'X', ' ', '2', '0', 0xBB, '\r', '\n', 0x1A, '\n'};
 
@@ -92,20 +82,15 @@ struct TextureDesc {
     bool isCube   = false; ///< faceCount == 6
 };
 
-// ---------------------------------------------------------------------------
-// Ktx2View
-// ---------------------------------------------------------------------------
-
 /// A validated view of a KTX2 file (or its metadata prefix) in caller memory.
 /// The bytes passed to open() must outlive the view. Copyable, no allocation.
 class KILN_API Ktx2View {
 public:
     Ktx2View() noexcept = default;
 
-    /// Validate `bytes` and return a view. `bytes` must contain at least the metadata
-    /// prefix (header, level index, DFD and KVD); level data that the span contains
-    /// is available through level_data(). On failure, one diagnostic with a K41xx code
-    /// is emitted to `diag` and its Status is returned.
+    /// Validates `bytes`, which must hold at least the metadata prefix (header, level
+    /// index, DFD, KVD); level data in the span is available through level_data().
+    /// On failure, emits one K41xx diagnostic to `diag` and returns its Status.
     [[nodiscard]] static Result<Ktx2View> open(Span<u8 const> bytes, DiagSink const* diag = nullptr,
                                                StrView assetName = {}) noexcept;
 

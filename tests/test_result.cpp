@@ -10,10 +10,7 @@ using namespace kiln;
 
 namespace {
 
-// ---------------------------------------------------------------------------
-// Helpers for KILN_TRY / KILN_TRY_ASSIGN
-// ---------------------------------------------------------------------------
-
+// Helpers for KILN_TRY / KILN_TRY_ASSIGN.
 Status may_fail(bool fail) noexcept {
     if (fail) return make_status(Code::InvalidArgument, 7);
     return kOk;
@@ -39,10 +36,7 @@ Result<int> uses_try_assign(bool fail) noexcept {
     return v + 1;
 }
 
-// ---------------------------------------------------------------------------
-// Non-trivially-destructible payload type
-// ---------------------------------------------------------------------------
-
+// Non-trivially-destructible payload.
 struct Tracked {
     static int liveCount;
     int value;
@@ -58,10 +52,7 @@ struct Tracked {
 };
 int Tracked::liveCount = 0;
 
-// ---------------------------------------------------------------------------
-// diagf / DiagSink capture
-// ---------------------------------------------------------------------------
-
+// Captures what diagf delivers to a DiagSink.
 struct Captured {
     bool called       = false;
     u32 code          = 0;
@@ -85,10 +76,6 @@ void capture_fn(void* user, Diagnostic const& d) noexcept {
 }
 
 } // namespace
-
-// ---------------------------------------------------------------------------
-// Status
-// ---------------------------------------------------------------------------
 
 KILN_TEST(Result, StatusOkFailed) {
     KILN_CHECK(kOk.ok());
@@ -127,10 +114,6 @@ KILN_TEST(Result, SeverityNames) {
     KILN_CHECK(std::strcmp(severity_name(Severity::Error), "error") == 0);
 }
 
-// ---------------------------------------------------------------------------
-// Result<int>
-// ---------------------------------------------------------------------------
-
 KILN_TEST(Result, IntSuccess) {
     Result<int> r = 5;
     KILN_REQUIRE(r.ok());
@@ -159,10 +142,6 @@ KILN_TEST(Result, ValueOr) {
     KILN_CHECK_EQ(b.value_or(99), 99);
 }
 
-// ---------------------------------------------------------------------------
-// Result<void>
-// ---------------------------------------------------------------------------
-
 KILN_TEST(Result, VoidResultOk) {
     Result<void> r;
     KILN_CHECK(r.ok());
@@ -174,10 +153,6 @@ KILN_TEST(Result, VoidResultFailed) {
     KILN_CHECK(r.failed());
     KILN_CHECK(r.code() == Code::IoError);
 }
-
-// ---------------------------------------------------------------------------
-// Result<T> with a non-trivially-destructible T
-// ---------------------------------------------------------------------------
 
 KILN_TEST(Result, TrackedSuccessConstructsAndDestroys) {
     int before = Tracked::liveCount;
@@ -231,10 +206,6 @@ KILN_TEST(Result, TrackedCopy) {
     KILN_CHECK_EQ(Tracked::liveCount, before);
 }
 
-// ---------------------------------------------------------------------------
-// KILN_TRY / KILN_TRY_ASSIGN
-// ---------------------------------------------------------------------------
-
 KILN_TEST(Result, TryStatusPropagatesFailure) {
     Status s = uses_try_status(true);
     KILN_CHECK(s.failed());
@@ -270,10 +241,6 @@ KILN_TEST(Result, TryAssignPassesThroughValue) {
     KILN_CHECK_EQ(r.value(), 43);
 }
 
-// ---------------------------------------------------------------------------
-// diagf + DiagSink
-// ---------------------------------------------------------------------------
-
 KILN_TEST(Result, DiagfDeliversToSink) {
     Captured cap;
     DiagSink sink{&capture_fn, &cap};
@@ -301,10 +268,6 @@ KILN_TEST(Result, DiagfSinkWithNullFnIsNoOp) {
     Status ret = diagf(&sink, kOk, 0, Severity::Info, StrView{}, StrView{}, "irrelevant");
     KILN_CHECK(ret.ok());
 }
-
-// ---------------------------------------------------------------------------
-// Monadic composition (C++23 idioms commit)
-// ---------------------------------------------------------------------------
 
 namespace {
 Result<int> parse_positive(int v) {

@@ -1,6 +1,5 @@
-// Read-only consumer: touches every shipping-side header and opens a hand-built
-// KTX2 image and a deliberately broken .mesh header, exercising the readers
-// without any cook-side code. Exit 0 on success.
+// tests/shipping_consumer/main.cpp — read-only consumer of the shipping headers, no cook code.
+// Opens a hand-built KTX2 image and a broken .mesh header. Exits 0 on success.
 #include <kiln/containers.h>
 #include <kiln/formats.h>
 #include <kiln/hash.h>
@@ -28,7 +27,8 @@ void check(bool ok, char const* what) {
 int main() {
     // Core vocabulary.
     Vec<u32> v(default_allocator(), Tag::General);
-    for (u32 i = 0; i < 8; ++i) v.push_back(i * i);
+    for (u32 i = 0; i < 8; ++i)
+        v.push_back(i * i);
     HashMap<u64, int> m;
     m.insert("meshes/ship"_h, 7);
     check(v[7] == 49 && *m.find("meshes/ship"_h) == 7, "containers");
@@ -48,30 +48,30 @@ int main() {
     std::memcpy(ktx, ktx2::kIdentifier, 12);
     auto put32 = [&](usize off, u32 x) { std::memcpy(ktx + off, &x, 4); };
     auto put64 = [&](usize off, u64 x) { std::memcpy(ktx + off, &x, 8); };
-    put32(12, u32(Format::R8_UNORM)); // vkFormat
-    put32(16, 1);                     // typeSize
-    put32(20, 1);                     // width
-    put32(24, 1);                     // height
-    put32(28, 0);                     // depth
-    put32(32, 0);                     // layers
-    put32(36, 1);                     // faces
-    put32(40, 1);                     // levels
-    put32(44, 0);                     // supercompression
-    put32(48, 104);                   // dfd offset
-    put32(52, 44);                    // dfd length
-    put32(56, 148);                   // kvd offset
-    put32(60, 0);                     // kvd length
-    put64(80, 148);                   // level 0 offset
-    put64(88, 1);                     // byteLength
-    put64(96, 1);                     // uncompressedByteLength
-    put32(104, 44);                   // DFD totalSize
-    put32(108, 0);                    // vendor/type
+    put32(12, u32(Format::R8_UNORM));     // vkFormat
+    put32(16, 1);                         // typeSize
+    put32(20, 1);                         // width
+    put32(24, 1);                         // height
+    put32(28, 0);                         // depth
+    put32(32, 0);                         // layers
+    put32(36, 1);                         // faces
+    put32(40, 1);                         // levels
+    put32(44, 0);                         // supercompression
+    put32(48, 104);                       // dfd offset
+    put32(52, 44);                        // dfd length
+    put32(56, 148);                       // kvd offset
+    put32(60, 0);                         // kvd length
+    put64(80, 148);                       // level 0 offset
+    put64(88, 1);                         // byteLength
+    put64(96, 1);                         // uncompressedByteLength
+    put32(104, 44);                       // DFD totalSize
+    put32(108, 0);                        // vendor/type
     put32(112, u32(2) | (u32(40) << 16)); // version 2, block size 40
-    ktx[116] = 1;                     // colorModel RGBSDA
-    ktx[117] = 1;                     // primaries
-    ktx[118] = 1;                     // transfer linear
-    ktx[124] = 1;                     // bytesPlane0
-    ktx[148] = 0x7f;                  // the pixel
+    ktx[116]                 = 1;         // colorModel RGBSDA
+    ktx[117]                 = 1;         // primaries
+    ktx[118]                 = 1;         // transfer linear
+    ktx[124]                 = 1;         // bytesPlane0
+    ktx[148]                 = 0x7f;      // the pixel
     Result<ktx2::Ktx2View> k = ktx2::Ktx2View::open(Span<u8 const>(ktx, sizeof ktx));
     check(k.ok(), "ktx2 reader opens hand-built image");
     if (k.ok()) {

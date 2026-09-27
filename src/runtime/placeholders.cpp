@@ -1,6 +1,4 @@
-// kiln/placeholders.cpp — static pixel tables for the built-in texture-kind
-// placeholders and the Failed checker (docs/design/handles-and-states.md
-// §Placeholders). No allocation: everything here is static storage.
+// placeholders.cpp — static pixels for the built-in placeholders and the Failed checker.
 #include "kiln/placeholders.h"
 
 #include <utility> // std::unreachable
@@ -9,7 +7,6 @@ namespace kiln {
 
 namespace {
 
-// 1x1 placeholders: one RGBA8 texel each.
 constexpr u8 kBaseColorPixel[4] = {128, 128, 128, 255}; // mid-grey, sRGB
 constexpr u8 kNormalPixel[4]    = {128, 128, 255, 255}; // flat normal, linear
 constexpr u8 kOrmPixel[4]       = {255, 255, 0, 255};   // AO 1, roughness 1, metallic 0, linear

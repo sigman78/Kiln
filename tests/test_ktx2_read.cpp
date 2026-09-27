@@ -1,8 +1,6 @@
-// Reader-only KTX2 tests: no kiln/cook/ includes, no kiln::ktx2::write() calls.
-// This is the suite the KILN_BUILD_COOK=OFF (shipping) configuration builds and
-// runs, so every file here is hand-built byte by byte. Writer round-trips and the
-// error paths that need real DFD/KVD content (built most easily by the writer)
-// stay in test_ktx2.cpp.
+// tests/test_ktx2_read.cpp — reader-only KTX2 tests; the shipping (KILN_BUILD_COOK=OFF) build runs them.
+// No kiln/cook/ includes and no ktx2::write(): every file is hand-built byte by byte.
+// Writer round trips and DFD/KVD error paths live in test_ktx2.cpp.
 #include "kiln_test.h"
 
 #include "kiln/containers.h"
@@ -21,10 +19,6 @@ static_assert(kIdentifier[0] == 0xAB && kIdentifier[1] == 'K' && kIdentifier[7] 
 static_assert(offsetof(Header, vkFormat) == 12);
 static_assert(offsetof(Header, supercompressionScheme) == 44);
 static_assert(offsetof(Header, sgdByteOffset) == 64);
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 /// Enum -> integer for KILN_CHECK_EQ messages.
 template <class E> u32 ev(E e) { return u32(e); }
@@ -49,10 +43,6 @@ u64 get_u64(Vec<u8> const& v, usize off) { return read_unaligned<u64>(v.data() +
 
 // Level index entry i starts at 80 + 24 * i: byteOffset, byteLength, uncompressedByteLength.
 constexpr usize level_field(u32 i, u32 field) { return 80 + 24 * usize(i) + 8 * usize(field); }
-
-// ---------------------------------------------------------------------------
-// Hand-built file: the reader does not depend on the writer
-// ---------------------------------------------------------------------------
 
 /// Minimal R8G8B8A8_UNORM file: header, `levelCount` level entries, a 44-byte DFD
 /// (basic block + one sample; the reader does not parse samples), empty KVD, then
@@ -153,10 +143,6 @@ KILN_TEST(Ktx2, HandBuiltLevelOrder) {
     Vec<u8> o           = hand_built(2, 1, 2, overlap, 184);
     KILN_CHECK_EQ(ev(Ktx2View::open(o.span()).code()), ev(Code::Corrupt));
 }
-
-// ---------------------------------------------------------------------------
-// Reader error paths, all from hand-built images (see hand_built() above)
-// ---------------------------------------------------------------------------
 
 KILN_TEST(Ktx2, ErrorBadIdentifier) {
     u32 const offsets[] = {148};

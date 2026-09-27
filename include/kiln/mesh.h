@@ -1,7 +1,5 @@
-// kiln/mesh.h — the cooked .mesh runtime format: on-disk records (spec v0.3,
-// docs/mesh-format-spec.md), zero-copy reader (MeshView), validation and the
-// payload decode loop. Everything here is in kiln_runtime; the writer lives in
-// kiln_cook (kiln/cook/mesh_writer.h).
+// kiln/mesh.h — .mesh runtime format (docs/mesh-format-spec.md, v0.3): on-disk records,
+// zero-copy reader, validation, payload decode. The writer is kiln/cook/mesh_writer.h.
 #pragma once
 
 #include "kiln/alloc.h" // Arena (decode scratch)
@@ -12,7 +10,7 @@
 namespace kiln::mesh {
 
 // ===========================================================================
-// On-disk format (spec §4-§5). Every struct is POD, little-endian, size-asserted.
+// On-disk format (spec §4-§5). Every struct is POD and little-endian.
 // ===========================================================================
 
 inline constexpr u32 kMagic            = fourcc('K', 'M', 'S', 'H');
@@ -27,7 +25,7 @@ enum HeaderFlags : u32 {
     kPayloadRaw = 1u << 0, ///< encoded layout == decoded layout; per-blob conditions in spec §5.9
 };
 
-struct FileHeader { // 80 bytes
+struct FileHeader {
     u32 magic;
     u16 versionMajor;
     u16 versionMinor;
@@ -45,17 +43,16 @@ struct FileHeader { // 80 bytes
 };
 static_assert(sizeof(FileHeader) == 80);
 
-struct SectionEntry { // 32 bytes
-    u32 id;           ///< fourcc
-    u32 flags;        ///< reserved, 0
-    u64 offset;       ///< from file start
-    u64 size;         ///< bytes
-    u32 count;        ///< element count (0 for blobs: STRS, GPUD)
-    u32 stride;       ///< element size AS WRITTEN
+struct SectionEntry {
+    u32 id;     ///< fourcc
+    u32 flags;  ///< reserved, 0
+    u64 offset; ///< from file start
+    u64 size;
+    u32 count;  ///< element count (0 for blobs: STRS, GPUD)
+    u32 stride; ///< element size AS WRITTEN
 };
 static_assert(sizeof(SectionEntry) == 32);
 
-// Section ids
 inline constexpr u32 kSecModel     = fourcc('M', 'O', 'D', 'L');
 inline constexpr u32 kSecStrings   = fourcc('S', 'T', 'R', 'S');
 inline constexpr u32 kSecLayouts   = fourcc('L', 'A', 'Y', 'T');
@@ -69,7 +66,7 @@ inline constexpr u32 kSecBlobs     = fourcc('B', 'L', 'O', 'B');
 inline constexpr u32 kSecGpuData   = fourcc('G', 'P', 'U', 'D');
 // Reserved (spec §9): SKIN MORF MLET COLL XTRA
 
-struct Bounds { // 32 bytes
+struct Bounds {
     f32 center[3];
     f32 radius;         ///< bounding sphere around center
     f32 halfExtents[3]; ///< AABB around center
@@ -77,7 +74,7 @@ struct Bounds { // 32 bytes
 };
 static_assert(sizeof(Bounds) == 32);
 
-struct ModelInfo { // 48 bytes
+struct ModelInfo {
     Bounds bounds; ///< model space, all parts at rest pose, LOD0
     u32 nameStr;   ///< asset name, e.g. "ship_hauler_a"
     u32 flags;     ///< reserved
@@ -96,8 +93,8 @@ enum class Semantic : u8 {
     Custom   = 7, ///< semanticIndex = user channel
 };
 
-struct VertexAttrib { // 12 bytes
-    u8 semantic;      ///< Semantic
+struct VertexAttrib {
+    u8 semantic; ///< Semantic
     u8 semanticIndex;
     u8 stream; ///< 0..streamCount-1
     u8 _pad;
@@ -107,17 +104,17 @@ struct VertexAttrib { // 12 bytes
 };
 static_assert(sizeof(VertexAttrib) == 12);
 
-struct VertexLayout { // 160 bytes
-    u8 streamCount;   ///< 1..kMaxStreams
-    u8 attribCount;   ///< 1..kMaxAttribs
-    u16 flags;        ///< reserved
+struct VertexLayout {
+    u8 streamCount; ///< 1..kMaxStreams
+    u8 attribCount; ///< 1..kMaxAttribs
+    u16 flags;      ///< reserved
     u16 strides[kMaxStreams];
     VertexAttrib attribs[kMaxAttribs];
     u32 _reserved;
 };
 static_assert(sizeof(VertexLayout) == 160);
 
-struct MeshPart { // 112 bytes
+struct MeshPart {
     u32 nameStr;
     u32 parent; ///< PART index or kInvalid (model root)
     u64 nameHash;
@@ -138,8 +135,8 @@ enum class IndexType : u8 { U16 = 0, U32 = 1, U8 = 2 };
     return t == IndexType::U16 ? 2u : t == IndexType::U32 ? 4u : t == IndexType::U8 ? 1u : 0u;
 }
 
-struct MeshLod { // 48 bytes
-    u32 layout;  ///< LAYT index
+struct MeshLod {
+    u32 layout; ///< LAYT index
     u32 vertexCount;
     u32 streamOffset[kMaxStreams]; ///< into DECODED payload; unused streams = kInvalid
     u32 indexOffset;               ///< into DECODED payload, multiple of index size
@@ -152,7 +149,7 @@ struct MeshLod { // 48 bytes
 };
 static_assert(sizeof(MeshLod) == 48);
 
-struct Submesh {    // 48 bytes
+struct Submesh {
     u32 material;   ///< MATL index
     u32 indexFirst; ///< relative to the LOD's index range
     u32 indexCount;
@@ -168,7 +165,7 @@ enum MaterialFlags : u32 {
     kMaterialDoubleSided = 1u << 1,
 };
 
-struct MaterialSlot { // 32 bytes
+struct MaterialSlot {
     u32 nameStr;
     u32 flags;        ///< MaterialFlags
     u64 nameHash;     ///< key into engine material library
@@ -193,16 +190,16 @@ enum TextureBindingFlags : u16 {
     kTextureSrgb = 1u << 0,
 };
 
-struct TextureBinding { // 16 bytes
-    u64 textureId;      ///< FNV-1a 64 of cooked texture asset path
-    u32 pathStr;        ///< same path, for tools/debug
-    u8 slot;            ///< TextureSlot
-    u8 uvSet;           ///< which TexCoord semanticIndex to sample
-    u16 flags;          ///< TextureBindingFlags
+struct TextureBinding {
+    u64 textureId; ///< FNV-1a 64 of cooked texture asset path
+    u32 pathStr;   ///< same path, for tools/debug
+    u8 slot;       ///< TextureSlot
+    u8 uvSet;      ///< which TexCoord semanticIndex to sample
+    u16 flags;     ///< TextureBindingFlags
 };
 static_assert(sizeof(TextureBinding) == 16);
 
-struct Mount { // 48 bytes
+struct Mount {
     u32 nameStr;
     u32 parentPart; ///< PART index or kInvalid (model root)
     u64 nameHash;
@@ -234,7 +231,7 @@ enum BlobFlags : u16 {
     kBlobOuterZstd = 1u << 0, ///< encoded bytes are Zstd(codec output); Meshopt* codecs only
 };
 
-struct PayloadBlob {   // 32 bytes
+struct PayloadBlob {
     u32 encodedOffset; ///< into GPUD, 16-B aligned; ranges never overlap
     u32 encodedSize;
     u32 decodedOffset; ///< into decoded payload, 16-B aligned; ranges never overlap
@@ -312,10 +309,9 @@ enum DiagCode : u32 {
 // Reader
 // ===========================================================================
 
-/// Strided accessor over a record section (spec §4 forward-compat rules).
-/// `operator[]` returns a reference into the blob and requires stride >= sizeof(T)
-/// (guaranteed by open()); `get()` copies min(stride, sizeof(T)) bytes and zero-fills
-/// the rest, which is the rule for reading records written by a newer minor version.
+/// Strided accessor over a record section (spec §4). `operator[]` returns a reference
+/// and needs stride >= sizeof(T), which open() guarantees. `get()` copies
+/// min(stride, sizeof(T)) bytes and zero-fills the rest (records from a newer minor).
 template <class T> class Records {
 public:
     constexpr Records() noexcept = default;
@@ -449,10 +445,9 @@ KILN_API Status decode_blob(PayloadBlob const& blob, Span<u8 const> encoded, Spa
                             DecodeOptions const& opt = {}, DiagSink const* diag = nullptr,
                             Arena* scratch = nullptr, StrView assetName = {}) noexcept;
 
-/// The full loop: decode every blob of `v` from `gpud` (the GPUD bytes, size ==
-/// gpuDataSize) into `dst` (size >= payloadDecodedSize) and zero-fill the gaps.
-/// Files with kPayloadRaw take the single-memcpy fast path. Runtime loaders that
-/// read blobs individually call decode_blob() instead.
+/// Decodes every blob of `v` from `gpud` (the GPUD bytes, gpuDataSize long) into `dst`
+/// (>= payloadDecodedSize) and zero-fills the gaps. kPayloadRaw files take a single
+/// memcpy. Loaders that read blobs one by one call decode_blob() instead.
 KILN_API Status decode_payload(MeshView const& v, Span<u8 const> gpud, Span<u8> dst,
                                DecodeOptions const& opt = {}, DiagSink const* diag = nullptr,
                                Arena* scratch = nullptr, StrView assetName = {}) noexcept;

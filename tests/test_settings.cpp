@@ -25,10 +25,6 @@ struct DiagCapture {
 
 } // namespace
 
-// ---------------------------------------------------------------------------
-// resolve_texture
-// ---------------------------------------------------------------------------
-
 KILN_TEST(Settings, TextureUsageFromSlotHint) {
     TargetProfile target{};
     CookSession session{};
@@ -163,10 +159,6 @@ KILN_TEST(Settings, TextureEnumOutOfRangeIsInvalidArgument) {
     KILN_CHECK(r.code() == Code::InvalidArgument);
 }
 
-// ---------------------------------------------------------------------------
-// resolve_mesh
-// ---------------------------------------------------------------------------
-
 KILN_TEST(Settings, MeshGenLodsUnsupported) {
     TargetProfile target{};
     CookSession session{};
@@ -282,20 +274,14 @@ KILN_TEST(Settings, MeshEnumOutOfRangeIsInvalidArgument) {
     KILN_CHECK(r.code() == Code::InvalidArgument);
 }
 
-// ---------------------------------------------------------------------------
-// Hashing
-// ---------------------------------------------------------------------------
-
 KILN_TEST(Settings, TextureHashIdenticalStructsEqual) {
     TextureCookSettings a{};
     TextureCookSettings b{};
     KILN_CHECK_EQ(hash_settings(a), hash_settings(b));
 }
 
-// Pinned against a reference build. A change here means either a bug or a
-// deliberate field/meaning change to TextureCookSettings, which must also bump
-// kTextureSettingsSchema (docs/design/settings.md) so old store entries miss
-// rather than being silently misread.
+// Pinned against a reference build. A deliberate TextureCookSettings change must also bump
+// kTextureSettingsSchema (docs/design/settings.md), so old store entries miss instead of misreading.
 KILN_TEST(Settings, TextureDefaultHashIsPinned) {
     TextureCookSettings defaults{};
     KILN_CHECK_EQ(hash_settings(defaults), u64(0x38efc66c33c35cd0ull));

@@ -1,12 +1,6 @@
-// PNG decoding for texture cooking, via wuffs (third_party/wuffs, v0.4, PNG modules).
-//
-// wuffs never allocates here: the decoder struct, its work buffer and the pixel
-// buffer all come from the caller's allocator (Tag::Cook). The PNG is decoded to
-// one of two interleaved destination formats wuffs can always swizzle to:
-//   8-bit sources (and 1/2/4-bit, expanded)  -> RGBA_NONPREMUL           (4 x u8)
-//   16-bit sources                           -> BGRA_NONPREMUL_4X16LE    (4 x u16 LE)
-// and then narrowed to the channel count the PNG itself declares (IHDR color type
-// plus tRNS), so a gray PNG yields a 1-channel Image, gray+alpha 2, and so on.
+// src/cook/png_decode.cpp — PNG decoding via wuffs (v0.4); all wuffs memory comes from the
+// caller's allocator. Decodes to RGBA_NONPREMUL (<= 8-bit) or BGRA_NONPREMUL_4X16LE (16-bit),
+// then narrows to the channel count the PNG declares (IHDR color type plus tRNS).
 #include "kiln/cook/image.h"
 #include "kiln/ktx2.h"
 
@@ -165,7 +159,7 @@ Result<Image> decode_png(Span<u8 const> bytes, Allocator const* alloc, DiagSink 
     if (!is_png(bytes))
         return fail(diag, asset, Code::ParseError, kDiagImageDecodeFailed, "not a PNG signature");
 
-    // --- IHDR (always the first chunk: 4 length + 4 type + 13 data + 4 CRC) -----------
+    // IHDR is always the first chunk: 4 length + 4 type + 13 data + 4 CRC.
     if (bytes.size < 8 + 8 + 13 + 4 || be32(bytes.data + 8) != 13 ||
         std::memcmp(bytes.data + 12, "IHDR", 4) != 0)
         return fail(diag, asset, Code::ParseError, kDiagImageDecodeFailed, "missing or truncated IHDR");
@@ -203,7 +197,6 @@ Result<Image> decode_png(Span<u8 const> bytes, Allocator const* alloc, DiagSink 
         return fail(diag, asset, Code::Unsupported, kDiagImageTooLarge,
                     "decoded size %llu bytes exceeds 2^32", outBytes);
 
-    // --- wuffs decoder ---------------------------------------------------------------
     Scratch decMem(alloc, sizeof__wuffs_png__decoder(), 16);
     auto* dec = static_cast<wuffs_png__decoder*>(decMem.ptr);
     wuffs_base__status st =
@@ -243,7 +236,7 @@ Result<Image> decode_png(Span<u8 const> bytes, Allocator const* alloc, DiagSink 
                                                                 wuffs_base__make_slice_u8(work.bytes(), work.size), nullptr);
     if (!wuffs_base__status__is_ok(&st)) return wuffs_fail(diag, asset, st, "decode");
 
-    // --- Narrow to the PNG's own channel layout ----------------------------------------
+    // Narrow to the PNG's own channel layout.
     Image img;
     img.width          = w;
     img.height         = hgt;

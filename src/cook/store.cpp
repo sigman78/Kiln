@@ -1,9 +1,6 @@
-// kiln/cook/store.cpp — content-hashed store: atomic writes, no index (v0.5).
-// Design: docs/design/settings.md ("Store key"), docs/HANDOFF.md §4.4.
-//
-// No <filesystem>, no <string>: paths are UTF-8 and built in stack buffers.
-// Windows uses the narrow ("A") Win32 / CRT API for now; a UTF-16 conversion
-// layer belongs to the M3 IO backend (include/kiln/cook/cook.h), not here.
+// src/cook/store.cpp — content-hashed store: atomic writes, no index (v0.5).
+// Paths are UTF-8 in stack buffers (no <filesystem>, no <string>).
+// TODO: Windows uses the narrow ("A") API; UTF-16 paths belong to the IO backend.
 #include "kiln/cook/cook.h"
 
 #include "kiln/log.h"
@@ -84,9 +81,8 @@ namespace {
     return true;
 }
 
-/// A process- and call-unique id for temp file names: writes are temp-file-then-
-/// rename (HANDOFF §4.4), so the temp name only needs to not collide with other
-/// writers racing the same store directory.
+/// Process- and call-unique id for temp file names. It only has to avoid collisions
+/// with other writers racing on the same store directory.
 [[nodiscard]] u64 next_tmp_id() noexcept {
     static std::atomic<u64> counter{0};
 #if defined(KILN_OS_WINDOWS)
@@ -126,8 +122,7 @@ Status store_write(StrView dir, StrView name, Span<u8 const> bytes, DiagSink con
                      "store path too long for dir %.*s", KILN_SV(dir));
     }
 
-    // Content-addressed: an existing file with this name already holds these
-    // exact bytes (same key -> same content), so there is nothing to do.
+    // Content-addressed: same name means same bytes.
     if (store_exists(dir, name)) return kOk;
 
     char dirBuf[1024];

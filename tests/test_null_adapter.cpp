@@ -12,10 +12,6 @@ using namespace kiln;
 
 namespace {
 
-// ---------------------------------------------------------------------------
-// create / adapter_is_valid
-// ---------------------------------------------------------------------------
-
 KILN_TEST(NullAdapter, CreateProducesValidAdapter) {
     Adapter adapter{};
     Result<NullAdapter*> created = null_adapter_create({}, &adapter);
@@ -24,10 +20,6 @@ KILN_TEST(NullAdapter, CreateProducesValidAdapter) {
     KILN_CHECK(adapter_is_valid(adapter));
     null_adapter_destroy(created.value());
 }
-
-// ---------------------------------------------------------------------------
-// acquire: bindless slots
-// ---------------------------------------------------------------------------
 
 KILN_TEST(NullAdapter, AcquireReturnsDistinctSlotsPerIdAndSameSlotForRepeat) {
     Adapter adapter{};
@@ -66,10 +58,6 @@ KILN_TEST(NullAdapter, NonBindlessAcquireReturnsNullObject) {
 
     null_adapter_destroy(na);
 }
-
-// ---------------------------------------------------------------------------
-// begin_upload / commit_upload / is_upload_complete / null_adapter_payload
-// ---------------------------------------------------------------------------
 
 KILN_TEST(NullAdapter, MeshUploadCycleWritesAndReadsBytes) {
     Adapter adapter{};
@@ -135,10 +123,6 @@ KILN_TEST(NullAdapter, TextureUploadCycleWritesAndReadsBytes) {
     null_adapter_destroy(na);
 }
 
-// ---------------------------------------------------------------------------
-// busyEveryN / failEveryN back-pressure
-// ---------------------------------------------------------------------------
-
 KILN_TEST(NullAdapter, BusyEveryNReturnsBusyOnEverySecondCall) {
     Adapter adapter{};
     Result<NullAdapter*> created = null_adapter_create(NullAdapterDesc{.busyEveryN = 2}, &adapter);
@@ -195,10 +179,6 @@ KILN_TEST(NullAdapter, FailEveryNReturnsUnsupportedOnEveryThirdCall) {
     null_adapter_destroy(na);
 }
 
-// ---------------------------------------------------------------------------
-// publish / null_adapter_slot
-// ---------------------------------------------------------------------------
-
 KILN_TEST(NullAdapter, PublishBindsSlotAndNullPublishFreesIt) {
     Adapter adapter{};
     Result<NullAdapter*> created = null_adapter_create({}, &adapter);
@@ -225,10 +205,6 @@ KILN_TEST(NullAdapter, PublishBindsSlotAndNullPublishFreesIt) {
 
     null_adapter_destroy(na);
 }
-
-// ---------------------------------------------------------------------------
-// destroy_deferred / null_adapter_flush_deferred
-// ---------------------------------------------------------------------------
 
 KILN_TEST(NullAdapter, DestroyDeferredKeepsPayloadUntilFlush) {
     Adapter adapter{};
@@ -262,10 +238,6 @@ KILN_TEST(NullAdapter, DestroyDeferredKeepsPayloadUntilFlush) {
 
     null_adapter_destroy(na);
 }
-
-// ---------------------------------------------------------------------------
-// concurrency: begin_upload/commit_upload from worker threads
-// ---------------------------------------------------------------------------
 
 KILN_TEST(NullAdapter, ConcurrentBeginCommitCyclesProduceDistinctCompletedTokens) {
     Adapter adapter{};
@@ -320,10 +292,6 @@ KILN_TEST(NullAdapter, ConcurrentBeginCommitCyclesProduceDistinctCompletedTokens
 
     null_adapter_destroy(na);
 }
-
-// ---------------------------------------------------------------------------
-// placeholders
-// ---------------------------------------------------------------------------
 
 KILN_TEST(Placeholders, BaseColorIsMidGreySrgb) {
     PlaceholderImage img = builtin_placeholder(TextureKind::BaseColor);

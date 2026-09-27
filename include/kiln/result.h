@@ -1,8 +1,4 @@
-// kiln/result.h — Status, Result<T>, and the diagnostic sink.
-//
-// Recoverable errors return values. Status is a compact code (+ optional detail),
-// Result<T> is value-or-Status with no heap in the error path. Human-readable
-// context goes to a caller-provided DiagSink, never into the Status itself.
+// kiln/result.h — Status, Result<T> and the diagnostic sink. No heap in the error path.
 // See docs/design/error-model.md.
 #pragma once
 
@@ -53,10 +49,6 @@ inline constexpr Status kOk{};
 
 [[nodiscard]] constexpr Status make_status(Code c, u16 detail = 0) noexcept { return {c, detail}; }
 
-// ---------------------------------------------------------------------------
-// Result<T>
-// ---------------------------------------------------------------------------
-
 /// Value-or-Status. Construct from a T (success) or a Status/Code (failure).
 /// Accessing the value of a failed Result is a programming error (asserts).
 template <class T> class Result {
@@ -68,7 +60,7 @@ public:
     }
     constexpr Result(Code c) noexcept : Result(make_status(c)) {} // NOLINT(google-explicit-constructor)
 
-    // Not constexpr: placement new into raw storage is not constant-evaluable in C++20.
+    // Not constexpr: placement new is not constant-evaluable before C++26.
     Result(T const& v) noexcept(std::is_nothrow_copy_constructible_v<T>) // NOLINT
         requires std::is_copy_constructible_v<T>
     {
@@ -139,7 +131,7 @@ public:
         return ok() ? std::move(ref()) : std::move(fallback);
     }
 
-    // -- monadic composition (std::expected-style; F is called by value, no heap) --
+    // Monadic composition, as in std::expected. No heap.
 
     /// f(T) -> Result<U>. On failure the Status is forwarded unchanged.
     template <class F> [[nodiscard]] auto and_then(F&& f) && -> std::invoke_result_t<F, T&&> {
@@ -245,7 +237,7 @@ struct Diagnostic {
     Status status     = kOk; ///< the Status this diagnostic accompanies, if any
     StrView asset;           ///< asset path / id text, may be empty
     StrView where;           ///< node, material, section... may be empty
-    StrView message;         ///< human-readable text
+    StrView message;
 };
 
 /// Caller-provided sink. A null sink (or null fn) drops diagnostics.
@@ -263,7 +255,7 @@ inline void emit(DiagSink const* sink, Diagnostic const& d) noexcept {
 KILN_API Status diagf(DiagSink const* sink, Status status, u32 code, Severity severity, StrView asset,
                       StrView where, char const* fmt, ...) noexcept KILN_PRINTF(7, 8);
 
-/// A DiagSink that forwards to the log (category "diag"). Handy for tools and tests.
+/// A DiagSink that forwards to the log (category "diag").
 [[nodiscard]] KILN_API DiagSink log_diag_sink() noexcept;
 
 } // namespace kiln

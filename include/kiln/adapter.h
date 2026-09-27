@@ -1,6 +1,5 @@
-// kiln/adapter.h — the renderer boundary. kiln never calls a graphics API; every
-// GPU interaction goes through this struct of function pointers that the host
-// renderer fills in. Design: docs/design/adapter.md (HANDOFF §6.4).
+// kiln/adapter.h — the renderer boundary: function pointers the host renderer fills in.
+// kiln never calls a graphics API. See docs/design/adapter.md.
 #pragma once
 
 #include "kiln/formats.h"
@@ -22,7 +21,7 @@ enum class TextureKind : u8 { BaseColor = 0, Normal, Orm, Emissive, Count };
 
 enum AdapterCaps : u32 {
     /// commit_upload submits to a queue by itself and is_upload_complete makes progress
-    /// without the host recording a frame. Required by wait() (HANDOFF §6.4).
+    /// without the host recording a frame. Required by wait().
     kSelfSubmitting = 1u << 0,
     // bits 1..31 reserved, must be 0
 };
@@ -77,10 +76,9 @@ struct UploadTarget {
     GpuObject object;            ///< the object that holds the data once the upload completes
 };
 
-/// The renderer boundary. Every function pointer except `acquire` and `publish`
-/// must be set. Threading (adapter.md): `acquire` runs on the requesting thread;
-/// `begin_upload` / `commit_upload` may run on kiln worker threads; everything else
-/// runs on the pump thread.
+/// Every function pointer except `acquire` and `publish` must be set. `acquire` runs on
+/// the requesting thread, `begin_upload` / `commit_upload` may run on kiln worker threads,
+/// everything else runs on the pump thread (threading contract: docs/design/adapter.md).
 struct Adapter {
     bool (*supports_format)(void* user, Format f, FormatUsage usage) = nullptr;
     void (*copy_constraints)(void* user, CopyConstraints* out)       = nullptr;

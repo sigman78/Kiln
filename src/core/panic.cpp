@@ -51,7 +51,7 @@ void panic(char const* file, int line, char const* fmt, ...) noexcept {
     PanicState& s  = panic_state();
     PanicHandler h = s.handler.load(std::memory_order_acquire);
     h(s.user.load(std::memory_order_relaxed), file, line, buf);
-    // A user handler must not return; if it does, make sure we still stop.
+    // A user handler must not return. If it does, still stop.
     std::abort();
 }
 

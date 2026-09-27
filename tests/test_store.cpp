@@ -37,10 +37,6 @@ bool read_whole_file(char const* path, Vec<u8>& out) {
 
 } // namespace
 
-// ---------------------------------------------------------------------------
-// store_key
-// ---------------------------------------------------------------------------
-
 KILN_TEST(Store, KeyIsOrderSensitive) {
     u64 const a = 0x1111111111111111ull;
     u64 const b = 0x2222222222222222ull;
@@ -62,10 +58,6 @@ KILN_TEST(Store, KeyIsCookerVersionSensitive) {
     KILN_CHECK_NE(store_key(a, b, c, 1), store_key(a, b, c, 2));
     KILN_CHECK_EQ(store_key(a, b, c, kCookerVersion), store_key(a, b, c, kCookerVersion));
 }
-
-// ---------------------------------------------------------------------------
-// store_file_name
-// ---------------------------------------------------------------------------
 
 KILN_TEST(Store, FileNameFormatting) {
     char buf[64];
@@ -90,12 +82,7 @@ KILN_TEST(Store, FileNameCapacity) {
     KILN_CHECK_EQ(exact[21], '\0');
 }
 
-// ---------------------------------------------------------------------------
-// store_write / store_exists
-//
-// These need a real directory (kiln::test::sample_dir(), --samples <dir>); they
-// no-op when it wasn't given, same convention as test_ktx2.cpp's sample-file test.
-// ---------------------------------------------------------------------------
+// store_write / store_exists tests need a real directory (--samples <dir>) and no-op without it.
 
 namespace {
 
@@ -179,9 +166,8 @@ KILN_TEST(Store, NoTempFileNameSurvivesAWrite) {
     u8 const payload[] = {7, 7, 7};
     KILN_REQUIRE(store_write(StrView(storeDir), nameView, Span<u8 const>(payload, sizeof payload)).ok());
 
-    // No <filesystem> here to enumerate the directory, so this is a best-effort
-    // check: store_write's actual temp name carries a random/pid suffix we can't
-    // predict, but the naive fixed pattern "<name>.tmp" must not exist either way.
+    // Best effort without <filesystem>: the real temp name has an unpredictable suffix,
+    // but the naive "<name>.tmp" must not exist either way.
     char tmpPath[1024];
     format(tmpPath, sizeof tmpPath, "%s/%.*s.tmp", storeDir, KILN_SV(nameView));
     KILN_CHECK(!file_exists(tmpPath));

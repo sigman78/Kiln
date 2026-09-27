@@ -1,11 +1,6 @@
-// cook_mesh (glTF/GLB -> .mesh) tests. Cook-only.
-//
-// Always run: a minimal GLB built in-test (quad, optional node scale) for
-// quantization, fallback and determinism. With `--corpus <dir>` (the KTX2 corpus
-// root; the glTF corpus is its sibling `<dir>/../gltf`): every entry of
-// tests/corpus/gltf/manifest.txt is cooked with default resolved settings and
-// checked against the manifest, plus targeted assertions per file. Cooked files
-// are written to `<sample_dir()>/cooked_<stem>.mesh` when `--samples` is given.
+// tests/test_mesh_cook.cpp — cook_mesh (glTF/GLB -> .mesh) tests; cook-only. Always run: an in-test GLB quad.
+// With `--corpus <dir>`: every entry of `<dir>/../gltf/manifest.txt` against the manifest, plus per-file
+// checks. With `--samples`: cooked files go to `<sample_dir()>/cooked_<stem>.mesh`.
 #include "kiln_test.h"
 #include "ktx2_corpus.h" // read_file, parse_u32
 
@@ -20,10 +15,6 @@ using namespace kiln;
 namespace corpus = kiln::test::corpus;
 
 namespace {
-
-// ---------------------------------------------------------------------------
-// Diagnostics capture
-// ---------------------------------------------------------------------------
 
 struct Diags {
     struct Item {
@@ -53,10 +44,6 @@ struct Diags {
         return n;
     }
 };
-
-// ---------------------------------------------------------------------------
-// Cooking helpers
-// ---------------------------------------------------------------------------
 
 cook::MeshCookSettings default_settings() {
     Result<cook::MeshCookSettings> r =
@@ -121,10 +108,6 @@ void write_sample(char const* name, Span<u8 const> bytes) {
     KILN_CHECK(std::fwrite(bytes.data, 1, bytes.size, f) == bytes.size);
     std::fclose(f);
 }
-
-// ---------------------------------------------------------------------------
-// Decoding helpers (tests only)
-// ---------------------------------------------------------------------------
 
 mesh::VertexAttrib const* find_attrib(mesh::VertexLayout const& l, mesh::Semantic s, u8 index = 0) {
     for (u32 i = 0; i < l.attribCount; ++i)
@@ -210,11 +193,8 @@ u32 part_index(mesh::MeshView const& v, StrView name) {
     return kInvalid;
 }
 
-// ---------------------------------------------------------------------------
-// Minimal in-test GLB: one quad node "quad" (POSITION/NORMAL/TEXCOORD_0, u16
-// indices, material "paint") with a uniform node scale.
-// ---------------------------------------------------------------------------
-
+// Minimal in-test GLB: one quad node "quad" (POSITION/NORMAL/TEXCOORD_0, u16 indices,
+// material "paint") with a uniform node scale.
 void put_bytes(Vec<u8>& out, void const* p, usize n) {
     out.append(Span<u8 const>(static_cast<u8 const*>(p), n));
 }
@@ -694,10 +674,8 @@ KILN_TEST(MeshCook, CorpusNoUvNoNormals) {
     KILN_CHECK_EQ(c.diags.count_of(cook::kDiagGltfNoNormals, Severity::Info), 1);
     KILN_REQUIRE_EQ(v.materials().size(), 1u);
     KILN_CHECK_EQ(v.str(v.materials()[0].nameStr), StrView("default"));
-    // Smooth normals on the welded cube (8 corners) run roughly along the corner diagonals,
-    // on the side the winding says is the front. (This corpus cube is wound CCW seen
-    // from outside, so its "front" is the outside; the cooker follows the authored
-    // winding, it does not guess.)
+    // Smooth normals on the welded cube run roughly along the corner diagonals, on the front side.
+    // The cube is wound CCW from outside, so front is outside; the cooker follows authored winding.
     mesh::MeshLod const& lod = v.lods()[0];
     KILN_CHECK_EQ(lod.vertexCount, 8u);
     KILN_CHECK_EQ(count_backfacing(c.opened, v.parts()[0], lod), 0u);

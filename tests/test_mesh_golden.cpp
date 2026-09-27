@@ -1,24 +1,6 @@
-// Golden-file tests for the mesh cooker (cook-only). HANDOFF.md §10: "cook sample
-// glbs, then compare .mesh byte-for-byte against committed goldens. This also
-// enforces determinism." Unlike test_mesh_cook.cpp (which checks *structure*
-// against tests/corpus/gltf/manifest.txt), this file checks *exact bytes* against
-// tests/golden/mesh/*.mesh, so it also catches unintentional changes to encoding
-// details the structural checks don't look at (quantization bit patterns, vertex
-// order after optimization, string table layout, ...).
-//
-// For every `ok` entry of tests/corpus/gltf/manifest.txt (found via --corpus
-// <ktx2 corpus dir>; the glTF corpus is its sibling <dir>/../gltf, same
-// convention as test_mesh_cook.cpp), cooks with the default resolved settings
-// (resolve_mesh(MeshCookSettings{}, TargetProfile{}, CookSession{})) and a
-// same-directory URI resolver for the one .gltf entry, then compares the
-// resulting .mesh bytes to <golden_dir>/mesh/<stem>.mesh.
-//
-// Needs --golden <dir> (see tests/CMakeLists.txt); without it these tests
-// silently skip, same as --corpus elsewhere. --update-golden writes the golden
-// instead of comparing (creating mesh/ if needed) and prints what it wrote — see
-// tests/golden/README.md before using it: a golden change must be deliberate, and
-// if the cooked bytes are meant to differ for the same input/settings, bump
-// kiln::cook::kCookerVersion (kiln/cook/cook.h) first.
+// tests/test_mesh_golden.cpp — mesh cooker golden files (cook-only); see tests/golden/README.md.
+// Cooks every `ok` entry of `<--corpus dir>/../gltf/manifest.txt` with default resolved settings
+// and compares the bytes with <golden_dir>/mesh/<stem>.mesh. Skips without --golden.
 #include "kiln_test.h"
 #include "ktx2_corpus.h" // read_file, bytes_equal
 
@@ -41,10 +23,7 @@ namespace corpus = kiln::test::corpus;
 
 namespace {
 
-// ---------------------------------------------------------------------------
-// Manifest + cooking helpers. Duplicated (not shared) from test_mesh_cook.cpp:
-// its helpers have internal linkage in that translation unit.
-// ---------------------------------------------------------------------------
+// Manifest and cooking helpers, duplicated from test_mesh_cook.cpp (internal linkage there).
 
 struct GltfEntry {
     StrView path;

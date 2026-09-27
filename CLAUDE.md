@@ -40,6 +40,20 @@ compiler is too old, update it.
 - Don't add a dependency without an entry in `docs/design/dependencies.md` and
   `third_party/README.md`. Pin versions.
 
+## Comments
+
+- Be critical of every comment: keep it only if it adds information the code does not show.
+- A comment is for a special case, a quirk, or an in-place explanation. Anything else, and
+  anything longer than ~3 lines, is documentation: move it to `docs/` and leave a one-line pointer
+  at most.
+- Header comments state the contract (what the caller may rely on). Source comments state
+  implementation details (why this way). Do not repeat one in the other.
+- The file-top comment is at most 3 lines.
+- Write comments in Simple Technical English: short sentences, present tense, one idea each.
+- Never refer to `docs/HANDOFF.md` or its sections in code; it is temporary and its numbering moves.
+- Prune tautological comments (`// increment i`) and comments that repeat a name, a type, or a
+  nearby comment.
+
 ## Layout
 
 `include/kiln/` public headers · `src/core|io|formats|cook|runtime/` · `tests/` (own runner,

@@ -1,8 +1,5 @@
-// kiln/core.h — configuration macros, fundamental types, panic/assert, and the
-// smallest vocabulary types (Span, StrView, Handle, FunctionRef).
-//
-// This header, and everything else under include/kiln/ that belongs to kiln_core,
-// depends only on lightweight std headers. See docs/HANDOFF.md §2.
+// kiln/core.h — config macros, fundamental types, panic/assert, and the basic
+// vocabulary types (Span, StrView, Handle, FunctionRef).
 #pragma once
 
 #include <bit>
@@ -46,9 +43,8 @@
 
 // Unreachable code: use std::unreachable() (C++23, <utility>).
 
-// Whether exceptions are enabled in this translation unit. kiln never throws, but
-// std::thread's constructor can; the one try/catch in the library (thread_pool.cpp)
-// is compiled only when this is 1 (KILN_NO_EXCEPTIONS hardening, v1.0).
+// 1 when exceptions are enabled in this translation unit. kiln never throws. It
+// catches only around std code that can throw (std::thread), and only when this is 1.
 #if defined(__cpp_exceptions) || defined(_CPPUNWIND)
 #define KILN_HAS_EXCEPTIONS 1
 #else
@@ -92,8 +88,8 @@
 #define KILN_PRINTF(fmtIdx, argIdx) __attribute__((format(printf, fmtIdx, argIdx)))
 #endif
 
-// Shared-library export. kiln builds static by default; KILN_SHARED + KILN_EXPORTS
-// are wired by CMake if/when a shared build is added.
+// Shared-library export. Empty in static builds (the default). KILN_SHARED and
+// KILN_EXPORTS select dllexport/dllimport.
 #if defined(KILN_SHARED)
 #if defined(_WIN32)
 #if defined(KILN_EXPORTS)
@@ -196,10 +192,7 @@ KILN_API void set_panic_handler(PanicHandler handler, void* user) noexcept;
 
 namespace kiln {
 
-// ---------------------------------------------------------------------------
-// Span<T>: non-owning view over contiguous memory
-// ---------------------------------------------------------------------------
-
+/// Non-owning view over contiguous memory.
 template <class T> struct Span {
     T* data    = nullptr;
     usize size = 0;
@@ -261,10 +254,7 @@ template <class T>
     return {reinterpret_cast<u8*>(s.data), s.size_bytes()};
 }
 
-// ---------------------------------------------------------------------------
-// StrView: non-owning, not necessarily null-terminated string view
-// ---------------------------------------------------------------------------
-
+/// Non-owning string view. Not necessarily null-terminated.
 struct StrView {
     char const* data = nullptr;
     usize size       = 0;
@@ -349,13 +339,9 @@ inline namespace literals {
 constexpr StrView operator""_sv(char const* s, usize n) noexcept { return {s, n}; }
 } // namespace literals
 
-// ---------------------------------------------------------------------------
-// Handle<Tag>: {index, generation} — see docs/design/handles-and-states.md
-// ---------------------------------------------------------------------------
-
-/// A typed, generation-counted index. `Tag` is a phantom type (e.g. struct Mesh;).
-/// Generation 0 is never issued, so generation == 0 means null; the default
-/// (all-zero) handle is *the* null handle and equals `from_bits(0)`.
+/// Typed, generation-counted index. `Tag` is a phantom type (e.g. `struct Mesh;`).
+/// Generation 0 is never issued, so it means null. The default handle is null and
+/// equals `from_bits(0)`. See docs/design/handles-and-states.md.
 template <class Tag> struct Handle {
     u32 index      = 0;
     u32 generation = 0;
@@ -371,10 +357,7 @@ template <class Tag> struct Handle {
     [[nodiscard]] friend constexpr bool operator!=(Handle a, Handle b) noexcept { return !(a == b); }
 };
 
-// ---------------------------------------------------------------------------
-// FunctionRef<R(Args...)>: non-owning reference to any callable
-// ---------------------------------------------------------------------------
-
+/// Non-owning reference to any callable.
 template <class Sig> class FunctionRef;
 
 template <class R, class... Args> class FunctionRef<R(Args...)> {
@@ -416,14 +399,9 @@ private:
     R (*thunk_)(void*, Args...) = nullptr;
 };
 
-// ---------------------------------------------------------------------------
-// Small utilities
-// ---------------------------------------------------------------------------
-
-/// Number of elements in a C array.
 template <class T, usize N> [[nodiscard]] constexpr usize countof(T const (&)[N]) noexcept { return N; }
 
-/// Bit-cast a POD from raw bytes (unaligned-safe).
+/// Read or write a trivially copyable T at a possibly unaligned address.
 template <class T>
     requires std::is_trivially_copyable_v<T>
 [[nodiscard]] inline T read_unaligned(void const* p) noexcept {

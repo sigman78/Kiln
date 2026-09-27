@@ -37,10 +37,55 @@ struct JobSystem {
 - `pump()` is the **only** place where state changes become visible, events are produced,
   diagnostics from workers are delivered to the `DiagSink`, and adapter completion is polled.
 - Workers push results into short-critical-section queues. `pump()` drains them.
-- No user callback ever fires on a worker thread. Exceptions: `Allocator`, `LogSink`, and the
-  adapter's `begin_upload` / `commit_upload` (see `adapter.md`), which must be thread-safe. The
-  adapter's `acquire` runs on the thread that calls `request()`; `publish` runs only on the pump
-  thread.
+- No user callback ever fires on a worker thread. Exceptions: `Allocator`, `LogSink`, the
+  `IoBackend`, the cook provider's `cook()`, and the adapter's `begin_upload` / `commit_upload`
+  (see `adapter.md`). All of these must be thread-safe. The adapter's `acquire` runs on the
+  thread that calls `request()`; `publish` runs only on the pump thread.
+
+### Runtime state ownership
+
+- Registry state (slots, id maps, queues, groups, events, placeholders, stats) is read and
+  mutated only on the pump thread: the thread that calls `request_*`, `release`, `pump()`,
+  `wait()` and the queries. kiln does not lock it.
+- A worker runs exactly one stage of one asset at a time. While a job is in flight:
+  - the worker reads only the slot's job-input fields, which the pump thread wrote before
+    submitting and does not write while the job runs (identity, source, path, provider
+    snapshot, and for the upload stage the metadata produced by the meta stage);
+  - the worker writes only the slot's job-output fields, which the pump thread does not touch
+    until it has popped the job's completion;
+  - the worker never reads fields the pump thread may change meanwhile (state, refcount,
+    generation, zombie flag, priority, queue links, group).
+- The completion queue's mutex orders the worker's writes before the pump thread's reads. The
+  job's last access to the context is the in-flight counter decrement.
+- A slot released while a job is in flight becomes a zombie: it leaves the id map and its
+  handles go stale at once (generation bump), but it returns to the free list only when the
+  pump thread pops the job's completion. A job never sees its slot reused.
+- Diagnostics produced on workers are captured into the slot and emitted to the host's
+  `DiagSink` from `pump()`.
+- Steady state: `pump()` and the queries never allocate. Every runtime table is sized at
+  `create()`. Per-load buffers are allocated on workers (`Tag::Payload` / `Tag::Io`) and freed
+  on the pump thread at unload or failure.
+
+### Worker stages
+
+One job runs one stage of one asset:
+
+- **Meta**: open the source (store file, registered bytes, or cook-on-miss), read and validate
+  the metadata (`.mesh` CPU region or KTX2 prefix), compute the texture upload layout.
+- **Upload**: `begin_upload`, read or decode the payload straight into the adapter's
+  destination, `commit_upload`.
+
+Results go into the slot's job-output fields and a completion is posted. The pump thread
+applies them.
+
+### Cook provider
+
+- `install_provider` / `uninstall_provider` run on the pump thread.
+- The `cook()` callback the runtime installs runs on a worker, possibly concurrently for
+  different assets. Once a provider is published through `set_cook_provider()` it is never
+  mutated again: `cook()` reads only its own locals and the provider's read-only fields.
+- The context-to-provider registry is touched only by install and uninstall, under a mutex.
+  `cook()` never looks at it.
 
 ### `wait()` on a load group
 

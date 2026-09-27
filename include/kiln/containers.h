@@ -1,8 +1,6 @@
 // kiln/containers.h — FixedArray<T,N>, Vec<T>, HashMap<K,V>.
-//
-// Allocator-aware, no exceptions, no hidden allocation: Vec and HashMap take an
-// Allocator const* + Tag and only allocate on growth. All containers panic on
-// misuse (out-of-range, overflow) rather than throwing.
+// Vec and HashMap allocate through their Allocator and Tag, only on growth.
+// A null Allocator means default_allocator(). Index checks are debug-only.
 #pragma once
 
 #include "kiln/alloc.h"
@@ -43,10 +41,7 @@ template <class T> inline void default_construct_n(T* p, usize n) noexcept {
 
 } // namespace detail
 
-// ---------------------------------------------------------------------------
-// FixedArray<T, N>: inline storage, bounded size, no allocation
-// ---------------------------------------------------------------------------
-
+/// Inline storage for up to N elements. Never allocates.
 template <class T, usize N> class FixedArray {
 public:
     static_assert(N > 0);
@@ -123,7 +118,7 @@ public:
     [[nodiscard]] Span<T> span() noexcept { return {ptr(), size_}; }
     [[nodiscard]] Span<T const> span() const noexcept { return {ptr(), size_}; }
 
-    /// Append. Panics (KILN_VERIFY) when full.
+    /// Append. Panics when full.
     T& push_back(T const& v) {
         KILN_VERIFY(size_ < N);
         return *::new (slot(size_++)) T(v);
@@ -174,17 +169,14 @@ private:
     usize size_ = 0;
 };
 
-// ---------------------------------------------------------------------------
-// Vec<T>: growable array over an Allocator
-// ---------------------------------------------------------------------------
-
+/// Growable array over an Allocator.
 template <class T> class Vec {
 public:
     Vec() noexcept = default;
     explicit Vec(Allocator const* alloc, Tag tag = Tag::Core) noexcept : alloc_(alloc), tag_(tag) {}
     ~Vec() noexcept { release(); }
 
-    Vec(Vec const&)            = delete; ///< use clone() — copies allocate, make it visible
+    Vec(Vec const&)            = delete; ///< Use clone(): copies allocate, so they are explicit.
     Vec& operator=(Vec const&) = delete;
 
     Vec(Vec&& o) noexcept : data_(o.data_), size_(o.size_), cap_(o.cap_), alloc_(o.alloc_), tag_(o.tag_) {
@@ -205,7 +197,7 @@ public:
         return *this;
     }
 
-    /// Set the allocator before first use (no-op if already allocated with the same one).
+    /// Set the allocator. Call before the first allocation.
     void init(Allocator const* alloc, Tag tag = Tag::Core) noexcept {
         KILN_ASSERT(data_ == nullptr && "Vec::init after allocation");
         alloc_ = alloc;
@@ -282,7 +274,8 @@ public:
                 ::new (static_cast<void*>(data_ + i)) T(fill);
         size_ = n;
     }
-    /// Grow size by `n` default-constructed elements and return a span of them.
+    /// Grow size by `n` uninitialized elements and return a span of them.
+    /// The caller writes them. Use only for trivial T.
     [[nodiscard]] Span<T> append_uninit(usize n) {
         usize old = size_;
         if (size_ + n > cap_) grow_to(size_ + n);
@@ -360,13 +353,9 @@ private:
     Tag tag_                = Tag::Core;
 };
 
-// ---------------------------------------------------------------------------
-// HashMap<K, V>: open addressing, linear probing, backward-shift deletion
-// ---------------------------------------------------------------------------
-
-/// Requirements: K is equality-comparable and `hash_of(K)` is found by ADL (or a
-/// custom `Hash` functor is supplied). K and V must be move-constructible.
-/// Pointers/references into the map are invalidated by insertion and erasure.
+/// Open-addressing hash map with linear probing. K is equality-comparable, and
+/// `hash_of(K)` is found by ADL unless a custom `Hash` is given. K and V are
+/// move-constructible. Insertion and erasure invalidate pointers into the map.
 template <class K, class V, class Hash = DefaultHash> class HashMap {
 public:
     struct Entry {
@@ -489,7 +478,7 @@ public:
         size_ = cap_ = 0;
     }
 
-    // -- iteration: for (auto& e : map) { e.key, e.value } ------------------
+    // Iteration: `for (auto& e : map)` yields Entry {key, value} in unspecified order.
     template <bool Const> class Iter {
         using MapPtr = std::conditional_t<Const, HashMap const*, HashMap*>;
         using Ref    = std::conditional_t<Const, Entry const&, Entry&>;

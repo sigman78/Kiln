@@ -1,7 +1,5 @@
-// Tests for the M3 IO layer: the built-in thread pool and the compat IO backend
-// (include/kiln/io.h, docs/design/threading-and-io.md).
-//
-// Suite names start with "Io" so `kiln_tests Io` runs both halves of this file.
+// tests/test_io.cpp — IO layer (kiln/io.h): built-in thread pool and compat IO backend.
+// Suite names start with "Io", so `kiln_tests Io` runs the whole file.
 #include "kiln_test.h"
 
 #include "kiln/io.h"
@@ -23,10 +21,6 @@
 #endif
 
 using namespace kiln;
-
-// ---------------------------------------------------------------------------
-// IoThreadPool
-// ---------------------------------------------------------------------------
 
 namespace {
 
@@ -79,9 +73,7 @@ KILN_TEST(IoThreadPool, SubmitFromMultipleThreads) {
 }
 
 KILN_TEST(IoThreadPool, QueueFullBackpressureStillCompletes) {
-    // Capacity 4 with slow jobs and a single worker: submitting more than the
-    // capacity forces submit() to block until a worker drains a slot. The test
-    // only asserts it never loses work and never deadlocks.
+    // Capacity 4, one slow worker: submit() blocks until a slot frees. No lost work, no deadlock.
     Result<JobSystem> r = create_thread_pool(ThreadPoolDesc{.threads = 1, .queueCapacity = 4});
     KILN_REQUIRE(r.ok());
     JobSystem jobs = r.value();
@@ -131,10 +123,6 @@ KILN_TEST(IoThreadPool, DestroyBusyPoolDrainsFirst) {
     KILN_CHECK_EQ(counter.load(), kJobs);
 }
 
-// ---------------------------------------------------------------------------
-// IoCompat
-// ---------------------------------------------------------------------------
-
 namespace {
 
 bool write_file(char const* path, Span<u8 const> bytes) {
@@ -145,8 +133,7 @@ bool write_file(char const* path, Span<u8 const> bytes) {
     return ok;
 }
 
-/// Deterministic pattern: byte i == i mod 251 (a prime, so the pattern doesn't
-/// alias short of a very long run), easy to check at any offset.
+/// Byte i == i mod 251. The prime period avoids aliasing, so any offset is checkable.
 void fill_pattern(Vec<u8>& v, usize n) {
     v.resize(n);
     for (usize i = 0; i < n; ++i)
@@ -319,10 +306,8 @@ KILN_TEST(IoCompat, NonAsciiPathRoundTrips) {
     char const* dir = kiln::test::sample_dir();
     if (!dir) return;
 
-    // "tést_ünïcode.bin" as literal UTF-8 bytes. Split right after \xAF: a bare
-    // hex escape greedily eats following hex digits, and 'c' is one, so without
-    // the literal break "\xAFcode" would be parsed as a single (out-of-range)
-    // escape instead of \xAF followed by "code".
+    // "tést_ünïcode.bin" as UTF-8 bytes. The literal breaks after \xAF because a hex
+    // escape would also eat the hex digit 'c' of "code".
     char path[1024];
     format(path, sizeof path,
            "%s/t\xC3\xA9st_\xC3\xBCn\xC3\xAF"
@@ -331,10 +316,8 @@ KILN_TEST(IoCompat, NonAsciiPathRoundTrips) {
 
     u8 const payload[] = {'k', 'i', 'l', 'n'};
 #if defined(KILN_OS_WINDOWS)
-    // Narrow fopen() interprets bytes with the ANSI code page, not UTF-8, so the
-    // fixture is written through the wide API (the compat backend itself is
-    // exercised below via io_read_file / io_file_exists, which do the UTF-8 ->
-    // UTF-16 conversion kiln ships).
+    // Narrow fopen() uses the ANSI code page, not UTF-8, so write the fixture through the
+    // wide API. io_read_file / io_file_exists below exercise kiln's own UTF-8 -> UTF-16 path.
     wchar_t wpath[1024];
     int wlen = MultiByteToWideChar(CP_UTF8, 0, path, -1, wpath, int(countof(wpath)));
     KILN_REQUIRE(wlen > 0);

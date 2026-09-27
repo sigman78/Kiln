@@ -1,10 +1,9 @@
-// kiln/log.h — user-supplied log sink and a tiny printf-style formatter.
-// No iostreams anywhere in kiln (HANDOFF §2, hard rule).
+// kiln/log.h — user-supplied log sink, log level and a small printf-style formatter.
 #pragma once
 
 #include "kiln/core.h"
 
-#include <cstdarg> // va_list for the v* variants; tiny header, no allocation or iostreams
+#include <cstdarg> // va_list for vlog/vformat
 
 namespace kiln {
 

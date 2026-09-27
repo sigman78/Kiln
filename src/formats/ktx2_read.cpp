@@ -1,4 +1,4 @@
-// KTX2 reader: validation of header, level index, DFD and KVD. No allocation.
+// KTX2 reader: validates the header, level index, DFD and KVD.
 #include "kiln/ktx2.h"
 
 namespace kiln::ktx2 {

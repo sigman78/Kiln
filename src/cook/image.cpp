@@ -1,14 +1,12 @@
-// Deterministic image pipeline for texture cooking: sRGB <-> linear through a fixed
-// table, channel/bit-depth conversion, 2x2 box mips, normal renormalization.
-// Everything is integer-exact except renormalize(), which uses IEEE double and
-// std::sqrt (correctly rounded, so identical on every conforming platform).
+// src/cook/image.cpp — image pipeline. Integer-exact except normal renormalization,
+// which uses IEEE double and std::sqrt (correctly rounded, so identical everywhere).
 #include "kiln/cook/image.h"
 
 #include <cmath>
 
 // Keep a*b+c from being fused into an FMA: fused and unfused results can differ in
-// the last bit, which would break cross-platform byte-identical output. (gcc in
-// ISO mode, -std=c++20, already defaults to -ffp-contract=off.)
+// the last bit, which would break cross-platform byte-identical output. gcc in
+// ISO mode (-std=c++NN) already defaults to -ffp-contract=off.
 #if defined(__clang__)
 #pragma clang fp contract(off)
 #elif defined(_MSC_VER)
@@ -19,12 +17,10 @@ namespace kiln::cook {
 
 namespace {
 
-/// sRGB-encoded 8-bit value -> linear 16-bit. Generated offline in double precision
-/// with the exact sRGB EOTF (IEC 61966-2-1):
-///   f(c) = c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055)^2.4,  c = v / 255
-///   table[v] = round(65535 * f(c))
-/// No entry lies within 1e-6 of a .5 tie, so the rounding mode does not matter.
-/// Strictly increasing (256 distinct values), so linear16_to_srgb8 inverts it exactly.
+/// Generated offline in double with the exact sRGB EOTF (IEC 61966-2-1):
+///   table[v] = round(65535 * f(v / 255)),  f(c) = c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055)^2.4
+/// No entry is within 1e-6 of a .5 tie, so the rounding mode does not matter.
+/// Strictly increasing, so linear16_to_srgb8 inverts it exactly.
 constexpr u16 kSrgbToLinear16[256] = {
     0,     20,    40,    60,    80,    99,    119,   139,   159,   179,   199,   219,   241,   264,   288,
     313,   340,   367,   396,   427,   458,   491,   526,   562,   599,   637,   677,   718,   761,   805,
@@ -113,10 +109,6 @@ void renormalize_px(u32 rgb[3], u32 maxv) noexcept {
 
 } // namespace
 
-// ---------------------------------------------------------------------------
-// sRGB
-// ---------------------------------------------------------------------------
-
 u16 srgb8_to_linear16(u8 v) noexcept { return kSrgbToLinear16[v]; }
 
 u8 linear16_to_srgb8(u16 v) noexcept {
@@ -133,10 +125,6 @@ u8 linear16_to_srgb8(u16 v) noexcept {
     if (lo > 0 && u32(v) - kSrgbToLinear16[lo - 1] <= u32(kSrgbToLinear16[lo]) - v) --lo;
     return u8(lo);
 }
-
-// ---------------------------------------------------------------------------
-// Operations
-// ---------------------------------------------------------------------------
 
 Result<Image> convert_image(Image const& src, u32 channels, u32 bitsPerChannel,
                             Allocator const* alloc) noexcept {

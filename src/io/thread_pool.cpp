@@ -1,8 +1,5 @@
-// kiln/io.h — built-in thread pool (docs/design/threading-and-io.md).
-//
-// std threading is confined to this translation unit (HANDOFF §13 Q3). Workers
-// pop {fn, arg} jobs from a bounded ring buffer allocated once from desc.alloc;
-// submit() blocks when the ring is full and never allocates.
+// Built-in thread pool (docs/design/threading-and-io.md). Workers pop jobs from a
+// bounded ring; submit() blocks while the ring is full.
 #include "kiln/io.h"
 
 #include "kiln/log.h"
@@ -32,9 +29,8 @@ struct Job {
     void* arg;
 };
 
-// A pool owns: itself (placement-new via new_object), the job ring, and the
-// worker thread array, all allocated from `alloc` with Tag::Jobs. Steady state
-// (submit / run / wait_idle) never allocates.
+// The pool, its job ring and its worker array are allocated once from `alloc` with
+// Tag::Jobs. submit, running jobs and wait_idle never allocate.
 struct Pool {
     Allocator const* alloc = nullptr;
 
@@ -153,9 +149,8 @@ Result<JobSystem> create_thread_pool(ThreadPoolDesc const& desc) noexcept {
     u32 started = 0;
     bool ok     = true;
     for (u32 i = 0; i < threadCount; ++i) {
-        // std::thread's constructor may throw (e.g. resource exhaustion). It is
-        // third-party (std) code kiln calls, so the throw is caught here and
-        // converted to a Status, per HANDOFF's exception policy.
+        // std::thread's constructor may throw on resource exhaustion. Third-party
+        // throws are caught at the call site and converted to a Status.
 #if KILN_HAS_EXCEPTIONS
         try {
             ::new (static_cast<void*>(&p->workers[i])) std::thread(&worker_main, p, i);
@@ -165,8 +160,8 @@ Result<JobSystem> create_thread_pool(ThreadPoolDesc const& desc) noexcept {
             break;
         }
 #else
-        // Without exceptions a failed std::thread construction terminates; native
-        // thread creation (v0.9 OS wrappers) will turn this into a Status.
+        // Without exceptions a failed construction terminates. Native thread
+        // creation (v0.9 OS wrappers) will return a Status instead.
         ::new (static_cast<void*>(&p->workers[i])) std::thread(&worker_main, p, i);
         started = i + 1;
 #endif

@@ -1,11 +1,6 @@
-// cook_mesh: glTF/GLB -> .mesh (kiln_cook). Pipeline (HANDOFF §6.2):
-//   import (gltf_import.cpp) -> scale baking -> split per material -> welding ->
-//   generated normals -> MikkTSpace tangents -> optimize (meshoptimizer) ->
-//   quantize (mesh-format-spec §6) -> LOD / submesh / material records -> write.
-//
-// Determinism: iteration is always in file / traversal order, never over hash
-// maps or pointer values; float math is limited to products, sums, divisions,
-// std::sqrt and std::floor; half floats are converted by bit manipulation.
+// mesh_cook.cpp — cook_mesh: glTF/GLB -> .mesh.
+// Determinism: iterate in file / traversal order only; float math is limited to
+// + - * /, std::sqrt and std::floor.
 #include "cook_internal.h"
 
 #include "kiln/cook/mesh_writer.h"
@@ -44,11 +39,8 @@ using mesh::Bounds;
 
 namespace {
 
-// ---------------------------------------------------------------------------
 // Working vertex: every attribute as f32, absent channels zero. Exact-match
 // welding compares these bytes, so the struct must have no padding.
-// ---------------------------------------------------------------------------
-
 struct Vtx {
     f32 p[3];
     f32 n[3];
@@ -978,10 +970,6 @@ Status cook_part(Cook& k, u32 index, ImportPart const& part, f32 modelMin[3], f3
 }
 
 } // namespace
-
-// ---------------------------------------------------------------------------
-// cook_mesh
-// ---------------------------------------------------------------------------
 
 Result<CookedMesh> cook_mesh(MeshSource const& src, MeshCookSettings const& settings,
                              TargetProfile const& target, Allocator const* alloc,

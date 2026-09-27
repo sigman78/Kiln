@@ -9,14 +9,9 @@
 using namespace kiln;
 using namespace kiln::ktx2;
 
-// Struct-size / layout static_asserts live in test_ktx2_read.cpp, next to the
-// hand-built file they validate against.
+// Struct-size and layout static_asserts live in test_ktx2_read.cpp, next to the hand-built file.
 
 namespace {
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 /// Enum -> integer for KILN_CHECK_EQ messages.
 template <class E> u32 ev(E e) { return u32(e); }
@@ -99,10 +94,6 @@ void write_sample_file(char const* dir, char const* name, Span<u8 const> bytes) 
 void put_u32(Vec<u8>& v, usize off, u32 x) { write_unaligned<u32>(v.data() + off, x); }
 
 } // namespace
-
-// ---------------------------------------------------------------------------
-// Round trip
-// ---------------------------------------------------------------------------
 
 KILN_TEST(Ktx2, RoundTripFormats) {
     Format const formats[] = {
@@ -212,10 +203,6 @@ KILN_TEST(Ktx2, DfdMatchesVk2dfd) {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Determinism, prefix open
-// ---------------------------------------------------------------------------
-
 KILN_TEST(Ktx2, Deterministic) {
     TestImage img(Format::R8G8B8A8_SRGB);
     Vec<u8> a = write_ok(img.desc());
@@ -270,10 +257,6 @@ KILN_TEST(Ktx2, PrefixOpen) {
     KILN_CHECK_EQ(cap.code, u32(kDiagKtxTruncated));
 }
 
-// ---------------------------------------------------------------------------
-// Reader error paths
-// ---------------------------------------------------------------------------
-
 namespace {
 
 struct Mutated {
@@ -292,11 +275,8 @@ Mutated mutate_rgba8() {
 
 } // namespace
 
-// Identifier / truncation / format / typeSize / supercompression / dimensions /
-// level-index error paths are hand-built (no writer needed) and live in
-// test_ktx2_read.cpp. DFD/KVD error paths need real descriptor and key/value
-// content, which the writer produces far more simply than a hand-built file
-// would, so they stay here.
+// Header and level-index error paths are hand-built in test_ktx2_read.cpp. DFD/KVD paths
+// need real descriptor and key/value content, so they start from writer output here.
 
 KILN_TEST(Ktx2, ErrorDfdAndKvd) {
     {
@@ -332,10 +312,6 @@ KILN_TEST(Ktx2, ErrorDfdAndKvd) {
         KILN_CHECK(m.cap.severity == Severity::Warning);
     }
 }
-
-// ---------------------------------------------------------------------------
-// Writer input validation
-// ---------------------------------------------------------------------------
 
 KILN_TEST(Ktx2, WriterRejectsBadInput) {
     TestImage img(Format::R8G8B8A8_UNORM);
@@ -383,10 +359,7 @@ KILN_TEST(Ktx2, WriterRejectsBadInput) {
     KILN_CHECK(bytes_equal(r->level_data(0), img.spans[0]));
 }
 
-// ---------------------------------------------------------------------------
-// Sample files for kiln-info's CTest coverage (tests/CMakeLists.txt)
-// ---------------------------------------------------------------------------
-
+// Writes the sample files that kiln-info's CTest entries read (tests/CMakeLists.txt).
 KILN_TEST(Ktx2, WriteSampleFiles) {
     char const* dir = kiln::test::sample_dir();
     if (!dir) return; // no --samples <dir> given: nothing to do

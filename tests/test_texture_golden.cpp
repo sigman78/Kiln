@@ -1,17 +1,6 @@
-// Golden-file tests for the texture cooker (cook-only). See test_mesh_golden.cpp
-// for what a golden test is for and tests/golden/README.md for how to regenerate.
-//
-// Three PNGs generated in-process (tests/png_writer.h, deterministic: no external
-// files) cover the three usages the cooker treats differently -- Color (sRGB,
-// mips), Normal (renormalized) and Height (16-bit, mips) -- mirroring
-// test_texture_cook.cpp's color_srgb_7x5 / normal_7x5 / height_r16 cases at
-// smaller, distinct sizes so a golden mismatch can't be confused with theirs.
-// KTX2 pass-through (a corpus file cooked unchanged) has nothing for a cooker
-// golden to pin, so it is not covered here.
-//
-// Needs --golden <dir> (see tests/CMakeLists.txt); without it these tests
-// silently skip. --update-golden writes <golden_dir>/ktx2/<case>.ktx2 instead of
-// comparing (creating ktx2/ if needed) and prints what it wrote.
+// tests/test_texture_golden.cpp — texture cooker golden files (cook-only); see tests/golden/README.md.
+// Cases mirror test_texture_cook.cpp's color/normal/height ones at smaller, distinct sizes,
+// so a golden mismatch cannot be confused with theirs. Skips without --golden.
 #include "kiln_test.h"
 #include "ktx2_corpus.h" // read_file, bytes_equal
 #include "png_writer.h"

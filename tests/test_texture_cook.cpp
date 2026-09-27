@@ -1,7 +1,6 @@
-// cook_texture tests (cook side): PNG -> KTX2 per usage, size caps, mips, KTX2
-// pass-through, rejection paths and determinism. Inputs come from png_writer.h and
-// the KTX2 corpus. Every cooked output is re-opened with Ktx2View and, when
-// --samples is given, written as <samples>/cooked_<case>.ktx2 for `ktx validate`.
+// tests/test_texture_cook.cpp — cook_texture (PNG -> KTX2, KTX2 pass-through); cook-only.
+// Inputs come from png_writer.h and the KTX2 corpus. Every output is re-opened with Ktx2View
+// and, with --samples, written as <samples>/cooked_<case>.ktx2 for `ktx validate`.
 #include "kiln_test.h"
 #include "ktx2_corpus.h"
 #include "png_writer.h"

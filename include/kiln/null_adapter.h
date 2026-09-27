@@ -25,9 +25,9 @@ struct NullAdapterStats {
     u32 liveObjects   = 0; ///< uploaded objects not yet destroyed
 };
 
-struct NullAdapter; ///< opaque
+struct NullAdapter;
 
-/// Create; the returned Adapter is valid until destroy. `out` must outlive users.
+/// Fills `out`, which stays valid until null_adapter_destroy(). `out` must outlive its users.
 [[nodiscard]] KILN_API Result<NullAdapter*> null_adapter_create(NullAdapterDesc const& desc,
                                                                 Adapter* out) noexcept;
 KILN_API void null_adapter_destroy(NullAdapter* na) noexcept;

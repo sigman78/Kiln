@@ -6,10 +6,6 @@
 
 namespace kiln {
 
-// ---------------------------------------------------------------------------
-// fourcc
-// ---------------------------------------------------------------------------
-
 /// Little-endian fourcc: fourcc('O','M','S','H') stores as bytes "OMSH".
 [[nodiscard]] constexpr u32 fourcc(char a, char b, char c, char d) noexcept {
     return u32(u8(a)) | (u32(u8(b)) << 8) | (u32(u8(c)) << 16) | (u32(u8(d)) << 24);
@@ -249,9 +245,8 @@ public:
     void update(void const* data, usize len) noexcept;
     void update(Span<u8 const> b) noexcept { update(b.data, b.size); }
     void update(StrView s) noexcept { update(s.data, s.size); }
-    /// Hash one scalar (integer, float, enum, bool). Deliberately not offered for
-    /// structs: their padding bytes are indeterminate, so hash structs field by
-    /// field (see docs/design/settings.md).
+    /// Hash one scalar (integer, float, enum, bool). Structs are rejected: their padding
+    /// bytes are indeterminate. Hash structs field by field (see docs/design/settings.md).
     template <class T>
         requires(std::is_arithmetic_v<T> || std::is_enum_v<T>)
     void update_value(T const& v) noexcept {
@@ -281,7 +276,6 @@ private:
     return x;
 }
 
-/// Combine two hashes.
 [[nodiscard]] constexpr u64 hash_combine(u64 a, u64 b) noexcept {
     return mix64(a ^ (b + 0x9e3779b97f4a7c15ull + (a << 6) + (a >> 2)));
 }

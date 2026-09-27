@@ -114,10 +114,37 @@ kiln::GroupStatus st = kiln::wait(ctx, boot, {.timeoutMs = 5000});
 
 ## Tools
 
-- `kiln-cook <input>... -o <store>`: cook `.glb`/`.gltf`/`.png`/`.ktx2` sources (files or directories) into the
-  store, writing `<store>/<assetPath>.<ext>` (Named layout) by default; `--check` validates only, `--hashed`
-  writes content-hash file names instead, `--map` records asset path -> file. Dev/CI only (needs `kiln_cook`).
-- `kiln-info <file> [--blobs] [--check]`: dump a `.mesh` or `.ktx2`; read-only, ships with the runtime side.
+Both tools are dev/CI only except `kiln-info`, which is read-only and ships with the runtime side.
+
+```
+kiln-cook <input>... [-o <store>] [--root <dir>] [--check] [--hashed] [--map <file>]
+          [--target <name>] [--profile default|precise] [--no-tangents] [--no-optimize]
+          [--no-mips] [--no-lods] [--quiet] [--verbose]
+
+  <input>       .glb / .gltf / .png / .ktx2 files, or directories (recursed)
+  -o <store>    store directory (default: ./cooked). Files are <store>/<assetPath>.<ext>,
+                the Named layout the v0.5 runtime store expects (kiln/assets.h StoreLayout)
+  --root <dir>  source root for asset paths (default: the input directory, or the file's
+                directory for single files). Asset path = relative path, forward slashes,
+                extension stripped.
+  --check       validate only: cook in memory, report diagnostics, write nothing
+  --hashed      write content-hash file names instead of <store>/<assetPath>.<ext>
+                (kept for the index-based hashed layout arriving in v0.6)
+  --map <file>  append "<assetPath>	<file name>	<key hex>" lines for every output
+
+Exit codes: 0 all inputs cooked, 1 usage, 2 IO failure, 3 one or more cook errors.
+```
+
+```
+kiln-info <file> [--blobs] [--check] [--quiet]
+
+  --blobs   print the full BLOB table (default: summary only)
+  --check   .mesh: decode the payload, verify checksums and index values
+            .ktx2: verify every level is present with the expected size
+  --quiet   errors only (the exit code still reports the result)
+
+Exit codes: 0 ok, 1 usage, 2 file could not be read, 3 open/validation failed, 4 --check failed.
+```
 
 ## Docs
 

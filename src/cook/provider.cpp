@@ -1,15 +1,6 @@
-// kiln/cook/provider.cpp — cook-on-miss provider: installs a CookProvider that
-// cooks missing assets from a context's source roots into its store (or only
-// into memory in cache-less mode). Design: kiln/cook/provider.h, HANDOFF §7,
-// docs/design/shipping-split.md §7.
-//
-// Threading: install_provider/uninstall_provider run on the host's pump thread
-// (assets.h convention). The cook() callback the runtime installs runs on a
-// worker thread, possibly concurrently for different assets, so once a
-// Provider is published through set_cook_provider() it is never mutated again:
-// cook() reads only its own locals and the Provider's read-only fields. The
-// registry below (Context* -> Provider*) is touched only by install/uninstall,
-// under a mutex; cook() never looks at it.
+// src/cook/provider.cpp — cook-on-miss provider. Threading: see docs/design/threading-and-io.md.
+// provider_cook() runs on workers, concurrently; a published Provider is never mutated,
+// and only install/uninstall touch the registry.
 #include "kiln/cook/provider.h"
 
 #include "kiln/cook/cook.h"
@@ -29,10 +20,7 @@ namespace kiln::cook {
 
 namespace {
 
-// ---------------------------------------------------------------------------
-// Provider state — allocated once at install_provider(), immutable thereafter.
-// ---------------------------------------------------------------------------
-
+/// Allocated once by install_provider(); immutable once published.
 struct Provider {
     ProviderDesc desc;
     CookSession session;
@@ -48,9 +36,7 @@ struct Provider {
         : storeDirBuf(a, Tag::Cook), rootsBuf(a, Tag::Cook), roots(a, Tag::Cook), alloc(a) {}
 };
 
-// ---------------------------------------------------------------------------
-// Context* -> Provider* registry (install/uninstall only; see file header).
-// ---------------------------------------------------------------------------
+// Context* -> Provider* registry, under registry_mutex().
 
 std::mutex& registry_mutex() noexcept {
     static std::mutex m;
@@ -61,9 +47,7 @@ HashMap<Context*, Provider*>& registry() noexcept {
     return reg;
 }
 
-// ---------------------------------------------------------------------------
-// Small path helpers (tool-local; kiln-cook has its own copy of make_dirs).
-// ---------------------------------------------------------------------------
+// Path helpers. kiln-cook has its own copy of make_dirs.
 
 bool mkdir_one(char const* path) noexcept {
 #if defined(KILN_OS_WINDOWS)
@@ -145,9 +129,7 @@ bool find_source(Provider const& p, StrView assetPath, char const* ext1, char co
     return false;
 }
 
-// ---------------------------------------------------------------------------
 // Mesh URI resolver: external buffers/images relative to the source file.
-// ---------------------------------------------------------------------------
 
 struct UriResolverCtx {
     char baseDir[900] = {};
@@ -161,10 +143,6 @@ Status resolve_uri_fn(void* user, StrView uri, Allocator const* alloc, Vec<u8>* 
     if (!io_file_exists(pathView)) return make_status(Code::NotFound);
     return io_read_file(compat_io_backend(), pathView, alloc, out);
 }
-
-// ---------------------------------------------------------------------------
-// Cooking
-// ---------------------------------------------------------------------------
 
 /// A texture with a source file of its own (no owning mesh involved).
 Status cook_texture_own_source(Provider const& p, StrView sourcePath, StrView assetPath,
@@ -191,11 +169,9 @@ Status cook_texture_own_source(Provider const& p, StrView sourcePath, StrView as
     return kOk;
 }
 
-/// Cooks the mesh at `meshAssetPath` (source at `sourcePath`) and every texture
-/// it references. `requestedKind`/`requestedAssetPath` select what `out` gets:
-/// the mesh bytes (Mesh) or one embedded/owned texture's bytes (Texture) — read
-/// back from the in-process cook result, never from the store (Memory mode has
-/// no store to re-read).
+/// Cooks the mesh and every texture it references. `out` gets the mesh bytes (Mesh)
+/// or the requested texture's bytes (Texture), taken from the in-process result,
+/// never re-read from the store (Memory mode has none).
 Status cook_mesh_full(Provider const& p, StrView meshAssetPath, StrView sourcePath, AssetKind requestedKind,
                       StrView requestedAssetPath, Allocator const* alloc, Vec<u8>* out,
                       DiagSink const* diag) noexcept {
@@ -313,10 +289,6 @@ Status provider_cook(void* user, AssetKind kind, StrView assetPath, Allocator co
 }
 
 } // namespace
-
-// ---------------------------------------------------------------------------
-// Public API
-// ---------------------------------------------------------------------------
 
 Status install_provider(Context* ctx, ProviderDesc const& desc) noexcept {
     Span<StrView const> const srcRoots = source_roots(ctx);

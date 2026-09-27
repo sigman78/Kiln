@@ -1,5 +1,5 @@
-// kiln/cook/settings.cpp — settings resolution and field-by-field hashing.
-// Design: docs/design/settings.md. See docs/diagnostics.md for the K3xxx table.
+// src/cook/settings.cpp — settings resolution and field-by-field hashing.
+// Design: docs/design/settings.md.
 #include "kiln/cook/settings.h"
 
 #include "kiln/log.h"
@@ -7,10 +7,6 @@
 #include <bit>
 
 namespace kiln::cook {
-
-// ---------------------------------------------------------------------------
-// Resolution
-// ---------------------------------------------------------------------------
 
 Result<TextureCookSettings> resolve_texture(TextureCookSettings const& overrides, SlotHint hint,
                                             TargetProfile const& target, CookSession const& session,
@@ -26,17 +22,16 @@ Result<TextureCookSettings> resolve_texture(TextureCookSettings const& overrides
 
     u32 const cap = target.maxTextureSize;
     if (s.maxSize == 0) {
-        s.maxSize = cap; // 0 = "no limit"; the target cap still applies
+        s.maxSize = cap;
     } else if (cap != 0 && s.maxSize > cap) {
         (void)diagf(diag, kOk, kDiagSettingsClampedByTarget, Severity::Warning, asset, "maxSize",
                     "maxSize %u clamped to target %.*s cap %u", s.maxSize, KILN_SV(target.name), cap);
         s.maxSize = cap;
     }
 
-    // normalRenormalize / flipGreen only mean something for usage == Normal. Both are
-    // cleared for other usages so the resolved struct (and its hash, hence the store
-    // key) is canonical. normalRenormalize defaults to true, so clearing it is silent;
-    // flipGreen defaults to false, so a set flag signals intent and gets a warning.
+    // Clear both Normal-only flags for other usages so the resolved struct, its hash and
+    // the store key stay canonical. Only flipGreen warns: it defaults to false, so a set
+    // flag signals intent.
     if (s.usage != TextureUsage::Normal) {
         if (s.flipGreen)
             (void)diagf(diag, kOk, kDiagSettingsInvalidCombo, Severity::Warning, asset, "usage",
@@ -45,9 +40,8 @@ Result<TextureCookSettings> resolve_texture(TextureCookSettings const& overrides
         s.flipGreen         = false;
     }
 
-    // session.fastPreview: reserved for cheaper texture settings later. Mips stay
-    // on for now -- they're cheap enough that skipping them isn't worth the extra
-    // resolved-state variance -- but this is where such a cheapening would go.
+    // fastPreview does not change texture settings yet: mips are cheap, and skipping
+    // them would add resolved-state variance.
     (void)session;
 
     return s;
@@ -106,13 +100,9 @@ Result<MeshCookSettings> resolve_mesh(MeshCookSettings const& overrides, TargetP
     return s;
 }
 
-// ---------------------------------------------------------------------------
-// Hashing (field by field, schema-versioned; never memcpy of a struct)
-// ---------------------------------------------------------------------------
-
 namespace {
 
-/// Floats are hashed by bit pattern after folding -0.0f to 0.0f (docs/design/settings.md).
+/// Floats are hashed by bit pattern after folding -0.0f to 0.0f.
 [[nodiscard]] u32 hashable_float_bits(f32 v) noexcept {
     if (v == 0.0f) v = 0.0f;
     return std::bit_cast<u32>(v);
@@ -143,9 +133,8 @@ u64 hash_settings(MeshCookSettings const& s) noexcept {
     h.update_value(hashable_float_bits(s.posTolMm));
     h.update_value(hashable_float_bits(s.weldTol));
     h.update_value(u8(s.compression));
-    // zstdLevel only means something for the Zstd-based schemes; hashing 0 for
-    // any other scheme means changing it elsewhere never misses the store
-    // (docs/design/settings.md, "Fields that the resolved settings do not use").
+    // Hash zstdLevel as 0 unless the scheme uses Zstd, so changing an unused field
+    // never misses the store.
     bool const usesZstd =
         s.compression == CompressionScheme::Basic || s.compression == CompressionScheme::MeshoptZstd;
     h.update_value(u8(usesZstd ? s.zstdLevel : 0));
@@ -161,10 +150,6 @@ u64 hash_target(TargetProfile const& t) noexcept {
     h.update_value(u8(t.maxVertexProfile));
     return h.digest();
 }
-
-// ---------------------------------------------------------------------------
-// Enum <-> string
-// ---------------------------------------------------------------------------
 
 char const* texture_usage_name(TextureUsage u) noexcept {
     switch (u) {

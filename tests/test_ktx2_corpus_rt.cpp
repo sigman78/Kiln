@@ -1,11 +1,6 @@
-// KTX2 corpus round trip through the kiln writer (cook side; built only with kiln_cook).
-//
-// For every manifest entry that kiln reads and that the v0.5 writer can express
-// (uncompressed, 2D, not an array, not a cube): read -> ktx2::write() -> re-open, then
-// compare the description, every level's bytes, and the DFD. The corpus files were
-// written by libktx, whose DFD comes from vk2dfd; kiln's writer claims to produce the
-// same bytes, so the DFDs must be identical. Round-tripped files go to
-// `<sample_dir()>/rt_<basename>` so CTest can run `ktx validate` on them.
+// tests/test_ktx2_corpus_rt.cpp — KTX2 corpus read -> ktx2::write() -> re-open (cook side only).
+// Description, level bytes and DFD must match; libktx's DFD (vk2dfd) and kiln's must be identical.
+// Output goes to `<sample_dir()>/rt_<basename>` so CTest can run `ktx validate` on it.
 #include "kiln_test.h"
 #include "ktx2_corpus.h"
 

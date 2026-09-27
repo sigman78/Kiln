@@ -8,10 +8,7 @@ using namespace kiln;
 
 namespace {
 
-// ---------------------------------------------------------------------------
-// Live: non-trivial type with a static live-instance counter
-// ---------------------------------------------------------------------------
-
+// Non-trivial type with a live-instance counter.
 struct Live {
     static int count;
     int v;
@@ -34,10 +31,7 @@ struct Live {
 };
 int Live::count = 0;
 
-// ---------------------------------------------------------------------------
-// MoveOnly: move-only type that owns an allocator-backed int, for Vec relocation
-// ---------------------------------------------------------------------------
-
+// Move-only type that owns an allocator-backed int; tracks Vec relocation.
 struct MoveOnly {
     static int count; // number of currently-live allocations
     int* ptr = nullptr;
@@ -70,10 +64,7 @@ struct MoveOnly {
 };
 int MoveOnly::count = 0;
 
-// ---------------------------------------------------------------------------
-// A key type with a custom hash_of() found via ADL
-// ---------------------------------------------------------------------------
-
+// Key type whose hash_of() is found via ADL.
 namespace user_ns {
 struct MyKey {
     u32 v;
@@ -82,19 +73,12 @@ struct MyKey {
 [[nodiscard]] constexpr bool operator==(MyKey a, MyKey b) noexcept { return a.v == b.v; }
 } // namespace user_ns
 
-// ---------------------------------------------------------------------------
-// A deliberately bad hasher: forces heavy collisions to stress backward-shift erase
-// ---------------------------------------------------------------------------
-
+// Bad hasher: heavy collisions stress backward-shift erase.
 struct BadHash {
     [[nodiscard]] constexpr u64 operator()(u32 k) const noexcept { return u64(k % 4); }
 };
 
 } // namespace
-
-// ===========================================================================
-// FixedArray<T, N>
-// ===========================================================================
 
 KILN_TEST(Containers, FixedArrayPushEmplacePop) {
     FixedArray<int, 4> a;
@@ -185,10 +169,6 @@ KILN_TEST(Containers, FixedArrayNonTrivialDestroys) {
     }
     KILN_CHECK_EQ(Live::count, before);
 }
-
-// ===========================================================================
-// Vec<T>
-// ===========================================================================
 
 KILN_TEST(Containers, VecDefaultThenInitPush1000) {
     Vec<int> v;
@@ -341,10 +321,6 @@ KILN_TEST(Containers, VecMoveOnlySurvivesGrowthRelocation) {
     }
     KILN_CHECK_EQ(MoveOnly::count, before);
 }
-
-// ===========================================================================
-// HashMap<K, V>
-// ===========================================================================
 
 KILN_TEST(Containers, HashMapInsertFindContainsErase) {
     HashMap<u64, int> m(default_allocator(), Tag::Test);

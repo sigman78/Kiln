@@ -1,35 +1,6 @@
-// runtime_internal.h — private state of the kiln runtime (kiln/assets.h). Included
-// only by src/runtime/*.cpp; never installed.
-//
-// THREADING RULE
-// --------------
-// * Registry state (slots, id maps, queues, groups, events, placeholders, stats) is
-//   read and mutated only on the pump thread: the thread that calls request_*,
-//   release, pump(), wait() and the queries (assets.h). kiln does not lock it.
-// * Workers (jobs submitted through ContextDesc::jobs) run exactly one stage of one
-//   asset at a time (Slot::jobStage). While a job is in flight (Slot::jobInFlight):
-//     - the worker reads only the slot's "job input" fields, which the pump thread
-//       wrote before submitting and never writes while the job runs (identity, source,
-//       path, provider snapshot, and for the upload stage the metadata produced by
-//       the meta stage);
-//     - the worker writes only the slot's "job output" fields, which the pump thread
-//       does not touch until it has popped the job's Completion;
-//     - the worker never reads the fields the pump thread may change meanwhile
-//       (state, refcount, generation, zombie, priority, queue links, group).
-//   The completion queue's mutex orders the worker's writes before the pump thread's
-//   reads. The job's last access to the Context is `jobsInFlight.fetch_sub`.
-// * A slot released while a job is in flight becomes a zombie: it leaves the id map
-//   and its handles go stale at once (generation bump), but it returns to the free
-//   list only when the pump thread pops the job's completion, so a job never sees
-//   its slot reused.
-// * Diagnostics produced on workers are captured into the slot (DiagCapture) and
-//   emitted to the host's DiagSink from pump(); no user callback other than the
-//   allocator, the IO backend, the adapter's begin_upload/commit_upload and the
-//   cook provider runs on a worker (threading-and-io.md, adapter.md).
-//
-// Steady state: pump() and the queries never allocate. Every array below is sized at
-// create(); per-load buffers are allocated on workers (Tag::Payload / Tag::Io) and
-// freed on the pump thread at unload / failure.
+// runtime_internal.h — private runtime state; included only by src/runtime/*.cpp.
+// Registry state is pump-thread only; an in-flight job touches only its slot's job fields.
+// See docs/design/threading-and-io.md.
 #pragma once
 
 #include "kiln/assets.h"
@@ -40,7 +11,6 @@
 
 namespace kiln {
 
-// Handle tags are declared (not defined) in assets.h.
 struct Context;
 
 namespace rt {
@@ -121,8 +91,7 @@ struct Slot {
     QueueId queue  = QueueId::None;
     u32 qPrev      = kInvalid;
     u32 qNext      = kInvalid;
-    u64 retryAfter = 0; ///< Busy retry: not before this pump index
-    // objects
+    u64 retryAfter = 0;   ///< Busy retry: not before this pump index
     GpuObject acquired;   ///< from Adapter::acquire (may be null)
     GpuObject realObj;    ///< the published payload object (Ready)
     Status preFail = kOk; ///< acquire() failure, reported on the next pump

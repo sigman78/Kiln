@@ -1,9 +1,6 @@
-// Reader-only .mesh tests: no kiln/cook/ includes, no kiln::mesh::write() calls.
-// This is the suite the KILN_BUILD_COOK=OFF (shipping) configuration builds and
-// runs, so every test here hand-assembles its own file image byte by byte,
-// per docs/mesh-format-spec.md §2, §4, §5, §5.9, §7. Writer round-trips and the
-// split_unit() static_asserts (declared in kiln/cook/mesh_writer.h) stay in
-// test_mesh.cpp.
+// tests/test_mesh_read.cpp — reader-only .mesh tests; the shipping (KILN_BUILD_COOK=OFF) build runs them.
+// No kiln/cook/ includes and no mesh::write(): file images are hand-built per docs/mesh-format-spec.md.
+// Writer round trips and split_unit() static_asserts live in test_mesh.cpp.
 #include "kiln_test.h"
 
 #include "kiln/containers.h"
@@ -15,10 +12,7 @@
 using namespace kiln;
 using namespace kiln::mesh;
 
-// ---------------------------------------------------------------------------
-// Compile-time facts (reader-side; mesh.h asserts the sizes too)
-// ---------------------------------------------------------------------------
-
+// Reader-side layout facts; mesh.h asserts the sizes too.
 static_assert(sizeof(FileHeader) == 80);
 static_assert(sizeof(SectionEntry) == 32);
 static_assert(sizeof(Bounds) == 32);
@@ -43,13 +37,9 @@ static_assert(is_allowed_blob_encoding(Codec::Zstd, Filter::ByteShuffle));
 
 namespace {
 
-// ---------------------------------------------------------------------------
-// Hand-built file assembler — no writer involved. Builds a minimal but complete
-// file: one layout (stream 0 Position R32G32B32_SFLOAT stride 12, stream 1
-// TexCoord0 R32G32_SFLOAT stride 8), one part with one LOD of 3 vertices / 3 U16
-// indices in one submesh, one material, raw payload (kPayloadRaw) with 3 blobs
-// (stream 0, stream 1, indices). Optionally an MNTS section for the mount tests.
-// ---------------------------------------------------------------------------
+// Hand-built file: one layout (stream 0 Position R32G32B32_SFLOAT, stream 1 TexCoord0 R32G32_SFLOAT),
+// one part with one LOD (3 vertices, 3 U16 indices, one submesh), one material, and a raw payload
+// with 3 blobs (stream 0, stream 1, indices). Optionally an MNTS section for the mount tests.
 
 /// Appends `size` bytes (copied from `data`, or zero-filled if null) to `buf`,
 /// 16-byte aligned, and records a SectionEntry describing the range.
@@ -246,10 +236,9 @@ void make_mounts(Mount (&mounts)[3]) {
     }
 }
 
-/// Rewrites section `id` so each record occupies `newStride` bytes instead of its
-/// current stride (original bytes first, zero after) and shifts every later
-/// section, GPUD and the header to match. Demonstrates the forward-compatibility
-/// rule of spec §4/§7: unknown trailing bytes zero-fill.
+/// Rewrites section `id` with `newStride` bytes per record (original bytes, then zeros) and
+/// shifts every later section, GPUD and the header to match. Exercises the spec §4/§7 rule:
+/// unknown trailing bytes zero-fill.
 Vec<u8> widen_section_stride(Vec<u8> const& src, u32 id, u32 newStride) {
     FileHeader const h = read_unaligned<FileHeader>(src.data());
     u32 secIndex       = kInvalid;
@@ -264,9 +253,7 @@ Vec<u8> widen_section_stride(Vec<u8> const& src, u32 id, u32 newStride) {
         }
     }
     KILN_VERIFY(secIndex != kInvalid);
-    // Growing a metadata section shifts everything after it, including GPUD — but
-    // GPUD must stay 256-byte aligned (spec §2), so its new offset is realigned
-    // rather than shifted by the same raw delta as the metadata sections before it.
+    // GPUD must stay 256-byte aligned (spec §2), so its offset is realigned, not shifted by delta.
     u64 const delta          = u64(entry.count) * (newStride - entry.stride);
     u64 const shiftedGpuData = h.gpuDataOffset + delta;
     u64 const newGpuData     = align_up(shiftedGpuData, u64(kPayloadBaseAlign));
@@ -365,10 +352,6 @@ void expect_open_fails(Vec<u8> const& b, Code code, u32 diagCode, char const* wh
 
 } // namespace
 
-// ---------------------------------------------------------------------------
-// Opens, all views resolve
-// ---------------------------------------------------------------------------
-
 KILN_TEST(Mesh, HandBuiltOpensAndResolves) {
     Vec<u8> const file = build_mesh();
     auto r             = MeshView::open(file.span());
@@ -445,10 +428,6 @@ KILN_TEST(Mesh, HandBuiltFindMount) {
     KILN_CHECK(v.find_mount(150) == nullptr);
 }
 
-// ---------------------------------------------------------------------------
-// Records<T>::get() zero-fills fields a newer minor version would add
-// ---------------------------------------------------------------------------
-
 KILN_TEST(Mesh, HandBuiltRecordsZeroFillNewFields) {
     Vec<u8> const good    = build_mesh();
     Vec<u8> const widened = widen_section_stride(good, kSecLods, 64);
@@ -462,10 +441,7 @@ KILN_TEST(Mesh, HandBuiltRecordsZeroFillNewFields) {
     KILN_CHECK_EQ(v.lods().get(0).vertexCount, 3u);
 }
 
-// ---------------------------------------------------------------------------
-// decode_payload / check_indices on the hand-built raw file
-// ---------------------------------------------------------------------------
-
+// decode_payload / check_indices on the hand-built raw file.
 KILN_TEST(Mesh, HandBuiltDecodeReproducesInput) {
     Vec<u8> const file = build_mesh();
     auto r             = MeshView::open(file.span());
@@ -492,10 +468,6 @@ KILN_TEST(Mesh, HandBuiltDecodeReproducesInput) {
     KILN_CHECK(check_indices(v, dst.span()).ok());
 }
 
-// ---------------------------------------------------------------------------
-// MeshView::open on a misaligned buffer
-// ---------------------------------------------------------------------------
-
 KILN_TEST(Mesh, HandBuiltMisalignedBufferRejected) {
     Vec<u8> const good = build_mesh();
     Vec<u8> big(default_allocator(), Tag::Test);
@@ -512,10 +484,6 @@ KILN_TEST(Mesh, HandBuiltMisalignedBufferRejected) {
     KILN_CHECK_EQ(r.code(), Code::InvalidArgument);
     KILN_CHECK_EQ(cap.code, u32(kDiagBufferAlignment));
 }
-
-// ---------------------------------------------------------------------------
-// Corruptions detected by MeshView::open, from a hand-built image
-// ---------------------------------------------------------------------------
 
 KILN_TEST(Mesh, HandBuiltCorruptionsDetected) {
     Vec<u8> const good = build_mesh();

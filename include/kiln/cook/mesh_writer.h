@@ -1,9 +1,6 @@
-// kiln/cook/mesh_writer.h — deterministic .mesh writer (kiln_cook). Takes fully
-// resolved records plus raw stream/index bytes, lays out the payload and blob
-// table per spec v0.3 §5.9, and returns the complete file image.
-//
-// Identical input produces byte-identical output: no timestamps, all padding
-// zeroed, strings deduplicated in first-seen order, mounts sorted by nameHash.
+// kiln/cook/mesh_writer.h — .mesh writer: resolved records plus raw stream/index bytes
+// in, complete file out (layout per mesh-format-spec §5.9). Deterministic: no timestamps,
+// zeroed padding, strings deduplicated in first-seen order, mounts sorted by nameHash.
 #pragma once
 
 #include "kiln/containers.h"

@@ -1,9 +1,6 @@
-// kiln/cook/image.h — decoded CPU images and the deterministic image pipeline
-// used by texture cooking (mips, color space, channel selection). Cook side only.
-//
-// Determinism: every operation here is integer-exact (sRGB <-> linear through a
-// fixed table, box filters in u32, IEEE sqrt for renormalization), so identical
-// input produces byte-identical output on every compiler and platform.
+// kiln/cook/image.h — decoded CPU images and the image pipeline for texture cooking.
+// Every operation is deterministic: identical input gives byte-identical output on
+// every compiler and platform.
 #pragma once
 
 #include "kiln/alloc.h"
@@ -48,7 +45,7 @@ enum ImageDiagCode : u32 {
 
 /// Decode a PNG (8- or 16-bit; gray, gray+alpha, RGB, RGBA, palette expanded to
 /// RGB/RGBA) into an Image allocated from `alloc` (Tag::Cook). Interlaced PNGs are
-/// accepted. Never throws; malformed input returns ParseError with a K2xxx diagnostic.
+/// accepted. Malformed input returns ParseError with a K2xxx diagnostic.
 KILN_API Result<Image> decode_png(Span<u8 const> bytes, Allocator const* alloc,
                                   DiagSink const* diag = nullptr, StrView asset = {}) noexcept;
 
@@ -65,24 +62,22 @@ KILN_API Result<Image> decode_png(Span<u8 const> bytes, Allocator const* alloc,
 // Operations (all deterministic; results allocated from `alloc`, Tag::Cook)
 // ---------------------------------------------------------------------------
 
-/// Convert to a different channel count / bit depth. Rules: dropping channels keeps
-/// the first N (R, RG, RGB); adding channels fills G/B by replicating R for 1->3/4,
-/// fills B with 0 for 2->3/4 (2 channels are RG, not gray+alpha; cook_texture handles
-/// gray+alpha PNGs itself), and sets A = max; 16->8 rounds to nearest
-/// (v * 255 + 32767) / 65535; 8->16 is
-/// v * 257. Returns the input unchanged (a copy) when nothing changes.
+/// Convert to another channel count / bit depth. Dropping channels keeps the first N.
+/// Adding channels: 1 -> 3/4 replicates R into G/B; 2 -> 3/4 sets B = 0 (2 channels
+/// are RG, not gray+alpha); A = max. 16 -> 8 is (v * 255 + 32767) / 65535; 8 -> 16 is
+/// v * 257. Returns a copy when nothing changes.
 KILN_API Result<Image> convert_image(Image const& src, u32 channels, u32 bitsPerChannel,
                                      Allocator const* alloc) noexcept;
 
-/// Next mip level with a 2x2 box filter (floor halving, min 1: an odd trailing column
-/// or row is dropped; a dimension of 1 samples the same texel twice). `srgb` selects
-/// sRGB-correct averaging for the first three
-/// channels (alpha is always linear). `renormalize` treats RGB as a tangent-space
-/// normal (0..1 -> -1..1), renormalizes after averaging and writes back rounded.
+/// `srgb`: sRGB-correct averaging of the first three channels (8-bit only; alpha is
+/// always linear). `renormalize`: treat RGB as a tangent-space normal (0..1 -> -1..1)
+/// and renormalize after averaging; takes precedence over `srgb`.
 struct MipOptions {
     bool srgb        = false;
     bool renormalize = false;
 };
+/// Next mip level with a 2x2 box filter. Floor halving, min 1: an odd trailing column
+/// or row is dropped; a dimension of 1 samples the same texel twice.
 KILN_API Result<Image> downsample_2x(Image const& src, MipOptions const& opt,
                                      Allocator const* alloc) noexcept;
 
@@ -92,8 +87,8 @@ KILN_API void flip_green(Image& img) noexcept;
 /// Renormalize RGB as unit vectors in place (8- or 16-bit). No-op for < 3 channels.
 KILN_API void renormalize(Image& img) noexcept;
 
-/// Full mip chain: level 0 is a copy of `src` (or `src` moved in when `takeSource`),
-/// then downsample_2x until 1x1. `maxLevels` 0 = full chain.
+/// Full mip chain: level 0 is `src` (moved in), then downsample_2x until 1x1.
+/// `maxLevels` 0 = full chain.
 KILN_API Result<Vec<Image>> build_mip_chain(Image&& src, MipOptions const& opt, u32 maxLevels,
                                             Allocator const* alloc) noexcept;
 

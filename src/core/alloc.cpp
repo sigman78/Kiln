@@ -24,10 +24,6 @@ char const* tag_name(Tag tag) noexcept {
     return "?";
 }
 
-// ---------------------------------------------------------------------------
-// Default allocator with per-tag stats
-// ---------------------------------------------------------------------------
-
 namespace {
 
 struct TagStats {
@@ -45,7 +41,7 @@ void* sys_alloc(usize size, usize align) noexcept {
 #if defined(KILN_OS_WINDOWS)
     return _aligned_malloc(size, align);
 #else
-    // aligned_alloc requires size to be a multiple of align
+    // aligned_alloc requires size to be a multiple of align.
     return std::aligned_alloc(align, align_up(size, align));
 #endif
 }
@@ -114,18 +110,13 @@ void* alloc(Allocator const* a, usize size, usize align, Tag tag) noexcept {
     return p;
 }
 
-// ---------------------------------------------------------------------------
-// Arena
-// ---------------------------------------------------------------------------
-
 struct Arena::Block {
     Block* prev;
-    usize size; ///< total bytes of this block including the header
-    // payload follows, aligned to kDefaultAlign
+    usize size; // includes this header
 };
 
-// Header size rounded up so payloads start kDefaultAlign-aligned. Block is a
-// private member type, so compute from its known layout (two pointer-sized fields).
+// Block is private here, so the header size comes from its layout (two pointer-sized
+// fields), rounded up so the payload after it is kDefaultAlign-aligned.
 static constexpr usize kBlockHeader = align_up(usize(2 * sizeof(void*)), kDefaultAlign);
 
 Arena::Arena(Desc const& desc) noexcept { init(desc); }
@@ -175,8 +166,8 @@ void* Arena::alloc(usize size, usize align) noexcept {
 
 void* Arena::alloc_slow(usize size, usize align) noexcept {
     if (!desc_.backing) init(desc_);
-    // Reuse an existing next block? We keep only a single chain, so allocate a new
-    // block big enough for this request (plus alignment slack).
+    // Blocks form one chain with no spare blocks to reuse, so always allocate a new
+    // block big enough for this request plus alignment slack.
     usize need  = kBlockHeader + size + align;
     usize bytes = need > desc_.blockSize ? need : desc_.blockSize;
     Block* b    = static_cast<Block*>(kiln::alloc(desc_.backing, bytes, kDefaultAlign, desc_.tag));

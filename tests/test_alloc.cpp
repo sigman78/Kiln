@@ -23,10 +23,6 @@ bool is_aligned_ptr(void const* p, usize align) noexcept {
     return (reinterpret_cast<std::uintptr_t>(p) & (align - 1)) == 0;
 }
 
-// ---------------------------------------------------------------------------
-// default_allocator: alloc/free + alignment
-// ---------------------------------------------------------------------------
-
 KILN_TEST(Alloc, DefaultAllocatorRawAlignment) {
     Allocator const* a = default_allocator();
     void* p            = a->alloc(a->user, 100, 64, Tag::Test);
@@ -45,10 +41,6 @@ KILN_TEST(Alloc, ConvenienceAllocFreeVariousAlignments) {
         free(a, p, 37, align, Tag::Test);
     }
 }
-
-// ---------------------------------------------------------------------------
-// default_alloc_stats deltas
-// ---------------------------------------------------------------------------
 
 KILN_TEST(Alloc, StatsBytesCurrentDelta) {
     Allocator const* a = default_allocator();
@@ -79,10 +71,6 @@ KILN_TEST(Alloc, StatsMultipleAllocations) {
     KILN_CHECK_EQ(after.freeCount, before.freeCount + u64(2));
 }
 
-// ---------------------------------------------------------------------------
-// new_object / delete_object
-// ---------------------------------------------------------------------------
-
 KILN_TEST(Alloc, NewDeleteObjectConstructsAndDestroys) {
     int beforeCtor = Counted::ctorCount;
     int beforeDtor = Counted::dtorCount;
@@ -102,10 +90,6 @@ KILN_TEST(Alloc, DeleteObjectNullIsNoOp) {
     KILN_CHECK_EQ(Counted::dtorCount, beforeDtor);
 }
 
-// ---------------------------------------------------------------------------
-// alloc_array / free_array
-// ---------------------------------------------------------------------------
-
 KILN_TEST(Alloc, ArrayAllocFree) {
     usize const n = 10;
     int* arr      = alloc_array<int>(default_allocator(), n, Tag::Test);
@@ -118,10 +102,6 @@ KILN_TEST(Alloc, ArrayAllocFree) {
     KILN_CHECK(ok);
     free_array(default_allocator(), arr, n, Tag::Test);
 }
-
-// ---------------------------------------------------------------------------
-// Arena
-// ---------------------------------------------------------------------------
 
 KILN_TEST(Alloc, ArenaAllocAlignment) {
     Arena arena({.blockSize = 1024, .tag = Tag::Test});

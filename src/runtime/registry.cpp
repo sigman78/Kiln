@@ -1,16 +1,11 @@
-// kiln runtime — registry: asset ids, slots and handles, id maps, request queues,
-// refcounted requests, load groups and the allocation-free queries (assets.h).
-// Everything here runs on the pump thread (runtime_internal.h, THREADING RULE).
+// registry.cpp — ids, slots and handles, request queues, refcounts, groups and queries.
+// Pump thread only.
 #include "runtime_internal.h"
 
 #include "kiln/placeholders.h"
 
 namespace kiln {
 namespace rt {
-
-// ---------------------------------------------------------------------------
-// Buffer
-// ---------------------------------------------------------------------------
 
 void Buffer::allocate(Allocator const* a, usize n, Tag t) noexcept {
     KILN_ASSERT(data == nullptr);

@@ -1,6 +1,6 @@
 // kiln/cook/cook.h — the cooker: glTF/GLB -> .mesh, PNG/KTX2 -> KTX2, and the
-// content-hashed store. Pure functions over caller memory (HANDOFF §6.2): no
-// global state, thread-safe, arena-backed temporaries, deterministic output.
+// content-hashed store. Pure functions over caller memory: no global state,
+// thread-safe, deterministic output.
 #pragma once
 
 #include "kiln/alloc.h"
@@ -65,15 +65,15 @@ struct MeshSource {
     UriResolver resolver; ///< optional
 };
 
-/// A texture the mesh references. The cooker does not cook it; the caller (store,
-/// cook-on-miss provider, kiln-cook) does, using `usage` as the SlotHint-derived
-/// inference. Views point into CookedMesh::strings / the source bytes.
+/// A texture the mesh references. cook_mesh does not cook it; the caller does,
+/// using `slot` for usage inference. Views point into CookedMesh::strings or the
+/// source bytes.
 struct TextureRef {
     StrView assetPath;       ///< cooked texture asset path: "<mesh assetPath>/<image stem>"
     StrView uri;             ///< source-relative URI for external images; empty when embedded
     Span<u8 const> embedded; ///< image bytes when embedded in the GLB (points into MeshSource::bytes)
     StrView mimeType;        ///< "image/png", "image/ktx2", ... (may be empty for external)
-    SlotHint slot;           ///< first slot that referenced it (usage inference)
+    SlotHint slot;           ///< first slot that referenced it
     bool srgb;               ///< as inferred from the slot
 };
 
@@ -118,7 +118,7 @@ KILN_API Result<CookedTexture> cook_texture(TextureSource const& src, TextureCoo
                                             DiagSink const* diag = nullptr) noexcept;
 
 // ---------------------------------------------------------------------------
-// Store (HANDOFF §4.4): content-hashed files, atomic writes, no index in v0.5
+// Store: content-hashed files, atomic writes, no index in v0.5
 // ---------------------------------------------------------------------------
 
 /// Store key = hash_combine chain of (source bytes hash, resolved settings hash,

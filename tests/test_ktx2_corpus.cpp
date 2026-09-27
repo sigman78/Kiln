@@ -1,7 +1,6 @@
-// Real-world KTX2 corpus (tests/corpus/ktx2): Khronos KTX-Software test files plus
-// variants made with `ktx create`. Reader-only (no kiln/cook/ includes), so the
-// shipping configuration runs it too. Expected values come from manifest.txt, which
-// records `ktx info` ground truth. Runs only when kiln_tests gets `--corpus <dir>`.
+// tests/test_ktx2_corpus.cpp — real-world KTX2 corpus (tests/corpus/ktx2); reader-only, shipping runs it.
+// Khronos KTX-Software files plus `ktx create` variants; manifest.txt holds `ktx info` ground truth.
+// Runs only when kiln_tests gets `--corpus <dir>`.
 #include "kiln_test.h"
 #include "ktx2_corpus.h"
 

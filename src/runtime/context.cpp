@@ -1,5 +1,4 @@
-// kiln runtime — context lifetime: create() (tables, pool, IO, placeholder uploads),
-// destroy(), the cook-provider hook, stats and accessors (assets.h).
+// context.cpp — create(), destroy(), the cook-provider hook, stats and accessors.
 #include "runtime_internal.h"
 
 #include "kiln/placeholders.h"
@@ -8,7 +7,6 @@
 
 namespace kiln {
 
-/// Build identifier of kiln_runtime (kept from the M0 placeholder TU).
 char const* runtime_version() noexcept { return "0.0.1-m3"; }
 
 namespace rt {
@@ -39,7 +37,7 @@ char* copy_str(Allocator const* a, StrView s) noexcept {
 }
 
 /// Upload one placeholder image (reserved id) through begin/commit. Retries Busy for
-/// up to 10 s. With kSelfSubmitting it also waits for completion and publishes.
+/// up to 10 s. Completion is polled by the caller.
 Status upload_placeholder(Context* ctx, u32 index, AssetId id, Format format, u32 w, u32 h,
                           Span<u8 const> pixels) noexcept {
     Placeholder& p = ctx->ph[index];
@@ -252,7 +250,6 @@ Result<Context*> create(ContextDesc const& desc) noexcept {
     ctx->maxGroups    = desc.maxGroups;
     ctx->maxEvents    = desc.maxEvents;
 
-    // Strings
     ctx->storeDirLen = desc.storeDir.size;
     ctx->storeDir    = copy_str(a, desc.storeDir);
     if (!desc.sourceRoots.empty()) {
@@ -273,7 +270,7 @@ Result<Context*> create(ContextDesc const& desc) noexcept {
         }
     }
 
-    // Tables (all allocated once; see runtime_internal.h)
+    // Tables: allocated once here; pump() and the queries never allocate.
     ctx->slots     = alloc_array<Slot>(a, ctx->maxAssets, Tag::Registry);
     ctx->freeSlots = alloc_array<u32>(a, ctx->maxAssets, Tag::Registry);
     for (u32 i = 0; i < ctx->maxAssets; ++i) {

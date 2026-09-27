@@ -1,11 +1,5 @@
 // src/cook/cook_internal.h — private interface between the glTF importer
-// (gltf_import.cpp, the only file that sees cgltf) and the mesh cooker
-// (mesh_cook.cpp: geometry pipeline, quantization, materials, write).
-//
-// The importer resolves everything cgltf-specific into plain arrays in the
-// per-cook arena: naming conventions are applied, node transforms are reduced
-// to part-relative translation/rotation plus a residual matrix to bake into
-// the vertices, and every attribute is expanded to f32.
+// (gltf_import.cpp, the only file that sees cgltf) and the mesh cooker (mesh_cook.cpp).
 #pragma once
 
 #include "kiln/cook/cook.h"
@@ -97,8 +91,8 @@ struct ImportScene {
     Span<ImportMount const> mounts;       ///< traversal order
 };
 
-/// Parse, load buffers, validate and traverse. Everything in `out` lives in
-/// `arena`. Emits K1xxx diagnostics; fails per cook.h.
+/// Parse, load buffers, validate, apply naming conventions and traverse. Everything
+/// in `out` is plain data in `arena`. Emits K1xxx diagnostics; fails per cook.h.
 Status import_gltf(MeshSource const& src, MeshCookSettings const& settings, Arena& arena,
                    Allocator const* alloc, DiagSink const* diag, ImportScene& out) noexcept;
 

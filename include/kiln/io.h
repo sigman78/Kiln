@@ -1,7 +1,5 @@
-// kiln/io.h — IO backend and job system interfaces (docs/design/threading-and-io.md).
-// Both are structs of function pointers plus a user pointer; kiln ships a
-// compatibility file backend (C/POSIX, blocking reads run on workers) and a small
-// built-in thread pool as defaults.
+// kiln/io.h — IO backend and job system interfaces, with built-in defaults (compat
+// file backend, small thread pool). See docs/design/threading-and-io.md.
 #pragma once
 
 #include "kiln/alloc.h"
@@ -10,12 +8,8 @@
 
 namespace kiln {
 
-// ---------------------------------------------------------------------------
-// Jobs
-// ---------------------------------------------------------------------------
-
-/// Submit work to be run on some worker thread. Callbacks never touch host state:
-/// completion is delivered through pump() only. `wait_idle` is optional.
+/// Runs jobs on worker threads. Jobs never touch host state; completion reaches the
+/// host only through pump(). `wait_idle` is optional.
 struct JobSystem {
     void (*submit)(void* user, void (*fn)(void* arg), void* arg) = nullptr;
     void (*wait_idle)(void* user)                                = nullptr;
@@ -33,20 +27,14 @@ struct ThreadPoolDesc {
 KILN_API void destroy_thread_pool(JobSystem const& jobs) noexcept;
 [[nodiscard]] KILN_API u32 thread_pool_thread_count(JobSystem const& jobs) noexcept;
 
-// ---------------------------------------------------------------------------
-// IO
-// ---------------------------------------------------------------------------
-
 struct IoFile {
     u64 bits = 0; ///< backend-defined; 0 = invalid
     [[nodiscard]] constexpr bool valid() const noexcept { return bits != 0; }
 };
 
-/// Range-based reads into caller memory. `read_range` is blocking in v0.5 and is
-/// called from worker threads, possibly concurrently for the same file, so it must
-/// be positional (pread / ReadFile with an offset), never seek-then-read on shared
-/// state. A true async backend (io_uring, IoRing, overlapped) will add a completion
-/// token and a poll (v0.9); the range-based contract stays.
+/// Range-based reads into caller memory. `read_range` blocks, runs on worker threads
+/// and may run concurrently for one file, so it must read positionally (pread /
+/// ReadFile with an offset), never seek-then-read on shared state.
 struct IoBackend {
     Status (*open)(void* user, StrView path, IoFile* out)                       = nullptr;
     Status (*size)(void* user, IoFile f, u64* out)                              = nullptr;
@@ -58,7 +46,7 @@ struct IoBackend {
 /// The built-in compatibility backend (thread-safe, positional reads, UTF-8 paths).
 [[nodiscard]] KILN_API IoBackend const* compat_io_backend() noexcept;
 
-/// Convenience: read a whole file through a backend into `out` (Tag::Io).
+/// Reads a whole file through `io` into `out` (Tag::Io).
 KILN_API Status io_read_file(IoBackend const* io, StrView path, Allocator const* alloc,
                              Vec<u8>* out) noexcept;
 

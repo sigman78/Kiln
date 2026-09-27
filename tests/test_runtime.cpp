@@ -1,10 +1,6 @@
-// Runtime (kiln/assets.h) through the null adapter: create/destroy and placeholders,
-// mesh and texture loads from the golden store, groups and wait(), failures (store
-// miss, corrupt file), Busy back-pressure, the upload budget, the cook provider,
-// in-memory registration, release while loading, and steady-state allocation.
-// Golden-based tests use tests/golden as the store (`--golden <dir>`) and skip
-// without it. The RuntimePanic.* cases abort on purpose and only run when selected
-// by their exact name (separate CTest entries).
+// tests/test_runtime.cpp — runtime (kiln/assets.h) through the null adapter.
+// Golden-based tests use tests/golden as the store (`--golden <dir>`) and skip without it.
+// RuntimePanic.* cases abort on purpose; they run only when selected by exact name (own CTest entries).
 #include "kiln_test.h"
 
 #include "ktx2_corpus.h" // corpus::read_file
@@ -40,10 +36,7 @@ char const* const kGoldenMeshes[] = {
 };
 char const* const kGoldenTextures[] = {"ktx2/color_srgb", "ktx2/height16", "ktx2/normal"};
 
-// ---------------------------------------------------------------------------
-// Diagnostics collector (pump thread only)
-// ---------------------------------------------------------------------------
-
+// Diagnostics collector (pump thread only).
 struct DiagLog {
     u32 codes[64]  = {};
     u32 count      = 0;
@@ -62,10 +55,7 @@ struct DiagLog {
     [[nodiscard]] DiagSink sink() { return {&fn, this}; }
 };
 
-// ---------------------------------------------------------------------------
-// Fixture: null adapter + context
-// ---------------------------------------------------------------------------
-
+// Fixture: null adapter + context.
 struct Rt {
     NullAdapter* na = nullptr;
     Adapter adapter;
@@ -156,10 +146,6 @@ void exit_on_panic(void*, char const* file, int line, char const* msg) {
 
 } // namespace
 
-// ---------------------------------------------------------------------------
-// Paths and ids
-// ---------------------------------------------------------------------------
-
 KILN_TEST(Runtime, AssetIdNormalization) {
     KILN_CHECK_EQ(asset_id("mesh/cube_basic"), "mesh/cube_basic"_h);
     KILN_CHECK_EQ(asset_id("mesh/cube_basic.mesh"), "mesh/cube_basic"_h);
@@ -168,10 +154,6 @@ KILN_TEST(Runtime, AssetIdNormalization) {
     KILN_CHECK_EQ(asset_id("a.b/c"), "a.b/c"_h);
     KILN_CHECK_EQ(asset_id("dir/.hidden"), "dir/.hidden"_h);
 }
-
-// ---------------------------------------------------------------------------
-// Create / destroy / placeholders
-// ---------------------------------------------------------------------------
 
 KILN_TEST(Runtime, CreateDestroyPlaceholders) {
     for (bool dev : {true, false}) {
@@ -256,10 +238,6 @@ KILN_TEST(Runtime, HostPlaceholderOverride) {
     null_adapter_destroy(na2);
 }
 
-// ---------------------------------------------------------------------------
-// Mesh load
-// ---------------------------------------------------------------------------
-
 KILN_TEST(Runtime, LoadMesh) {
     if (!test::golden_dir()) return;
     Rt rt;
@@ -320,10 +298,7 @@ KILN_TEST(Runtime, LoadMesh) {
     release(rt.ctx, m3);
 }
 
-// ---------------------------------------------------------------------------
-// Texture load (tight rows and 256-byte row pitch)
-// ---------------------------------------------------------------------------
-
+// Tight rows and a 256-byte row pitch.
 KILN_TEST(Runtime, LoadTexture) {
     if (!test::golden_dir()) return;
     for (u64 pitchAlign : {u64(1), u64(256)}) {
@@ -380,10 +355,6 @@ KILN_TEST(Runtime, LoadTexture) {
         release(rt.ctx, t);
     }
 }
-
-// ---------------------------------------------------------------------------
-// Whole golden folder through a group
-// ---------------------------------------------------------------------------
 
 KILN_TEST(Runtime, GoldenFolderGroupWait) {
     if (!test::golden_dir()) return;
@@ -464,10 +435,6 @@ KILN_TEST(Runtime, WaitTimeoutAndMixedGroup) {
     release(rt.ctx, miss);
 }
 
-// ---------------------------------------------------------------------------
-// Failures
-// ---------------------------------------------------------------------------
-
 KILN_TEST(Runtime, MissingAssetFails) {
     for (bool dev : {true, false}) {
         Rt rt;
@@ -542,10 +509,6 @@ KILN_TEST(Runtime, AdapterRejectFails) {
     release(rt2.ctx, m);
 }
 
-// ---------------------------------------------------------------------------
-// Back-pressure and budgets
-// ---------------------------------------------------------------------------
-
 KILN_TEST(Runtime, BusyBackPressure) {
     if (!test::golden_dir()) return;
     Rt rt;
@@ -613,10 +576,6 @@ KILN_TEST(Runtime, UploadBudget) {
         release(rt.ctx, m);
 }
 
-// ---------------------------------------------------------------------------
-// Cook provider
-// ---------------------------------------------------------------------------
-
 struct FakeProvider {
     std::atomic<u32> calls{0};
     Vec<u8> bytes{default_allocator(), Tag::Test};
@@ -661,10 +620,6 @@ KILN_TEST(Runtime, CookProviderOnMiss) {
     release(rt.ctx, hit);
 }
 
-// ---------------------------------------------------------------------------
-// In-memory registration
-// ---------------------------------------------------------------------------
-
 KILN_TEST(Runtime, RegisterInMemory) {
     if (!test::golden_dir()) return;
     Vec<u8> meshBytes(default_allocator(), Tag::Test), texBytes(default_allocator(), Tag::Test);
@@ -705,10 +660,7 @@ KILN_TEST(Runtime, RegisterInMemory) {
     KILN_CHECK(find_mesh(rt.ctx, asset_id("gen/mesh")).is_null());
 }
 
-// ---------------------------------------------------------------------------
-// Release while loading (zombie slots), registry reuse
-// ---------------------------------------------------------------------------
-
+// Zombie slots, then registry reuse.
 KILN_TEST(Runtime, ReleaseWhileLoading) {
     if (!test::golden_dir()) return;
     Rt rt;
@@ -782,10 +734,7 @@ KILN_TEST(Runtime, BindlessPublish) {
     KILN_CHECK(null_adapter_slot(rt.na, acquired.slot).is_null()); // publish(id, null) at unload
 }
 
-// ---------------------------------------------------------------------------
-// Steady state: no allocation in pump() or the queries
-// ---------------------------------------------------------------------------
-
+// No allocation in pump() or the queries.
 KILN_TEST(Runtime, SteadyStateNoAllocation) {
     if (!test::golden_dir()) return;
     Rt rt;
@@ -832,10 +781,6 @@ KILN_TEST(Runtime, SteadyStateNoAllocation) {
         release(rt.ctx, m);
     release(rt.ctx, t);
 }
-
-// ---------------------------------------------------------------------------
-// wait() misuse: panics (run only as dedicated CTest entries)
-// ---------------------------------------------------------------------------
 
 KILN_TEST(RuntimePanic, WaitOffThread) {
     if (!test::selected_exactly("RuntimePanic.WaitOffThread")) return;

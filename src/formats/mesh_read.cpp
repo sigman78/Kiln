@@ -1,14 +1,9 @@
-// .mesh reader: MeshView::open (parse + validate), payload decode loop, tools checks.
-// Spec: docs/mesh-format-spec.md v0.3.
+// .mesh reader: MeshView::open, payload decode and tools checks (docs/mesh-format-spec.md v0.3).
 #include "kiln/mesh.h"
 
 #include "kiln/log.h"
 
 namespace kiln::mesh {
-
-// ---------------------------------------------------------------------------
-// Enum names
-// ---------------------------------------------------------------------------
 
 char const* semantic_name(Semantic s) noexcept {
     switch (s) {
@@ -122,7 +117,7 @@ Status bind_records(Ctx& ctx, Span<u8 const> bytes, SectionEntry const* sec, cha
     return kOk;
 }
 
-/// Is the string offset inside STRS? (STRS is guaranteed to end with '\0'.)
+/// STRS ends with a NUL, so any in-range offset is a valid C string.
 bool str_ok(Span<u8 const> strs, u32 off) noexcept { return off == kInvalid || off < strs.size; }
 
 /// Sum of the intersection of [a, a+n) with every blob's decoded range.
@@ -363,10 +358,6 @@ Status validate_full(Ctx& ctx, MeshView const& v) noexcept {
 
 } // namespace
 
-// ---------------------------------------------------------------------------
-// MeshView
-// ---------------------------------------------------------------------------
-
 Result<MeshView> MeshView::open(Span<u8 const> bytes, OpenOptions const& opt, DiagSink const* diag,
                                 StrView assetName) noexcept {
     Ctx ctx{diag, assetName};
@@ -501,10 +492,6 @@ u64 MeshView::stream_bytes(MeshLod const& lod, u32 s) const noexcept {
     if (s >= lay.streamCount) return 0;
     return u64(lod.vertexCount) * lay.strides[s];
 }
-
-// ---------------------------------------------------------------------------
-// Decode
-// ---------------------------------------------------------------------------
 
 Status decode_blob(PayloadBlob const& blob, Span<u8 const> encoded, Span<u8> dst, DecodeOptions const& opt,
                    DiagSink const* diag, Arena* /*scratch*/, StrView assetName) noexcept {

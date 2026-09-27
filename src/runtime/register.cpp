@@ -1,6 +1,5 @@
-// kiln runtime — in-memory registration (register_mesh / register_texture): copy and
-// validate complete cooked bytes, then load them through the normal pipeline with a
-// memory source. Pump thread only.
+// register.cpp — register_mesh / register_texture: copy and validate cooked bytes, then
+// load them through the normal pipeline as a memory source. Pump thread only.
 #include "runtime_internal.h"
 
 namespace kiln {

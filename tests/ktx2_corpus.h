@@ -1,6 +1,5 @@
-// Shared helpers for the KTX2 corpus tests (test_ktx2_corpus.cpp, test_ktx2_corpus_rt.cpp):
-// load a whole file with C stdio and parse tests/corpus/ktx2/manifest.txt. Reader-side
-// only; no kiln/cook/ includes. No iostreams: a hand-rolled parser over a Vec<char>.
+// tests/ktx2_corpus.h — KTX2 corpus test helpers: read a file, parse tests/corpus/ktx2/manifest.txt.
+// Reader-side only: no kiln/cook/ includes.
 #pragma once
 
 #include "kiln_test.h"
@@ -69,7 +68,7 @@ inline Format format_by_name(StrView name) noexcept {
     return Format::Undefined;
 }
 
-/// Call fn(user, item) for each comma-separated item of `list` (empty items skipped).
+/// Call fn(item) for each comma-separated item of `list` (empty items skipped).
 template <class Fn> void for_each_item(StrView list, Fn&& fn) noexcept {
     usize pos = 0;
     while (pos < list.size) {

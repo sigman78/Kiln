@@ -114,7 +114,6 @@ if(KILN_BUILD_COOK)
         include/kiln/cook/settings.h
         src/cook/settings.cpp
         include/kiln/cook/cook.h
-        src/cook/cook.cpp
         src/cook/store.cpp
         include/kiln/cook/image.h
         src/cook/image.cpp
