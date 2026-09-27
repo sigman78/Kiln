@@ -116,6 +116,7 @@ Repeated from HANDOFF §8, plus kiln-specific header rules.
   by one kiln `.cpp` file that exposes kiln types (`Result<T>`, `Span`, kiln structs).
 - **Exceptions:** if a dependency can throw, catch only in that wrapping `.cpp` and convert to
   `Status` (see `error-model.md`). None of the proposed v0.5 dependencies throw.
+- **Allocation, observed in M2:** cgltf and wuffs are routed to kiln's `Allocator` (per-cook arena / Tag::Cook). meshoptimizer allocates temporaries through global `new` (its `meshopt_setAllocator` is process-global, so kiln leaves it alone) and MikkTSpace uses `malloc`; neither can be redirected without patching the library. Both are cook-side only, so the runtime allocation discipline is unaffected; tag statistics for cooking under-report by these temporaries.
 - **Allocation:** where a dependency accepts allocator callbacks (cgltf, wuffs work buffers,
   meshoptimizer `meshopt_setAllocator`), route them to kiln's `Allocator` with `Tag::Cook`.
 - **Runtime stays lean.** A dependency in `kiln_runtime` needs an explicit reason in this note.

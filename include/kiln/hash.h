@@ -71,7 +71,7 @@ inline constexpr u64 kXxhP4 = 0x85EBCA77C2B2AE63ull;
 inline constexpr u64 kXxhP5 = 0x27D4EB2F165667C5ull;
 
 [[nodiscard]] constexpr u64 xxh_read64(u8 const* p) noexcept {
-    if (std::is_constant_evaluated()) {
+    if consteval {
         u64 v = 0;
         for (int i = 0; i < 8; ++i)
             v |= u64(p[i]) << (8 * i);
@@ -82,7 +82,7 @@ inline constexpr u64 kXxhP5 = 0x27D4EB2F165667C5ull;
     return v;
 }
 [[nodiscard]] constexpr u32 xxh_read32(u8 const* p) noexcept {
-    if (std::is_constant_evaluated()) {
+    if consteval {
         u32 v = 0;
         for (int i = 0; i < 4; ++i)
             v |= u32(p[i]) << (8 * i);
@@ -293,9 +293,9 @@ template <class T> [[nodiscard]] constexpr u64 hash_of(T* p) noexcept {
 [[nodiscard]] constexpr u64 hash_of(StrView s) noexcept { return fnv1a64(s); }
 template <class Tag> [[nodiscard]] constexpr u64 hash_of(Handle<Tag> h) noexcept { return mix64(h.bits()); }
 template <class E>
-    requires std::is_enum_v<E>
+    requires std::is_scoped_enum_v<E>
 [[nodiscard]] constexpr u64 hash_of(E e) noexcept {
-    return mix64(u64(static_cast<std::underlying_type_t<E>>(e)));
+    return mix64(u64(std::to_underlying(e)));
 }
 
 /// Default hasher used by HashMap: dispatches to hash_of(key) via ADL.

@@ -65,9 +65,9 @@ inline usize to_str(char* buf, usize cap, long v) noexcept { return to_str(buf, 
 inline usize to_str(char* buf, usize cap, unsigned long v) noexcept { return to_str(buf, cap, u64(v)); }
 #endif
 template <class E>
-    requires std::is_enum_v<E>
+    requires std::is_scoped_enum_v<E>
 usize to_str(char* buf, usize cap, E v) noexcept {
-    return to_str(buf, cap, i64(static_cast<std::underlying_type_t<E>>(v)));
+    return to_str(buf, cap, i64(std::to_underlying(v)));
 }
 template <class T> usize to_str(char* buf, usize cap, T* v) noexcept {
     return to_str(buf, cap, static_cast<void const*>(v));

@@ -139,6 +139,32 @@ public:
         return ok() ? std::move(ref()) : std::move(fallback);
     }
 
+    // -- monadic composition (std::expected-style; F is called by value, no heap) --
+
+    /// f(T) -> Result<U>. On failure the Status is forwarded unchanged.
+    template <class F> [[nodiscard]] auto and_then(F&& f) && -> std::invoke_result_t<F, T&&> {
+        using R = std::invoke_result_t<F, T&&>;
+        return ok() ? f(std::move(ref())) : R(status_);
+    }
+    template <class F> [[nodiscard]] auto and_then(F&& f) const& -> std::invoke_result_t<F, T const&> {
+        using R = std::invoke_result_t<F, T const&>;
+        return ok() ? f(ref()) : R(status_);
+    }
+    /// f(T) -> U, wrapped into Result<U>. On failure the Status is forwarded unchanged.
+    template <class F> [[nodiscard]] auto transform(F&& f) && -> Result<std::invoke_result_t<F, T&&>> {
+        using R = Result<std::invoke_result_t<F, T&&>>;
+        return ok() ? R(f(std::move(ref()))) : R(status_);
+    }
+    template <class F>
+    [[nodiscard]] auto transform(F&& f) const& -> Result<std::invoke_result_t<F, T const&>> {
+        using R = Result<std::invoke_result_t<F, T const&>>;
+        return ok() ? R(f(ref())) : R(status_);
+    }
+    /// f(Status) -> Result<T>, called only on failure (recovery / substitution).
+    template <class F> [[nodiscard]] Result or_else(F&& f) && {
+        return ok() ? std::move(*this) : Result(f(status_));
+    }
+
 private:
     T& ref() noexcept { return *std::launder(reinterpret_cast<T*>(storage_)); }
     T const& ref() const noexcept { return *std::launder(reinterpret_cast<T const*>(storage_)); }
@@ -163,6 +189,17 @@ public:
     [[nodiscard]] constexpr bool failed() const noexcept { return status_.failed(); }
     [[nodiscard]] constexpr Status status() const noexcept { return status_; }
     [[nodiscard]] constexpr Code code() const noexcept { return status_.code; }
+
+    /// f() -> Result<U>; the Status is forwarded on failure.
+    template <class F> [[nodiscard]] auto and_then(F&& f) const -> std::invoke_result_t<F> {
+        using R = std::invoke_result_t<F>;
+        return ok() ? f() : R(status_);
+    }
+    /// f() -> U, wrapped into Result<U>.
+    template <class F> [[nodiscard]] auto transform(F&& f) const -> Result<std::invoke_result_t<F>> {
+        using R = Result<std::invoke_result_t<F>>;
+        return ok() ? R(f()) : R(status_);
+    }
 
 private:
     Status status_{};

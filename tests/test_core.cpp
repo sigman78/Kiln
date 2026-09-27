@@ -300,3 +300,22 @@ KILN_TEST(Core, Countof) {
 }
 
 } // namespace
+
+// ---------------------------------------------------------------------------
+// C++23 idioms: KILN_ASSUME compiles and does not evaluate; uz literals
+// ---------------------------------------------------------------------------
+
+KILN_TEST(Core, AssumeAndSizeLiterals) {
+    int calls = 0;
+    auto side = [&] {
+        ++calls;
+        return true;
+    };
+    int x = 5;
+    KILN_ASSUME(x > 0);
+    (void)side; // KILN_ASSUME must never evaluate its argument at runtime; keep `side` out of it.
+    KILN_CHECK_EQ(calls, 0);
+    Span<int const> none;
+    KILN_CHECK_EQ(none.size, 0uz);
+    KILN_CHECK_EQ(sizeof(u32), 4uz);
+}

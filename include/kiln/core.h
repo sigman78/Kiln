@@ -37,13 +37,33 @@
 #if defined(KILN_COMPILER_MSVC)
 #define KILN_FORCEINLINE __forceinline
 #define KILN_NOINLINE __declspec(noinline)
-#define KILN_UNREACHABLE() __assume(0)
 #define KILN_DEBUGBREAK() __debugbreak()
 #else
 #define KILN_FORCEINLINE inline __attribute__((always_inline))
 #define KILN_NOINLINE __attribute__((noinline))
-#define KILN_UNREACHABLE() __builtin_unreachable()
 #define KILN_DEBUGBREAK() __builtin_trap()
+#endif
+
+// Unreachable code: use std::unreachable() (C++23, <utility>).
+
+// Optimizer hint that `cond` holds. Never evaluates `cond` at runtime; a false
+// condition is undefined behavior, so pair hot-path uses with a KILN_ASSERT.
+#if defined(__has_cpp_attribute)
+#if __has_cpp_attribute(assume) >= 202207L
+#define KILN_ASSUME(cond) [[assume(cond)]]
+#endif
+#endif
+#if !defined(KILN_ASSUME)
+#if defined(KILN_COMPILER_MSVC)
+#define KILN_ASSUME(cond) __assume(cond)
+#elif defined(KILN_COMPILER_CLANG)
+#define KILN_ASSUME(cond) __builtin_assume(cond)
+#else
+#define KILN_ASSUME(cond)                                                                                    \
+    do {                                                                                                     \
+        if (!(cond)) __builtin_unreachable();                                                                \
+    } while (0)
+#endif
 #endif
 
 #if defined(KILN_COMPILER_MSVC)
