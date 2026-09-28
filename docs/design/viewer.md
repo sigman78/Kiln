@@ -69,7 +69,8 @@ The library never sees a Vulkan header.
   `uploadBytes` budget (`--budget-mib`), so the first frames show placeholders. The viewer logs
   per-frame CPU time and warns on frames over twice the running average.
 - **Offscreen.** `--offscreen --frames N --dump out.png` renders into an image instead of a
-  swapchain, reads it back after the last frame and writes a PNG (the encoder is the test helper
+  swapchain. Frames are paced like a display, `--fps` per second (default 60; `0` runs unpaced
+  for timing CPU work), so a frame count means the same time as in a window. It reads it back after the last frame and writes a PNG (the encoder is the test helper
   `tests/png_writer.h`). This mode never initializes GLFW and runs on a headless machine or a
   software Vulkan driver.
 - **Sky.** `--sky <name>` requests a cube texture (`RequestOptions::textureShape = Cube`), for

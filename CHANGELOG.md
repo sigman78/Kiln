@@ -8,6 +8,9 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
 ## [Unreleased]
 
 ### Added
+- `kiln-viewer --fps <n>` paces offscreen frames like a display (default 60; `0` = unpaced), so a
+  frame count means real time. `kiln-headless --fps <n>` (default 60) replaces `--frame <ms>`
+  (was 16 ms). Migration: `--frame 16` becomes `--fps 60`.
 - `kiln-viewer --sky <name>` draws a cube texture behind the scene (a sky pass with
   `shaders/sky.{vert,frag}`). The example Vulkan adapter now takes cube and array textures: one
   bindless binding per `TextureShape` (2D, cube, array) sharing a slot index, cube-compatible

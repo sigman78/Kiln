@@ -23,6 +23,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <thread>
 
 using namespace kiln;
 using vkx::Mat4;
@@ -103,6 +104,7 @@ struct Options {
     u32 rootCount    = 0;
     char const* dump = nullptr;
     char const* sky  = nullptr; ///< a cube map drawn behind the scene
+    u32 fps          = 60;      ///< offscreen frame rate; 0 = as fast as possible
     bool validate    = false;
     bool offscreen   = false;
     bool noFit       = false;
@@ -600,6 +602,11 @@ int main(int argc, char** argv) {
          .arg  = "<file.png>",
          .help = "offscreen: write the last frame as a PNG",
          .str  = &o.dump},
+        {.name   = "--fps",
+         .arg    = "<n>",
+         .help   = "offscreen: frames per second, like a display (default: 60; 0 = unpaced)",
+         .number = &o.fps,
+         .max    = 1000},
         {.name = "--sky",
          .arg  = "<name>",
          .help = "a cube texture drawn behind the scene, e.g. sky_cube.png (a vertical strip of 6 faces)",
@@ -802,6 +809,7 @@ int main(int argc, char** argv) {
         }
         if (maxFrames && frames >= maxFrames) break;
 
+        Clock::time_point const frameStart = Clock::now();
         vkx::renderer_wait_frame(app.ren);
         Clock::time_point const t0 = Clock::now();
         scene.frame                = frames + 1;
@@ -844,6 +852,9 @@ int main(int argc, char** argv) {
             warmMs += ms;
             ++warmFrames;
         }
+        // A window is paced by presenting; offscreen frames sleep out the rest of their period.
+        if (o.offscreen && o.fps)
+            std::this_thread::sleep_until(frameStart + std::chrono::microseconds(1000000 / o.fps));
     }
     vkx::renderer_wait_idle(app.ren);
 

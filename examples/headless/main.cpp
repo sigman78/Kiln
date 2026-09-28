@@ -235,7 +235,7 @@ struct Options {
     u32 rootCount    = 0;
     double slowMs    = 0;
     double latencyMs = 0;
-    u32 frameMs      = 16;
+    u32 fps          = 60; ///< pumps per second; 0 = as fast as possible
     u32 timeoutS     = 60;
     bool trace       = false;
     bool watch       = false;
@@ -296,10 +296,11 @@ int main(int argc, char** argv) {
          .arg  = "<ms>",
          .help = "artificial delay per read call and per cook (default: 0)",
          .real = &o.latencyMs},
-        {.name   = "--frame",
-         .arg    = "<ms>",
-         .help   = "simulated frame time between pumps (default: 16)",
-         .number = &o.frameMs},
+        {.name   = "--fps",
+         .arg    = "<n>",
+         .help   = "simulated frames per second, one pump each (default: 60; 0 = unpaced)",
+         .number = &o.fps,
+         .max    = 1000},
         {.name   = "--timeout",
          .arg    = "<s>",
          .help   = "give up after this many seconds (default: 60)",
@@ -427,7 +428,7 @@ int main(int argc, char** argv) {
             timedOut = !gs.settled(); // with --watch, the end of the watch is not a timeout
             break;
         }
-        sleep_ms(double(o.frameMs));
+        if (o.fps) sleep_ms(1000.0 / o.fps);
     }
 
     // 7. Summary and teardown. release() is refcounted; destroy() drops whatever is left.
