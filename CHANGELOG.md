@@ -14,6 +14,8 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
   `decode_jpeg`, `decode_webp`, `decode_image` (picks the decoder by signature), `is_jpeg`,
   `is_webp`, `is_lossy_image` and `webp_decode_enabled`. New warning K2009 when a Normal or Height
   texture comes from a lossy source. The cook provider and `kiln-cook` accept the new extensions.
+- `viewer-assets` fetches a sixth CC0 model, DiffuseTransmissionTeacup, whose GLB embeds JPEG base-color
+  textures next to PNG maps; `viewer-demo` shows it.
 - M5 hot reload (`docs/design/hot-reload.md`). Runtime: `request_reload()` reloads a store-backed
   asset while the old version stays servable; success bumps the content version, publishes the new
   object, sends the old one to `destroy_deferred` and emits `Changed` (or `Ready` from `Failed`, which

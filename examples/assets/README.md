@@ -15,7 +15,7 @@ Then cook on the fly and view (the store is created next to the build):
 
 ```sh
 build/win-msvc-debug/examples/viewer/kiln-viewer --source examples/assets/khronos \
-    --store build/demo-store Lantern.mesh WaterBottle.mesh Avocado.mesh SheenChair.mesh BoomBox.mesh
+    --store build/demo-store Lantern.mesh WaterBottle.mesh Avocado.mesh SheenChair.mesh BoomBox.mesh \n    DiffuseTransmissionTeacup.mesh
 ```
 
 | Model | Size | License | What it shows |
@@ -25,8 +25,9 @@ build/win-msvc-debug/examples/viewer/kiln-viewer --source examples/assets/khrono
 | Avocado | 7.7 MiB | CC0-1.0 | organic shape, normal map |
 | SheenChair | 3.9 MiB | CC0-1.0 | material variants and sheen (base color only in the viewer) |
 | BoomBox | 10.1 MiB | CC0-1.0 | dense mesh, emissive panel |
+| DiffuseTransmissionTeacup | 4.6 MiB | CC0-1.0 | embedded JPEG base color next to PNG maps (diffuse transmission ignored in the viewer) |
 
-All five are CC0 1.0 (public domain dedication), pinned to commit
+All six are CC0 1.0 (public domain dedication), pinned to commit
 `7d4ba189827916452eeadc82d4b712dbc6280a6f`. Models with `CC-BY-NC`, vendor test licenses
 (VirtualCity, Sponza) or trademark marks were left out on purpose.
 

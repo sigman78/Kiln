@@ -7,7 +7,7 @@ cmake --preset win-msvc-debug                                    # or any other 
 cmake --build --preset win-msvc-debug --target viewer-demo
 ```
 
-`viewer-demo` downloads five CC0 Khronos models (about 40 MiB, once, into `examples/assets/khronos/`,
+`viewer-demo` downloads six CC0 Khronos models (about 45 MiB, once, into `examples/assets/khronos/`,
 which git ignores), cooks them on the fly into `build/<preset>/demo-store`, and opens `kiln-viewer` on
 them. The models appear as flat placeholders first and get their textures as the uploads land. Left-drag
 orbits, the wheel zooms, Esc quits. It needs a Vulkan 1.4 driver; no SDK.
@@ -29,7 +29,7 @@ Every program prints its options with `--help`. Binaries land in `build/<preset>
 ```sh
 # the demo set by hand (what viewer-demo runs)
 kiln-viewer --source examples/assets/khronos --store build/demo-store \
-    Lantern.mesh WaterBottle.mesh Avocado.mesh SheenChair.mesh BoomBox.mesh
+    Lantern.mesh WaterBottle.mesh Avocado.mesh SheenChair.mesh BoomBox.mesh DiffuseTransmissionTeacup.mesh
 
 # an already cooked store, for example the test goldens
 kiln-viewer --store tests/golden mesh/Box.mesh mesh/BoxTextured.mesh

@@ -103,7 +103,7 @@ All programs print their options with `--help`.
   `kiln-vk-smoke` exercises the adapter alone. Both need a Vulkan 1.4 driver to run.
 
 ```sh
-cmake --build --preset win-msvc-debug --target viewer-demo   # fetches five CC0 Khronos models, cooks, opens the viewer
+cmake --build --preset win-msvc-debug --target viewer-demo   # fetches six CC0 Khronos models, cooks, opens the viewer
 ```
 
 `examples/README.md` has the recipes.
