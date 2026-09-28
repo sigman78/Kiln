@@ -397,6 +397,74 @@ KILN_TEST(Provider, StandaloneTextureUsageFromName) {
     KILN_CHECK_MSG(nf != Format::R8G8B8A8_SRGB, "wall_n.png was cooked as sRGB color");
 }
 
+// A sidecar beats the name rule: `wall_n.png` with `usage = "color"` in `wall_n.png.kiln` is sRGB.
+// A broken sidecar fails the cook instead of being ignored.
+KILN_TEST(Provider, SidecarSetsTextureUsage) {
+    char root[1024], storeDir[1024];
+    scratch_dir("provider_sidecar_src", root, sizeof root);
+    scratch_dir("provider_sidecar_store", storeDir, sizeof storeDir);
+    make_dir(root);
+
+    u8 rgba[4 * 4 * 4];
+    for (usize i = 0; i < sizeof rgba; ++i)
+        rgba[i] = u8(i * 5);
+    char path[1100];
+    for (char const* name : {"wall_n", "broken"}) {
+        format(path, sizeof path, "%s/%s.png", root, name);
+        replace_file(path, test_png(rgba).span());
+    }
+    StrView const color = "usage = \"color\"\n";
+    format(path, sizeof path, "%s/wall_n.png.kiln", root);
+    replace_file(path, Span<u8 const>(reinterpret_cast<u8 const*>(color.data), color.size));
+    StrView const broken = "usage = \"bump\"\n";
+    format(path, sizeof path, "%s/broken.png.kiln", root);
+    replace_file(path, Span<u8 const>(reinterpret_cast<u8 const*>(broken.data), broken.size));
+
+    StrView const roots[] = {StrView(root)};
+    TestContext tc;
+    if (!tc.init(StrView(storeDir), Span<StrView const>(roots, 1))) return;
+    KILN_REQUIRE(cook::install_provider(tc.ctx, cook::ProviderDesc{.storeMode = cook::StoreMode::Disk}).ok());
+
+    TextureHandle const wall = request_texture(tc.ctx, "wall_n");
+    KILN_REQUIRE_EQ(pump_until_settled(tc.ctx, wall), State::Ready);
+    KILN_CHECK(texture_info(tc.ctx, wall).desc.format == Format::R8G8B8A8_SRGB);
+    TextureHandle const bad = request_texture(tc.ctx, "broken");
+    KILN_CHECK_EQ(pump_until_settled(tc.ctx, bad), State::Failed);
+}
+
+// A sidecar is part of its source: adding one re-cooks the texture.
+KILN_TEST(Provider, SourcePollerRecooksOnSidecarChange) {
+    char root[1024], storeDir[1024];
+    scratch_dir("provider_watch_sidecar_src", root, sizeof root);
+    scratch_dir("provider_watch_sidecar_store", storeDir, sizeof storeDir);
+    make_dir(root);
+
+    u8 rgba[4 * 4 * 4];
+    for (usize i = 0; i < sizeof rgba; ++i)
+        rgba[i] = u8(i * 3);
+    char srcPath[1100], sidecar[1100], storeFile[1100];
+    format(srcPath, sizeof srcPath, "%s/tex.png", root);
+    format(sidecar, sizeof sidecar, "%s/tex.png.kiln", root);
+    format(storeFile, sizeof storeFile, "%s/tex.ktx2", storeDir);
+    replace_file(srcPath, test_png(rgba).span());
+
+    StrView const roots[] = {StrView(root)};
+    TestContext tc;
+    if (!tc.init(StrView(storeDir), Span<StrView const>(roots, 1))) return;
+    KILN_REQUIRE(cook::install_provider(tc.ctx, kWatchDesc).ok());
+    TextureHandle const tex = request_texture(tc.ctx, "tex");
+    KILN_REQUIRE_EQ(pump_until_settled(tc.ctx, tex), State::Ready);
+    Vec<u8> before(default_allocator(), Tag::Test);
+    KILN_REQUIRE(read_file(storeFile, before));
+
+    StrView const noMips = "genMips = false\n";
+    replace_file(sidecar, Span<u8 const>(reinterpret_cast<u8 const*>(noMips.data), noMips.size));
+    Vec<u8> after(default_allocator(), Tag::Test);
+    bool const changed = wait_for_change(storeFile, before, after);
+    cook::uninstall_provider(tc.ctx);
+    KILN_CHECK_MSG(changed, "adding %s did not re-cook %s", sidecar, storeFile);
+}
+
 // The source poller re-cooks a PNG whose file changed and overwrites its store file. This
 // checks the store only; the runtime reloading from it is the runtime's own test.
 KILN_TEST(Provider, SourcePollerRecooksPng) {

@@ -15,6 +15,7 @@
 
 #include "kiln/cook/cook.h"
 #include "kiln/cook/image.h"
+#include "kiln/cook/sidecar.h"
 #include "kiln/io.h"
 #include "kiln/log.h"
 
@@ -43,6 +44,13 @@ constexpr usize kMaxSources = 4096;
 constexpr usize kRecordStringBytes = kMaxSources * 96;
 constexpr usize kSourceLockStripes = 64;
 
+/// A source file and its `.kiln` sidecar, which is part of the source: editing, adding or
+/// removing it re-cooks. A missing sidecar reads as zeros.
+struct SourceStat {
+    IoStat file;
+    IoStat sidecar;
+};
+
 /// One source file that produced store files. Paths are offsets into Provider::strings.
 struct SourceRecord {
     u32 pathOff = 0, pathLen = 0;     ///< the source file, as find_source() built it
@@ -50,8 +58,8 @@ struct SourceRecord {
                                       ///< when a texture request created the record), the
                                       ///< texture for a png/ktx2 of its own
     AssetKind kind = AssetKind::Mesh; ///< Mesh: cook_mesh_full; Texture: cook_texture_own_source
-    IoStat stat;                      ///< the source as last cooked successfully
-    IoStat failedStat;                ///< the source version whose re-cook last failed
+    SourceStat stat;                  ///< the source as last cooked successfully
+    SourceStat failedStat;            ///< the source version whose re-cook last failed
     bool failed      = false;
     bool retryFailed = false; ///< that failure was IO (source read, store write): retry every round
 };
@@ -195,6 +203,25 @@ bool find_source(Provider const& p, StrView assetPath, Span<char const* const> e
 
 constexpr char const* kMeshExts[] = {"glb", "gltf"};
 
+void sidecar_path(StrView sourcePath, char (&buf)[1100], StrView& out) noexcept {
+    out = StrView(buf, format(buf, sizeof buf, "%.*s%.*s", KILN_SV(sourcePath), KILN_SV(kSidecarExt)));
+}
+
+/// Applies `<sourcePath>.kiln` to `*s` when it exists; `*found` says whether it did.
+template <class Settings>
+Status read_sidecar(StrView sourcePath, Settings* s, Allocator const* alloc, DiagSink const* diag,
+                    bool* found = nullptr) noexcept {
+    char buf[1100];
+    StrView path;
+    sidecar_path(sourcePath, buf, path);
+    bool const exists = io_file_exists(path);
+    if (found) *found = exists;
+    if (!exists) return kOk;
+    Vec<u8> bytes(alloc, Tag::Cook);
+    KILN_TRY(io_read_file(compat_io_backend(), path, alloc, &bytes));
+    return apply_sidecar(StrView(reinterpret_cast<char const*>(bytes.data()), bytes.size()), s, diag, path);
+}
+
 // Mesh URI resolver: external buffers/images relative to the source file.
 
 struct UriResolverCtx {
@@ -220,6 +247,7 @@ Status cook_texture_own_source(Provider const& p, StrView sourcePath, StrView as
     if (overrides.usage == TextureUsage::Auto)
         overrides.usage =
             usage_from_name(sourcePath, Span<NameRule const>(p.nameRules.data(), p.nameRules.size()));
+    KILN_TRY(read_sidecar(sourcePath, &overrides, alloc, diag));
     Result<TextureCookSettings> rs =
         resolve_texture(overrides, SlotHint::None, p.desc.target, p.session, diag, assetPath);
     if (rs.failed()) return rs.status();
@@ -265,8 +293,20 @@ Status cook_mesh_full(Provider const& p, StrView meshAssetPath, StrView sourcePa
     src.sourcePath = sourcePath;
     src.resolver   = {&resolve_uri_fn, &uctx};
 
+    // Without a sidecar the settings resolved at install apply.
+    MeshCookSettings settings    = p.resolvedMesh;
+    MeshCookSettings withSidecar = p.desc.mesh;
+    bool hasSidecar              = false;
+    KILN_TRY(read_sidecar(sourcePath, &withSidecar, alloc, diag, &hasSidecar));
+    if (hasSidecar) {
+        Result<MeshCookSettings> rm =
+            resolve_mesh(withSidecar, p.desc.target, p.session, diag, meshAssetPath);
+        if (rm.failed()) return rm.status();
+        settings = rm.value();
+    }
+
     Result<CookedMesh> r =
-        cook_mesh(src, p.resolvedMesh, p.desc.target, {.alloc = alloc, .diag = diag, .jobs = p.jobs});
+        cook_mesh(src, settings, p.desc.target, {.alloc = alloc, .diag = diag, .jobs = p.jobs});
     if (r.failed()) return r.status();
 
     if (p.desc.storeMode == StoreMode::Disk) {
@@ -338,9 +378,9 @@ Status cook_mesh_full(Provider const& p, StrView meshAssetPath, StrView sourcePa
 // Source records
 // ---------------------------------------------------------------------------
 
-/// Size and modification time of a source. Uses the compat backend's `stat` when it has
+/// Size and modification time of a file. Uses the compat backend's `stat` when it has
 /// one, else the same platform calls locally, so every stat in a process uses one clock.
-Status stat_source(StrView path, IoStat* out) noexcept {
+Status stat_file(StrView path, IoStat* out) noexcept {
     IoBackend const* io = compat_io_backend();
     if (io && io->stat) return io->stat(io->user, path, out);
 
@@ -377,8 +417,21 @@ Status stat_source(StrView path, IoStat* out) noexcept {
     return kOk;
 }
 
+/// Fails only if the source itself cannot be stat'ed.
+Status stat_source(StrView path, SourceStat* out) noexcept {
+    KILN_TRY(stat_file(path, &out->file));
+    char buf[1100];
+    StrView side;
+    sidecar_path(path, buf, side);
+    if (stat_file(side, &out->sidecar).failed()) out->sidecar = {};
+    return kOk;
+}
+
 bool same_stat(IoStat const& a, IoStat const& b) noexcept {
     return a.size == b.size && a.mtimeNs == b.mtimeNs;
+}
+bool same_stat(SourceStat const& a, SourceStat const& b) noexcept {
+    return same_stat(a.file, b.file) && same_stat(a.sidecar, b.sidecar);
 }
 
 std::mutex& source_lock(Provider& p, StrView sourcePath) noexcept {
@@ -429,7 +482,7 @@ void set_emitted(Provider& p, u32 idx, Vec<char> const& list, bool replace) noex
 /// before the cook read it. A source already recorded (a texture of a glb whose mesh was
 /// cooked before) joins its record; the stat stays, since this cook left existing store
 /// files untouched.
-void record_source(Provider& p, StrView sourcePath, IoStat const& st, AssetKind kind, StrView assetPath,
+void record_source(Provider& p, StrView sourcePath, SourceStat const& st, AssetKind kind, StrView assetPath,
                    Vec<char> const* emittedTextures) noexcept {
     std::lock_guard<std::mutex> const lock(p.recordMutex);
     for (usize i = 0; i < p.records.size(); ++i) {
@@ -474,7 +527,7 @@ Status cook_mesh_on_miss(Provider& p, StrView meshAssetPath, StrView sourcePath,
 
     // Stat before the cook reads the source, so an edit during the cook is seen later.
     bool const disk = p.desc.storeMode == StoreMode::Disk;
-    IoStat st{};
+    SourceStat st{};
     bool const haveStat = disk && stat_source(sourcePath, &st).ok();
     MeshEmit emit;
     emit.textures.init(alloc, Tag::Cook);
@@ -488,7 +541,7 @@ Status cook_texture_on_miss(Provider& p, StrView sourcePath, StrView assetPath, 
                             Vec<u8>* out, DiagSink const* diag) noexcept {
     std::unique_lock<std::mutex> const lock = lock_source_if_watching(p, sourcePath);
 
-    IoStat st{};
+    SourceStat st{};
     bool const haveStat = p.desc.storeMode == StoreMode::Disk && stat_source(sourcePath, &st).ok();
     Status const s      = cook_texture_own_source(p, sourcePath, assetPath, false, alloc, out, diag);
     if (s.ok() && haveStat) record_source(p, sourcePath, st, AssetKind::Texture, assetPath, nullptr);
@@ -544,7 +597,7 @@ struct LogDiag {
 /// Re-cooks one changed source into the store, overwriting, and updates record `idx`.
 /// `rec` and `strings` are the poller's snapshot of the record table.
 void recook_source(Provider& p, u32 idx, SourceRecord const& rec, Vec<char> const& strings,
-                   IoStat const& now) noexcept {
+                   SourceStat const& now) noexcept {
     StrView const sourcePath = pool_view(strings, rec.pathOff, rec.pathLen);
     StrView const assetPath  = pool_view(strings, rec.assetOff, rec.assetLen);
 
@@ -609,7 +662,7 @@ void poller_main(Provider* p) noexcept {
         for (usize i = 0; i < snap.size(); ++i) {
             if (p->stopping.load()) return;
             SourceRecord const& rec = snap[i];
-            IoStat now{};
+            SourceStat now{};
             // Missing (an editor mid-save) or unreadable: look again next round.
             if (stat_source(pool_view(snapStrings, rec.pathOff, rec.pathLen), &now).failed()) continue;
             if (same_stat(now, rec.stat)) continue;

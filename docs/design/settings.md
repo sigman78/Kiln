@@ -77,7 +77,7 @@ Weakest to strongest:
 | 3 | project presets (named intents) | reserved (v0.6) |
 | 4 | target encodings per preset | reserved (v0.6, v0.9 for mobile) |
 | 5 | path rules (glob to preset/overrides) | **name rules only**: a file-stem suffix gives the usage of a standalone texture (`NameRule`, `kDefaultNameRules`, `ProviderDesc::nameRules`); globs and presets v0.6 |
-| 6 | per-asset sidecar (`*.kiln`) | reserved (v0.6) |
+| 6 | per-asset sidecar (`<source>.kiln`) | **yes** (see "Sidecar files"; applied after layer 7) |
 | 7 | session overrides: structs passed by the host, `CookSession`, CLI flags | **yes** |
 | - | `kiln-cook --explain` (which layer set each field) | reserved (v0.6) |
 
@@ -98,6 +98,50 @@ and a K1017 warning.
 `resolve_texture(overrides, SlotHint, TargetProfile, CookSession, diag, asset)` and
 `resolve_mesh(overrides, TargetProfile, CookSession, diag, asset)` are pure functions. After
 resolution no field is `Auto`. The cook functions receive resolved structs only.
+
+### Sidecar files
+
+A sidecar is `<source file name>.kiln` next to its source, e.g. `wall_n.png.kiln` or
+`chair.glb.kiln`. It is part of the source: the provider's source poller re-cooks when a sidecar is
+added, edited or removed. `apply_sidecar()` (`kiln/cook/sidecar.h`) applies one to a settings
+struct; the provider and `kiln-cook` call it for standalone textures and for meshes. Embedded
+images have no sidecar of their own.
+
+**Syntax: a strict subset of TOML**, parsed by kiln (`src/cook/toml_subset.cpp`, no dependency).
+Every accepted file is valid TOML.
+
+- `key = value` lines, bare keys (`A-Z a-z 0-9 _ -`), `#` comments, blank lines, LF or CRLF, an
+  optional UTF-8 BOM.
+- Values: basic strings `"…"` (escapes `\b \t \n \f \r \" \\ \uXXXX \UXXXXXXXX`), literal
+  strings `'…'`, decimal integers, floats with a fraction and/or exponent, `true`, `false`.
+- `[a]` and `[a.b]` table headers are parsed; no key uses them yet, so a key inside a table is a
+  K3006 error.
+- Not supported (K3005): dotted and quoted keys, arrays, inline tables, arrays of tables,
+  multi-line strings, dates and times, hex/octal/binary, underscores in numbers, `inf`, `nan`.
+- A key or table defined twice is K3005, as in TOML.
+
+**Keys are the struct field names.** An unknown key, a value of the wrong type, an unknown enum
+name or an out-of-range number is K3006. An integer is accepted where a float is expected.
+
+| Texture key | Value |
+|---|---|
+| `usage` | `"auto"`, `"color"`, `"normal"`, `"orm"`, `"mask"`, `"hdr"`, `"ui"`, `"lut"`, `"height"` |
+| `colorSpace` | `"auto"`, `"srgb"`, `"linear"` |
+| `genMips`, `normalRenormalize`, `flipGreen` | boolean |
+| `maxSize` | integer, 0 to 2^32 - 1 |
+
+| Mesh key | Value |
+|---|---|
+| `profile` | `"default"`, `"precise"` |
+| `genTangents`, `optimize`, `useAuthoredLods` | boolean |
+| `posTolMm`, `weldTol` | number |
+
+Reserved fields (compression, `genLods`, …) are not sidecar keys yet.
+
+**Order as implemented:** built-in defaults, then slot inference or name rules, then the session
+struct, then the sidecar. A sidecar key therefore beats a session value, the reverse of the layer
+table above: the session struct cannot tell "unset" from a default, so applying it last would
+undo every sidecar bool and number. See open points.
 
 ### Validation
 
@@ -173,5 +217,6 @@ type checking, allocates), and `optional<T>` per field (heavy; `Auto` covers v0.
   channel layout and mips for now.
 - Confirm the inference table (`emissiveTexture` as sRGB color).
 - How overrides express "unset" for bools and numbers in v0.6 (set mask vs parallel overrides
-  struct).
+  struct). Until then sidecars apply after the session struct (see "Sidecar files"): confirm, or
+  decide that session values must win over sidecars.
 - Confirm the Compression group fields are declared in v0.5 with only `None` / 0 accepted.

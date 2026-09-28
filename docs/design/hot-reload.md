@@ -13,7 +13,7 @@ Hot reload is two independent pollers joined by the store on disk:
    external pipeline, and needs no cook code.
 2. **`kiln_cook`'s provider watches sources.** The cook-on-miss provider remembers which source file
    produced each asset it cooked (a glb produces the mesh and its embedded textures; a PNG, JPEG, WebP or KTX2
-   produces one texture). A poll thread stats those sources; when one changes it re-cooks through the
+   produces one texture). A poll thread stats those sources and their `.kiln` sidecars; when one changes it re-cooks through the
    same functions as cook-on-miss and rewrites the store files, which the runtime poller then sees.
 
 Neither poller knows about the other. Dependencies exist only on the cook side and only for the

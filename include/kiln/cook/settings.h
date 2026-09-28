@@ -118,6 +118,9 @@ enum SettingsDiagCode : u32 {
                                          ///< flipGreen with a non-Normal usage: Warning)
     kDiagSettingsClampedByTarget = 3003, ///< profile or size clamped by the target (Warning)
     kDiagSettingsEnumRange       = 3004, ///< an enum field holds a value outside its range
+    kDiagSidecarSyntax           = 3005, ///< a `.kiln` sidecar is outside the TOML subset (ParseError)
+    kDiagSidecarKey =
+        3006, ///< a sidecar key is unknown, or its value has the wrong type or range (InvalidArgument)
 };
 
 // ---------------------------------------------------------------------------
