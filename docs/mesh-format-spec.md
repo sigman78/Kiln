@@ -1,6 +1,6 @@
 # kiln `.mesh` — Cooked Runtime Mesh Format
 
-**Status:** draft v0.3 · **Target:** Vulkan 1.4, C++23, little-endian only
+**Status:** draft v0.4 · **Target:** Vulkan 1.4, C++23, little-endian only
 **Produced by:** `kiln-cook` from glTF 2.0 sources (`.glb`, or `.gltf` with external or data-URI buffers and images). **Never** hand-authored, never edited.
 
 The format originated as Orbital's `.mesh` (magic `OMSH`); kiln adopts it under its own magic and namespace, and no `OMSH` files need to be read.
@@ -10,6 +10,8 @@ The format originated as Orbital's `.mesh` (magic `OMSH`); kiln adopts it under 
 > - The header grows to 80 bytes and records both encoded and decoded payload sizes.
 > - Draw-facing offsets (`MeshLod`) now refer to the **decoded** payload.
 > - The v0.5 cooker emits uncompressed blobs only, and loaders must support at least codec `None`.
+
+> **v0.4 changes:** `TextureBinding.flags` bit1 `External` (§5.7): the binding names an image the source references by URI, which the cooker does not cook. Embedded images are named `<mesh>#<image name>`. `kVersionMinor` is 4.
 
 > **v0.3 changes:** (resolves `docs/open-questions.md` B1-B27)
 > - Magic `KMSH`, namespace `kiln::mesh`, producer `kiln-cook` (B1). `kVersionMinor` is 3.
@@ -100,7 +102,7 @@ Section IDs for these are reserved (§9).
 | Quaternions | `x, y, z, w` |
 | Names | UTF-8 in `STRS`, plus a 64-bit hash stored next to each name |
 | Name hash | FNV-1a 64 over the exact name bytes (case-sensitive, no terminator) |
-| Asset / texture IDs | FNV-1a 64 of the cooked asset path, e.g. `"meshes/ship_hauler_a/hull_albedo"` |
+| Asset / texture IDs | FNV-1a 64 of the cooked asset path, e.g. `"meshes/ship_hauler_a#hull_albedo"` (an embedded image) |
 | Invalid index | `0xFFFFFFFF` (`kInvalid`) |
 | Formats | Vertex formats are stored as `kiln::Format` values, which are numerically equal to `VkFormat`. A Vulkan renderer casts them directly; other renderers map them in their adapter. |
 
@@ -118,7 +120,7 @@ constexpr uint32_t fourcc(char a, char b, char c, char d) {
 
 constexpr uint32_t kMagic        = fourcc('K','M','S','H');
 constexpr uint16_t kVersionMajor = 0;   // mismatch = VersionMismatch
-constexpr uint16_t kVersionMinor = 3;   // 0.x: exact match required; from 1.0: additive, loader tolerates newer
+constexpr uint16_t kVersionMinor = 4;   // 0.x: exact match required; from 1.0: additive, loader tolerates newer
 constexpr uint32_t kInvalid      = 0xFFFFFFFFu;
 constexpr uint32_t kMaxStreams   = 4;
 constexpr uint32_t kMaxAttribs   = 12;
@@ -356,18 +358,21 @@ enum class TextureSlot : uint8_t {
 };
 
 struct TextureBinding {             // 16 bytes
-    uint64_t textureId;             // FNV-1a 64 of cooked texture asset path
-    uint32_t pathStr;               // same path, for tools/debug
+    uint64_t textureId;             // FNV-1a 64 of the texture asset path; 0 with External
+    uint32_t pathStr;               // the texture asset path, or the URI with External
     uint8_t  slot;                  // TextureSlot
     uint8_t  uvSet;                 // which TexCoord semanticIndex to sample
-    uint16_t flags;                 // bit0: sRGB (from the cooker's slot inference)
+    uint16_t flags;                 // bit0: sRGB (slot inference), bit1: External
 };
 static_assert(sizeof(TextureBinding) == 16);
 ```
 
-Textures are **separate cooked assets** (KTX2 / BCn), referenced by ID. They are never embedded in `.mesh`, so they stream, dedupe and hot-reload independently.
+Textures are **separate cooked assets** (KTX2 / BCn). They are never embedded in `.mesh`, so they stream and hot-reload independently. A binding is one of two kinds:
 
-The sRGB bit is derived from the cooker's slot inference (after resolution), so it matches how the texture was actually cooked.
+- **Embedded image** (bit1 clear). The image is inside the glTF source. The cooker writes it as a texture of its own named `<mesh asset path>#<image name>` (an unnamed image is `image<N>`, N its glTF index), and `textureId` is the FNV-1a 64 of that name. Two embedded images with one name, or a name holding `:` `#` `/` `\` or a control character, are a cook error (K1019).
+- **External image** (bit1 set). The source references the image by URI. `pathStr` holds the URI, percent-decoded and relative to the source file; `textureId` is 0, and a reader rejects a non-zero one. The cooker does not cook, name or track the image: the host maps the URI to a texture asset of its choosing (`docs/design/asset-model-next.md`).
+
+The sRGB bit comes from the cooker's slot inference. For an embedded image it matches how the texture was cooked. For an external image it records the authored intent only; the texture's own cook decides its color space.
 
 ### 5.8 `MNTS` — mount slots
 

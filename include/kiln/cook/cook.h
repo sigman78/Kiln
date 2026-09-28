@@ -17,7 +17,8 @@ namespace kiln::cook {
 
 /// Bump when cooked output changes for identical input and settings. Part of every store key.
 inline constexpr u32 kCookerVersion =
-    2; // 2: KTX2 outputs carry kiln.sourceHash / kiln.cookHash key/value entries
+    3; // 3: .mesh 0.4; embedded images named "<mesh>#<name>", external images as kTextureExternal
+       // 2: KTX2 outputs carry kiln.sourceHash / kiln.cookHash key/value entries
 
 // ---------------------------------------------------------------------------
 // Diagnostics (K1000-K1999: glTF import). See docs/diagnostics.md.
@@ -47,6 +48,8 @@ enum GltfDiagCode : u32 {
     kDiagGltfEmptyMesh     = 1016, ///< a part ended up with zero triangles (Warning)
     kDiagGltfUsageConflict = 1017, ///< the same image is bound to slots implying different usages (Warning)
     kDiagGltfQuantFallback = 1018, ///< positions/UVs fell back to the precise profile (Info)
+    kDiagGltfImageName     = 1019, ///< two embedded images share a name, or a name holds `:` `#` `/` `\` or a
+                                   ///< control character (ValidationFailed)
 };
 
 // ---------------------------------------------------------------------------
@@ -111,22 +114,21 @@ struct MeshSource {
     UriResolver resolver;      ///< optional
 };
 
-/// A texture the mesh references. cook_mesh does not cook it; the caller does,
-/// using `slot` for usage inference. Views point into CookedMesh::strings or the
-/// source bytes.
+/// An image embedded in the source, which the mesh cook outputs as a texture of its own.
+/// cook_mesh does not cook it; the caller does, using `slot` for usage inference. Views
+/// point into CookedMesh::strings or the source bytes. External images are not outputs:
+/// the .mesh records them as kTextureExternal bindings.
 struct TextureRef {
-    StrView assetPath = {};       ///< cooked texture asset path: "<mesh assetPath>/<image stem>"
-    StrView uri       = {};       ///< source-relative path of an external image (URI percent-decoded);
-                                  ///< empty when embedded
-    Span<u8 const> embedded = {}; ///< image bytes when embedded in the GLB (points into MeshSource::bytes)
-    StrView mimeType        = {}; ///< "image/png", "image/ktx2", ... (may be empty for external)
+    StrView assetPath       = {}; ///< "<mesh assetPath>#<image name>"
+    Span<u8 const> embedded = {}; ///< the image bytes (points into MeshSource::bytes when possible)
+    StrView mimeType        = {}; ///< "image/png", "image/jpeg", ... (may be empty)
     SlotHint slot;                ///< first slot that referenced it
     bool srgb;                    ///< as inferred from the slot
 };
 
 struct CookedMesh {
     Vec<u8> file;             ///< the .mesh bytes
-    Vec<TextureRef> textures; ///< distinct textures referenced, in first-reference order
+    Vec<TextureRef> textures; ///< embedded images referenced, in first-reference order
     Vec<char> strings;        ///< backing store for TextureRef views (stable after cook)
     u64 sourceHash = 0;
     u32 partCount = 0, lodCount = 0;

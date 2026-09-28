@@ -24,9 +24,11 @@ struct ProviderDesc {
 };
 
 /// Register the provider. Source lookup: `<root>/<assetPath>.glb|.gltf` for meshes,
-/// `<root>/<assetPath>.png|.ktx2` for textures; a texture with no source file of its
-/// own is produced by cooking its owning mesh (the parent path) which emits its
-/// embedded textures. Returns InvalidArgument if the context has no source roots.
+/// `<root>/<assetPath>.png|.jpg|.jpeg|.webp|.ktx2` for textures. A texture named
+/// `<mesh>#<image>` is an embedded image: the provider cooks `<mesh>`, which writes all
+/// of its embedded images. Images a mesh references by URI are not cooked with it; the
+/// host requests them under names of its own. Returns InvalidArgument if the context
+/// has no source roots.
 /// Call install_provider and uninstall_provider on the pump thread.
 KILN_API Status install_provider(Context* ctx, ProviderDesc const& desc) noexcept;
 KILN_API void uninstall_provider(Context* ctx) noexcept;

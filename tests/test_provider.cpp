@@ -13,6 +13,8 @@
 #include <cerrno>
 #include <chrono>
 #include <cstdio>
+#include <filesystem>
+#include <system_error>
 #include <thread>
 
 #if defined(KILN_OS_WINDOWS)
@@ -37,8 +39,11 @@ bool store_path(char const* storeDir, char const* rel, char* out, usize cap) {
     return true;
 }
 
+/// An empty `<sample_dir()>/<suffix>`: files from an earlier run would load without a cook.
 void scratch_dir(char const* suffix, char* out, usize cap) {
     format(out, cap, "%s/%s", kiln::test::sample_dir(), suffix);
+    std::error_code ec;
+    std::filesystem::remove_all(out, ec);
 }
 
 void gltf_khronos_dir(char* out, usize cap) {
@@ -222,9 +227,9 @@ KILN_TEST(Provider, DiskModeCooksAndWritesNamedStoreFiles) {
         store_path(storeDir, "cube_basic.mesh", meshPath, sizeof meshPath);
         KILN_CHECK(file_exists(meshPath));
 
-        // pbr_textures/hull_albedo has no source of its own: cooking it cooks its
-        // owning mesh, writing the mesh plus every texture it references.
-        TextureHandle const tex = request_texture(tc.ctx, "pbr_textures/hull_albedo");
+        // pbr_textures#hull_albedo is embedded in pbr_textures.glb: cooking it cooks that
+        // mesh, which writes the mesh plus every embedded image it references.
+        TextureHandle const tex = request_texture(tc.ctx, "pbr_textures#hull_albedo");
         KILN_REQUIRE(tex);
         KILN_CHECK_EQ(pump_until_settled(tc.ctx, tex), State::Ready);
 
@@ -238,13 +243,13 @@ KILN_TEST(Provider, DiskModeCooksAndWritesNamedStoreFiles) {
         static char const* const kTextures[] = {"hull_albedo", "hull_normal", "hull_orm", "hull_emissive"};
         for (char const* name : kTextures) {
             char rel[256];
-            format(rel, sizeof rel, "pbr_textures/%s.ktx2", name);
+            format(rel, sizeof rel, "pbr_textures#%s.ktx2", name);
             char path[1024];
             store_path(storeDir, rel, path, sizeof path);
             KILN_CHECK_MSG(file_exists(path), "missing %s", path);
         }
         char heightPath[1024];
-        store_path(storeDir, "pbr_textures/hull_height.ktx2", heightPath, sizeof heightPath);
+        store_path(storeDir, "pbr_textures#hull_height.ktx2", heightPath, sizeof heightPath);
         KILN_CHECK_MSG(!file_exists(heightPath), "hull_height should never be cooked (unreferenced)");
     }
 
@@ -258,14 +263,14 @@ KILN_TEST(Provider, DiskModeCooksAndWritesNamedStoreFiles) {
         KILN_REQUIRE(mesh);
         KILN_CHECK_EQ(pump_until_settled(tc2.ctx, mesh), State::Ready);
 
-        TextureHandle const tex = request_texture(tc2.ctx, "pbr_textures/hull_albedo");
+        TextureHandle const tex = request_texture(tc2.ctx, "pbr_textures#hull_albedo");
         KILN_REQUIRE(tex);
         KILN_CHECK_EQ(pump_until_settled(tc2.ctx, tex), State::Ready);
     }
 }
 
 // generated/jpeg_texture.glb has no source of its own for its "albedo" image (embedded
-// JPEG): cooking it cooks the owning mesh, same path as pbr_textures/hull_albedo (PNG).
+// JPEG): cooking it cooks the owning mesh, same path as pbr_textures#hull_albedo (PNG).
 KILN_TEST(Provider, DiskModeCooksEmbeddedJpegTexture) {
     char storeDir[1024], gltfDir[1024];
     scratch_dir("provider_jpeg_embedded_store", storeDir, sizeof storeDir);
@@ -278,13 +283,13 @@ KILN_TEST(Provider, DiskModeCooksEmbeddedJpegTexture) {
         cook::install_provider(tc.ctx, cook::ProviderDesc{.storeMode = cook::StoreMode::Disk});
     KILN_REQUIRE(installed.ok());
 
-    TextureHandle const tex = request_texture(tc.ctx, "jpeg_texture/albedo");
+    TextureHandle const tex = request_texture(tc.ctx, "jpeg_texture#albedo");
     KILN_REQUIRE(tex);
     KILN_CHECK_EQ(pump_until_settled(tc.ctx, tex), State::Ready);
 
     char meshPath[1024], texPath[1024];
     store_path(storeDir, "jpeg_texture.mesh", meshPath, sizeof meshPath);
-    store_path(storeDir, "jpeg_texture/albedo.ktx2", texPath, sizeof texPath);
+    store_path(storeDir, "jpeg_texture#albedo.ktx2", texPath, sizeof texPath);
     KILN_CHECK(file_exists(meshPath));
     KILN_CHECK_MSG(file_exists(texPath), "cook-on-miss did not write %s", texPath);
 }
@@ -346,7 +351,6 @@ KILN_TEST(Provider, DiskModeCooksJpegSource) {
     char srcPath[1100], texPath[1100];
     format(srcPath, sizeof srcPath, "%s/tex.jpg", root);
     format(texPath, sizeof texPath, "%s/tex.ktx2", storeDir);
-    std::remove(texPath);
     replace_file(srcPath, kiln::test::img::kJpegGradientRgbBytes);
 
     StrView const roots[] = {StrView(root)};
@@ -377,8 +381,6 @@ KILN_TEST(Provider, StandaloneTextureUsageFromName) {
     for (char const* name : {"wall", "wall_n"}) {
         format(path, sizeof path, "%s/%s.png", root, name);
         replace_file(path, test_png(rgba).span());
-        format(path, sizeof path, "%s/%s.ktx2", storeDir, name);
-        std::remove(path); // left by an earlier run, it would load without a cook
     }
 
     StrView const roots[] = {StrView(root)};
@@ -406,7 +408,6 @@ KILN_TEST(Provider, SourcePollerRecooksPng) {
     char srcPath[1100], storeFile[1100];
     format(srcPath, sizeof srcPath, "%s/tex.png", root);
     format(storeFile, sizeof storeFile, "%s/tex.ktx2", storeDir);
-    std::remove(storeFile); // left by an earlier run, it would load without a cook
 
     u8 first[4 * 4 * 4], second[4 * 4 * 4];
     test_pixels(first, 1);
@@ -454,9 +455,7 @@ KILN_TEST(Provider, SourcePollerRecooksGlbAndTextures) {
     format(plain, sizeof plain, "%s/Box.glb", khronos);
     format(srcPath, sizeof srcPath, "%s/box.glb", root);
     format(meshFile, sizeof meshFile, "%s/box.mesh", storeDir);
-    format(texFile, sizeof texFile, "%s/box/image_0.ktx2", storeDir); // BoxTextured's one unnamed image
-    std::remove(meshFile);
-    std::remove(texFile);
+    format(texFile, sizeof texFile, "%s/box#image0.ktx2", storeDir); // BoxTextured's one unnamed image
     copy_file(textured, srcPath);
 
     StrView const roots[] = {StrView(root)};
@@ -501,7 +500,6 @@ KILN_TEST(Provider, SourcePollerStopsOnUninstall) {
     char srcPath[1100], storeFile[1100];
     format(srcPath, sizeof srcPath, "%s/tex.png", root);
     format(storeFile, sizeof storeFile, "%s/tex.ktx2", storeDir);
-    std::remove(storeFile);
 
     u8 first[4 * 4 * 4], second[4 * 4 * 4];
     test_pixels(first, 3);

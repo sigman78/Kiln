@@ -350,11 +350,11 @@ Result<Vec<u8>> write(WriteDesc const& desc, WriteOptions const& opt, Allocator 
     for (usize i = 0; i < d.textures.size; ++i) {
         TextureBindingDesc const& t = d.textures[i];
         TextureBinding& r           = texRecs[i];
-        r.textureId                 = t.textureId ? t.textureId : hash_name(t.path);
-        r.pathStr                   = strs.intern(t.path);
-        r.slot                      = u8(t.slot);
-        r.uvSet                     = t.uvSet;
-        r.flags                     = t.flags;
+        r.textureId = (t.flags & kTextureExternal) ? 0 : t.textureId ? t.textureId : hash_name(t.path);
+        r.pathStr   = strs.intern(t.path);
+        r.slot      = u8(t.slot);
+        r.uvSet     = t.uvSet;
+        r.flags     = t.flags;
     }
 
     Vec<Mount> mountRecs(alloc, Tag::Cook);

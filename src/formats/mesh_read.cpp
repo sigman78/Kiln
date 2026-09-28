@@ -340,6 +340,8 @@ Status validate_full(Ctx& ctx, MeshView const& v) noexcept {
             KILN_MESH_FAIL(ctx, Corrupt, kDiagStringOffset, "texture %u pathStr", i);
         if (t.slot > 15)
             KILN_MESH_FAIL(ctx, ValidationFailed, kDiagIndexRange, "texture %u: slot %u", i, t.slot);
+        if ((t.flags & kTextureExternal) && t.textureId != 0)
+            KILN_MESH_FAIL(ctx, Corrupt, kDiagIndexRange, "texture %u: external binding with a textureId", i);
     }
 
     auto const& mounts = v.mounts();

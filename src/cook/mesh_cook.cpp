@@ -122,12 +122,12 @@ struct LodTask {
 };
 
 struct TexRefBuild {
-    StrView path; ///< arena
-    StrView uri;
+    StrView path; ///< "<asset>#<name>" (arena), or the URI of an external image
     StrView mime;
     Span<u8 const> embedded;
     SlotHint slot = SlotHint::None;
     bool srgb     = false;
+    bool external = false;
 };
 
 struct Cook {
@@ -136,7 +136,8 @@ struct Cook {
         : src(s), settings(st), alloc(al), diag(d), arena(a), scene(sc), asset(diag_asset(s)),
           layouts(al, Tag::Cook), parts(al, Tag::Cook), lods(al, Tag::Cook), submeshes(al, Tag::Cook),
           materials(al, Tag::Cook), bindings(al, Tag::Cook), mounts(al, Tag::Cook), matMap(al, Tag::Cook),
-          vertexColor(al, Tag::Cook), imageRef(al, Tag::Cook), refs(al, Tag::Cook), tasks(al, Tag::Cook) {}
+          vertexColor(al, Tag::Cook), imageRef(al, Tag::Cook), imageName(al, Tag::Cook), refs(al, Tag::Cook),
+          tasks(al, Tag::Cook) {}
 
     MeshSource const& src;
     MeshCookSettings const& settings;
@@ -156,8 +157,9 @@ struct Cook {
 
     Vec<u32> matMap; ///< glTF material index -> MATL index
     u32 defaultMat = kInvalid;
-    Vec<u8> vertexColor; ///< per glTF material, +1 slot at the end for the default material
-    Vec<u32> imageRef;   ///< glTF image -> refs index
+    Vec<u8> vertexColor;    ///< per glTF material, +1 slot at the end for the default material
+    Vec<u32> imageRef;      ///< glTF image -> refs index
+    Vec<StrView> imageName; ///< glTF image -> sub-asset name; empty for external images
     Vec<TexRefBuild> refs;
     Vec<LodTask> tasks; ///< every (part, LOD) in traversal order; LodDesc streams point into them
 
@@ -598,29 +600,30 @@ void build_lod(LodTask& task, MeshCookSettings const& settings, Allocator const*
     return {p, n};
 }
 
-[[nodiscard]] StrView sanitize(Arena& arena, StrView s) noexcept {
-    char* p = arena.alloc_array<char>(s.size + 1);
-    for (usize i = 0; i < s.size; ++i) {
-        char const ch = s[i];
-        bool const ok = (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') ||
-                        ch == '_' || ch == '.' || ch == '-';
-        p[i] = ok ? ch : '_';
+/// Names every embedded image: its glTF name, or "image<N>" when unnamed. The name becomes
+/// the sub-asset part of "<asset>#<name>", so it must be unique and free of `: # / \` and
+/// control characters.
+Status name_embedded_images(Cook& k) {
+    k.imageName.resize(k.scene.images.size);
+    for (u32 i = 0; i < u32(k.scene.images.size); ++i) {
+        ImportImage const& img = k.scene.images[i];
+        if (!img.uri.empty() || !img.usable) continue;
+        StrView name = img.name;
+        if (name.empty()) {
+            char buf[32];
+            name = k.arena.copy(StrView(buf, format(buf, sizeof buf, "image%u", i)));
+        }
+        for (char const ch : name)
+            if (ch == ':' || ch == '#' || ch == '/' || ch == '\\' || u8(ch) < 0x20 || ch == 0x7f)
+                COOK_FAIL(k, Code::ValidationFailed, kDiagGltfImageName, name,
+                          "embedded image %u: name '%.*s' holds a reserved character", i, KILN_SV(name));
+        for (u32 j = 0; j < i; ++j)
+            if (k.imageName[j] == name)
+                COOK_FAIL(k, Code::ValidationFailed, kDiagGltfImageName, name,
+                          "embedded images %u and %u are both named '%.*s'", j, i, KILN_SV(name));
+        k.imageName[i] = name;
     }
-    p[s.size] = '\0';
-    return {p, s.size};
-}
-
-/// File stem of a URI: no directory, no query, no extension.
-[[nodiscard]] StrView uri_stem(StrView uri) noexcept {
-    usize const q = uri.find('?');
-    if (q != StrView::kNpos) uri = uri.substr(0, q);
-    usize const slash = uri.rfind('/');
-    if (slash != StrView::kNpos) uri = uri.substr(slash + 1);
-    usize const bs = uri.rfind('\\');
-    if (bs != StrView::kNpos) uri = uri.substr(bs + 1);
-    usize const dot = uri.rfind('.');
-    if (dot != StrView::kNpos && dot > 0) uri = uri.substr(0, dot);
-    return uri;
+    return kOk;
 }
 
 [[nodiscard]] StrView with_suffix(Arena& arena, StrView base, u32 n) noexcept {
@@ -641,27 +644,15 @@ u32 texture_ref(Cook& k, u32 image, mesh::TextureSlot slot, StrView where) {
         return k.imageRef[image];
     }
     ImportImage const& img = k.scene.images[image];
-    StrView stem           = img.name;
-    if (stem.empty() && !img.uri.empty()) stem = uri_stem(img.uri);
-    char buf[32];
-    if (stem.empty()) stem = StrView(buf, format(buf, sizeof buf, "image_%u", image));
-    stem = sanitize(k.arena, stem);
-
-    StrView const base = concat(k.arena, k.src.assetPath, "/", stem);
-    StrView path       = base;
-    for (u32 n = 2;; ++n) {
-        bool clash = false;
-        for (TexRefBuild const& r : k.refs)
-            clash |= r.path == path;
-        if (!clash) break;
-        path = with_suffix(k.arena, base, n);
-    }
-
     TexRefBuild r;
-    r.path            = path;
-    r.uri             = img.uri;
-    r.mime            = img.mimeType;
-    r.embedded        = img.uri.empty() ? img.bytes : Span<u8 const>{};
+    r.external = !img.uri.empty();
+    if (r.external) {
+        r.path = img.uri;
+    } else {
+        r.path     = concat(k.arena, k.src.assetPath, "#", k.imageName[image]);
+        r.mime     = img.mimeType;
+        r.embedded = img.bytes;
+    }
     r.slot            = hint;
     r.srgb            = color_space_for(usage_from_slot(hint)) == ColorSpace::Srgb;
     k.imageRef[image] = u32(k.refs.size());
@@ -735,7 +726,8 @@ u32 material_for(Cook& k, u32 key) {
             b.path  = k.refs[r].path;
             b.slot  = slot;
             b.uvSet = u8(min(t.texcoord, 255u));
-            b.flags = k.refs[r].srgb ? u16(mesh::kTextureSrgb) : u16(0);
+            b.flags = u16((k.refs[r].srgb ? mesh::kTextureSrgb : 0) |
+                          (k.refs[r].external ? mesh::kTextureExternal : 0));
             bind.push_back(b);
         }
     }
@@ -1159,6 +1151,7 @@ Result<CookedMesh> cook_mesh(MeshSource const& src, MeshCookSettings const& sett
     k.matMap.resize(scene.materials.size, kInvalid);
     k.vertexColor.resize(scene.materials.size + 1, 0);
     k.imageRef.resize(scene.images.size, kInvalid);
+    KILN_TRY(name_embedded_images(k));
 
     // kMaterialVertexColor: any cooked primitive using the material has COLOR_0.
     for (ImportPart const& p : scene.parts)
@@ -1265,7 +1258,7 @@ Result<CookedMesh> cook_mesh(MeshSource const& src, MeshCookSettings const& sett
     // TextureRef views point into out.strings (or the source bytes), so fill the
     // backing store completely first and resolve offsets afterwards.
     struct Off {
-        usize path, pathLen, uri, uriLen, mime, mimeLen, emb, embLen;
+        usize path, pathLen, mime, mimeLen, emb, embLen;
         bool embInSrc;
     };
     Vec<Off> offs(alloc, Tag::Cook);
@@ -1278,9 +1271,9 @@ Result<CookedMesh> cook_mesh(MeshSource const& src, MeshCookSettings const& sett
     auto const srcBegin = reinterpret_cast<std::uintptr_t>(src.bytes.data);
     auto const srcEnd   = srcBegin + src.bytes.size;
     for (TexRefBuild const& r : k.refs) {
+        if (r.external) continue;
         Off o{};
         put(r.path, o.path, o.pathLen);
-        put(r.uri, o.uri, o.uriLen);
         put(r.mime, o.mime, o.mimeLen);
         if (!r.embedded.empty()) {
             auto const b = reinterpret_cast<std::uintptr_t>(r.embedded.data);
@@ -1295,18 +1288,19 @@ Result<CookedMesh> cook_mesh(MeshSource const& src, MeshCookSettings const& sett
         }
         offs.push_back(o);
     }
-    for (usize i = 0; i < k.refs.size(); ++i) {
-        Off const& o  = offs[i];
+    usize next = 0;
+    for (TexRefBuild const& r : k.refs) {
+        if (r.external) continue;
+        Off const& o  = offs[next++];
         char const* s = out.strings.data();
         TextureRef t{};
         t.assetPath = StrView(s + o.path, o.pathLen);
-        t.uri       = o.uriLen ? StrView(s + o.uri, o.uriLen) : StrView();
         t.mimeType  = o.mimeLen ? StrView(s + o.mime, o.mimeLen) : StrView();
         if (o.embLen)
             t.embedded = o.embInSrc ? Span<u8 const>(src.bytes.data + o.emb, o.embLen)
                                     : Span<u8 const>(reinterpret_cast<u8 const*>(s + o.emb), o.embLen);
-        t.slot = k.refs[i].slot;
-        t.srgb = k.refs[i].srgb;
+        t.slot = r.slot;
+        t.srgb = r.srgb;
         out.textures.push_back(t);
     }
 

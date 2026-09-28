@@ -338,23 +338,10 @@ bool cook_one_mesh(Ctx& c, Span<u8 const> bytes, StrView assetPath, char const* 
     if (!emit(c, assetPath, "mesh", key, r->file.span())) return false;
     if (c.opt.verbose) print_mesh_stats(r->stats);
 
-    // Referenced textures: embedded bytes or files next to the source.
+    // Embedded images only; files the mesh references by URI are cooked as inputs of their own.
     bool ok = true;
-    for (TextureRef const& t : r->textures) {
-        if (!t.embedded.empty()) {
-            ok &= cook_one_texture(c, t.embedded, t.assetPath, src.sourcePath, t.slot);
-        } else if (!t.uri.empty()) {
-            Vec<u8> img(default_allocator(), Tag::Io);
-            char path[1024];
-            format(path, sizeof path, "%s/%.*s", baseDir, KILN_SV(t.uri));
-            if (!read_file(path, img)) {
-                std::fprintf(stderr, "kiln-cook: %.*s: cannot read texture %s\n", KILN_SV(assetPath), path);
-                ok = false;
-                continue;
-            }
-            ok &= cook_one_texture(c, img.span(), t.assetPath, StrView(path), t.slot);
-        }
-    }
+    for (TextureRef const& t : r->textures)
+        ok &= cook_one_texture(c, t.embedded, t.assetPath, src.sourcePath, t.slot);
     return ok;
 }
 
