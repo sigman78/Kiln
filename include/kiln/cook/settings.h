@@ -30,6 +30,37 @@ struct TextureCookSettings {
 /// The glTF material slot a texture was referenced from (for usage inference).
 enum class SlotHint : u8 { None = 0, BaseColor, Normal, MetallicRoughness, Occlusion, Emissive };
 
+/// Name rule (resolution layer 5) for a standalone texture source: a file whose stem ends
+/// with `suffix` has `usage`. Matching ignores ASCII case; the first matching rule wins.
+struct NameRule {
+    StrView suffix     = {};
+    TextureUsage usage = TextureUsage::Auto;
+};
+
+/// Built-in name rules. Hosts replace or extend them through ProviderDesc::nameRules.
+inline constexpr NameRule kDefaultNameRules[] = {
+    {"_n",                 TextureUsage::Normal},
+    {"_nrm",               TextureUsage::Normal},
+    {"_normal",            TextureUsage::Normal},
+    {"_orm",               TextureUsage::Orm   },
+    {"_arm",               TextureUsage::Orm   },
+    {"_mr",                TextureUsage::Orm   },
+    {"_metallicroughness", TextureUsage::Orm   },
+    {"_roughnessmetallic", TextureUsage::Orm   },
+    {"_occlusion",         TextureUsage::Orm   },
+    {"_ao",                TextureUsage::Orm   },
+    {"_mask",              TextureUsage::Mask  },
+    {"_height",            TextureUsage::Height},
+    {"_basecolor",         TextureUsage::Color },
+    {"_albedo",            TextureUsage::Color },
+    {"_diffuse",           TextureUsage::Color },
+    {"_emissive",          TextureUsage::Color },
+};
+
+/// Usage of the first rule whose suffix ends the file stem of `path` (no directory, no
+/// extension). Auto if no rule matches.
+[[nodiscard]] KILN_API TextureUsage usage_from_name(StrView path, Span<NameRule const> rules) noexcept;
+
 // ---------------------------------------------------------------------------
 // Mesh
 // ---------------------------------------------------------------------------

@@ -13,7 +13,10 @@ struct ProviderDesc {
     TargetProfile target        = {};
     MeshCookSettings mesh       = {}; ///< session overrides for every mesh
     TextureCookSettings texture = {}; ///< session overrides (usage/color space still inferred per slot)
-    bool fastPreview            = false;
+    /// Usage of a texture with a source file of its own, when `texture.usage` is Auto. Copied
+    /// at install; empty means standalone textures are cooked as Color.
+    Span<NameRule const> nameRules = kDefaultNameRules;
+    bool fastPreview               = false;
     /// Dev builds: poll the source files of cooked assets and re-cook them into the store when
     /// they change (docs/design/hot-reload.md). The runtime's store poller then reloads them.
     bool watchSources = false;

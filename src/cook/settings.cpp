@@ -47,6 +47,24 @@ Result<TextureCookSettings> resolve_texture(TextureCookSettings const& overrides
     return s;
 }
 
+TextureUsage usage_from_name(StrView path, Span<NameRule const> rules) noexcept {
+    usize const slash = path.rfind('/');
+    StrView stem      = slash == StrView::kNpos ? path : path.substr(slash + 1);
+    usize const dot   = stem.rfind('.');
+    if (dot != StrView::kNpos && dot > 0) stem = stem.substr(0, dot);
+
+    auto const lower = [](char c) { return c >= 'A' && c <= 'Z' ? char(c - 'A' + 'a') : c; };
+    for (NameRule const& r : rules) {
+        if (r.suffix.empty() || r.suffix.size >= stem.size) continue; // a bare "_n.png" has no name
+        StrView const tail = stem.substr(stem.size - r.suffix.size);
+        bool match         = true;
+        for (usize i = 0; i < tail.size && match; ++i)
+            match = lower(tail[i]) == lower(r.suffix[i]);
+        if (match) return r.usage;
+    }
+    return TextureUsage::Auto;
+}
+
 Result<MeshCookSettings> resolve_mesh(MeshCookSettings const& overrides, TargetProfile const& target,
                                       CookSession const& session, DiagSink const* diag,
                                       StrView asset) noexcept {
