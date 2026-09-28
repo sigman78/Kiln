@@ -456,3 +456,121 @@ KILN_TEST(texture_cook, threads_byte_identical) {
     }
     destroy_thread_pool(*pool);
 }
+
+// ---------------------------------------------------------------------------
+// Strips: cube and array textures from one image (docs/design/texture-shapes.md)
+// ---------------------------------------------------------------------------
+
+namespace {
+
+/// A vertical strip of `count` slices of w x h; slice i is filled with (40i, 255 - 40i, i, 255).
+Vec<u8> strip_png(u32 w, u32 h, u32 count) {
+    Vec<u8> rgba(default_allocator(), Tag::Test);
+    rgba.resize(usize(w) * h * count * 4);
+    for (u32 s = 0; s < count; ++s)
+        for (usize p = 0; p < usize(w) * h; ++p) {
+            u8* px = rgba.data() + (usize(s) * w * h + p) * 4;
+            px[0]  = u8(40 * s);
+            px[1]  = u8(255 - 40 * s);
+            px[2]  = u8(s);
+            px[3]  = 255;
+        }
+    return png::encode({.width = w, .height = h * count, .colorType = 6, .depth = 8, .pixels = rgba.span()});
+}
+
+/// True if every texel of `slice` in `level` has the color of strip slice `slice`.
+bool slice_is(ktx2::Ktx2View const& v, u32 level, u32 slice) {
+    Span<u8 const> const data = v.level_data(level);
+    usize const bytes         = usize(v.level_image_bytes(level));
+    for (usize i = 0; i < bytes; i += 4) {
+        u8 const* px = data.data + usize(slice) * bytes + i;
+        if (px[0] != u8(40 * slice) || px[1] != u8(255 - 40 * slice) || px[2] != u8(slice)) return false;
+    }
+    return true;
+}
+
+} // namespace
+
+KILN_TEST(texture_cook, cube_strip) {
+    Vec<u8> const f         = strip_png(4, 4, 6);
+    TextureCookSettings s   = kColor;
+    s.shape                 = CookShape::Cube;
+    Result<CookedTexture> r = run_cook(f.span(), s);
+    KILN_REQUIRE(r.ok());
+    KILN_CHECK(r->desc.isCube && r->desc.faces == 6 && r->desc.width == 4 && r->desc.height == 4);
+    Result<ktx2::Ktx2View> v = ktx2::Ktx2View::open(r->file.span());
+    KILN_REQUIRE(v.ok());
+    KILN_CHECK_EQ(v->desc().levels, 3u);
+    for (u32 level = 0; level < 3; ++level)
+        for (u32 face = 0; face < 6; ++face)
+            KILN_CHECK_MSG(slice_is(*v, level, face), "level %u face %u", level, face);
+    write_sample("cube_strip", r->file.span());
+
+    // The size cap applies to each face.
+    s.maxSize                    = 2;
+    Result<CookedTexture> capped = run_cook(f.span(), s);
+    KILN_REQUIRE(capped.ok());
+    KILN_CHECK(capped->desc.width == 2 && capped->desc.height == 2 && capped->desc.faces == 6);
+}
+
+KILN_TEST(texture_cook, array_strip) {
+    // Square slices by default: 4x12 is 3 layers.
+    TextureCookSettings s   = kColor;
+    s.shape                 = CookShape::Array;
+    Result<CookedTexture> r = run_cook(strip_png(4, 4, 3).span(), s);
+    KILN_REQUIRE(r.ok());
+    KILN_CHECK(r->desc.isArray && r->desc.layers == 3 && r->desc.height == 4);
+    Result<ktx2::Ktx2View> v = ktx2::Ktx2View::open(r->file.span());
+    KILN_REQUIRE(v.ok());
+    for (u32 layer = 0; layer < 3; ++layer)
+        KILN_CHECK(slice_is(*v, 0, layer));
+    write_sample("array_strip", r->file.span());
+
+    // An explicit count: 4x8 as 4 layers of 4x2.
+    s.slices                 = 4;
+    Result<CookedTexture> r4 = run_cook(strip_png(4, 2, 4).span(), s);
+    KILN_REQUIRE(r4.ok());
+    KILN_CHECK(r4->desc.layers == 4 && r4->desc.width == 4 && r4->desc.height == 2);
+}
+
+KILN_TEST(texture_cook, strip_layout_errors) {
+    struct Case {
+        CookShape shape;
+        u32 slices;
+        u32 w, h, count;
+        u32 maxLayers;
+    };
+    Case const cases[] = {
+        {CookShape::Cube,  0, 4, 4, 5, 2048}, // 5 faces
+        {CookShape::Cube,  0, 4, 2, 6, 2048}, // faces not square
+        {CookShape::Array, 0, 4, 5, 2, 2048}, // 4x10 is not square slices
+        {CookShape::Array, 3, 4, 2, 4, 2048}, // 8 rows do not divide into 3
+        {CookShape::Array, 0, 4, 4, 3, 2   }, // 3 layers over the limit
+    };
+    for (Case const& c : cases) {
+        TextureCookSettings s = kColor;
+        s.shape               = c.shape;
+        s.slices              = c.slices;
+        TargetProfile target;
+        target.maxArrayLayers = c.maxLayers;
+        DiagLog log;
+        Result<CookedTexture> r = run_cook(strip_png(c.w, c.h, c.count).span(), s, &log, target);
+        KILN_CHECK_EQ(r.code(), Code::InvalidArgument);
+        KILN_CHECK(log.has(kDiagImageSliceLayout, Severity::Error));
+    }
+}
+
+// A KTX2 source keeps its shape; asking for another one is an error, not a reshape.
+KILN_TEST(texture_cook, ktx2_shape_must_match) {
+    char path[1024];
+    format(path, sizeof path, "%s/khronos/r8g8b8a8_srgb_array_7_mip.ktx2", kiln::test::corpus_dir());
+    Vec<u8> bytes(default_allocator(), Tag::Test);
+    KILN_REQUIRE(kiln::test::corpus::read_file(path, bytes));
+    TextureCookSettings s = kColor;
+    s.shape               = CookShape::Array;
+    KILN_CHECK(run_cook(bytes.span(), s).ok());
+    s.shape = CookShape::Cube;
+    DiagLog log;
+    KILN_CHECK_EQ(run_cook(bytes.span(), s, &log).code(), Code::InvalidArgument);
+    KILN_CHECK(log.has(kDiagImagePassthroughBad, Severity::Error));
+}

@@ -23,8 +23,14 @@ void note(DiagSink const* diag, StrView asset, Severity sev, u32 code, char cons
     (void)diagf(diag, kOk, code, sev, asset, "texture", fmt, a, b, c, d);
 }
 
-Result<CookedTexture> pass_through(TextureSource const& src, u32 cap, u32 maxLayers, Allocator const* alloc,
-                                   DiagSink const* diag, StrView asset, u64 sourceHash) noexcept {
+/// The CookShape a KTX2 texture has.
+CookShape shape_of(ktx2::TextureDesc const& d) noexcept {
+    return d.isCube ? CookShape::Cube : d.isArray ? CookShape::Array : CookShape::Tex2D;
+}
+
+Result<CookedTexture> pass_through(TextureSource const& src, CookShape shape, u32 cap, u32 maxLayers,
+                                   Allocator const* alloc, DiagSink const* diag, StrView asset,
+                                   u64 sourceHash) noexcept {
     Result<ktx2::Ktx2View> r = ktx2::Ktx2View::open(src.bytes, diag, asset);
     if (r.failed())
         return fail(diag, asset, r.status(), kDiagImagePassthroughBad,
@@ -38,6 +44,11 @@ Result<CookedTexture> pass_through(TextureSource const& src, u32 cap, u32 maxLay
         return fail(diag, asset, make_status(Code::Unsupported), kDiagImagePassthroughBad,
                     "only 2D, cube and array KTX2 can be passed through (depth %llu, cube array %llu)",
                     d.depth, d.isArray && d.isCube ? 1u : 0u);
+    if (shape != CookShape::Auto && shape != shape_of(d))
+        return diagf(diag, make_status(Code::InvalidArgument), kDiagImagePassthroughBad, Severity::Error,
+                     asset, "texture",
+                     "the KTX2 source is %s, the settings ask for %s (pass-through cannot reshape)",
+                     cook_shape_name(shape_of(d)), cook_shape_name(shape));
     if (d.layers > maxLayers)
         return fail(diag, asset, make_status(Code::Unsupported), kDiagImagePassthroughBad,
                     "%llu array layers exceed the target limit %llu", d.layers, maxLayers);
@@ -157,8 +168,32 @@ Result<CookedTexture> cook_decoded(TextureSource const& src, TextureCookSettings
     }
     u64 const prepareUs = swPrepare.elapsed_us();
 
-    // Size cap: drop leading levels until the top fits.
-    u32 const srcW = img.width, srcH = img.height;
+    // A Cube or Array source is a vertical strip, slice 0 at the top (texture-shapes.md). Each
+    // slice is one contiguous block of the row-major image.
+    CookShape const shape = settings.shape == CookShape::Auto ? CookShape::Tex2D : settings.shape;
+    u32 const stripW = img.width, stripH = img.height;
+    u32 slices = 1, sliceH = stripH;
+    if (shape == CookShape::Cube) {
+        if (stripH != stripW * 6)
+            return fail(diag, asset, make_status(Code::InvalidArgument), kDiagImageSliceLayout,
+                        "a cube strip is 6 square faces (W x 6W), not %llux%llu", stripW, stripH);
+        slices = 6;
+        sliceH = stripW;
+    } else if (shape == CookShape::Array) {
+        bool const square = settings.slices == 0;
+        slices            = square ? stripH / stripW : settings.slices;
+        if (slices == 0 || stripH % slices != 0 || (square && stripH % stripW != 0))
+            return fail(diag, asset, make_status(Code::InvalidArgument), kDiagImageSliceLayout,
+                        "an array strip of %llux%llu does not divide into %llu slices", stripW, stripH,
+                        square ? 0u : slices);
+        if (slices > target.maxArrayLayers)
+            return fail(diag, asset, make_status(Code::InvalidArgument), kDiagImageSliceLayout,
+                        "%llu array layers exceed the target limit %llu", slices, target.maxArrayLayers);
+        sliceH = stripH / slices;
+    }
+
+    // Size cap per slice: drop leading levels until the top fits.
+    u32 const srcW = stripW, srcH = sliceH;
     u32 drop = 0;
     while (max(srcW >> drop, 1u) > cap || max(srcH >> drop, 1u) > cap)
         ++drop;
@@ -171,19 +206,50 @@ Result<CookedTexture> cook_decoded(TextureSource const& src, TextureCookSettings
     u32 const fullLevels = u32(std::bit_width(max(srcW, srcH)));
     u32 const buildCount = settings.genMips ? fullLevels : drop + 1;
     detail::Stopwatch const swMips;
-    KILN_TRY_ASSIGN(Vec<Image> chain, build_mip_chain(std::move(img), plan.mips, buildCount, alloc, budget));
+    Vec<Vec<Image>> chains(alloc, Tag::Cook);
+    chains.reserve(slices);
+    if (slices == 1) {
+        KILN_TRY_ASSIGN(Vec<Image> chain,
+                        build_mip_chain(std::move(img), plan.mips, buildCount, alloc, budget));
+        chains.push_back(std::move(chain));
+    } else {
+        usize const sliceBytes = usize(img.row_bytes()) * sliceH;
+        for (u32 i = 0; i < slices; ++i) {
+            Image slice{.width          = srcW,
+                        .height         = srcH,
+                        .channels       = img.channels,
+                        .bitsPerChannel = img.bitsPerChannel,
+                        .pixels         = Vec<u8>(alloc, Tag::Cook)};
+            slice.pixels.append(Span<u8 const>(img.pixels.data() + i * sliceBytes, sliceBytes));
+            KILN_TRY_ASSIGN(Vec<Image> chain,
+                            build_mip_chain(std::move(slice), plan.mips, buildCount, alloc, budget));
+            chains.push_back(std::move(chain));
+        }
+        img.pixels.release();
+    }
     u64 const mipsUs     = swMips.elapsed_us();
-    u32 const levelCount = u32(chain.size()) - drop;
+    u32 const levelCount = u32(chains[0].size()) - drop;
     KILN_VERIFY(levelCount >= 1 && levelCount <= ktx2::kMaxLevels);
-    KILN_VERIFY(chain[drop].width == topW && chain[drop].height == topH);
+    KILN_VERIFY(chains[0][drop].width == topW && chains[0][drop].height == topH);
 
     if (levelCount > 1 && (!is_pow2(topW) || !is_pow2(topH)))
         note(diag, asset, Severity::Info, kDiagImageNpotMips,
              "non-power-of-two %llux%llu with mips: levels use floor halving", topW, topH);
 
+    // A KTX2 level holds every slice of that level, slice 0 first.
     Span<u8 const> levels[ktx2::kMaxLevels];
-    for (u32 i = 0; i < levelCount; ++i)
-        levels[i] = chain[drop + i].pixels.span();
+    Vec<u8> levelBytes[ktx2::kMaxLevels];
+    for (u32 i = 0; i < levelCount; ++i) {
+        if (slices == 1) {
+            levels[i] = chains[0][drop + i].pixels.span();
+            continue;
+        }
+        levelBytes[i].init(alloc, Tag::Cook);
+        levelBytes[i].reserve(chains[0][drop + i].pixels.size() * slices);
+        for (Vec<Image> const& chain : chains)
+            levelBytes[i].append(chain[drop + i].pixels.span());
+        levels[i] = levelBytes[i].span();
+    }
 
     // Content identity for invalidation (named store layout, open-questions R4).
     char sourceHex[17], cookHex[17];
@@ -199,6 +265,9 @@ Result<CookedTexture> cook_decoded(TextureSource const& src, TextureCookSettings
         .format             = plan.format,
         .width              = topW,
         .height             = topH,
+        .layers             = shape == CookShape::Array ? slices : 1,
+        .faces              = shape == CookShape::Cube ? 6u : 1u,
+        .isArray            = shape == CookShape::Array,
         .levels             = {levels, levelCount},
         .writerTag          = "kiln-cook",
         .premultipliedAlpha = false,
@@ -209,8 +278,15 @@ Result<CookedTexture> cook_decoded(TextureSource const& src, TextureCookSettings
     u64 const writeUs = swWrite.elapsed_us();
 
     CookedTexture out;
-    out.file = std::move(file);
-    out.desc = ktx2::TextureDesc{.format = plan.format, .width = topW, .height = topH, .levels = levelCount};
+    out.file            = std::move(file);
+    out.desc            = ktx2::TextureDesc{.format  = plan.format,
+                                            .width   = topW,
+                                            .height  = topH,
+                                            .layers  = shape == CookShape::Array ? slices : 1,
+                                            .faces   = shape == CookShape::Cube ? 6u : 1u,
+                                            .levels  = levelCount,
+                                            .isArray = shape == CookShape::Array,
+                                            .isCube  = shape == CookShape::Cube};
     out.passthrough     = false;
     out.sourceHash      = sourceHash;
     out.stats.decodeUs  = decodeUs;
@@ -234,7 +310,7 @@ Result<CookedTexture> cook_texture(TextureSource const& src, TextureCookSettings
     u32 const cap                = min(settingsCap, targetCap);
 
     if (is_ktx2(src.bytes))
-        return pass_through(src, cap, target.maxArrayLayers, alloc, diag, asset, sourceHash);
+        return pass_through(src, settings.shape, cap, target.maxArrayLayers, alloc, diag, asset, sourceHash);
     if (is_png(src.bytes) || is_jpeg(src.bytes) || is_webp(src.bytes))
         return cook_decoded(src, settings, target, cap, alloc, diag, JobBudget{env.jobs, env.maxThreads},
                             asset, sourceHash);

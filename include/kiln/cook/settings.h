@@ -16,6 +16,9 @@ enum class ColorSpace : u8 { Auto = 0, Srgb, Linear };
 /// What a texture *is*. Drives color space, channel layout, mip filtering and
 /// (later) encoding. Inferred from the glTF material slot when Auto.
 enum class TextureUsage : u8 { Auto = 0, Color, Normal, Orm, Mask, Hdr, Ui, Lut, Height };
+/// The shape to cook (docs/design/texture-shapes.md). Auto stays Auto after resolution: it
+/// means "from the source", i.e. the shape of a KTX2 source, else Tex2D.
+enum class CookShape : u8 { Auto = 0, Tex2D, Cube, Array };
 
 struct TextureCookSettings {
     ColorSpace colorSpace  = ColorSpace::Auto;   ///< Auto: sRGB for Color/Ui, else Linear
@@ -24,42 +27,57 @@ struct TextureCookSettings {
     bool normalRenormalize = true; ///< only for usage == Normal; cleared otherwise by resolve_texture
     u32 maxSize            = 0;    ///< 0 = no limit (the target cap still applies)
     bool flipGreen = false; ///< DirectX-style normal maps; only for Normal (warning + cleared otherwise)
-    // reserved: alphaMode, premultiply, dilation, encoding, supercompression, residentMips, shape
+    /// Cube and Array cut the source image into a vertical strip of slices, slice 0 at the top.
+    CookShape shape = CookShape::Auto;
+    u32 slices = 0; ///< Array: layers in the strip; 0 = square slices. Only for Array (cleared otherwise)
+    // reserved: alphaMode, premultiply, dilation, encoding, supercompression, residentMips
 };
 
 /// The glTF material slot a texture was referenced from (for usage inference).
 enum class SlotHint : u8 { None = 0, BaseColor, Normal, MetallicRoughness, Occlusion, Emissive };
 
 /// Name rule (resolution layer 5) for a standalone texture source: a file whose stem ends
-/// with `suffix` has `usage`. Matching ignores ASCII case; the first matching rule wins.
+/// with `suffix` has `usage` and `shape` (Auto: the rule says nothing about it). Suffixes stack:
+/// after a match the suffix is removed and the rules match again, each rule at most once, so
+/// `rock_array_n` is an Array of Normal. Matching ignores ASCII case; in each round the first
+/// matching rule wins, and the first rule that sets a field wins it.
 struct NameRule {
     StrView suffix     = {};
     TextureUsage usage = TextureUsage::Auto;
+    CookShape shape    = CookShape::Auto;
 };
 
 /// Built-in name rules. Hosts replace or extend them through ProviderDesc::nameRules.
 inline constexpr NameRule kDefaultNameRules[] = {
-    {"_n",                 TextureUsage::Normal},
-    {"_nrm",               TextureUsage::Normal},
-    {"_normal",            TextureUsage::Normal},
-    {"_orm",               TextureUsage::Orm   },
-    {"_arm",               TextureUsage::Orm   },
-    {"_mr",                TextureUsage::Orm   },
-    {"_metallicroughness", TextureUsage::Orm   },
-    {"_roughnessmetallic", TextureUsage::Orm   },
-    {"_occlusion",         TextureUsage::Orm   },
-    {"_ao",                TextureUsage::Orm   },
-    {"_mask",              TextureUsage::Mask  },
-    {"_height",            TextureUsage::Height},
-    {"_basecolor",         TextureUsage::Color },
-    {"_albedo",            TextureUsage::Color },
-    {"_diffuse",           TextureUsage::Color },
-    {"_emissive",          TextureUsage::Color },
+    {"_n", TextureUsage::Normal},
+    {"_nrm", TextureUsage::Normal},
+    {"_normal", TextureUsage::Normal},
+    {"_orm", TextureUsage::Orm},
+    {"_arm", TextureUsage::Orm},
+    {"_mr", TextureUsage::Orm},
+    {"_metallicroughness", TextureUsage::Orm},
+    {"_roughnessmetallic", TextureUsage::Orm},
+    {"_occlusion", TextureUsage::Orm},
+    {"_ao", TextureUsage::Orm},
+    {"_mask", TextureUsage::Mask},
+    {"_height", TextureUsage::Height},
+    {"_basecolor", TextureUsage::Color},
+    {"_albedo", TextureUsage::Color},
+    {"_diffuse", TextureUsage::Color},
+    {"_emissive", TextureUsage::Color},
+    {"_cube", TextureUsage::Auto, CookShape::Cube},
+    {"_array", TextureUsage::Auto, CookShape::Array},
 };
 
-/// Usage of the first rule whose suffix ends the file stem of `path` (no directory, no
-/// extension). Auto if no rule matches.
+/// The usage of hints_from_name(): Auto if no rule sets one.
 [[nodiscard]] KILN_API TextureUsage usage_from_name(StrView path, Span<NameRule const> rules) noexcept;
+
+struct NameHints {
+    TextureUsage usage = TextureUsage::Auto;
+    CookShape shape    = CookShape::Auto;
+};
+/// Usage and shape from the stacked suffixes of the file stem of `path` (see NameRule).
+[[nodiscard]] KILN_API NameHints hints_from_name(StrView path, Span<NameRule const> rules) noexcept;
 
 // ---------------------------------------------------------------------------
 // Mesh
@@ -207,7 +225,7 @@ KILN_API Result<MeshCookSettings> resolve_mesh_layers(MeshCookSettings const& ba
 // Hashing (field by field, schema-versioned)
 // ---------------------------------------------------------------------------
 
-inline constexpr u32 kTextureSettingsSchema = 1; ///< bump when a field is added or changes meaning
+inline constexpr u32 kTextureSettingsSchema = 2; ///< bump when a field is added or changes meaning
 inline constexpr u32 kMeshSettingsSchema    = 1;
 inline constexpr u32 kTargetSchema          = 1;
 
@@ -220,5 +238,6 @@ inline constexpr u32 kTargetSchema          = 1;
 [[nodiscard]] KILN_API char const* color_space_name(ColorSpace c) noexcept;
 [[nodiscard]] KILN_API char const* vertex_profile_name(VertexProfile p) noexcept;
 [[nodiscard]] KILN_API char const* slot_hint_name(SlotHint h) noexcept;
+[[nodiscard]] KILN_API char const* cook_shape_name(CookShape s) noexcept;
 
 } // namespace kiln::cook

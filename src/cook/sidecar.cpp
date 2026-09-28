@@ -83,6 +83,12 @@ constexpr EnumName<ColorSpace> kColorSpaces[] = {
     {"srgb",   ColorSpace::Srgb  },
     {"linear", ColorSpace::Linear},
 };
+constexpr EnumName<CookShape> kShapes[] = {
+    {"auto",  CookShape::Auto },
+    {"2d",    CookShape::Tex2D},
+    {"cube",  CookShape::Cube },
+    {"array", CookShape::Array},
+};
 constexpr EnumName<VertexProfile> kProfiles[] = {
     {"default", VertexProfile::Default},
     {"precise", VertexProfile::Precise},
@@ -95,6 +101,8 @@ Status set_field(TomlEntry const& e, TextureCookSettings& s, KeyError const& err
     if (e.key == "normalRenormalize") return set_bool(e, s.normalRenormalize, err);
     if (e.key == "maxSize") return set_u32(e, s.maxSize, err);
     if (e.key == "flipGreen") return set_bool(e, s.flipGreen, err);
+    if (e.key == "shape") return set_enum(e, kShapes, s.shape, err);
+    if (e.key == "slices") return set_u32(e, s.slices, err);
     return err(e, "unknown key for a texture");
 }
 

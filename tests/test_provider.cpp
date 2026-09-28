@@ -832,3 +832,32 @@ KILN_TEST(Provider, CubeKtx2CooksAndLoads) {
     format(storeFile, sizeof storeFile, "%s/sky.ktx2.ktx2", storeDir);
     KILN_CHECK(file_exists(storeFile));
 }
+
+// A strip named `_cube` cooks on miss into a cube, and loads as one.
+KILN_TEST(Provider, CubeStripFromName) {
+    char root[1024], storeDir[1024];
+    scratch_dir("provider_strip_src", root, sizeof root);
+    scratch_dir("provider_strip_store", storeDir, sizeof storeDir);
+    make_dir(root);
+    u8 rgba[4 * 24 * 4];
+    for (usize i = 0; i < sizeof rgba; ++i)
+        rgba[i] = u8(i * 3);
+    Vec<u8> const png =
+        kiln::test::png::encode({.width = 4, .height = 24, .colorType = 6, .depth = 8, .pixels = rgba});
+    char path[1100];
+    format(path, sizeof path, "%s/sky_cube.png", root);
+    replace_file(path, png.span());
+
+    Root const roots[] = {
+        {{}, StrView(root)}
+    };
+    TestContext tc;
+    if (!tc.init(StrView(storeDir), Span<Root const>(roots, 1))) return;
+    KILN_REQUIRE(
+        cook::install_provider(tc.ctx, cook::ProviderDesc{.storeMode = cook::StoreMode::Memory}).ok());
+    TextureHandle const sky =
+        request_texture(tc.ctx, "sky_cube.png", RequestOptions{.textureShape = TextureShape::Cube});
+    KILN_REQUIRE_EQ(pump_until_settled(tc.ctx, sky), State::Ready);
+    TextureInfo const ti = texture_info(tc.ctx, sky);
+    KILN_CHECK(ti.desc.isCube && ti.desc.width == 4 && ti.desc.height == 4);
+}

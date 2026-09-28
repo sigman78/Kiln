@@ -314,7 +314,7 @@ KILN_TEST(Settings, TextureHashIdenticalStructsEqual) {
 // kTextureSettingsSchema (docs/design/settings.md), so old store entries miss instead of misreading.
 KILN_TEST(Settings, TextureDefaultHashIsPinned) {
     TextureCookSettings defaults{};
-    KILN_CHECK_EQ(hash_settings(defaults), u64(0x38efc66c33c35cd0ull));
+    KILN_CHECK_EQ(hash_settings(defaults), u64(0x7ef735bb784af79aull)); // schema 2: shape, slices
 }
 
 namespace {

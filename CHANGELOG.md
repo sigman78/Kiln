@@ -8,6 +8,13 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
 ## [Unreleased]
 
 ### Added
+- Cube and array textures from one strip image (`docs/design/texture-shapes.md`, steps 3 and 4):
+  `TextureCookSettings::shape` (`CookShape`) and `slices` cut a vertical strip into faces or layers,
+  each with its own mip chain and size cap; a bad strip is the new K2010. Name rules stack
+  (`rock_array_n.png` is an Array of normal maps) and gain a shape: `NameRule::shape`,
+  `hints_from_name`, default rules `_cube` and `_array`. Sidecar keys `shape` and `slices`. A KTX2
+  source whose shape differs from a non-Auto `shape` is K2004. Texture settings schema 2: the
+  settings hash changes, so stores re-cook textures.
 - KTX2 cube and array textures in the cook (`docs/design/texture-shapes.md`, step 2):
   `ktx2::WriteDesc` gains `layers`, `faces` and `isArray`; a cube or array KTX2 source passes
   through with its shape (a volume or cube array is still K2004); new

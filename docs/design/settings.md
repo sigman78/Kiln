@@ -13,7 +13,7 @@ produce the same structs.
 ### Texture
 
 `ColorSpace { Auto, Srgb, Linear }`, `TextureUsage { Auto, Color, Normal, Orm, Mask, Hdr, Ui, Lut,
-Height }`.
+Height }`, `CookShape { Auto, Tex2D, Cube, Array }`.
 
 | `TextureCookSettings` field | Default | Meaning |
 |---|---|---|
@@ -23,9 +23,11 @@ Height }`.
 | `normalRenormalize` | true | `Normal` only |
 | `maxSize` | 0 | 0 = the target cap |
 | `flipGreen` | false | DirectX-style normal maps; `Normal` only |
+| `shape` | `Auto` | `Cube` and `Array` cut the source into a vertical strip of slices (`texture-shapes.md`). `Auto` stays `Auto` after resolution and means "from the source": a KTX2 source's own shape, else `Tex2D` |
+| `slices` | 0 | `Array` only: layers in the strip; 0 = square slices. Cleared with a K3002 warning for other shapes |
 
-Reserved: alphaMode, premultiply, dilation, encoding, supercompression, residentMips, shape
-(2D / array / cube / 3D).
+Reserved: alphaMode, premultiply, dilation, encoding, supercompression, residentMips.
+Texture settings schema: 2 (`shape`, `slices`).
 
 ### Mesh
 
@@ -77,7 +79,7 @@ values; code layers fill or override them. Each layer beats the ones above it.
 | 2 | host settings: `ProviderDesc::textureDefaults` / `meshDefaults`, `kiln-cook` flags | data, base | what the host changes | **yes** |
 | 3 | project config: presets, path rules (globs), target encodings | data, patch | the keys it names | reserved (v0.6) |
 | 4 | per-asset sidecar (`<source>.kiln`) | data, patch | the keys it names | **yes** (see "Sidecar files") |
-| 5 | inference: glTF slot, else name rules, else Color | code | `usage`, only if `Auto` | **yes** |
+| 5 | inference: glTF slot, else name rules, else Color | code | `usage` and `shape`, only if `Auto` | **yes** |
 | 6 | `CookPolicy` (optional) | code | anything; may refuse the asset (K3007) | **yes** |
 | - | resolve: derived fields, validation, `CookSession`, target caps | kiln | `colorSpace` if `Auto`; clears; errors | **yes** |
 | - | `kiln-cook --explain` (which layer set each field) | | | reserved (v0.6) |
@@ -119,6 +121,12 @@ Inference (layer 5, `usage_from_slot`, `usage_from_name`) and the derived color 
 | `occlusionTexture` | Orm | Linear |
 | standalone image (PNG, JPEG, WebP), no slot | name rule, else Color | from the usage |
 
+Name rules (`NameRule { suffix, usage, shape }`, `hints_from_name`) match suffixes of the file stem
+that **stack**: after a match the suffix is removed and the rules match again, each rule at most
+once. `rock_array_n.png` is an Array of Normal, `sky_cube.png` a Cube of Color. In each round the
+first matching rule wins, and the first rule that sets a field wins it. The default rules add
+`_cube` (Cube) and `_array` (Array). An embedded image has a slot and no name hints.
+
 An image bound to two slots with different inferred usages is cooked with the first slot's usage
 and a K1017 warning.
 
@@ -157,6 +165,8 @@ name or an out-of-range number is K3006. An integer is accepted where a float is
 | `colorSpace` | `"auto"`, `"srgb"`, `"linear"` |
 | `genMips`, `normalRenormalize`, `flipGreen` | boolean |
 | `maxSize` | integer, 0 to 2^32 - 1 |
+| `shape` | `"auto"`, `"2d"`, `"cube"`, `"array"` |
+| `slices` | integer, 0 to 2^32 - 1 |
 
 | Mesh key | Value |
 |---|---|

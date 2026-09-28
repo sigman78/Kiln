@@ -1,7 +1,7 @@
 # Texture shapes: cube maps and arrays
 
 **Status:** Decided (owner, 2026-09-28): vertical strips, the cube face order below, no volumes for
-now, stacked name suffixes, errors on over-limit input. Steps 1 and 2 of the rollout are implemented.
+now, stacked name suffixes, errors on over-limit input. Steps 1 to 4 of the rollout are implemented.
 **Decides:** How one source image becomes a cube map or a texture array; the settings, name hints
 and sidecar keys for it; and how the runtime and the adapter carry a texture's shape.
 
@@ -42,13 +42,13 @@ slice at a time and keep less than the whole image in memory. That helps the coo
 help loading: KTX2 stores data by mip level, with every face and layer inside each level, so a
 loader cannot stream one slice at a time without a different file layout.
 
-### 2. Settings, name hints, sidecar keys *(decided)*
+### 2. Settings, name hints, sidecar keys *(implemented)*
 
 New fields in `TextureCookSettings` (texture settings schema 2):
 
 | Field | Default | Meaning |
 |---|---|---|
-| `shape` | `Auto` | `Auto`, `Tex2D`, `Cube`, `Array`. `Auto` resolves to the shape of a KTX2 source, else `Tex2D` |
+| `shape` | `Auto` | `CookShape`: `Auto`, `Tex2D`, `Cube`, `Array`. `Auto` stays `Auto` and means the shape of a KTX2 source, else `Tex2D` |
 | `slices` | 0 | layers in an array strip; 0 = square slices (ignored for `Tex2D` and `Cube`) |
 
 - **Resolution:** `shape` follows the layer rules of `settings.md`. Name rules fill it only when it
@@ -72,8 +72,8 @@ New fields in `TextureCookSettings` (texture settings schema 2):
   cube faces, and several layers without `isArray`. `ktx validate` accepts its cube and array
   output, and the corpus round trip matches libktx byte for byte, DFD included.
 - A cube or array KTX2 source passes through with its own shape; a volume or cube array is
-  rejected (K2004), and so is an array over `maxArrayLayers`. Once `shape` exists (step 3), a KTX2
-  whose shape differs from a non-Auto `shape` is an error too.
+  rejected (K2004), and so is an array over `maxArrayLayers` or a KTX2 whose shape differs from a
+  non-Auto `shape` (pass-through cannot reshape).
 
 ### 4. Runtime and adapter *(implemented)*
 
@@ -123,9 +123,10 @@ New fields in `TextureCookSettings` (texture settings schema 2):
    `kCubeTextures` / `kArrayTextures`, `RequestOptions::textureShape`, K5017, placeholders per
    shape. KTX2 cube and array files load through the null adapter.
 2. **KTX2 writer and pass-through** for cubes and arrays *(done)*.
-3. **Strip slicing in the texture cook:** `shape`, `slices`, K2010, per-slice mips, the array limit.
-4. **Name hints and sidecar keys:** suffix chains, `_cube` and `_array`, the `shape` and `slices`
-   keys.
+3. **Strip slicing in the texture cook** *(done)*: `shape`, `slices`, K2010, per-slice mips and
+   size cap, the array limit. A slice is copied out of the strip once and gets its own mip chain.
+4. **Name hints and sidecar keys** *(done)*: stacked suffixes, `_cube` and `_array`, the `shape` and
+   `slices` keys.
 5. **Viewer:** cube and array views in the example adapter, and a skybox pass, so that step 3 can
    be checked by eye. Until then the checks are unit tests and `kiln-info`.
 

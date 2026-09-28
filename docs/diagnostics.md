@@ -139,6 +139,7 @@ under K2002 when the texture cooker wraps them. Where a code is emitted with mor
 | K2007 | `kDiagImageChannelMismatch` | kOk | Warning | The channel count is unusual for the usage: fewer than 3 channels for a Normal map (expanded to RGBA), or more than 2 channels for a Mask/Height texture (only the first channel is kept). | Author the source image with the channel count the usage expects, or accept the automatic expansion/truncation. |
 | K2008 | `kDiagImageTooLarge` | Unsupported | Error | An image dimension exceeds 16384, the decoded byte size would exceed 2^32, or the decoder's required work buffer would exceed twice that limit. | Downscale the source image before cooking. |
 | K2009 | `kDiagImageLossySource` | kOk | Warning | A Normal or Height texture comes from a lossy source (JPEG or lossy WebP). Block artifacts turn into visible shading noise, and a later BCn encode loses quality a second time. | Author normal and height maps as PNG (or lossless WebP). |
+| K2010 | `kDiagImageSliceLayout` | InvalidArgument | Error | A texture with `shape = Cube` or `Array` does not divide into its slices: a cube strip is not W x 6W (6 square faces), an array strip's height does not divide into `slices` (or, with `slices = 0`, into square slices), or the array has more layers than `TargetProfile::maxArrayLayers`. | Fix the strip image, set `slices`, or set `shape` in the sidecar (`docs/design/texture-shapes.md`). |
 
 ### 3.3 K3000-3999 — Settings resolution
 

@@ -13,9 +13,10 @@ namespace kiln::cook {
 Result<TextureCookSettings> resolve_texture(TextureCookSettings const& overrides, SlotHint hint,
                                             TargetProfile const& target, CookSession const& session,
                                             DiagSink const* diag, StrView asset) noexcept {
-    if (u8(overrides.usage) > u8(TextureUsage::Height) || u8(overrides.colorSpace) > u8(ColorSpace::Linear)) {
+    if (u8(overrides.usage) > u8(TextureUsage::Height) || u8(overrides.colorSpace) > u8(ColorSpace::Linear) ||
+        u8(overrides.shape) > u8(CookShape::Array)) {
         return diagf(diag, make_status(Code::InvalidArgument), kDiagSettingsEnumRange, Severity::Error, asset,
-                     "texture", "usage or colorSpace holds a value outside its enum range");
+                     "texture", "usage, colorSpace or shape holds a value outside its enum range");
     }
 
     TextureCookSettings s = overrides;
@@ -42,6 +43,12 @@ Result<TextureCookSettings> resolve_texture(TextureCookSettings const& overrides
         s.flipGreen         = false;
     }
 
+    if (s.shape != CookShape::Array && s.slices != 0) {
+        (void)diagf(diag, kOk, kDiagSettingsInvalidCombo, Severity::Warning, asset, "slices",
+                    "slices ignored for shape %s", cook_shape_name(s.shape));
+        s.slices = 0;
+    }
+
     // fastPreview does not change texture settings yet: mips are cheap, and skipping
     // them would add resolved-state variance.
     (void)session;
@@ -62,13 +69,13 @@ Result<TextureCookSettings> resolve_texture_layers(TextureCookSettings const& ba
                                                    ResolveDesc const& d) noexcept {
     TextureCookSettings s = base;
     if (!d.sidecar.empty()) KILN_TRY(apply_sidecar(d.sidecar, &s, d.diag, d.sidecarPath));
+    NameHints const hints =
+        d.asset.slot == SlotHint::None ? hints_from_name(d.asset.name, d.nameRules) : NameHints{};
     if (s.usage == TextureUsage::Auto) {
-        if (d.asset.slot != SlotHint::None)
-            s.usage = usage_from_slot(d.asset.slot);
-        else
-            s.usage = usage_from_name(d.asset.name, d.nameRules);
+        s.usage = d.asset.slot != SlotHint::None ? usage_from_slot(d.asset.slot) : hints.usage;
         if (s.usage == TextureUsage::Auto) s.usage = TextureUsage::Color;
     }
+    if (s.shape == CookShape::Auto) s.shape = hints.shape;
     if (d.policy.texture) {
         Status const st = d.policy.texture(d.policy.user, d.asset, d.target, &s, d.diag);
         if (st.failed()) return refused(d, st);
@@ -86,22 +93,39 @@ Result<MeshCookSettings> resolve_mesh_layers(MeshCookSettings const& base, Resol
     return resolve_mesh(s, d.target, d.session, d.diag, d.asset.name);
 }
 
-TextureUsage usage_from_name(StrView path, Span<NameRule const> rules) noexcept {
+NameHints hints_from_name(StrView path, Span<NameRule const> rules) noexcept {
     usize const slash = path.rfind('/');
     StrView stem      = slash == StrView::kNpos ? path : path.substr(slash + 1);
     usize const dot   = stem.rfind('.');
     if (dot != StrView::kNpos && dot > 0) stem = stem.substr(0, dot);
 
-    auto const lower = [](char c) { return c >= 'A' && c <= 'Z' ? char(c - 'A' + 'a') : c; };
-    for (NameRule const& r : rules) {
-        if (r.suffix.empty() || r.suffix.size >= stem.size) continue; // a bare "_n.png" has no name
-        StrView const tail = stem.substr(stem.size - r.suffix.size);
-        bool match         = true;
-        for (usize i = 0; i < tail.size && match; ++i)
-            match = lower(tail[i]) == lower(r.suffix[i]);
-        if (match) return r.usage;
+    auto const lower          = [](char c) { return c >= 'A' && c <= 'Z' ? char(c - 'A' + 'a') : c; };
+    constexpr usize kMaxRules = 64; // rules past this take part in the first round only
+    bool used[kMaxRules]      = {};
+    NameHints hints;
+    for (bool matched = true; matched;) {
+        matched = false;
+        for (usize r = 0; r < rules.size && !matched; ++r) {
+            NameRule const& rule = rules[r];
+            if ((r < kMaxRules && used[r]) || rule.suffix.empty() || rule.suffix.size >= stem.size)
+                continue; // a bare "_n.png" has no name
+            StrView const tail = stem.substr(stem.size - rule.suffix.size);
+            bool match         = true;
+            for (usize i = 0; i < tail.size && match; ++i)
+                match = lower(tail[i]) == lower(rule.suffix[i]);
+            if (!match) continue;
+            if (hints.usage == TextureUsage::Auto) hints.usage = rule.usage;
+            if (hints.shape == CookShape::Auto) hints.shape = rule.shape;
+            if (r < kMaxRules) used[r] = true;
+            stem    = stem.substr(0, stem.size - rule.suffix.size);
+            matched = r < kMaxRules;
+        }
     }
-    return TextureUsage::Auto;
+    return hints;
+}
+
+TextureUsage usage_from_name(StrView path, Span<NameRule const> rules) noexcept {
+    return hints_from_name(path, rules).usage;
 }
 
 Result<MeshCookSettings> resolve_mesh(MeshCookSettings const& overrides, TargetProfile const& target,
@@ -176,6 +200,8 @@ u64 hash_settings(TextureCookSettings const& s) noexcept {
     h.update_value(u8(s.normalRenormalize));
     h.update_value(s.maxSize);
     h.update_value(u8(s.flipGreen));
+    h.update_value(u8(s.shape));
+    h.update_value(s.slices);
     return h.digest();
 }
 
@@ -249,6 +275,16 @@ char const* slot_hint_name(SlotHint h) noexcept {
     case SlotHint::MetallicRoughness: return "metallicRoughness";
     case SlotHint::Occlusion: return "occlusion";
     case SlotHint::Emissive: return "emissive";
+    }
+    return "?";
+}
+
+char const* cook_shape_name(CookShape s) noexcept {
+    switch (s) {
+    case CookShape::Auto: return "auto";
+    case CookShape::Tex2D: return "2d";
+    case CookShape::Cube: return "cube";
+    case CookShape::Array: return "array";
     }
     return "?";
 }

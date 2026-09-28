@@ -797,7 +797,8 @@ Status install_provider(Context* ctx, ProviderDesc const& desc) noexcept {
     usize ruleAt = 0;
     for (NameRule const& r : effective.nameRules) {
         if (r.suffix.size) std::memcpy(p->ruleStrings.data() + ruleAt, r.suffix.data, r.suffix.size);
-        p->nameRules.push_back(NameRule{StrView(p->ruleStrings.data() + ruleAt, r.suffix.size), r.usage});
+        p->nameRules.push_back(
+            NameRule{StrView(p->ruleStrings.data() + ruleAt, r.suffix.size), r.usage, r.shape});
         ruleAt += r.suffix.size;
     }
     p->desc.nameRules = {}; // the host's span may not outlive install_provider

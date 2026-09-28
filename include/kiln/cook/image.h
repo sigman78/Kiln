@@ -43,6 +43,7 @@ enum ImageDiagCode : u32 {
     kDiagImageTooLarge = 2008, ///< dimension exceeds 16384 or byte size exceeds 2^32 (Unsupported)
     kDiagImageLossySource =
         2009, ///< lossy source (JPEG, lossy WebP) for a Normal or Height texture (Warning)
+    kDiagImageSliceLayout = 2010, ///< a cube or array strip does not divide into its slices (InvalidArgument)
 };
 
 /// True if `bytes` start with the signature of that format.

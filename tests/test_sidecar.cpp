@@ -264,3 +264,37 @@ KILN_TEST(Layers, MeshSidecarThenPolicy) {
     KILN_REQUIRE(r.ok());
     KILN_CHECK(r->genTangents && !r->optimize);
 }
+
+KILN_TEST(Layers, NameSuffixesStack) {
+    NameHints h = hints_from_name("tex/rock_array_n.png", kDefaultNameRules);
+    KILN_CHECK(h.usage == TextureUsage::Normal && h.shape == CookShape::Array);
+    h = hints_from_name("sky_CUBE.png", kDefaultNameRules);
+    KILN_CHECK(h.usage == TextureUsage::Auto && h.shape == CookShape::Cube);
+    h = hints_from_name("sky_cube_albedo.png", kDefaultNameRules);
+    KILN_CHECK(h.usage == TextureUsage::Color && h.shape == CookShape::Cube);
+    h = hints_from_name("_cube.png", kDefaultNameRules); // no name left: no match
+    KILN_CHECK(h.shape == CookShape::Auto);
+    // The shape comes from the name only when no earlier layer set it.
+    Result<TextureCookSettings> r = resolve_texture_layers({}, desc_for("sky_cube.png"));
+    KILN_REQUIRE(r.ok());
+    KILN_CHECK(r->shape == CookShape::Cube && r->usage == TextureUsage::Color);
+    r = resolve_texture_layers({}, desc_for("sky_cube.png", "shape = \"2d\"\n"));
+    KILN_REQUIRE(r.ok());
+    KILN_CHECK(r->shape == CookShape::Tex2D);
+}
+
+KILN_TEST(Layers, ShapeAndSlicesKeys) {
+    TextureCookSettings s;
+    KILN_REQUIRE(apply_sidecar("shape = \"array\"\nslices = 16\n", &s).ok());
+    KILN_CHECK(s.shape == CookShape::Array && s.slices == 16);
+    KILN_CHECK(apply_sidecar("shape = \"volume\"\n", &s).failed());
+    // slices means nothing for another shape: cleared with a warning, so the hash stays canonical.
+    DiagLast dl;
+    DiagSink const sink           = dl.sink();
+    ResolveDesc d                 = desc_for("sky.png", "shape = \"cube\"\nslices = 4\n");
+    d.diag                        = &sink;
+    Result<TextureCookSettings> r = resolve_texture_layers({}, d);
+    KILN_REQUIRE(r.ok());
+    KILN_CHECK_EQ(r->slices, 0u);
+    KILN_CHECK_EQ(dl.code, u32(kDiagSettingsInvalidCombo));
+}

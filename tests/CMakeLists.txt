@@ -165,7 +165,7 @@ if(KILN_KTX_TOOL)
             list(APPEND _kiln_validate_tests ktx_validate_rt_${_stem})
         endforeach()
         # cook_texture output (test_texture_cook.cpp writes samples/cooked_<case>.ktx2)
-        foreach(_case color_srgb color_linear normal height16 mask_rg nomips maxsize)
+        foreach(_case color_srgb color_linear normal height16 mask_rg nomips maxsize cube_strip array_strip)
             add_test(NAME ktx_validate_cooked_${_case}
                      COMMAND ${KILN_KTX_TOOL} validate samples/cooked_${_case}.ktx2)
             list(APPEND _kiln_validate_tests ktx_validate_cooked_${_case})
