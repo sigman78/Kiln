@@ -1,10 +1,46 @@
 # Asset model (next)
 
-Status: **Draft, in discussion** (2026-09-28). Nothing here is implemented. It records decisions
-taken so far in an owner discussion, topic by topic. A retrospective against the original intent
-follows before any code changes.
+Status: **Draft, experimental** (2026-09-28, branch `exp/single-file-scope`). Nothing here is
+implemented. Parts 1 and 2 record an owner discussion; the retrospective below narrows its scope
+and marks what it supersedes.
 
-## Why
+## Retrospective: scope cut back to single files
+
+*Decided (owner, 2026-09-28).*
+
+The original intent was asynchronous loading and cooking, mainly of textures, which have no
+dependencies between them. Meshes were in the plan from M2. The trouble came later, when the cook
+began to resolve a mesh's texture references itself: it cooks the images as a side effect, names
+them, guesses their owner on cook-on-miss, and records them for hot reload. That makes kiln own a
+dependency graph, and sharing, back-references, update rules and invalidation follow from it.
+That is an asset database, and an asset database is project policy: some projects have no
+authored meshes, some have their own material system or editor database.
+
+**Rule: one source file produces one cooked asset. kiln never follows a reference.**
+
+- Textures: unchanged.
+- Meshes stay as leaf assets. A `.mesh` records its material names and texture references
+  (URI as written, slot, UV set) as data. kiln does not cook, name, load or track them.
+- The host resolves references: it reads them from the mesh view and requests the textures it
+  wants, under names it chooses. This extends open question #6 (material remapping is the
+  host's job) to textures.
+- Hot reload is one file to one asset. Whether a mesh reload also reloads textures is the
+  host's decision.
+- Async loading, the upload budget, placeholders, load groups and the store do not change.
+
+**Embedded images are the one exception** (a `.glb` holds several images). *Open, owner deciding:*
+
+- (b) An explicit `kiln-cook` step extracts them to files, which are then normal texture sources.
+  The one-to-one rule has no exception.
+- (c) The mesh cook writes them as extra outputs named `model.glb#name`. kiln tracks nothing
+  beyond that. The viewer's "drop in a glb and see it" keeps working.
+- (a), not supporting them at all, was rejected: exported `.glb` files embed images by default.
+
+**What stays from Parts 1 and 2:** identity as the exact source path with its extension, mounts,
+the path rules, and strict input rules. **Superseded:** anything that needs kiln to follow a
+reference. Each such item below is marked *Superseded by the retrospective*.
+
+## Why (the original symptoms)
 
 The cook and the runtime derive everything from asset names on demand. There is no record of
 which source produces which asset. Symptoms seen so far:
@@ -36,6 +72,7 @@ which source produces which asset. Symptoms seen so far:
   normalization. A URI that leaves the mount is a cook error.
 - Sharing across mounts goes by identity, not by path. Example: a material file
   (`material-name.toml`) names `pool:textures/wood_oak.png`. The material file is its own topic.
+  *Superseded by the retrospective:* a material file is host policy; kiln does not read it.
 
 **B3. There is no separate ad-hoc mode.** *Decided.* Viewing a random `.glb` means a project whose
 default mount is the folder given as the source. If its references leave that folder, pick a
@@ -43,7 +80,8 @@ higher folder or the cook fails.
 
 **B4. Guarantees hold only for input that follows the rules.** *Decided in principle.* Input that breaks
 a rule gets a diagnostic and never a crash or a partial store write. Stable identities, sharing,
-dependency tracking and change reports are promised only for input that follows the rules.
+dependency tracking and change reports are promised only for input that follows the rules
+(*superseded by the retrospective:* sharing, dependency tracking and change reports leave kiln).
 `kiln-cook --check` reports violations. To do: replace this with a concrete list of guarantees
 and the diagnostic for each broken rule.
 
@@ -81,7 +119,7 @@ mount. Reasons:
 
 The cooked file name in the store is a separate decision (store layout).
 
-**I4. Sub-assets.** *Decided.*
+**I4. Sub-assets.** *Decided; applies only if embedded images take option (c) of the retrospective.*
 
 - A sub-asset lives inside another source file and has no file of its own. For now this is
   only an image embedded in a `.glb`/`.gltf`. An external image is not a sub-asset; it has its
@@ -97,7 +135,8 @@ name is an error at the call.
 
 **I6. `AssetId` is FNV-1a 64 of the full identity**, mount and extension included. *Proposed.*
 Texture bindings in `.mesh` store full identities. This is a format break: every store must be
-re-cooked.
+re-cooked. *Superseded by the retrospective:* bindings store the URI as written; the host maps it
+to an identity.
 
 **I7. Identity is the path; no GUIDs.** *Decided for now.* Moving or renaming a source breaks
 references, as it already does for glTF URIs. GUID sidecars (Unity-style `.meta`) survive moves
@@ -105,31 +144,29 @@ but double the file count and weaken "sources are the truth". Worth exploring la
 
 ## Consequences for the current code
 
-Not a plan yet; listed so the retrospective can weigh them.
+Not a plan yet. After the retrospective:
 
-- Texture names change from `<mesh>/<stem>` to the image's own identity (external) or
-  `model.ext#name` (embedded). Stores need a re-cook; the `.mesh` format changes (I6).
-- The provider's extension loop and owner guess go away.
+- The mesh cook stops cooking textures. `cook_mesh_full` in `src/cook/provider.cpp` loses its
+  texture half, or keeps only the embedded-image outputs of option (c).
+- `TextureRef` becomes data only: URI, slot, UV set. It no longer carries an asset path for
+  external images.
+- The provider's extension loop, owner guess and record of emitted textures go away.
+- The viewer maps texture references to names itself.
 - `ContextDesc::sourceRoots` becomes a list of named mounts.
-- `TextureRef::assetPath` in `include/kiln/cook/cook.h` changes meaning.
+- Asset names gain their extension. Stores need a re-cook.
 
 ## Later topics
 
-In the agreed order, after the retrospective:
+The retrospective changes the list agreed before it.
 
-1. **Inclusion.** How an asset enters the project: discovered on request (today's cook-on-miss),
-   an import step, or a manifest.
-2. **Dependency graph.** Per asset, the source files it read and its settings; the reverse
-   direction answers "what does this file affect". Sharing, back-references and invalidation
-   come from it.
-3. **Store layout.** Mapping identities to cooked files: named, flat, or content-addressed. See
-   `open-questions.md` R4 (index file).
-4. **Update rules.** When a cooked file is stale (source hash, settings hash, cooker version)
-   and who re-cooks it.
-5. **Hot reload as a report plus a plan.** The asset layer detects changes and reports the
-   affected assets. The engine decides what to reload, when and how much, and calls
-   `request_reload`. Automatic reload (`hot-reload.md`) is paused until this is designed. Open:
-   mark `watchStore`/`watchSources` experimental or remove them.
+- **Store layout.** Mapping identities to cooked files: named, flat, or content-addressed. See
+  `open-questions.md` R4 (index file). Still needed.
+- **Update rules.** When a cooked file is stale (source hash, settings hash, cooker version).
+  Still needed, but only per file.
+- **Hot reload.** One file to one asset. Automatic reload (`hot-reload.md`) keeps working in
+  that form; the glb-to-embedded-texture relation in its source poller goes away. Open: keep
+  `watchStore`/`watchSources`, or mark them experimental.
+- *Superseded by the retrospective:* inclusion, the dependency graph, and hot reload as a report
+  plus a plan. They are host work. A small helper may come later if real usage asks for one.
 
-Also deferred: overlays (B1), the material library file (B2), GUIDs (I7), the concrete
-guarantee list (B4).
+Also deferred: overlays (B1), GUIDs (I7), the concrete guarantee list (B4).
