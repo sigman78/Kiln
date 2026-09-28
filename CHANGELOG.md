@@ -8,6 +8,12 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
 ## [Unreleased]
 
 ### Added
+- Cook: per-asset `.kiln` sidecar files (`wall_n.png.kiln`, `chair.glb.kiln`) set cook settings for
+  one standalone texture or mesh. The syntax is a strict TOML subset parsed by kiln itself (no
+  dependency); keys are the settings field names. `apply_sidecar()` in the new
+  `kiln/cook/sidecar.h`; the provider and `kiln-cook` read sidecars, and the source poller re-cooks
+  when one is added, edited or removed. New diagnostics K3005 (syntax) and K3006 (key or value).
+  Syntax and keys: `docs/design/settings.md`, "Sidecar files".
 - Cook: name rules give a standalone texture source its usage from its file-stem suffix
   (`wall_n.png` is a linear normal map, `crate_orm.png` is ORM). `NameRule`, `kDefaultNameRules`
   and `usage_from_name` in `kiln/cook/settings.h`; `ProviderDesc::nameRules` (default: the

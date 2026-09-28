@@ -116,6 +116,10 @@ if(KILN_BUILD_COOK)
         src/formats/ktx2_write.cpp
         include/kiln/cook/settings.h
         src/cook/settings.cpp
+        include/kiln/cook/sidecar.h
+        src/cook/sidecar.cpp
+        src/cook/toml_subset.h
+        src/cook/toml_subset.cpp
         include/kiln/cook/cook.h
         src/cook/store.cpp
         include/kiln/cook/image.h

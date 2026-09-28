@@ -55,7 +55,9 @@ Explicit session overrides still win over all three. Rules and sidecars are laye
 cooked usage.
 
 **Order of work:** name rules (done), then the scope cut with option (c) (done: `.mesh` 0.4,
-`kTextureExternal`, `<mesh>#<name>`, K1019; see `mesh-format-spec.md` §5.7), then sidecars.
+`kTextureExternal`, `<mesh>#<name>`, K1019; see `mesh-format-spec.md` §5.7), then sidecars
+(done: `kiln/cook/sidecar.h`, K3005/K3006; see `settings.md`, "Sidecar files"). Sidecars apply
+after the session settings, not before them; that deviation is an open point in `settings.md`.
 
 **What stays from Parts 1 and 2:** identity as the exact source path with its extension, mounts,
 the path rules, and strict input rules. **Superseded:** anything that needs kiln to follow a

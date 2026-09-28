@@ -6,6 +6,7 @@
 #include "kiln/cook/cook.h"
 #include "kiln/cook/image.h"
 #include "kiln/cook/settings.h"
+#include "kiln/cook/sidecar.h"
 #include "kiln/hash.h"
 #include "kiln/io.h"
 #include "kiln/log.h"
@@ -291,14 +292,33 @@ void print_mesh_stats(CookStats const& s) {
                 double(s.totalUs) / 1000.0);
 }
 
+/// Applies `<sourcePath>.kiln` to `*s` if it exists. False if the sidecar is invalid.
+template <class Settings> bool apply_sidecar_file(Ctx& c, StrView sourcePath, Settings* s) {
+    char path[1100];
+    usize const n = format(path, sizeof path, "%.*s%.*s", KILN_SV(sourcePath), KILN_SV(kSidecarExt));
+    if (!io_file_exists(StrView(path, n))) return true;
+    Vec<u8> text(default_allocator(), Tag::Io);
+    if (!read_file(path, text)) {
+        std::fprintf(stderr, "kiln-cook: cannot read %s\n", path);
+        return false;
+    }
+    return apply_sidecar(StrView(reinterpret_cast<char const*>(text.data()), text.size()), s, &c.sink,
+                         StrView(path, n))
+        .ok();
+}
+
 bool cook_one_texture(Ctx& c, Span<u8 const> bytes, StrView assetPath, StrView sourcePath, SlotHint hint) {
     u64 pathHash = hash_name(assetPath);
-    if (c.doneTextures.contains(pathHash)) return true; // shared between meshes
+    if (c.doneTextures.contains(pathHash)) return true;
     c.doneTextures.insert(pathHash, 1);
 
+    // A standalone file: name rule, then its sidecar. An embedded image takes its usage from the slot.
     TextureCookSettings overrides = c.opt.tex;
-    if (hint == SlotHint::None && overrides.usage == TextureUsage::Auto)
-        overrides.usage = usage_from_name(sourcePath, kDefaultNameRules);
+    if (hint == SlotHint::None) {
+        if (overrides.usage == TextureUsage::Auto)
+            overrides.usage = usage_from_name(sourcePath, kDefaultNameRules);
+        if (!apply_sidecar_file(c, sourcePath, &overrides)) return false;
+    }
     Result<TextureCookSettings> rs =
         resolve_texture(overrides, hint, c.opt.target, c.session, &c.sink, assetPath);
     if (rs.failed()) return false;
@@ -316,7 +336,9 @@ bool cook_one_texture(Ctx& c, Span<u8 const> bytes, StrView assetPath, StrView s
 }
 
 bool cook_one_mesh(Ctx& c, Span<u8 const> bytes, StrView assetPath, char const* sourcePath) {
-    Result<MeshCookSettings> rs = resolve_mesh(c.opt.mesh, c.opt.target, c.session, &c.sink, assetPath);
+    MeshCookSettings overrides = c.opt.mesh;
+    if (!apply_sidecar_file(c, StrView(sourcePath), &overrides)) return false;
+    Result<MeshCookSettings> rs = resolve_mesh(overrides, c.opt.target, c.session, &c.sink, assetPath);
     if (rs.failed()) return false;
 
     char baseDir[1024];
