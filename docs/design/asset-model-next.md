@@ -28,7 +28,8 @@ authored meshes, some have their own material system or editor database.
   host's decision.
 - Async loading, the upload budget, placeholders, load groups and the store do not change.
 
-**Embedded images are the one exception** (a `.glb` holds several images). *Open, owner deciding:*
+**Embedded images are the one exception** (a `.glb` holds several images). *Decided (owner,
+2026-09-28): option (c).*
 
 - (b) An explicit `kiln-cook` step extracts them to files, which are then normal texture sources.
   The one-to-one rule has no exception.
@@ -53,7 +54,8 @@ Explicit session overrides still win over all three. Rules and sidecars are laye
 `settings.md`. Proposed: warn when a host requests a texture with a kind that differs from the
 cooked usage.
 
-**Order of work:** name rules (done), then the scope cut with option (c), then sidecars.
+**Order of work:** name rules (done), then the scope cut with option (c) (done: `.mesh` 0.4,
+`kTextureExternal`, `<mesh>#<name>`, K1019; see `mesh-format-spec.md` §5.7), then sidecars.
 
 **What stays from Parts 1 and 2:** identity as the exact source path with its extension, mounts,
 the path rules, and strict input rules. **Superseded:** anything that needs kiln to follow a

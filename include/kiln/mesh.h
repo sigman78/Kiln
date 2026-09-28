@@ -15,7 +15,7 @@ namespace kiln::mesh {
 
 inline constexpr u32 kMagic            = fourcc('K', 'M', 'S', 'H');
 inline constexpr u16 kVersionMajor     = 0; ///< mismatch = VersionMismatch
-inline constexpr u16 kVersionMinor     = 3; ///< 0.x: exact match required; from 1.0: additive
+inline constexpr u16 kVersionMinor     = 4; ///< 0.x: exact match required; from 1.0: additive
 inline constexpr u32 kMaxStreams       = 4;
 inline constexpr u32 kMaxAttribs       = 12;
 inline constexpr u32 kPayloadBaseAlign = 256; ///< minimum payloadAlignment / gpuDataOffset alignment
@@ -188,11 +188,14 @@ enum class TextureSlot : u8 {
 
 enum TextureBindingFlags : u16 {
     kTextureSrgb = 1u << 0,
+    /// pathStr is an external image's URI, percent-decoded and relative to the source file;
+    /// textureId is 0. kiln does not cook or name it: the host maps it to a texture.
+    kTextureExternal = 1u << 1,
 };
 
 struct TextureBinding {
-    u64 textureId; ///< FNV-1a 64 of cooked texture asset path
-    u32 pathStr;   ///< same path, for tools/debug
+    u64 textureId; ///< FNV-1a 64 of the texture asset path; 0 with kTextureExternal
+    u32 pathStr;   ///< the texture asset path, or the URI with kTextureExternal
     u8 slot;       ///< TextureSlot
     u8 uvSet;      ///< which TexCoord semanticIndex to sample
     u16 flags;     ///< TextureBindingFlags

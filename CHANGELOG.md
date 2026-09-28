@@ -112,6 +112,18 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
   relative path, as the `UriResolver` already received for buffers.
 
 ### Changed
+- **Breaking (format, cook, store):** a mesh cook no longer cooks the images its glTF references by
+  URI (`docs/design/asset-model-next.md`, "one source file per cooked asset").
+  - `.mesh` 0.4: `TextureBinding` flag `kTextureExternal` marks such a binding; `pathStr` is the
+    URI (percent-decoded, relative to the source) and `textureId` is 0. The host maps it to a
+    texture (the viewer resolves it against the mesh's directory).
+  - Embedded images are named `<mesh>#<image name>` (was `<mesh>/<sanitized stem>`); an unnamed
+    image is `image<N>`. A duplicate or reserved-character name is the new error K1019.
+  - `TextureRef` lists embedded images only and loses `uri`. The provider splits a texture
+    request at `#` instead of guessing the owning mesh from the last `/`.
+  - `kCookerVersion` 3.
+  - Migration: delete the store and re-cook; 0.3 files fail with `VersionMismatch`. Request
+    externally referenced textures by their own names; the name rules pick their usage.
 - Tests: `kiln_tests` compiles in the corpus, golden and scratch (`<build>/tests/samples`)
   directories, so running it by hand runs every test; `--corpus`, `--golden` and `--samples` still
   override. A missing directory now stops the run (exit 2) instead of silently skipping tests.

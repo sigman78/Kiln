@@ -46,8 +46,8 @@ struct MaterialDesc {
 };
 
 struct TextureBindingDesc {
-    StrView path     = {}; ///< cooked texture asset path (also stored as pathStr)
-    u64 textureId    = 0;  ///< 0 = hash_name(path)
+    StrView path     = {}; ///< texture asset path, or the URI with kTextureExternal (stored as pathStr)
+    u64 textureId    = 0;  ///< 0 = hash_name(path); always written as 0 with kTextureExternal
     TextureSlot slot = TextureSlot::BaseColor;
     u8 uvSet         = 0;
     u16 flags        = 0; ///< TextureBindingFlags

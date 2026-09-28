@@ -284,26 +284,8 @@ Status cook_mesh_full(Provider const& p, StrView meshAssetPath, StrView sourcePa
     for (TextureRef const& t : r->textures) {
         bool const isRequested = requestedKind == AssetKind::Texture && t.assetPath == requestedAssetPath;
 
-        Span<u8 const> texBytes;
-        Vec<u8> uriBytes(alloc, Tag::Cook);
-        if (!t.embedded.empty()) {
-            texBytes = t.embedded;
-        } else if (!t.uri.empty()) {
-            char path[1200];
-            usize const n = format(path, sizeof path, "%.*s/%.*s", KILN_SV(baseDir), KILN_SV(t.uri));
-            StrView const pathView(path, n);
-            Status const rr = io_read_file(compat_io_backend(), pathView, alloc, &uriBytes);
-            if (rr.failed()) {
-                diagf(diag, rr, 0, Severity::Error, t.assetPath, "texture", "cannot read external texture %s",
-                      path);
-                if (isRequested) requestedTexStatus = rr;
-                noteFailure(rr);
-                continue;
-            }
-            texBytes = uriBytes.span();
-        } else {
-            continue; // no usable source (the importer only emits refs with one)
-        }
+        Span<u8 const> const texBytes = t.embedded;
+        if (texBytes.empty()) continue; // the importer only emits refs with bytes
 
         Result<TextureCookSettings> rs =
             resolve_texture(p.desc.texture, t.slot, p.desc.target, p.session, diag, t.assetPath);
@@ -518,22 +500,21 @@ Status provider_cook(void* user, AssetKind kind, StrView assetPath, Allocator co
     auto* p = static_cast<Provider*>(user);
 
     if (kind == AssetKind::Texture) {
+        // "<mesh>#<image>": an image embedded in that mesh's source.
+        usize const hash = assetPath.find('#');
+        if (hash != StrView::kNpos) {
+            StrView const meshAssetPath = assetPath.substr(0, hash);
+            FoundSource mesh;
+            if (!find_source(*p, meshAssetPath, kMeshExts, mesh)) return make_status(Code::NotFound);
+            return cook_mesh_on_miss(*p, meshAssetPath, StrView(mesh.path, mesh.len), AssetKind::Texture,
+                                     assetPath, alloc, out, diag);
+        }
+
         char const* const texExts[] = {"png", "jpg", "jpeg", webp_decode_enabled() ? "webp" : nullptr,
                                        "ktx2"};
         FoundSource tex;
-        if (find_source(*p, assetPath, texExts, tex))
-            return cook_texture_on_miss(*p, StrView(tex.path, tex.len), assetPath, alloc, out, diag);
-
-        // No source of its own: it must be embedded in its owning mesh
-        // ("<mesh assetPath>/<image stem>", cook/cook.h's TextureRef::assetPath).
-        usize const slash = assetPath.rfind('/');
-        if (slash == StrView::kNpos) return make_status(Code::NotFound);
-        StrView const meshAssetPath = assetPath.substr(0, slash);
-
-        FoundSource mesh;
-        if (!find_source(*p, meshAssetPath, kMeshExts, mesh)) return make_status(Code::NotFound);
-        return cook_mesh_on_miss(*p, meshAssetPath, StrView(mesh.path, mesh.len), AssetKind::Texture,
-                                 assetPath, alloc, out, diag);
+        if (!find_source(*p, assetPath, texExts, tex)) return make_status(Code::NotFound);
+        return cook_texture_on_miss(*p, StrView(tex.path, tex.len), assetPath, alloc, out, diag);
     }
 
     FoundSource mesh;

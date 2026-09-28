@@ -504,8 +504,17 @@ KILN_TEST(MeshCook, CorpusManifest) {
         KILN_CHECK_MSG(maxLods == e.lods, "%s: lods %u, manifest %u", rel, maxLods, e.lods);
         KILN_CHECK_MSG(v.materials().size() == e.materials, "%s: materials %u, manifest %u", rel,
                        v.materials().size(), e.materials);
-        KILN_CHECK_MSG(c.result->textures.size() == e.textures, "%s: textures %u, manifest %u", rel,
-                       u32(c.result->textures.size()), e.textures);
+        // Referenced images: the embedded ones the cook outputs, plus distinct external URIs.
+        u32 images = u32(c.result->textures.size());
+        for (u32 i = 0; i < v.textures().size(); ++i) {
+            mesh::TextureBinding const& b = v.textures()[i];
+            bool seen                     = !(b.flags & mesh::kTextureExternal);
+            for (u32 j = 0; j < i && !seen; ++j)
+                seen =
+                    (v.textures()[j].flags & mesh::kTextureExternal) && v.textures()[j].pathStr == b.pathStr;
+            images += !seen;
+        }
+        KILN_CHECK_MSG(images == e.textures, "%s: textures %u, manifest %u", rel, images, e.textures);
         KILN_CHECK_MSG(v.mounts().size() == e.mounts, "%s: mounts %u, manifest %u", rel, v.mounts().size(),
                        e.mounts);
         KILN_CHECK_EQ(c.result->partCount, v.parts().size());
@@ -654,8 +663,8 @@ KILN_TEST(MeshCook, CorpusTwoUvSets) {
     KILN_CHECK_EQ(b1.slot, u8(mesh::TextureSlot::Occlusion));
     KILN_CHECK_EQ(b1.uvSet, u8(1));
     KILN_CHECK_EQ(b1.flags, u16(0));
-    KILN_CHECK_EQ(v.str(b0.pathStr), StrView("meshes/two_uv_sets/albedo"));
-    KILN_CHECK_EQ(b0.textureId, hash_name("meshes/two_uv_sets/albedo"));
+    KILN_CHECK_EQ(v.str(b0.pathStr), StrView("meshes/two_uv_sets#albedo"));
+    KILN_CHECK_EQ(b0.textureId, hash_name("meshes/two_uv_sets#albedo"));
 }
 
 KILN_TEST(MeshCook, CorpusNoUvNoNormals) {
@@ -697,16 +706,15 @@ KILN_TEST(MeshCook, CorpusPbrTextures) {
         cook::SlotHint slot;
         bool srgb;
     } const want[4] = {
-        {"meshes/pbr_textures/hull_albedo",   cook::SlotHint::BaseColor,         true },
-        {"meshes/pbr_textures/hull_normal",   cook::SlotHint::Normal,            false},
-        {"meshes/pbr_textures/hull_orm",      cook::SlotHint::MetallicRoughness, false},
-        {"meshes/pbr_textures/hull_emissive", cook::SlotHint::Emissive,          true },
+        {"meshes/pbr_textures#hull_albedo",   cook::SlotHint::BaseColor,         true },
+        {"meshes/pbr_textures#hull_normal",   cook::SlotHint::Normal,            false},
+        {"meshes/pbr_textures#hull_orm",      cook::SlotHint::MetallicRoughness, false},
+        {"meshes/pbr_textures#hull_emissive", cook::SlotHint::Emissive,          true },
     };
     for (u32 i = 0; i < 4; ++i) {
         KILN_CHECK_EQ(t[i].assetPath, StrView(want[i].path));
         KILN_CHECK_EQ(t[i].slot, want[i].slot);
         KILN_CHECK_EQ(t[i].srgb, want[i].srgb);
-        KILN_CHECK(t[i].uri.empty());
         KILN_CHECK(t[i].embedded.size > 8 && t[i].embedded[1] == 'P' && t[i].embedded[2] == 'N');
         KILN_CHECK_EQ(t[i].mimeType, StrView("image/png"));
     }
@@ -725,10 +733,9 @@ KILN_TEST(MeshCook, CorpusJpegTexture) {
     if (!cook_corpus("generated/jpeg_texture.glb", c) || !c.opened.ok) return;
     Vec<cook::TextureRef> const& t = c.result->textures;
     KILN_REQUIRE_EQ(t.size(), usize(1));
-    KILN_CHECK_EQ(t[0].assetPath, StrView("meshes/jpeg_texture/albedo"));
+    KILN_CHECK_EQ(t[0].assetPath, StrView("meshes/jpeg_texture#albedo"));
     KILN_CHECK_EQ(t[0].slot, cook::SlotHint::BaseColor);
     KILN_CHECK(t[0].srgb);
-    KILN_CHECK(t[0].uri.empty());
     KILN_CHECK_EQ(t[0].mimeType, StrView("image/jpeg"));
     KILN_REQUIRE(t[0].embedded.size >= 3);
     KILN_CHECK(t[0].embedded[0] == 0xFF && t[0].embedded[1] == 0xD8 && t[0].embedded[2] == 0xFF);
@@ -762,12 +769,14 @@ KILN_TEST(MeshCook, CorpusExternalUri) {
     if (!cook_corpus("generated/external_uri.gltf", c)) return;
     if (!KILN_CHECK_MSG(c.result.ok(), "%s", c.diags.msg)) return;
     KILN_REQUIRE(c.opened.ok);
-    KILN_REQUIRE_EQ(c.result->textures.size(), usize(1));
-    cook::TextureRef const& t = c.result->textures[0];
-    KILN_CHECK_EQ(t.uri, StrView("external_uri_albedo.png"));
-    KILN_CHECK(t.embedded.empty());
-    KILN_CHECK_EQ(t.assetPath, StrView("meshes/external_uri/external_uri_albedo"));
-    KILN_CHECK_EQ(t.mimeType, StrView("image/png"));
+    // An external image is not an output of the mesh cook: only the binding records it.
+    KILN_CHECK(c.result->textures.empty());
+    mesh::MeshView const& v = c.opened.view;
+    KILN_REQUIRE_EQ(v.textures().size(), 1u);
+    mesh::TextureBinding const& b = v.textures()[0];
+    KILN_CHECK_EQ(v.str(b.pathStr), StrView("external_uri_albedo.png"));
+    KILN_CHECK_EQ(b.flags, u16(mesh::kTextureExternal | mesh::kTextureSrgb));
+    KILN_CHECK_EQ(b.textureId, u64(0));
 
     CorpusCook none;
     if (!cook_corpus("generated/external_uri.gltf", none, false)) return;
@@ -783,7 +792,7 @@ KILN_TEST(MeshCook, CorpusExternalUri) {
 KILN_TEST(MeshCook, CorpusExternalUriPercentEncoded) {
     CorpusCook c;
     if (!cook_corpus("generated/external_uri.gltf", c)) return;
-    // Encode the '_' in both URIs as %5F; the resolver and TextureRef see plain file names.
+    // Encode the '_' in both URIs as %5F; the resolver and the binding see plain file names.
     Vec<u8> patched(default_allocator(), Tag::Test);
     StrView const text(reinterpret_cast<char const*>(c.bytes.data()), c.bytes.size());
     StrView const needles[] = {"\"external_uri.bin\"", "\"external_uri_albedo.png\""};
@@ -804,9 +813,35 @@ KILN_TEST(MeshCook, CorpusExternalUriPercentEncoded) {
     Result<cook::CookedMesh> r =
         cook_bytes(patched.span(), "meshes/external_uri", d, default_settings(), &c.resolver);
     if (!KILN_CHECK_MSG(r.ok(), "%s", d.msg)) return;
-    KILN_REQUIRE_EQ(r->textures.size(), usize(1));
-    KILN_CHECK_EQ(r->textures[0].uri, StrView("external_uri_albedo.png"));
-    KILN_CHECK_EQ(r->textures[0].mimeType, StrView("image/png"));
+    Opened o;
+    open_cooked(r.value(), o, "external_uri (encoded)");
+    if (!o.ok) return;
+    KILN_REQUIRE_EQ(o.view.textures().size(), 1u);
+    KILN_CHECK_EQ(o.view.str(o.view.textures()[0].pathStr), StrView("external_uri_albedo.png"));
+}
+
+// Embedded image names become "<mesh>#<name>", so a duplicate name or a reserved character is
+// an error (K1019). The corpus file is patched with same-length names, so GLB chunk sizes hold.
+KILN_TEST(MeshCook, EmbeddedImageNameRules) {
+    CorpusCook c;
+    if (!cook_corpus("generated/pbr_textures.glb", c)) return;
+    KILN_REQUIRE(c.result.ok());
+    for (StrView const renamed : {StrView("\"hull_albedo\""), StrView("\"hull#normal\"")}) {
+        Vec<u8> patched(default_allocator(), Tag::Test);
+        patched.append(c.bytes.span());
+        StrView const from = "\"hull_normal\"";
+        usize hits         = 0;
+        for (usize i = 0; i + from.size <= patched.size(); ++i)
+            if (std::memcmp(patched.data() + i, from.data, from.size) == 0) {
+                std::memcpy(patched.data() + i, renamed.data, renamed.size);
+                ++hits;
+            }
+        KILN_REQUIRE(hits > 0);
+        Diags d;
+        Result<cook::CookedMesh> r = cook_bytes(patched.span(), "meshes/pbr_textures", d, default_settings());
+        KILN_CHECK_EQ(r.code(), Code::ValidationFailed);
+        KILN_CHECK_EQ(d.firstErr, u32(cook::kDiagGltfImageName));
+    }
 }
 
 namespace {
@@ -823,8 +858,8 @@ bool same_texture_refs(cook::CookedMesh const& a, cook::CookedMesh const& b) {
     for (usize i = 0; i < a.textures.size(); ++i) {
         cook::TextureRef const& x = a.textures[i];
         cook::TextureRef const& y = b.textures[i];
-        if (x.assetPath != y.assetPath || x.uri != y.uri || x.mimeType != y.mimeType || x.slot != y.slot ||
-            x.srgb != y.srgb || !same_bytes(x.embedded, y.embedded))
+        if (x.assetPath != y.assetPath || x.mimeType != y.mimeType || x.slot != y.slot || x.srgb != y.srgb ||
+            !same_bytes(x.embedded, y.embedded))
             return false;
     }
     return true;

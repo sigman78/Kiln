@@ -158,10 +158,15 @@ int dump_mesh(Span<u8 const> bytes, Options const& o, DiagSink const* diag) {
             f64(m.alphaCutoff), m.flags);
         for (u32 t = 0; t < m.textureCount; ++t) {
             mesh::TextureBinding const& tb = v.textures()[m.textureFirst + t];
-            out("      %-10s uv%u %s \"%.*s\"  id %016llx\n",
-                mesh::texture_slot_name(mesh::TextureSlot(tb.slot)), tb.uvSet,
-                (tb.flags & mesh::kTextureSrgb) ? "sRGB  " : "linear", KILN_SV(v.str(tb.pathStr)),
-                static_cast<unsigned long long>(tb.textureId));
+            if (tb.flags & mesh::kTextureExternal)
+                out("      %-10s uv%u %s uri \"%.*s\"\n", mesh::texture_slot_name(mesh::TextureSlot(tb.slot)),
+                    tb.uvSet, (tb.flags & mesh::kTextureSrgb) ? "sRGB  " : "linear",
+                    KILN_SV(v.str(tb.pathStr)));
+            else
+                out("      %-10s uv%u %s \"%.*s\"  id %016llx\n",
+                    mesh::texture_slot_name(mesh::TextureSlot(tb.slot)), tb.uvSet,
+                    (tb.flags & mesh::kTextureSrgb) ? "sRGB  " : "linear", KILN_SV(v.str(tb.pathStr)),
+                    static_cast<unsigned long long>(tb.textureId));
         }
     }
 

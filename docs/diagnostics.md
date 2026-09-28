@@ -102,6 +102,7 @@ depends on the specific check that failed (see "Meaning").
 | K1016 | `kDiagGltfEmptyMesh` | kOk | Warning | A part or LOD ended up with zero triangles after import. An empty LOD0 drops all of the part's LODs; an empty coarser LOD just drops that LOD. | Check the source node actually has triangle geometry, or remove genuinely empty nodes. |
 | K1017 | `kDiagGltfUsageConflict` | kOk | Warning | The same image is bound to texture slots implying different usages (e.g. both base color and normal); the first usage encountered wins. | Use separate image files per usage in the source material. |
 | K1018 | `kDiagGltfQuantFallback` | kOk | Info | Positions or a UV set fell back to float (the precise profile) because the quantized range/tolerance was exceeded: model extent exceeds 16-bit precision at the configured `posTolMm`, or UV values fall outside +-2048. | Informational. Tighten expectations around `posTolMm`, or accept float storage for that attribute. |
+| K1019 | `kDiagGltfImageName` | ValidationFailed | Error | An embedded image's name cannot be a texture name `<mesh>#<name>`: two embedded images share a name, or a name holds `:` `#` `/` `\` or a control character. Unnamed images are `image<N>` and never fail. | Give each embedded image a unique name without those characters, or clear the names. |
 
 #### 3.1.1 glTF naming conventions
 

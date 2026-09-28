@@ -144,7 +144,42 @@ struct Scene {
     u32 frame     = 0; ///< the frame being prepared, for the event log
 };
 
-/// Requests every BaseColor texture the mesh's materials name, once per texture id. They are
+/// The texture asset name a binding refers to; this mapping is the viewer's policy, not kiln's.
+/// An embedded image carries its name. An external URI resolves against the mesh's directory,
+/// without its extension (asset names have none). Empty if the URI leaves the store root.
+StrView texture_name(StrView meshPath, mesh::MeshView const& v, mesh::TextureBinding const& b,
+                     char (&buf)[256]) {
+    StrView const path = v.str(b.pathStr);
+    if (!(b.flags & mesh::kTextureExternal)) return path;
+    if (path.empty() || path[0] == '/' || path.find(':') != StrView::kNpos) return {};
+
+    usize const slash = meshPath.rfind('/');
+    usize n =
+        slash == StrView::kNpos ? 0 : format(buf, sizeof buf, "%.*s", KILN_SV(meshPath.substr(0, slash)));
+    for (usize at = 0; at <= path.size;) {
+        usize end = at;
+        while (end < path.size && path[end] != '/')
+            ++end;
+        StrView const seg = path.substr(at, end - at);
+        at                = end + 1;
+        if (seg.empty() || seg == ".") continue;
+        if (seg == "..") {
+            if (n == 0) return {};
+            while (n > 0 && buf[n - 1] != '/')
+                --n;
+            if (n > 0) --n; // the separator itself
+            continue;
+        }
+        n += format(buf + n, sizeof buf - n, n ? "/%.*s" : "%.*s", KILN_SV(seg));
+    }
+    StrView name(buf, n);
+    usize const dot = name.rfind('.');
+    usize const sep = name.rfind('/');
+    if (dot != StrView::kNpos && (sep == StrView::kNpos || dot > sep + 1)) name = name.substr(0, dot);
+    return name;
+}
+
+/// Requests every BaseColor texture the mesh's materials name, once per texture. They are
 /// not waited on: they stream in under the per-frame budget while frames render.
 void request_textures(Scene& s, MeshItem const& m) {
     mesh::MeshView const* v = mesh_view(s.ctx, m.handle);
@@ -152,14 +187,22 @@ void request_textures(Scene& s, MeshItem const& m) {
     for (u32 i = 0; i < v->textures().size(); ++i) {
         mesh::TextureBinding const& b = v->textures()[i];
         auto const slot               = mesh::TextureSlot(b.slot);
-        if (slot != mesh::TextureSlot::BaseColor || s.textureIndex.find(b.textureId)) continue;
-        StrView const path = v->str(b.pathStr);
+        if (slot != mesh::TextureSlot::BaseColor) continue;
+        char buf[256];
+        StrView const path = texture_name(m.path, *v, b, buf);
+        if (path.empty()) {
+            KILN_WARN("viewer", "%.*s: texture '%.*s' leaves the store root; skipped", KILN_SV(m.path),
+                      KILN_SV(v->str(b.pathStr)));
+            continue;
+        }
+        u64 const id = hash_name(path);
+        if (s.textureIndex.find(id)) continue;
         TextureItem t;
-        t.textureId = b.textureId;
+        t.textureId = id;
         t.handle = request_texture(s.ctx, path, RequestOptions{.textureKind = texture_kind_for_slot(slot)});
         t.last   = state(s.ctx, t.handle);
         format(t.path, sizeof t.path, "%.*s", KILN_SV(path));
-        s.textureIndex.insert(b.textureId, u32(s.textures.size()));
+        s.textureIndex.insert(id, u32(s.textures.size()));
         s.textures.push_back(t);
         KILN_INFO("viewer", "request texture %s (%s) for %.*s -> %s", t.path, mesh::texture_slot_name(slot),
                   KILN_SV(m.path), state_name(t.last));
@@ -257,7 +300,8 @@ void place_meshes(Scene& s, bool fit) {
 }
 
 /// Base-color slot and draw flags for a material (spec §5.7).
-void material_bindings(Scene& s, mesh::MeshView const& v, u32 material, vkx::DrawPush& push) {
+void material_bindings(Scene& s, StrView meshPath, mesh::MeshView const& v, u32 material,
+                       vkx::DrawPush& push) {
     push.baseColorSlot = 0;
     push.flags         = 0;
     if (material >= v.materials().size()) return;
@@ -268,7 +312,9 @@ void material_bindings(Scene& s, mesh::MeshView const& v, u32 material, vkx::Dra
         if (ti >= v.textures().size()) break;
         mesh::TextureBinding const& b = v.textures()[ti];
         if (mesh::TextureSlot(b.slot) != mesh::TextureSlot::BaseColor) continue;
-        if (u32 const* idx = s.textureIndex.find(b.textureId)) {
+        char buf[256];
+        StrView const name = texture_name(meshPath, v, b, buf);
+        if (u32 const* idx = name.empty() ? nullptr : s.textureIndex.find(hash_name(name))) {
             GpuObject const g = gpu(s.ctx, s.textures[*idx].handle);
             if (g.slot != kInvalid) {
                 push.baseColorSlot = g.slot;
@@ -349,7 +395,7 @@ void draw_scene(Scene& s, VkCommandBuffer cmd) {
             }
             for (u32 si = 0; si < lod.submeshCount; ++si) {
                 mesh::Submesh const& sm = v->submeshes()[lod.submeshFirst + si];
-                material_bindings(s, *v, sm.material, push);
+                material_bindings(s, m.path, *v, sm.material, push);
                 vkCmdPushConstants(cmd, layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
                                    sizeof push, &push);
                 // indexFirst is relative to the LOD's index range, which is where the buffer is bound.
