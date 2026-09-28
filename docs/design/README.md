@@ -20,6 +20,7 @@ The notes follow HANDOFF v2 and mesh-format-spec draft v0.3 (magic `KMSH`, names
 | [mesh-cook.md](mesh-cook.md) | The glTF to `.mesh` cooker stage order and its determinism rules |
 | [cook-kernels.md](cook-kernels.md) | Kernel contract for the cooker's hot paths, SIMD rules, row and item splitting, `CookEnv`, rollout order |
 | [hot-reload.md](hot-reload.md) | M5: store poller in the runtime, source poller in the cook provider, reload swap through a `next` metadata set, `request_reload`, `IoBackend::stat` |
+| [asset-model-next.md](asset-model-next.md) | Draft, in discussion: project boundaries, mounts, asset identity (`mount:path.ext#sub`), and the topics that follow (inclusion, dependencies, store layout, update rules, hot reload as a plan) |
 | [viewer.md](viewer.md) | The example Vulkan 1.4 adapter (transfer queue, timeline semaphore, bindless slots, deferred destroy) and viewer, its dependencies and offscreen mode |
 
 Related documents:
