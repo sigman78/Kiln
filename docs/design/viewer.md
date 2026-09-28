@@ -13,7 +13,9 @@ offscreen mode.
 `examples/viewer/` holds two things with a hard line between them:
 
 - **`vk_adapter.{h,cpp}`: the example adapter** (namespace `kiln::vkx`). A `kiln::Adapter` on raw
-  Vulkan 1.4 that is self-submitting (dedicated transfer queue, one timeline semaphore) and
+  Vulkan 1.4 that is self-submitting (dedicated transfer queue, one timeline semaphore; an
+  upload gets its timeline value at `commit_upload`, so uploads submit in commit order and a
+  small one never waits for a larger one that began earlier) and
   bindless (one descriptor array per `TextureShape`: 2D, cube, array, sharing one slot index;
   `acquire` writes the placeholder of the kind and shape into a slot, `publish` overwrites the
   same slot). It declares `kCubeTextures` and `kArrayTextures`. It shows that an adapter is a few hundred lines. It knows

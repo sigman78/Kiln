@@ -132,6 +132,11 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
 - Project display name is Kiln; GitHub repository renamed to sigman78/Kiln (namespace, CMake package and targets stay lowercase `kiln`).
 
 ### Fixed
+- Example Vulkan adapter: a small upload no longer waits for a larger one that began earlier. The
+  timeline value is given at `commit_upload` instead of `begin_upload`, so submission follows
+  commit order; the upload token is now the object handle (index and generation). A small sky
+  texture now becomes Ready about 5 ms before a 22 MB texture requested with it, instead of on the
+  same frame. `kiln-vk-smoke` checks the order before loading and exits 1 if it breaks.
 - `PumpStats::uploadsStarted` and `uploadBytes` counted a Busy retry again each time it was
   re-dispatched, so a run with back-pressure could report many times the bytes actually uploaded.
   Retries still consume the per-pump budget and show up in `busyRetries`.

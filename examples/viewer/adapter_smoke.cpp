@@ -1,6 +1,6 @@
 // examples/viewer/adapter_smoke.cpp — loads cooked assets through the Vulkan adapter with no
-// window (docs/design/viewer.md): device, adapter, context, one group waited on, a report per
-// asset, then frames that release everything and retire deferred objects.
+// window (docs/design/viewer.md): device, adapter, an upload-order check, context, one group
+// waited on, a report per asset, then frames that release everything and retire deferred objects.
 #include <kiln/assets.h>
 #include <kiln/log.h>
 
@@ -8,8 +8,10 @@
 #include "vk_adapter.h"
 #include "vk_device.h"
 
+#include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <thread>
 
 using namespace kiln;
 
@@ -46,6 +48,69 @@ char const* state_name(State s) {
     case State::Partial: return "Partial";
     }
     return "?";
+}
+
+using Clock = std::chrono::steady_clock;
+
+/// Polls `token` for up to `ms`; true once complete.
+bool wait_upload(Adapter const& a, u64 token, u32 ms) {
+    Clock::time_point const end = Clock::now() + std::chrono::milliseconds(ms);
+    while (!a.is_upload_complete(a.user, token)) {
+        if (Clock::now() >= end) return false;
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    return true;
+}
+
+/// The adapter submits uploads in commit order: a small upload committed first completes while
+/// a larger one that began earlier is still being written (not committed). The sizes scale with
+/// the staging ring, so the check also runs with --staging-kib.
+bool check_commit_order(Adapter const& a, u64 stagingBytes) {
+    MeshPayloadDesc const bigDesc{
+        .payloadDecodedSize = stagingBytes / 2, .payloadAlignment = 256, .indexSize = 4};
+    MeshPayloadDesc const smallDesc{
+        .payloadDecodedSize = max<u64>(stagingBytes / 16, 256), .payloadAlignment = 256, .indexSize = 4};
+    UploadDesc const big{.id        = 0x6b696c6e00000001ull,
+                         .kind      = UploadKind::MeshPayload,
+                         .size      = bigDesc.payloadDecodedSize,
+                         .alignment = 256,
+                         .texture   = nullptr,
+                         .mesh      = &bigDesc};
+    UploadDesc const small{.id        = 0x6b696c6e00000002ull,
+                           .kind      = UploadKind::MeshPayload,
+                           .size      = smallDesc.payloadDecodedSize,
+                           .alignment = 256,
+                           .texture   = nullptr,
+                           .mesh      = &smallDesc};
+    UploadTarget bigT{}, smallT{};
+    if (a.begin_upload(a.user, big, &bigT).failed() || a.begin_upload(a.user, small, &smallT).failed()) {
+        KILN_ERROR("smoke", "commit order: begin_upload failed");
+        return false;
+    }
+    std::memset(bigT.dst, 0x5a, usize(big.size));
+    std::memset(smallT.dst, 0xa5, usize(small.size));
+
+    Clock::time_point const t0 = Clock::now();
+    a.commit_upload(a.user, smallT.token); // the big one is still "being written"
+    bool const smallDone = wait_upload(a, smallT.token, 5000);
+    double const ms      = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
+    bool const bigWaited = !a.is_upload_complete(a.user, bigT.token);
+    a.commit_upload(a.user, bigT.token);
+    bool const bigDone = wait_upload(a, bigT.token, 5000);
+    a.destroy_deferred(a.user, smallT.object);
+    a.destroy_deferred(a.user, bigT.object);
+
+    if (!smallDone || !bigWaited || !bigDone) {
+        KILN_ERROR("smoke", "commit order: small upload %s, big upload %s before its commit, %s after it",
+                   smallDone ? "completed" : "blocked behind the earlier big one",
+                   bigWaited ? "pending" : "complete", bigDone ? "completed" : "timed out");
+        return false;
+    }
+    KILN_INFO("smoke",
+              "commit order: a %llu-byte upload completed in %.2f ms while an earlier %llu-byte one was "
+              "still uncommitted",
+              ull(small.size), ms, ull(big.size));
+    return true;
 }
 
 struct Options {
@@ -114,7 +179,8 @@ int main(int argc, char** argv) {
         .synopsis   = "[options] <asset>...",
         .options    = {opts, countof(opts)},
         .footer     = "<asset> is a store-relative path with its extension, e.g. mesh/Box.mesh.\n"
-                      "Exit codes: 0 every asset Ready, 1 one or more not Ready, 2 usage or setup error.",
+                      "Exit codes: 0 every asset Ready and uploads complete in commit order, 1 otherwise,\n"
+                      "2 usage or setup error.",
         .positional = &add_item,
         .user       = &o,
     };
@@ -145,6 +211,7 @@ int main(int argc, char** argv) {
         return 2;
     }
     vkx::VkAdapter* vka = va.value();
+    bool const orderOk  = check_commit_order(adapter, ad.stagingBytes);
 
     // 2. The context. create() uploads the placeholders through the adapter and waits for them.
     ContextDesc const desc{.diag = diag, .adapter = &adapter, .storeDir = StrView(o.store)};
@@ -208,5 +275,5 @@ int main(int argc, char** argv) {
     destroy(ctx);
     vkx::adapter_destroy(vka);
     vkx::device_destroy(device);
-    return notReady == 0 ? 0 : 1;
+    return notReady == 0 && orderOk ? 0 : 1;
 }

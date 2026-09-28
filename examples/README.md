@@ -20,7 +20,7 @@ The second run is fast: the models are cached and the store is already cooked.
 |---|---|---|
 | `kiln-headless` | nothing | Loads assets through the null adapter and logs every request, event and diagnostic. `--slow` and `--latency` simulate slow IO and cooking. `--watch` keeps pumping until `--timeout` and logs hot reloads. |
 | `kiln-viewer` | Vulkan 1.4 driver | Draws cooked meshes through the example Vulkan adapter (`viewer/vk_adapter.cpp`). `--watch` turns on hot reload. |
-| `kiln-vk-smoke` | Vulkan 1.4 driver | Loads assets through the adapter with no window and prints what the adapter did. |
+| `kiln-vk-smoke` | Vulkan 1.4 driver | Checks that uploads complete in commit order, then loads assets through the adapter with no window and prints what the adapter did. |
 
 Every program prints its options with `--help`. Binaries land in `build/<preset>/examples/<name>/`.
 

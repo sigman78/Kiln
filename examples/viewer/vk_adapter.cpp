@@ -106,7 +106,7 @@ constexpr u32 kMaxSubmitBatch    = 16;
 enum class ObjectState : u8 {
     Free,      ///< on the free list
     Begun,     ///< begin_upload returned it; kiln is writing the staging bytes
-    Recorded,  ///< commit_upload recorded its command buffer; waiting for earlier values to submit
+    Recorded,  ///< commit_upload recorded it and gave it a value; submitted at once or on the next poll
     Submitted, ///< on the transfer queue; complete once the timeline reaches `value`
 };
 
@@ -118,16 +118,19 @@ struct Object {
     VkDeviceMemory memory   = VK_NULL_HANDLE;
     VkDeviceSize size       = 0; ///< bytes kiln wrote (the mesh payload size for buffers)
     VkDeviceAddress address = 0;
-    u64 value               = 0; ///< timeline value (== upload token) that completes it
+    u64 value               = 0; ///< timeline value that completes it, given at commit_upload (0 before)
     u64 stagingOffset       = 0;
     VkCommandBuffer cmd     = VK_NULL_HANDLE; ///< recorded, not yet submitted
     TextureDesc texture{};                    ///< copy of the upload's TextureDesc
     UploadKind kind   = UploadKind::MeshPayload;
     ObjectState state = ObjectState::Free;
     bool deferred     = false; ///< destroy_deferred received it
+    u32 generation    = 0;     ///< bumped when the object is freed; part of the upload token
+    u32 ringItem      = 0;     ///< its staging reservation in VkAdapter::ring.items
 };
 
-/// A staging ring reservation, released when the timeline reaches `value`.
+/// A staging ring reservation, released when the timeline reaches `value`. Reservations are
+/// made in begin order and get their value at commit, so `value` is 0 until then.
 struct RingEntry {
     u64 value = 0;
     u64 end   = 0; ///< ring head after this reservation
@@ -200,7 +203,7 @@ struct VkAdapter {
     // Transfer submission: values are handed out in begin_upload and submitted in order.
     VkSemaphore timeline = VK_NULL_HANDLE;
     VkCommandPool pool   = VK_NULL_HANDLE;
-    u64 lastValue        = 0; ///< last value handed out
+    u64 lastValue        = 0; ///< last value given at commit_upload; values follow commit order
     std::atomic<u64> submittedValue{0};
     Vec<u32> byValue; ///< object index for value v at [v % maxObjects]
     Fifo<CmdEntry> cmdsInFlight;
@@ -238,6 +241,19 @@ namespace {
     return v;
 }
 
+/// An upload token: the object's generation and its 1-based index. Stable from begin_upload on,
+/// unlike its timeline value, which commit_upload gives.
+[[nodiscard]] u64 token_of(u32 index, Object const& o) noexcept {
+    return (u64(o.generation) << 32) | (u64(index) + 1);
+}
+[[nodiscard]] Object* object_of_token(VkAdapter* a, u64 token) noexcept {
+    u64 const index = (token & 0xFFFFFFFFu);
+    if (index == 0 || index > a->objects.size()) return nullptr;
+    Object& o = a->objects[usize(index - 1)];
+    if (o.state == ObjectState::Free || o.generation != u32(token >> 32)) return nullptr;
+    return &o;
+}
+
 [[nodiscard]] Object* object_of(VkAdapter* a, GpuObject obj) noexcept {
     if (obj.native == 0 || obj.native > a->objects.size()) return nullptr;
     Object& o = a->objects[usize(obj.native - 1)];
@@ -248,7 +264,7 @@ namespace {
 
 /// Releases every reservation whose upload has completed. Caller holds the mutex.
 void ring_reclaim(VkAdapter* a, u64 completed) noexcept {
-    while (!a->ring.empty() && a->ring.front().value <= completed) {
+    while (!a->ring.empty() && a->ring.front().value != 0 && a->ring.front().value <= completed) {
         a->ringTail = a->ring.front().end;
         a->ring.pop();
     }
@@ -306,7 +322,9 @@ VkCommandBuffer cmd_get(VkAdapter* a) noexcept {
 }
 
 /// Submits every recorded upload whose value is next in line, in value order, because a
-/// timeline semaphore only accepts increasing signal values. Caller holds the mutex.
+/// timeline semaphore only accepts increasing signal values. Values are given at commit, so a
+/// small upload committed first is never held back by a larger one still being written.
+/// Caller holds the mutex.
 void submit_ready(VkAdapter* a) noexcept {
     u64 next = a->submittedValue.load(std::memory_order_relaxed) + 1;
     while (next <= a->lastValue) {
@@ -349,7 +367,9 @@ void object_free(VkAdapter* a, u32 index) noexcept {
     if (o.image) vkDestroyImage(a->device, o.image, nullptr);
     if (o.buffer) vkDestroyBuffer(a->device, o.buffer, nullptr);
     if (o.memory) vkFreeMemory(a->device, o.memory, nullptr);
-    o = Object{};
+    u32 const generation = o.generation + 1;
+    o                    = Object{};
+    o.generation         = generation; // tokens of the old object no longer match
     a->freeObjects.push_back(index);
     --a->liveObjects;
 }
@@ -711,9 +731,8 @@ Status vk_begin_upload(void* user, UploadDesc const& desc, UploadTarget* out) no
         return st;
     }
 
-    o.value                                        = ++a->lastValue;
-    a->byValue[usize(o.value % a->byValue.size())] = index;
-    a->ring.push(RingEntry{.value = o.value, .end = start + n});
+    o.ringItem = u32((a->ring.head + a->ring.count) % a->ring.items.size());
+    a->ring.push(RingEntry{.value = 0, .end = start + n});
     a->ringHead = start + n;
 
     u32 slot = kInvalid;
@@ -721,7 +740,7 @@ Status vk_begin_upload(void* user, UploadDesc const& desc, UploadTarget* out) no
         if (u32 const* s = a->assetSlots.find(desc.id)) slot = *s;
     out->dst           = a->mapped + start;
     out->rowPitchAlign = kRowPitchAlign;
-    out->token         = o.value;
+    out->token         = token_of(index, o);
     out->object        = GpuObject{.native = u64(index) + 1, .slot = slot, .kind = u32(desc.kind)};
     return kOk;
 }
@@ -729,9 +748,10 @@ Status vk_begin_upload(void* user, UploadDesc const& desc, UploadTarget* out) no
 void vk_commit_upload(void* user, u64 token) noexcept {
     VkAdapter* a = self(user);
     std::lock_guard<std::mutex> lock(a->mutex);
-    KILN_VERIFY(token != 0 && token <= a->lastValue);
-    Object& o = a->objects[a->byValue[usize(token % a->byValue.size())]];
-    KILN_VERIFY(o.value == token && o.state == ObjectState::Begun);
+    Object* const found = object_of_token(a, token);
+    KILN_VERIFY(found && found->state == ObjectState::Begun);
+    Object& o       = *found;
+    u32 const index = u32((token & 0xFFFFFFFFu) - 1);
 
     VkCommandBuffer const cmd = cmd_get(a);
     VkCommandBufferBeginInfo begin{};
@@ -743,19 +763,22 @@ void vk_commit_upload(void* user, u64 token) noexcept {
     else
         record_mesh(a, cmd, o);
     VKX_CHECK(vkEndCommandBuffer(cmd));
-    o.cmd   = cmd;
-    o.state = ObjectState::Recorded;
+    o.cmd                                          = cmd;
+    o.state                                        = ObjectState::Recorded;
+    o.value                                        = ++a->lastValue;
+    a->byValue[usize(o.value % a->byValue.size())] = index;
+    a->ring.items[o.ringItem].value                = o.value;
     a->bytesUploaded += o.size;
     if (!a->submitOnPoll) submit_ready(a);
 }
 
 bool vk_is_upload_complete(void* user, u64 token) noexcept {
     VkAdapter* a = self(user);
-    if (a->submitOnPoll && token > a->submittedValue.load(std::memory_order_acquire)) {
-        std::lock_guard<std::mutex> lock(a->mutex);
-        submit_ready(a);
-    }
-    return timeline_value(a) >= token;
+    std::lock_guard<std::mutex> lock(a->mutex);
+    Object const* o = object_of_token(a, token);
+    if (!o) return true; // freed: nothing is left to wait for
+    if (o->state == ObjectState::Recorded && a->submitOnPoll) submit_ready(a);
+    return o->state == ObjectState::Submitted && timeline_value(a) >= o->value;
 }
 
 void vk_publish(void* user, AssetId id, GpuObject obj, u32 /*version*/) noexcept {
