@@ -14,6 +14,10 @@ struct ProviderDesc {
     MeshCookSettings mesh       = {}; ///< session overrides for every mesh
     TextureCookSettings texture = {}; ///< session overrides (usage/color space still inferred per slot)
     bool fastPreview            = false;
+    /// Dev builds: poll the source files of cooked assets and re-cook them into the store when
+    /// they change (docs/design/hot-reload.md). The runtime's store poller then reloads them.
+    bool watchSources = false;
+    u32 pollMs        = 250;
 };
 
 /// Register the provider. Source lookup: `<root>/<assetPath>.glb|.gltf` for meshes,

@@ -58,7 +58,8 @@ struct SlowIo {
         inner     = in;
         msPerMiB  = perMiB;
         latencyMs = latency;
-        backend   = {&open, &size, &read_range, &close, this};
+        backend =
+            IoBackend{.open = &open, .size = &size, .read_range = &read_range, .close = &close, .user = this};
         return &backend;
     }
 

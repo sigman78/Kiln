@@ -37,6 +37,12 @@ struct IoFile {
     [[nodiscard]] constexpr bool valid() const noexcept { return bits != 0; }
 };
 
+/// What a file poller compares between rounds.
+struct IoStat {
+    u64 size    = 0;
+    u64 mtimeNs = 0; ///< modification time; any monotonic-per-file clock, nanoseconds
+};
+
 /// Range-based reads into caller memory. `read_range` blocks, runs on worker threads
 /// and may run concurrently for one file, so it must read positionally (pread /
 /// ReadFile with an offset), never seek-then-read on shared state.
@@ -45,7 +51,10 @@ struct IoBackend {
     Status (*size)(void* user, IoFile f, u64* out)                              = nullptr;
     Status (*read_range)(void* user, IoFile f, u64 offset, u64 size, void* dst) = nullptr;
     void (*close)(void* user, IoFile f)                                         = nullptr;
-    void* user                                                                  = nullptr;
+    /// Optional. Size and modification time without opening; NotFound if absent. Hot
+    /// reload needs it (docs/design/hot-reload.md); the compat backend implements it.
+    Status (*stat)(void* user, StrView path, IoStat* out) = nullptr;
+    void* user                                            = nullptr;
 };
 
 /// The built-in compatibility backend (thread-safe, positional reads, UTF-8 paths).

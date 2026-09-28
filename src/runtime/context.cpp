@@ -357,3 +357,9 @@ JobSystem const* jobs(Context* ctx) noexcept { return ctx ? &ctx->jobs : nullptr
 Adapter const* adapter(Context* ctx) noexcept { return ctx ? &ctx->adapter : nullptr; }
 
 } // namespace kiln
+
+namespace kiln {
+// M5 in progress: replaced by the reload pipeline (docs/design/hot-reload.md).
+void request_reload(Context*, MeshHandle) noexcept {}
+void request_reload(Context*, TextureHandle) noexcept {}
+} // namespace kiln

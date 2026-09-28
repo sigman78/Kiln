@@ -65,6 +65,12 @@ struct PlaceholderDesc {
     Span<u8 const> pixels = {}; ///< width * height * 4 bytes
 };
 
+/// Dev builds: reload an asset when its cooked file changes (docs/design/hot-reload.md).
+struct HotReloadDesc {
+    bool watchStore = false; ///< poll the store files of loaded assets; needs KILN_HOT_RELOAD
+    u32 pollMs      = 250;
+};
+
 struct ContextDesc {
     Allocator const* alloc = nullptr; ///< nullptr = default allocator
     LogSink log            = {};      ///< fn null = process-wide sink (log.h)
@@ -78,6 +84,8 @@ struct ContextDesc {
     StoreLayout storeLayout                  = StoreLayout::Named;
     bool devPlaceholders                     = KILN_DEBUG != 0; ///< Failed textures show the magenta checker
     Span<PlaceholderDesc const> placeholders = {}; ///< overrides per kind; missing kinds use built-ins
+
+    HotReloadDesc hotReload = {};
 
     u32 maxAssets     = 4096; ///< registry capacity (allocated once at create)
     u32 maxGroups     = 64;
@@ -206,6 +214,19 @@ KILN_API void release(Context* ctx, Group g) noexcept; ///< frees the group reco
 [[nodiscard]] KILN_API GroupStatus wait(Context* ctx, Group g, WaitOptions const& opt = {}) noexcept;
 
 // ---------------------------------------------------------------------------
+// Hot reload
+// ---------------------------------------------------------------------------
+
+/// Reload the asset from its store file (through the cook provider if the file is
+/// missing). A Ready asset keeps serving its current payload until the new one is
+/// published: then version + 1, publish(), destroy_deferred(old), a Changed event.
+/// A failed reload keeps the old version and emits K5010. Memory-registered assets
+/// cannot be reloaded (K5012). Works without KILN_HOT_RELOAD; the store poller
+/// (ContextDesc::hotReload) calls this for you.
+KILN_API void request_reload(Context* ctx, MeshHandle h) noexcept;
+KILN_API void request_reload(Context* ctx, TextureHandle h) noexcept;
+
+// ---------------------------------------------------------------------------
 // In-memory registration (procedural / generated content, tests, mods)
 // ---------------------------------------------------------------------------
 
@@ -263,11 +284,14 @@ enum RuntimeDiagCode : u32 {
     kDiagAssetLoadFailed  = 5003, ///< IO or validation failure while loading (status from the reader)
     kDiagAdapterRejected =
         5004, ///< begin_upload failed with something other than Busy, or unsupported format
-    kDiagRegistryFull      = 5005, ///< maxAssets / maxGroups reached
-    kDiagEventsDropped     = 5006, ///< event ring overflowed (Warning)
-    kDiagWaitMisuse        = 5007, ///< wait() off the pump thread or without kSelfSubmitting (panics)
-    kDiagDuplicateRegister = 5008, ///< register_* for an already known path
-    kDiagPlaceholderFailed = 5009, ///< placeholder upload rejected at create()
+    kDiagRegistryFull         = 5005, ///< maxAssets / maxGroups reached
+    kDiagEventsDropped        = 5006, ///< event ring overflowed (Warning)
+    kDiagWaitMisuse           = 5007, ///< wait() off the pump thread or without kSelfSubmitting (panics)
+    kDiagDuplicateRegister    = 5008, ///< register_* for an already known path
+    kDiagPlaceholderFailed    = 5009, ///< placeholder upload rejected at create()
+    kDiagReloadFailed         = 5010, ///< a reload failed; the previous version stays (Error)
+    kDiagHotReloadUnavailable = 5011, ///< not compiled in, or the IO backend has no stat (Warning)
+    kDiagReloadMemorySource   = 5012, ///< reload requested for a memory-registered asset (Warning)
 };
 
 } // namespace kiln
