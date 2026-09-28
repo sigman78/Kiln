@@ -6,57 +6,45 @@ note wins; fix the diagram.
 
 ## Building blocks
 
-Solid arrows are link-time dependencies. Dashed arrows are calls or data at run time.
+Thick arrows carry asset data from the sources to the GPU. Thin arrows are link dependencies.
+Green ships in a release build, orange is dev builds and tools only, blue is the host's code, grey
+is files on disk.
 
 ```mermaid
 flowchart TB
-    subgraph users["Users of kiln"]
-        direction LR
-        app["Host app<br/>game, engine, editor"]
-        kilnCook["kiln-cook"]
-        viewer["kiln-viewer<br/>kiln-headless"]
-        kilnInfo["kiln-info"]
-    end
+    cli["kiln-cook<br/>batch cook CLI"]
+    sources[("Source files<br/>glb · gltf · png · jpg · ktx2<br/>.kiln sidecars")]
+    app["Host application<br/>engine · editor<br/>kiln-viewer · kiln-headless<br/><i>+ kiln_cook in dev builds</i>"]
 
-    subgraph cook["kiln_cook: dev builds and tools"]
-        direction LR
-        provider["Cook provider<br/>cook-on-miss, source poller"]
-        cookers["Mesh and texture cooks<br/>settings, name rules, sidecars"]
-        storeWriter["Store writer"]
-    end
+    cook["<b>kiln_cook</b><br/>glTF → .mesh<br/>images → KTX2<br/>settings · sidecars<br/>cook-on-miss provider<br/>source watch"]
+    third["cgltf · MikkTSpace<br/>meshoptimizer · wuffs"]
 
-    thirdParty["cgltf, MikkTSpace,<br/>meshoptimizer, wuffs"]
+    store[("Store<br/>name.mesh<br/>name.ktx2")]
 
-    subgraph runtime["kiln_runtime: ships"]
-        direction LR
-        ctx["Context<br/>registry, pump, events, groups"]
-        loader["Loader<br/>meta and upload jobs"]
-        readers[".mesh / KTX2 readers<br/>IO backend, thread pool"]
-        storePoller["Store poller"]
-    end
+    runtime["<b>kiln_runtime</b><br/>requests · pump · events<br/>loader jobs · readers<br/>IO backend<br/>store watch"]
 
-    core["kiln_core<br/>allocators, containers, Status, diagnostics, log, hash"]
+    core["<b>kiln_core</b><br/>allocators · containers<br/>Status · diagnostics · log"]
+    adapter["<b>Adapter</b><br/>host implements<br/>GPU upload · publish"]
 
-    adapter["Host Adapter<br/>GPU uploads, bindless slots"]
-    sources[("Sources<br/>glb, gltf, png, jpg, ktx2")]
-    store[("Store<br/>name.mesh, name.ktx2")]
-
+    cli --> cook
+    sources ==>|read| cook
     app --> runtime
-    app -.->|dev builds| cook
-    kilnCook --> cook
-    viewer --> runtime
-    viewer -.->|"--source"| cook
-    kilnInfo --> runtime
-    cook --> runtime
-    cook --> thirdParty
+    app ~~~ cook
+    cook --> third
+    cook ==>|write| store
+    store ==>|read| runtime
+    cook -->|"CookProvider<br/>on store miss"| runtime
     runtime --> core
+    runtime ==>|"upload · publish"| adapter
 
-    provider -.->|"installed as CookProvider"| ctx
-    provider -.->|reads| sources
-    storeWriter -.->|writes| store
-    readers -.->|reads| store
-    storePoller -.->|stats| store
-    ctx -.->|"acquire, upload, publish"| adapter
+    classDef ship fill:#e3f2e6,stroke:#2e7d32,color:#1b3a1f
+    classDef dev fill:#fff3e0,stroke:#e08a00,color:#4a2c00
+    classDef host fill:#e8eaf6,stroke:#3949ab,color:#1a1f4d
+    classDef data fill:#f5f5f5,stroke:#757575,color:#212121
+    class runtime,core ship
+    class cook,third,cli dev
+    class app,adapter host
+    class sources,store data
 ```
 
 The rules behind the picture:
