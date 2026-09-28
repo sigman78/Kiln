@@ -70,8 +70,10 @@ struct Provider {
                                    ///< settings depend on SlotHint and are resolved per cook.
     Vec<char> storeDirBuf;         ///< owned copy of store_dir(ctx), NUL-terminated
     StrView storeDir;
-    Vec<char> rootsBuf; ///< owned copies of source_roots(ctx), NUL-separated
-    Vec<StrView> roots; ///< views into rootsBuf
+    Vec<char> rootsBuf;      ///< owned copies of source_roots(ctx), NUL-separated
+    Vec<StrView> roots;      ///< views into rootsBuf
+    Vec<char> ruleStrings;   ///< owned copies of the name rule suffixes
+    Vec<NameRule> nameRules; ///< suffixes point into ruleStrings
     Allocator const* alloc = nullptr;
     JobSystem const* jobs  = nullptr; ///< the context's pool; provider_cook runs on one of its workers
 
@@ -93,8 +95,9 @@ struct Provider {
     std::atomic<bool> stopping{false};
 
     explicit Provider(Allocator const* a) noexcept
-        : storeDirBuf(a, Tag::Cook), rootsBuf(a, Tag::Cook), roots(a, Tag::Cook), alloc(a),
-          records(a, Tag::Cook), emitted(a, Tag::Cook), strings(a, Tag::Cook) {}
+        : storeDirBuf(a, Tag::Cook), rootsBuf(a, Tag::Cook), roots(a, Tag::Cook), ruleStrings(a, Tag::Cook),
+          nameRules(a, Tag::Cook), alloc(a), records(a, Tag::Cook), emitted(a, Tag::Cook),
+          strings(a, Tag::Cook) {}
 };
 
 // Context* -> Provider* registry, under registry_mutex().
@@ -213,8 +216,12 @@ Status cook_texture_own_source(Provider const& p, StrView sourcePath, StrView as
     Vec<u8> bytes(alloc, Tag::Cook);
     KILN_TRY(io_read_file(compat_io_backend(), sourcePath, alloc, &bytes));
 
+    TextureCookSettings overrides = p.desc.texture;
+    if (overrides.usage == TextureUsage::Auto)
+        overrides.usage =
+            usage_from_name(sourcePath, Span<NameRule const>(p.nameRules.data(), p.nameRules.size()));
     Result<TextureCookSettings> rs =
-        resolve_texture(p.desc.texture, SlotHint::None, p.desc.target, p.session, diag, assetPath);
+        resolve_texture(overrides, SlotHint::None, p.desc.target, p.session, diag, assetPath);
     if (rs.failed()) return rs.status();
 
     TextureSource src{};
@@ -695,6 +702,19 @@ Status install_provider(Context* ctx, ProviderDesc const& desc) noexcept {
         p->roots.push_back(StrView(p->rootsBuf.data() + offset, r.size));
         offset += r.size + 1;
     }
+
+    usize ruleBytes = 0;
+    for (NameRule const& r : effective.nameRules)
+        ruleBytes += r.suffix.size;
+    p->ruleStrings.resize(ruleBytes);
+    p->nameRules.reserve(effective.nameRules.size);
+    usize ruleAt = 0;
+    for (NameRule const& r : effective.nameRules) {
+        if (r.suffix.size) std::memcpy(p->ruleStrings.data() + ruleAt, r.suffix.data, r.suffix.size);
+        p->nameRules.push_back(NameRule{StrView(p->ruleStrings.data() + ruleAt, r.suffix.size), r.usage});
+        ruleAt += r.suffix.size;
+    }
+    p->desc.nameRules = {}; // the host's span may not outlive install_provider
 
     Result<MeshCookSettings> rm = resolve_mesh(effective.mesh, effective.target, p->session);
     if (rm.failed()) {

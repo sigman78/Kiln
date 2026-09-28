@@ -362,6 +362,39 @@ KILN_TEST(Provider, DiskModeCooksJpegSource) {
     KILN_CHECK_MSG(file_exists(texPath), "cook-on-miss did not write %s", texPath);
 }
 
+// A standalone texture gets its usage from the name rules: `wall_n.png` is a linear normal map,
+// `wall.png` (no rule) stays sRGB color.
+KILN_TEST(Provider, StandaloneTextureUsageFromName) {
+    char root[1024], storeDir[1024];
+    scratch_dir("provider_name_rules_src", root, sizeof root);
+    scratch_dir("provider_name_rules_store", storeDir, sizeof storeDir);
+    make_dir(root);
+
+    u8 rgba[4 * 4 * 4];
+    for (usize i = 0; i < sizeof rgba; ++i)
+        rgba[i] = u8(i * 7);
+    char path[1100];
+    for (char const* name : {"wall", "wall_n"}) {
+        format(path, sizeof path, "%s/%s.png", root, name);
+        replace_file(path, test_png(rgba).span());
+        format(path, sizeof path, "%s/%s.ktx2", storeDir, name);
+        std::remove(path); // left by an earlier run, it would load without a cook
+    }
+
+    StrView const roots[] = {StrView(root)};
+    TestContext tc;
+    if (!tc.init(StrView(storeDir), Span<StrView const>(roots, 1))) return;
+    KILN_REQUIRE(cook::install_provider(tc.ctx, cook::ProviderDesc{.storeMode = cook::StoreMode::Disk}).ok());
+
+    TextureHandle const color  = request_texture(tc.ctx, "wall");
+    TextureHandle const normal = request_texture(tc.ctx, "wall_n");
+    KILN_REQUIRE_EQ(pump_until_settled(tc.ctx, color), State::Ready);
+    KILN_REQUIRE_EQ(pump_until_settled(tc.ctx, normal), State::Ready);
+    KILN_CHECK(texture_info(tc.ctx, color).desc.format == Format::R8G8B8A8_SRGB);
+    Format const nf = texture_info(tc.ctx, normal).desc.format;
+    KILN_CHECK_MSG(nf != Format::R8G8B8A8_SRGB, "wall_n.png was cooked as sRGB color");
+}
+
 // The source poller re-cooks a PNG whose file changed and overwrites its store file. This
 // checks the store only; the runtime reloading from it is the runtime's own test.
 KILN_TEST(Provider, SourcePollerRecooksPng) {

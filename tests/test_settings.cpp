@@ -49,6 +49,36 @@ KILN_TEST(Settings, TextureUsageFromSlotHint) {
     }
 }
 
+KILN_TEST(Settings, UsageFromName) {
+    struct Case {
+        char const* path;
+        TextureUsage usage;
+    };
+    Case const cases[] = {
+        {"tex/wood_n.png",                TextureUsage::Normal},
+        {"Wood_Normal.PNG",               TextureUsage::Normal},
+        {"wood_n",                        TextureUsage::Normal}, // no extension
+        {"Lantern_roughnessMetallic.png", TextureUsage::Orm   },
+        {"crate_orm.jpg",                 TextureUsage::Orm   },
+        {"crate_albedo.png",              TextureUsage::Color },
+        {"wood.png",                      TextureUsage::Auto  },
+        {"wood_nx.png",                   TextureUsage::Auto  },
+        {"_n.png",                        TextureUsage::Auto  }, // the suffix alone is not a name
+        {"dir_n/wood.png",                TextureUsage::Auto  }, // only the file stem counts
+        {"wood_n.v2.png",                 TextureUsage::Auto  }, // the stem is "wood_n.v2"
+    };
+    for (Case const& c : cases)
+        KILN_CHECK_MSG(usage_from_name(c.path, kDefaultNameRules) == c.usage, "%s -> %s", c.path,
+                       texture_usage_name(usage_from_name(c.path, kDefaultNameRules)));
+
+    KILN_CHECK(usage_from_name("wood_n.png", {}) == TextureUsage::Auto);
+    NameRule const mine[] = {
+        {"_n", TextureUsage::Mask  },
+        {"_n", TextureUsage::Normal}, // shadowed: the first match wins
+    };
+    KILN_CHECK(usage_from_name("wood_N.png", mine) == TextureUsage::Mask);
+}
+
 KILN_TEST(Settings, TextureExplicitUsageWins) {
     TargetProfile target{};
     CookSession session{};

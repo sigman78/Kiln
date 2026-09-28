@@ -8,6 +8,12 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
 ## [Unreleased]
 
 ### Added
+- Cook: name rules give a standalone texture source its usage from its file-stem suffix
+  (`wall_n.png` is a linear normal map, `crate_orm.png` is ORM). `NameRule`, `kDefaultNameRules`
+  and `usage_from_name` in `kiln/cook/settings.h`; `ProviderDesc::nameRules` (default: the
+  built-in table, copied at install) and `kiln-cook` apply them when the usage is `Auto`. Before,
+  every standalone texture was cooked as sRGB color. Textures referenced from a glTF still take
+  their usage from the material slot.
 - JPEG texture sources, embedded in glTF (`image/jpeg`) or loose `.jpg`/`.jpeg` files, through the
   JPEG decoder of the already vendored wuffs (no new dependency). WebP sources (`.webp` files and
   `EXT_texture_webp`) behind the new CMake option `KILN_WEBP`, default OFF. `kiln/cook/image.h` adds

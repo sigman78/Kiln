@@ -296,8 +296,11 @@ bool cook_one_texture(Ctx& c, Span<u8 const> bytes, StrView assetPath, StrView s
     if (c.doneTextures.contains(pathHash)) return true; // shared between meshes
     c.doneTextures.insert(pathHash, 1);
 
+    TextureCookSettings overrides = c.opt.tex;
+    if (hint == SlotHint::None && overrides.usage == TextureUsage::Auto)
+        overrides.usage = usage_from_name(sourcePath, kDefaultNameRules);
     Result<TextureCookSettings> rs =
-        resolve_texture(c.opt.tex, hint, c.opt.target, c.session, &c.sink, assetPath);
+        resolve_texture(overrides, hint, c.opt.target, c.session, &c.sink, assetPath);
     if (rs.failed()) return false;
     TextureSource src{};
     src.bytes      = bytes;

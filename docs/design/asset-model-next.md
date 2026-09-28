@@ -36,6 +36,25 @@ authored meshes, some have their own material system or editor database.
   beyond that. The viewer's "drop in a glb and see it" keeps working.
 - (a), not supporting them at all, was rejected: exported `.glb` files embed images by default.
 
+**Texture usage without a mesh.** *Decided (owner, 2026-09-28).* The glTF slot used to say what
+an external texture is (color, normal, ORM). A standalone texture needs another source, from
+most to least specific:
+
+1. A per-asset sidecar `<file>.<ext>.kiln` (e.g. `wood_n.png.kiln`). Its syntax is a strict
+   subset of TOML: `key = value`, `#` comments, `[section]` / `[a.b]` headers, string, integer,
+   float and boolean values. kiln parses it with its own small parser, with no dependency.
+   Anything outside the subset, and any unknown key, is an error with file and line.
+2. Name rules: a file-stem suffix (`_n`, `_normal` → normal; `_orm`, `_arm` → ORM; …).
+   *Implemented* as `NameRule` / `kDefaultNameRules` in `kiln/cook/settings.h`, applied by the
+   provider (`ProviderDesc::nameRules`) and `kiln-cook` to standalone texture sources.
+3. Default: color, sRGB.
+
+Explicit session overrides still win over all three. Rules and sidecars are layers 5 and 6 of
+`settings.md`. Proposed: warn when a host requests a texture with a kind that differs from the
+cooked usage.
+
+**Order of work:** name rules (done), then the scope cut with option (c), then sidecars.
+
 **What stays from Parts 1 and 2:** identity as the exact source path with its extension, mounts,
 the path rules, and strict input rules. **Superseded:** anything that needs kiln to follow a
 reference. Each such item below is marked *Superseded by the retrospective*.

@@ -76,7 +76,7 @@ Weakest to strongest:
 | 2 | inferred usage from the glTF material slot | **yes** |
 | 3 | project presets (named intents) | reserved (v0.6) |
 | 4 | target encodings per preset | reserved (v0.6, v0.9 for mobile) |
-| 5 | path rules (glob to preset/overrides) | reserved (v0.6) |
+| 5 | path rules (glob to preset/overrides) | **name rules only**: a file-stem suffix gives the usage of a standalone texture (`NameRule`, `kDefaultNameRules`, `ProviderDesc::nameRules`); globs and presets v0.6 |
 | 6 | per-asset sidecar (`*.kiln`) | reserved (v0.6) |
 | 7 | session overrides: structs passed by the host, `CookSession`, CLI flags | **yes** |
 | - | `kiln-cook --explain` (which layer set each field) | reserved (v0.6) |
@@ -90,7 +90,7 @@ Inference (layer 2, `usage_from_slot`, `color_space_for`):
 | `normalTexture` | Normal | Linear |
 | `metallicRoughnessTexture` | Orm | Linear |
 | `occlusionTexture` | Orm | Linear |
-| standalone image (PNG, JPEG, WebP), no slot | Color | Srgb |
+| standalone image (PNG, JPEG, WebP), no slot | name rule (layer 5), else Color | from the usage |
 
 An image bound to two slots with different inferred usages is cooked with the first slot's usage
 and a K1017 warning.
