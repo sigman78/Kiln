@@ -21,6 +21,7 @@ The notes follow HANDOFF v2 and mesh-format-spec draft v0.3 (magic `KMSH`, names
 | [mesh-cook.md](mesh-cook.md) | The glTF to `.mesh` cooker stage order and its determinism rules |
 | [cook-kernels.md](cook-kernels.md) | Kernel contract for the cooker's hot paths, SIMD rules, row and item splitting, `CookEnv`, rollout order |
 | [hot-reload.md](hot-reload.md) | M5: store poller in the runtime, source poller in the cook provider, reload swap through a `next` metadata set, `request_reload`, `IoBackend::stat` |
+| [texture-shapes.md](texture-shapes.md) | Draft: cube maps, arrays and volumes from one strip image (`shape`, `slices`, name hints), KTX2 pass-through, the shape at the adapter boundary and in `RequestOptions` |
 | [asset-model-next.md](asset-model-next.md) | Draft, experimental: scope cut back to one source file per cooked asset (kiln never follows a reference), project boundaries, roots, asset identity (`root:path.ext#sub`) |
 | [viewer.md](viewer.md) | The example Vulkan 1.4 adapter (transfer queue, timeline semaphore, bindless slots, deferred destroy) and viewer, its dependencies and offscreen mode |
 
