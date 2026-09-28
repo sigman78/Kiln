@@ -95,13 +95,12 @@ struct TextureItem {
     char path[160]{}; ///< copied: the mesh view that named it may be reloaded
 };
 
-constexpr u32 kMaxMounts = 8;
+constexpr u32 kMaxRoots = 8;
 
 struct Options {
-    char const* store  = "cooked";
-    char const* source = nullptr;
-    Mount mounts[kMaxMounts];
-    u32 mountCount   = 0; ///< with --source, mounts[0] is the default mount
+    char const* store = "cooked";
+    Root roots[kMaxRoots]; ///< --source and --root
+    u32 rootCount    = 0;
     char const* dump = nullptr;
     bool validate    = false;
     bool offscreen   = false;
@@ -130,19 +129,18 @@ bool add_mesh(void* user, char const* arg) {
     return true;
 }
 
-/// `--mount <name>=<dir>`; the name is checked by create().
-bool add_mount(void* user, char const* arg) {
-    auto* o              = static_cast<Options*>(user);
+/// `--root [<name>=]<dir>` and `--source <dir>`. A prefix before `=` that is a valid root name
+/// names the root; otherwise the argument is the default root. create() rejects a repeated root.
+bool add_root(void* user, char const* arg) {
+    auto* o = static_cast<Options*>(user);
+    if (o->rootCount == kMaxRoots) {
+        std::fprintf(stderr, "kiln-viewer: too many roots (max %u)\n", kMaxRoots);
+        return false;
+    }
     char const* const eq = std::strchr(arg, '=');
-    if (!eq || eq == arg || eq[1] == '\0') {
-        std::fprintf(stderr, "kiln-viewer: --mount: expected <name>=<dir>, got '%s'\n", arg);
-        return false;
-    }
-    if (o->mountCount == kMaxMounts - 1) {
-        std::fprintf(stderr, "kiln-viewer: too many mounts (max %u)\n", kMaxMounts - 1);
-        return false;
-    }
-    o->mounts[1 + o->mountCount++] = Mount{StrView(arg, usize(eq - arg)), StrView(eq + 1)};
+    bool const named     = eq && !check_root_name(StrView(arg, usize(eq - arg)));
+    o->roots[o->rootCount++] =
+        named ? Root{StrView(arg, usize(eq - arg)), StrView(eq + 1)} : Root{{}, StrView(arg)};
     return true;
 }
 
@@ -164,8 +162,8 @@ struct Scene {
 };
 
 /// The texture asset name a binding refers to; this mapping is the viewer's policy, not kiln's.
-/// An embedded image carries its name. An external URI names a file in the mesh's mount
-/// (resolve_asset_name). Empty if it leaves the mount.
+/// An embedded image carries its name. An external URI names a file in the mesh's root
+/// (resolve_asset_name). Empty if it leaves the root.
 StrView texture_name(StrView meshPath, mesh::MeshView const& v, mesh::TextureBinding const& b,
                      char (&buf)[256]) {
     StrView const path = v.str(b.pathStr);
@@ -543,12 +541,13 @@ int main(int argc, char** argv) {
         {.name = "--store", .arg = "<dir>", .help = "cooked store root (default: cooked)", .str = &o.store},
         {.name = "--source",
          .arg  = "<dir>",
-         .help = "root of the default mount; enables cook-on-miss (needs kiln_cook)",
-         .str  = &o.source},
-        {.name = "--mount",
-         .arg  = "<name>=<dir>",
-         .help = "a named mount for cook-on-miss: names <name>:<path> (repeatable)",
-         .each = &add_mount,
+         .help = "the default root; enables cook-on-miss (needs kiln_cook)",
+         .each = &add_root,
+         .user = &o},
+        {.name = "--root",
+         .arg  = "[<name>=]<dir>",
+         .help = "a source root for cook-on-miss; <name>=<dir> names <name>:<path> (repeatable)",
+         .each = &add_root,
          .user = &o},
         {.name = "--validate",
          .help = "enable the Vulkan validation layer if installed",
@@ -679,16 +678,13 @@ int main(int argc, char** argv) {
     app.ren   = rr.value();
     input.ren = app.ren;
 
-    // mounts[0] is the default mount when --source is given.
-    if (o.source) o.mounts[0] = Mount{{}, StrView(o.source)};
-    u32 const firstMount = o.source ? 0u : 1u;
-    Result<Context*> c   = create(ContextDesc{
-          .diag          = diag,
-          .adapter       = &adapter,
-          .storeDir      = StrView(o.store),
-          .mounts        = Span<Mount const>(o.mounts + firstMount, o.mountCount + 1 - firstMount),
-          .hotReload     = {.watchStore = o.watch},
-          .workerThreads = o.threads,
+    Result<Context*> c = create(ContextDesc{
+        .diag          = diag,
+        .adapter       = &adapter,
+        .storeDir      = StrView(o.store),
+        .roots         = Span<Root const>(o.roots, o.rootCount),
+        .hotReload     = {.watchStore = o.watch},
+        .workerThreads = o.threads,
     });
     if (c.failed()) {
         KILN_ERROR("viewer", "create: %s", code_name(c.code()));
@@ -696,7 +692,7 @@ int main(int argc, char** argv) {
     }
     app.ctx = c.value();
 #if KILN_VIEWER_HAS_COOK
-    if (o.source || o.mountCount) {
+    if (o.rootCount) {
         Status const st = cook::install_provider(app.ctx, cook::ProviderDesc{.watchSources = o.watch});
         if (st.failed()) {
             KILN_ERROR("viewer", "install_provider: %s", code_name(st.code));
@@ -705,7 +701,7 @@ int main(int argc, char** argv) {
         app.provider = true;
     }
 #else
-    if (o.source) KILN_WARN("viewer", "built without kiln_cook: --source is ignored");
+    if (o.rootCount) KILN_WARN("viewer", "built without kiln_cook: --source and --root are ignored");
 #endif
 
     // 3. The boot group: every mesh on the command line, waited on before the first frame.

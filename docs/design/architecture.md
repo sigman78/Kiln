@@ -84,7 +84,7 @@ sequenceDiagram
     Worker->>Store: open props/chair.glb.mesh
     opt store miss and a provider is installed
         Worker->>Prov: cook(Mesh, name)
-        Prov->>Prov: find the source in its mount, check the kind and case
+        Prov->>Prov: find the source in its root, check the kind and case
         Prov->>Store: write the .mesh and its embedded .ktx2 files
         Prov-->>Worker: cooked bytes
     end

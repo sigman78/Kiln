@@ -32,25 +32,25 @@ using namespace kiln::cook;
 
 namespace {
 
-/// `--mount <name>=<dir>`: files under `dir` get names `name:<path in dir>`.
-struct NamedMount {
+/// `--root <name>=<dir>`: files under `dir` get names `name:<path in dir>`.
+struct NamedRoot {
     char name[64];
-    char root[1024];
+    char dir[1024];
 };
 
 struct Options {
     Vec<char const*> inputs{default_allocator(), Tag::General};
-    Vec<NamedMount> mounts{default_allocator(), Tag::General};
-    char const* store      = "cooked";
-    char const* root       = nullptr;
-    char const* map        = nullptr;
-    bool check             = false;
-    bool hashed            = false; ///< false (default): Named layout, <store>/<assetPath>.<ext>
-    bool quiet             = false;
-    bool verbose           = false;
-    u32 threads            = 0; ///< cooking threads including the main one; 0 = auto, 1 = no pool
-    char const* profile    = "default";
-    char const* targetName = "desktop";
+    Vec<NamedRoot> roots{default_allocator(), Tag::General};
+    char const* store       = "cooked";
+    char const* defaultRoot = nullptr; ///< --root without a name; null: the input directory
+    char const* map         = nullptr;
+    bool check              = false;
+    bool hashed             = false; ///< false (default): Named layout, <store>/<assetPath>.<ext>
+    bool quiet              = false;
+    bool verbose            = false;
+    u32 threads             = 0; ///< cooking threads including the main one; 0 = auto, 1 = no pool
+    char const* profile     = "default";
+    char const* targetName  = "desktop";
     MeshCookSettings mesh;
     TextureCookSettings tex;
     TargetProfile target;
@@ -200,16 +200,16 @@ bool under(char const* path, char const* root) {
     return rl && std::strncmp(path, root, rl) == 0 && path[rl] == '/';
 }
 
-/// The asset name of the source `path`: `mount:<path in root>` for the named mount with the
-/// longest root that holds it, else the path relative to `root` (the default mount), with
+/// The asset name of the source `path`: `root:<path in root>` for the named root with the
+/// longest root that holds it, else the path relative to `root` (the default root), with
 /// its extension. `*rootLen` gets the length of the root the name is relative to.
 void asset_name_of(Options const& o, char const* path, char const* root, char* out, usize cap,
                    usize* rootLen) {
-    NamedMount const* best = nullptr;
-    for (NamedMount const& m : o.mounts)
-        if (under(path, m.root) && (!best || std::strlen(m.root) > std::strlen(best->root))) best = &m;
+    NamedRoot const* best = nullptr;
+    for (NamedRoot const& m : o.roots)
+        if (under(path, m.dir) && (!best || std::strlen(m.dir) > std::strlen(best->dir))) best = &m;
     if (best) {
-        *rootLen = std::strlen(best->root);
+        *rootLen = std::strlen(best->dir);
         format(out, cap, "%s:%s", best->name, path + *rootLen + 1);
         return;
     }
@@ -445,30 +445,38 @@ bool add_input(void* user, char const* arg) {
     return true;
 }
 
-bool add_mount(void* user, char const* arg) {
+/// `--root [<name>=]<dir>`. A prefix before `=` that is a valid root name names the root;
+/// otherwise the whole argument is the directory of the default root.
+bool add_root(void* user, char const* arg) {
     auto* o              = static_cast<Options*>(user);
     char const* const eq = std::strchr(arg, '=');
-    NamedMount m{};
-    if (!eq || usize(eq - arg) >= sizeof m.name || eq[1] == '\0') {
-        std::fprintf(stderr, "kiln-cook: --mount: expected <name>=<dir>, got '%s'\n", arg);
+    NamedRoot m{};
+    bool const named =
+        eq && usize(eq - arg) < sizeof m.name && !check_root_name(StrView(arg, usize(eq - arg)));
+    if (!named) {
+        if (o->defaultRoot) {
+            std::fprintf(stderr, "kiln-cook: --root: the default root is given twice\n");
+            return false;
+        }
+        o->defaultRoot = arg;
+        return true;
+    }
+    if (eq[1] == '\0') {
+        std::fprintf(stderr, "kiln-cook: --root: '%s' has no directory\n", arg);
         return false;
     }
     format(m.name, sizeof m.name, "%.*s", int(eq - arg), arg);
-    if (char const* why = check_mount_name(StrView(m.name))) {
-        std::fprintf(stderr, "kiln-cook: --mount: '%s': %s\n", m.name, why);
-        return false;
-    }
-    format(m.root, sizeof m.root, "%s", eq + 1);
-    normalize_slashes(m.root);
-    usize n = std::strlen(m.root);
-    while (n > 1 && m.root[n - 1] == '/')
-        m.root[--n] = '\0';
-    for (NamedMount const& other : o->mounts)
+    format(m.dir, sizeof m.dir, "%s", eq + 1);
+    normalize_slashes(m.dir);
+    usize n = std::strlen(m.dir);
+    while (n > 1 && m.dir[n - 1] == '/')
+        m.dir[--n] = '\0';
+    for (NamedRoot const& other : o->roots)
         if (std::strcmp(other.name, m.name) == 0) {
-            std::fprintf(stderr, "kiln-cook: --mount: '%s' is given twice\n", m.name);
+            std::fprintf(stderr, "kiln-cook: --root: '%s' is given twice\n", m.name);
             return false;
         }
-    o->mounts.push_back(m);
+    o->roots.push_back(m);
     return true;
 }
 
@@ -487,13 +495,9 @@ int kiln::cook::cook_cli_main(int argc, char** argv, CookPolicy const& policy) n
          .help = "store directory (default: cooked)",
          .str  = &o.store},
         {.name = "--root",
-         .arg  = "<dir>",
-         .help = "root of the default mount (default: the input directory)",
-         .str  = &o.root},
-        {.name = "--mount",
-         .arg  = "<name>=<dir>",
-         .help = "a named mount: sources under <dir> are named <name>:<path> (repeatable)",
-         .each = &add_mount,
+         .arg  = "[<name>=]<dir>",
+         .help = "repeatable; <name>=<dir> names <name>:<path>, a bare <dir> is the default root",
+         .each = &add_root,
          .user = &o},
         {.name = "--check", .help = "validate only: cook in memory, write nothing", .flag = &o.check},
         {.name = "--hashed",
@@ -588,8 +592,8 @@ int kiln::cook::cook_cli_main(int argc, char** argv, CookPolicy const& policy) n
             in[--n] = '\0';
 
         char root[1024];
-        if (o.root) {
-            format(root, sizeof root, "%s", o.root);
+        if (o.defaultRoot) {
+            format(root, sizeof root, "%s", o.defaultRoot);
             normalize_slashes(root);
         } else if (is_dir(in)) {
             format(root, sizeof root, "%s", in);

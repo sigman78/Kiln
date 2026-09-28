@@ -177,12 +177,12 @@ struct Context {
     CopyConstraints cc;
     bool devPlaceholders = true;
 
-    char* storeDir      = nullptr; ///< owned copy (null-terminated)
-    usize storeDirLen   = 0;
-    Mount* mounts       = nullptr; ///< owned copies of ContextDesc::mounts
-    u32 mountCount      = 0;
-    char* mountChars    = nullptr;
-    usize mountCharsLen = 0;
+    char* storeDir     = nullptr; ///< owned copy (null-terminated)
+    usize storeDirLen  = 0;
+    Root* roots        = nullptr; ///< owned copies of ContextDesc::roots
+    u32 rootCount      = 0;
+    char* rootChars    = nullptr;
+    usize rootCharsLen = 0;
 
     u32 maxAssets = 0, maxGroups = 0, maxEvents = 0, maxIoJobs = 0;
     u64 ioBudget = 0;

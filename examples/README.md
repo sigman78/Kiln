@@ -43,22 +43,30 @@ kiln-viewer --budget-mib 1 --store build/demo-store WaterBottle.glb BoomBox.glb
 # your own glTF: the asset name is the file name, extension included, relative to --source
 kiln-viewer --source path/to/models --store build/my-store Robot.glb
 
-# a named mount instead of (or alongside) --source: positional names take its `<name>:` prefix
-kiln-viewer --mount lib=path/to/library --store build/my-store lib:props/chair.glb
+# two source roots: the demo models as the default root, the test corpus as the root `gen`.
+# The external_uri texture resolves inside `gen`; its store files go to build/roots-store/gen#/
+kiln-viewer --source examples/assets/khronos --root gen=tests/corpus/gltf/generated \
+    --store build/roots-store WaterBottle.glb gen:external_uri.gltf
 
 # hot reload: re-export Robot.glb and the view updates in about a second
 kiln-viewer --watch --source path/to/models --store build/my-store Robot.glb
 ```
 
-`--source` sets the default mount and enables cook-on-miss: a mesh missing from the store is cooked
-from `<source>/<name>` on a worker, written to the store, and loaded. Its embedded textures are cooked with
-it. `--mount <name>=<dir>` adds another named mount.
+`--source <dir>` sets the default root and enables cook-on-miss: a mesh missing from the store is
+cooked from `<source>/<name>` on a worker, written to the store, and loaded. Its embedded textures
+are cooked with it. `--root <name>=<dir>` adds a named root, whose assets are named `<name>:<path>`;
+`--root <dir>` without a name is the same as `--source <dir>`. Roots have separate namespaces, and
+a glTF file's references must stay inside its own root.
 
 ## Headless recipes
 
 ```sh
 kiln-headless --store tests/golden --slow 200 --latency 5 mesh/Box.mesh ktx2/color_srgb.ktx2
 kiln-headless --store build/demo-store --source examples/assets/khronos --latency 300 Lantern.glb.mesh
+# two roots, with committed files only (the example_headless_roots test runs this)
+kiln-headless --store build/roots-store --source tests/corpus/gltf/khronos \
+    --root gen=tests/corpus/gltf/generated Box.glb.mesh gen:external_uri.gltf.mesh \
+    "gen:pbr_textures.glb#hull_albedo.ktx2"
 # log reloads for two minutes while you edit the source
 kiln-headless --watch --timeout 120 --store build/my-store --source path/to/models Robot.glb.mesh
 ```

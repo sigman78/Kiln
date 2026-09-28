@@ -8,11 +8,11 @@ namespace kiln {
 
 namespace {
 
-[[nodiscard]] bool is_mount_char(char c) noexcept {
+[[nodiscard]] bool is_root_char(char c) noexcept {
     return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_';
 }
 
-/// Checks the part after the mount prefix, `#sub` included.
+/// Checks the part after the root prefix, `#sub` included.
 [[nodiscard]] char const* check_path(StrView path) noexcept {
     usize const hash  = path.find('#');
     usize const slash = path.rfind('/');
@@ -28,7 +28,7 @@ namespace {
             char const c = path[i];
             if (u8(c) < 0x20 || c == 0x7f) return "control character";
             if (c == '\\') return "'\\' (use '/')";
-            if (c == ':') return "':' outside the mount prefix";
+            if (c == ':') return "':' outside the root prefix";
             if (c == '<' || c == '>' || c == '"' || c == '|' || c == '?' || c == '*')
                 return "character not allowed in Windows file names";
             if (c != '/') continue;
@@ -47,8 +47,8 @@ AssetNameParts split_asset_name(StrView name) noexcept {
     AssetNameParts p;
     usize const colon = name.find(':');
     if (colon != StrView::kNpos) {
-        p.mount = name.substr(0, colon);
-        name    = name.substr(colon + 1);
+        p.root = name.substr(0, colon);
+        name   = name.substr(colon + 1);
     }
     usize const hash = name.find('#');
     p.path           = hash == StrView::kNpos ? name : name.substr(0, hash);
@@ -56,10 +56,10 @@ AssetNameParts split_asset_name(StrView name) noexcept {
     return p;
 }
 
-char const* check_mount_name(StrView mount) noexcept {
-    if (mount.size < 2) return "mount name shorter than 2 characters";
-    for (char const c : mount)
-        if (!is_mount_char(c)) return "mount name outside [a-z0-9_]";
+char const* check_root_name(StrView root) noexcept {
+    if (root.size < 2) return "root name shorter than 2 characters";
+    for (char const c : root)
+        if (!is_root_char(c)) return "root name outside [a-z0-9_]";
     return nullptr;
 }
 
@@ -68,9 +68,9 @@ char const* check_asset_name(StrView name) noexcept {
     if (name.size > kMaxAssetNameLen) return "longer than 255 bytes";
     usize const colon = name.find(':');
     if (colon != StrView::kNpos) {
-        if (char const* why = check_mount_name(name.substr(0, colon))) return why;
+        if (char const* why = check_root_name(name.substr(0, colon))) return why;
         name = name.substr(colon + 1);
-        if (name.empty()) return "empty path after the mount";
+        if (name.empty()) return "empty path after the root";
     }
     return check_path(name);
 }
@@ -82,8 +82,8 @@ usize resolve_asset_name(StrView owner, StrView uri, char* out, usize cap) noexc
     AssetNameParts const o = split_asset_name(owner);
 
     usize n = 0;
-    if (!o.mount.empty()) {
-        n = format(out, cap, "%.*s:", KILN_SV(o.mount));
+    if (!o.root.empty()) {
+        n = format(out, cap, "%.*s:", KILN_SV(o.root));
         if (n >= cap - 1) return 0;
     }
     usize const pathBegin = n;
@@ -99,7 +99,7 @@ usize resolve_asset_name(StrView owner, StrView uri, char* out, usize cap) noexc
         at                = end + 1;
         if (seg == ".") continue;
         if (seg == "..") {
-            if (n == pathBegin) return 0; // leaves the mount
+            if (n == pathBegin) return 0; // leaves the root
             while (n > pathBegin && out[n - 1] != '/')
                 --n;
             if (n > pathBegin) --n; // the separator itself
@@ -120,9 +120,9 @@ usize store_file_path(StrView storeDir, AssetKind kind, StrView name, char* out,
         sep             = (last == '/' || last == '\\') ? "" : "/";
     }
     AssetNameParts const p = split_asset_name(name);
-    if (p.mount.empty()) return format(out, cap, "%.*s%s%.*s%s", KILN_SV(storeDir), sep, KILN_SV(name), ext);
-    StrView const rest = name.substr(p.mount.size + 1);
-    return format(out, cap, "%.*s%s%.*s#/%.*s%s", KILN_SV(storeDir), sep, KILN_SV(p.mount), KILN_SV(rest),
+    if (p.root.empty()) return format(out, cap, "%.*s%s%.*s%s", KILN_SV(storeDir), sep, KILN_SV(name), ext);
+    StrView const rest = name.substr(p.root.size + 1);
+    return format(out, cap, "%.*s%s%.*s#/%.*s%s", KILN_SV(storeDir), sep, KILN_SV(p.root), KILN_SV(rest),
                   ext);
 }
 

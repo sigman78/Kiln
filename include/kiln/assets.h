@@ -71,10 +71,10 @@ struct HotReloadDesc {
     u32 pollMs      = 250;
 };
 
-/// A source root of the cook provider. Mount names have separate namespaces.
-struct Mount {
-    StrView name = {}; ///< empty: the default mount, whose asset names have no prefix
-    StrView root = {}; ///< a directory
+/// A named directory of sources for the cook provider. Each root has its own namespace of names.
+struct Root {
+    StrView name = {}; ///< empty: the default root, whose asset names have no prefix
+    StrView dir  = {}; ///< the directory that holds its sources
 };
 
 struct ContextDesc {
@@ -86,7 +86,7 @@ struct ContextDesc {
     Adapter const* adapter = nullptr; ///< required
 
     StrView storeDir                         = {}; ///< cooked store root (read-only for the runtime)
-    Span<Mount const> mounts                 = {}; ///< where the cook provider looks for sources (dev)
+    Span<Root const> roots                   = {}; ///< where the cook provider looks for sources (dev)
     StoreLayout storeLayout                  = StoreLayout::Named;
     bool devPlaceholders                     = KILN_DEBUG != 0; ///< Failed textures show the magenta checker
     Span<PlaceholderDesc const> placeholders = {}; ///< overrides per kind; missing kinds use built-ins
@@ -103,7 +103,7 @@ struct ContextDesc {
     u64 ioInFlightBytes = 64u << 20; ///< budget for bytes being read at once
 };
 
-/// Create a context. Fails with InvalidArgument (K5013) if a mount name is invalid or used
+/// Create a context. Fails with InvalidArgument (K5013) if a root name is invalid or used
 /// twice. Placeholders are uploaded through the adapter here; with a
 /// self-submitting adapter create() waits for them, otherwise gpu() returns a null
 /// object until the first pump() sees them complete.
@@ -131,35 +131,35 @@ KILN_API void release(Context* ctx, TextureHandle h) noexcept;
 [[nodiscard]] KILN_API AssetId asset_id(StrView name) noexcept;
 
 // ---------------------------------------------------------------------------
-// Asset names: `mount:path/file.ext#sub` (docs/design/asset-model-next.md, Part 2).
+// Asset names: `root:path/file.ext#sub` (docs/design/asset-model-next.md, Part 2).
 // A name is checked where it enters kiln and compared byte for byte after that.
 // ---------------------------------------------------------------------------
 
 inline constexpr usize kMaxAssetNameLen = 255;
 
 /// Null if `name` is valid, else a short reason. Valid: at most kMaxAssetNameLen bytes; an
-/// optional `mount:` prefix (see check_mount_name); then `/`-separated segments that are not
+/// optional `root:` prefix (see check_root_name); then `/`-separated segments that are not
 /// empty, `.` or `..`; no control characters and none of `\ : < > " | ? *`; at most one `#`,
 /// in the last segment, with text on both sides.
 [[nodiscard]] KILN_API char const* check_asset_name(StrView name) noexcept;
-/// Null if `mount` is a valid mount name (`[a-z0-9_]`, at least 2 characters), else a reason.
-[[nodiscard]] KILN_API char const* check_mount_name(StrView mount) noexcept;
+/// Null if `root` is a valid root name (`[a-z0-9_]`, at least 2 characters), else a reason.
+[[nodiscard]] KILN_API char const* check_root_name(StrView root) noexcept;
 
 struct AssetNameParts {
-    StrView mount; ///< empty: the default mount
-    StrView path;  ///< the source file in its mount, with its extension
-    StrView sub;   ///< the part after `#`; empty if none
+    StrView root; ///< empty: the default root
+    StrView path; ///< the source file in its root, with its extension
+    StrView sub;  ///< the part after `#`; empty if none
 };
 /// Splits `name` at its first `:` and `#`. Does not check it.
 [[nodiscard]] KILN_API AssetNameParts split_asset_name(StrView name) noexcept;
 
 /// The name that a relative URI inside the source of `owner` refers to: resolved against the
-/// owner's directory, in the owner's mount. Returns the length written to `out`, or 0 if the
-/// URI is absolute, leaves the mount, gives an invalid name or does not fit `cap`.
+/// owner's directory, in the owner's root. Returns the length written to `out`, or 0 if the
+/// URI is absolute, leaves the root, gives an invalid name or does not fit `cap`.
 [[nodiscard]] KILN_API usize resolve_asset_name(StrView owner, StrView uri, char* out, usize cap) noexcept;
 
 /// The cooked file of `name` in the Named layout: `<storeDir>/<name>.mesh|.ktx2`, with the
-/// prefix `m:` of a named mount written as the directory `m#/`. Returns what `format()`
+/// prefix `m:` of a named root written as the directory `m#/`. Returns what `format()`
 /// returns (>= cap - 1 means truncated).
 [[nodiscard]] KILN_API usize store_file_path(StrView storeDir, AssetKind kind, StrView name, char* out,
                                              usize cap) noexcept;
@@ -308,8 +308,8 @@ struct ContextStats {
 };
 [[nodiscard]] KILN_API ContextStats stats(Context* ctx) noexcept;
 [[nodiscard]] KILN_API StrView store_dir(Context* ctx) noexcept;
-/// The mounts from ContextDesc (owned copies).
-[[nodiscard]] KILN_API Span<Mount const> mounts(Context* ctx) noexcept;
+/// The roots from ContextDesc (owned copies).
+[[nodiscard]] KILN_API Span<Root const> roots(Context* ctx) noexcept;
 [[nodiscard]] KILN_API Allocator const* allocator(Context* ctx) noexcept;
 /// The job system the context runs its IO and cook jobs on: the host's JobSystem
 /// from ContextDesc, or the built-in pool. Valid until destroy(ctx).
@@ -334,7 +334,7 @@ enum RuntimeDiagCode : u32 {
     kDiagReloadFailed         = 5010, ///< a reload failed; the previous version stays (Error)
     kDiagHotReloadUnavailable = 5011, ///< not compiled in, or the IO backend has no stat (Warning)
     kDiagReloadMemorySource   = 5012, ///< reload requested for a memory-registered asset (Warning)
-    kDiagBadAssetName         = 5013, ///< a request, registration or mount breaks the name rules
+    kDiagBadAssetName         = 5013, ///< a request, registration or root breaks the name rules
 };
 
 } // namespace kiln

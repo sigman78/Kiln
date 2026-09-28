@@ -602,7 +602,7 @@ void build_lod(LodTask& task, MeshCookSettings const& settings, Allocator const*
 
 /// Names every embedded image: its glTF name, or "image<N>" when unnamed. The name becomes
 /// the sub-asset part of "<asset>#<name>", so it must be unique and give a valid asset name.
-/// An external image's URI must resolve to a name in the source's mount.
+/// An external image's URI must resolve to a name in the source's root.
 Status name_embedded_images(Cook& k) {
     k.imageName.resize(k.scene.images.size);
     for (u32 i = 0; i < u32(k.scene.images.size); ++i) {
@@ -610,8 +610,8 @@ Status name_embedded_images(Cook& k) {
         if (!img.uri.empty()) {
             char resolved[kMaxAssetNameLen + 1];
             if (resolve_asset_name(k.src.assetPath, img.uri, resolved, sizeof resolved) == 0)
-                COOK_FAIL(k, Code::ValidationFailed, kDiagGltfUriOutsideMount, img.uri,
-                          "image %u: URI '%.*s' is absolute, leaves the mount or gives an invalid asset name",
+                COOK_FAIL(k, Code::ValidationFailed, kDiagGltfUriOutsideRoot, img.uri,
+                          "image %u: URI '%.*s' is absolute, leaves the root or gives an invalid asset name",
                           i, KILN_SV(img.uri));
             continue;
         }

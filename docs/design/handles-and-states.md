@@ -35,13 +35,13 @@ generation" wording but keeps its intent.
 
 ### `AssetId`
 
-- An asset name is `mount:path/file.ext#sub`. The extension is part of the name; the runtime does
+- An asset name is `root:path/file.ext#sub`. The extension is part of the name; the runtime does
   not normalize names (no stripped extension, no `./` removal, no slash collapsing). A name is
   checked once where it enters kiln (`check_asset_name()`) and compared byte for byte after that.
   See `docs/design/asset-model-next.md` Part 2 (decision I3) and `include/kiln/assets.h`.
   Example: `"meshes/ship_hauler_a.glb#hull_albedo"`. A name is at most 255 bytes
   (`kMaxAssetNameLen`), case-sensitive.
-- `using AssetId = u64`: FNV-1a 64 of the full name, mount and extension included (`asset_id()`);
+- `using AssetId = u64`: FNV-1a 64 of the full name, root and extension included (`asset_id()`);
   returns 0 for an invalid name.
 - Matches mesh-format-spec §3, so `ModelInfo.assetId` and `TextureBinding.textureId` are usable as
   `AssetId`s.

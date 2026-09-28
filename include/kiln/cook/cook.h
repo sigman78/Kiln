@@ -45,13 +45,13 @@ enum GltfDiagCode : u32 {
     kDiagGltfLimit = 1014, ///< too many streams/attributes/vertices for the format (Unsupported)
     kDiagGltfExtrasDropped =
         1015, ///< mount extras pair with `;`/`=` in key or value, or non-scalar, dropped (Warning)
-    kDiagGltfEmptyMesh     = 1016,   ///< a part ended up with zero triangles (Warning)
-    kDiagGltfUsageConflict = 1017,   ///< the same image is bound to slots implying different usages (Warning)
-    kDiagGltfQuantFallback = 1018,   ///< positions/UVs fell back to the precise profile (Info)
-    kDiagGltfImageName     = 1019,   ///< two embedded images share a name, or `<mesh>#<name>` is not a valid
-                                     ///< asset name (ValidationFailed)
-    kDiagGltfUriOutsideMount = 1020, ///< an external URI is absolute, leaves the mount or gives an invalid
-                                     ///< asset name (ValidationFailed)
+    kDiagGltfEmptyMesh     = 1016,  ///< a part ended up with zero triangles (Warning)
+    kDiagGltfUsageConflict = 1017,  ///< the same image is bound to slots implying different usages (Warning)
+    kDiagGltfQuantFallback = 1018,  ///< positions/UVs fell back to the precise profile (Info)
+    kDiagGltfImageName     = 1019,  ///< two embedded images share a name, or `<mesh>#<name>` is not a valid
+                                    ///< asset name (ValidationFailed)
+    kDiagGltfUriOutsideRoot = 1020, ///< an external URI is absolute, leaves the root or gives an invalid
+                                    ///< asset name (ValidationFailed)
 };
 
 // ---------------------------------------------------------------------------

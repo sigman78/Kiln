@@ -77,7 +77,7 @@ struct TestContext {
     TestContext& operator=(TestContext const&) = delete;
     TestContext() noexcept                     = default;
 
-    bool init(StrView storeDir, Span<Mount const> mounts, DiagSink diag = {}) noexcept {
+    bool init(StrView storeDir, Span<Root const> roots, DiagSink diag = {}) noexcept {
         Result<NullAdapter*> na_ = null_adapter_create({}, &adapter);
         if (!KILN_CHECK_MSG(na_.ok(), "null_adapter_create failed")) return false;
         na = na_.value();
@@ -85,7 +85,7 @@ struct TestContext {
         ContextDesc desc{};
         desc.adapter  = &adapter;
         desc.storeDir = storeDir;
-        desc.mounts   = mounts;
+        desc.roots    = roots;
         desc.diag     = diag;
 
         Result<Context*> c = create(desc);
@@ -210,13 +210,13 @@ KILN_TEST(Provider, DiskModeCooksAndWritesNamedStoreFiles) {
     scratch_dir("provider_store", storeDir, sizeof storeDir);
     gltf_generated_dir(gltfDir, sizeof gltfDir);
 
-    Mount const roots[] = {
+    Root const roots[] = {
         {{}, StrView(gltfDir)}
     };
 
     {
         TestContext tc;
-        if (!tc.init(StrView(storeDir), Span<Mount const>(roots, 1))) return;
+        if (!tc.init(StrView(storeDir), Span<Root const>(roots, 1))) return;
 
         Status const installed =
             cook::install_provider(tc.ctx, cook::ProviderDesc{.storeMode = cook::StoreMode::Disk});
@@ -279,11 +279,11 @@ KILN_TEST(Provider, DiskModeCooksEmbeddedJpegTexture) {
     scratch_dir("provider_jpeg_embedded_store", storeDir, sizeof storeDir);
     gltf_generated_dir(gltfDir, sizeof gltfDir);
 
-    Mount const roots[] = {
+    Root const roots[] = {
         {{}, StrView(gltfDir)}
     };
     TestContext tc;
-    if (!tc.init(StrView(storeDir), Span<Mount const>(roots, 1))) return;
+    if (!tc.init(StrView(storeDir), Span<Root const>(roots, 1))) return;
     Status const installed =
         cook::install_provider(tc.ctx, cook::ProviderDesc{.storeMode = cook::StoreMode::Disk});
     KILN_REQUIRE(installed.ok());
@@ -306,11 +306,11 @@ KILN_TEST(Provider, MemoryModeNeverWritesTheStore) {
     scratch_dir("provider_store_memory", storeDir, sizeof storeDir);
     gltf_generated_dir(gltfDir, sizeof gltfDir);
 
-    Mount const roots[] = {
+    Root const roots[] = {
         {{}, StrView(gltfDir)}
     };
     TestContext tc;
-    if (!tc.init(StrView(storeDir), Span<Mount const>(roots, 1))) return;
+    if (!tc.init(StrView(storeDir), Span<Root const>(roots, 1))) return;
 
     Status const installed =
         cook::install_provider(tc.ctx, cook::ProviderDesc{.storeMode = cook::StoreMode::Memory});
@@ -332,12 +332,12 @@ KILN_TEST(Provider, MissingSourceFailsWithStoreMiss) {
     scratch_dir("provider_store_missing", storeDir, sizeof storeDir);
     gltf_generated_dir(gltfDir, sizeof gltfDir);
 
-    Mount const roots[] = {
+    Root const roots[] = {
         {{}, StrView(gltfDir)}
     };
     DiagCapture diags;
     TestContext tc;
-    if (!tc.init(StrView(storeDir), Span<Mount const>(roots, 1), diags.sink())) return;
+    if (!tc.init(StrView(storeDir), Span<Root const>(roots, 1), diags.sink())) return;
 
     Status const installed =
         cook::install_provider(tc.ctx, cook::ProviderDesc{.storeMode = cook::StoreMode::Disk});
@@ -361,11 +361,11 @@ KILN_TEST(Provider, DiskModeCooksJpegSource) {
     format(texPath, sizeof texPath, "%s/tex.jpg.ktx2", storeDir);
     replace_file(srcPath, kiln::test::img::kJpegGradientRgbBytes);
 
-    Mount const roots[] = {
+    Root const roots[] = {
         {{}, StrView(root)}
     };
     TestContext tc;
-    if (!tc.init(StrView(storeDir), Span<Mount const>(roots, 1))) return;
+    if (!tc.init(StrView(storeDir), Span<Root const>(roots, 1))) return;
     Status const installed =
         cook::install_provider(tc.ctx, cook::ProviderDesc{.storeMode = cook::StoreMode::Disk});
     KILN_REQUIRE(installed.ok());
@@ -393,11 +393,11 @@ KILN_TEST(Provider, StandaloneTextureUsageFromName) {
         replace_file(path, test_png(rgba).span());
     }
 
-    Mount const roots[] = {
+    Root const roots[] = {
         {{}, StrView(root)}
     };
     TestContext tc;
-    if (!tc.init(StrView(storeDir), Span<Mount const>(roots, 1))) return;
+    if (!tc.init(StrView(storeDir), Span<Root const>(roots, 1))) return;
     KILN_REQUIRE(cook::install_provider(tc.ctx, cook::ProviderDesc{.storeMode = cook::StoreMode::Disk}).ok());
 
     TextureHandle const color  = request_texture(tc.ctx, "wall.png");
@@ -432,11 +432,11 @@ KILN_TEST(Provider, SidecarSetsTextureUsage) {
     format(path, sizeof path, "%s/broken.png.kiln", root);
     replace_file(path, Span<u8 const>(reinterpret_cast<u8 const*>(broken.data), broken.size));
 
-    Mount const roots[] = {
+    Root const roots[] = {
         {{}, StrView(root)}
     };
     TestContext tc;
-    if (!tc.init(StrView(storeDir), Span<Mount const>(roots, 1))) return;
+    if (!tc.init(StrView(storeDir), Span<Root const>(roots, 1))) return;
     KILN_REQUIRE(cook::install_provider(tc.ctx, cook::ProviderDesc{.storeMode = cook::StoreMode::Disk}).ok());
 
     TextureHandle const wall = request_texture(tc.ctx, "wall_n.png");
@@ -462,11 +462,11 @@ KILN_TEST(Provider, SourcePollerRecooksOnSidecarChange) {
     format(storeFile, sizeof storeFile, "%s/tex.png.ktx2", storeDir);
     replace_file(srcPath, test_png(rgba).span());
 
-    Mount const roots[] = {
+    Root const roots[] = {
         {{}, StrView(root)}
     };
     TestContext tc;
-    if (!tc.init(StrView(storeDir), Span<Mount const>(roots, 1))) return;
+    if (!tc.init(StrView(storeDir), Span<Root const>(roots, 1))) return;
     KILN_REQUIRE(cook::install_provider(tc.ctx, kWatchDesc).ok());
     TextureHandle const tex = request_texture(tc.ctx, "tex.png");
     KILN_REQUIRE_EQ(pump_until_settled(tc.ctx, tex), State::Ready);
@@ -498,11 +498,11 @@ KILN_TEST(Provider, SourcePollerRecooksPng) {
     test_pixels(second, 100);
     replace_file(srcPath, test_png(first).span());
 
-    Mount const roots[] = {
+    Root const roots[] = {
         {{}, StrView(root)}
     };
     TestContext tc;
-    if (!tc.init(StrView(storeDir), Span<Mount const>(roots, 1))) return;
+    if (!tc.init(StrView(storeDir), Span<Root const>(roots, 1))) return;
     KILN_REQUIRE(cook::install_provider(tc.ctx, kWatchDesc).ok());
 
     TextureHandle const tex = request_texture(tc.ctx, "tex.png");
@@ -544,11 +544,11 @@ KILN_TEST(Provider, SourcePollerRecooksGlbAndTextures) {
     format(texFile, sizeof texFile, "%s/box.glb#image0.ktx2", storeDir); // BoxTextured's one unnamed image
     copy_file(textured, srcPath);
 
-    Mount const roots[] = {
+    Root const roots[] = {
         {{}, StrView(root)}
     };
     TestContext tc;
-    if (!tc.init(StrView(storeDir), Span<Mount const>(roots, 1))) return;
+    if (!tc.init(StrView(storeDir), Span<Root const>(roots, 1))) return;
     KILN_REQUIRE(cook::install_provider(tc.ctx, kWatchDesc).ok());
 
     MeshHandle const mesh = request_mesh(tc.ctx, "box.glb");
@@ -594,11 +594,11 @@ KILN_TEST(Provider, SourcePollerStopsOnUninstall) {
     test_pixels(second, 200);
     replace_file(srcPath, test_png(first).span());
 
-    Mount const roots[] = {
+    Root const roots[] = {
         {{}, StrView(root)}
     };
     TestContext tc;
-    if (!tc.init(StrView(storeDir), Span<Mount const>(roots, 1))) return;
+    if (!tc.init(StrView(storeDir), Span<Root const>(roots, 1))) return;
     KILN_REQUIRE(cook::install_provider(tc.ctx, kWatchDesc).ok());
 
     TextureHandle const tex = request_texture(tc.ctx, "tex.png");
@@ -615,12 +615,12 @@ KILN_TEST(Provider, SourcePollerStopsOnUninstall) {
     KILN_CHECK(!wait_for_change(storeFile, before, after, 200));
 }
 
-// A named mount: `lib:tex.png` cooks from the mount's root into `<store>/lib#/tex.png.ktx2`.
-KILN_TEST(Provider, NamedMountCooksIntoItsStoreDirectory) {
+// A named root: `lib:tex.png` cooks from the root's root into `<store>/lib#/tex.png.ktx2`.
+KILN_TEST(Provider, NamedRootCooksIntoItsStoreDirectory) {
     char root[1024], libRoot[1024], storeDir[1024];
-    scratch_dir("provider_mount_default", root, sizeof root);
-    scratch_dir("provider_mount_lib", libRoot, sizeof libRoot);
-    scratch_dir("provider_mount_store", storeDir, sizeof storeDir);
+    scratch_dir("provider_root_default", root, sizeof root);
+    scratch_dir("provider_root_lib", libRoot, sizeof libRoot);
+    scratch_dir("provider_root_store", storeDir, sizeof storeDir);
     make_dir(root);
     make_dir(libRoot);
 
@@ -630,13 +630,13 @@ KILN_TEST(Provider, NamedMountCooksIntoItsStoreDirectory) {
     format(path, sizeof path, "%s/tex.png", libRoot);
     replace_file(path, test_png(rgba).span());
 
-    Mount const mounts[] = {
+    Root const roots[] = {
         {{},    StrView(root)   },
         {"lib", StrView(libRoot)}
     };
     DiagCapture diags;
     TestContext tc;
-    if (!tc.init(StrView(storeDir), Span<Mount const>(mounts, 2), diags.sink())) return;
+    if (!tc.init(StrView(storeDir), Span<Root const>(roots, 2), diags.sink())) return;
     KILN_REQUIRE(cook::install_provider(tc.ctx, cook::ProviderDesc{.storeMode = cook::StoreMode::Disk}).ok());
 
     TextureHandle const tex = request_texture(tc.ctx, "lib:tex.png");
@@ -645,7 +645,7 @@ KILN_TEST(Provider, NamedMountCooksIntoItsStoreDirectory) {
     format(storeFile, sizeof storeFile, "%s/lib#/tex.png.ktx2", storeDir);
     KILN_CHECK_MSG(file_exists(storeFile), "cook-on-miss did not write %s", storeFile);
 
-    // The same file is not in the default mount.
+    // The same file is not in the default root.
     TextureHandle const missing = request_texture(tc.ctx, "tex.png");
     KILN_CHECK_EQ(pump_until_settled(tc.ctx, missing), State::Failed);
     KILN_CHECK_EQ(diags.firstCode, u32(kDiagStoreMiss));
@@ -657,12 +657,12 @@ KILN_TEST(Provider, UnknownMountFails) {
     scratch_dir("provider_unknown_mount_store", storeDir, sizeof storeDir);
     make_dir(root);
 
-    Mount const roots[] = {
+    Root const roots[] = {
         {{}, StrView(root)}
     };
     DiagCapture diags;
     TestContext tc;
-    if (!tc.init(StrView(storeDir), Span<Mount const>(roots, 1), diags.sink())) return;
+    if (!tc.init(StrView(storeDir), Span<Root const>(roots, 1), diags.sink())) return;
     KILN_REQUIRE(cook::install_provider(tc.ctx, cook::ProviderDesc{}).ok());
 
     TextureHandle const tex = request_texture(tc.ctx, "nope:tex.png");
@@ -676,12 +676,12 @@ KILN_TEST(Provider, ExtensionMustMatchKind) {
     scratch_dir("provider_kind_store", storeDir, sizeof storeDir);
     gltf_generated_dir(gltfDir, sizeof gltfDir);
 
-    Mount const roots[] = {
+    Root const roots[] = {
         {{}, StrView(gltfDir)}
     };
     DiagCapture diags;
     TestContext tc;
-    if (!tc.init(StrView(storeDir), Span<Mount const>(roots, 1), diags.sink())) return;
+    if (!tc.init(StrView(storeDir), Span<Root const>(roots, 1), diags.sink())) return;
     KILN_REQUIRE(
         cook::install_provider(tc.ctx, cook::ProviderDesc{.storeMode = cook::StoreMode::Memory}).ok());
 
@@ -702,12 +702,12 @@ KILN_TEST(Provider, NameCaseMustMatchTheDisk) {
     scratch_dir("provider_case_store", storeDir, sizeof storeDir);
     gltf_generated_dir(gltfDir, sizeof gltfDir);
 
-    Mount const roots[] = {
+    Root const roots[] = {
         {{}, StrView(gltfDir)}
     };
     DiagCapture diags;
     TestContext tc;
-    if (!tc.init(StrView(storeDir), Span<Mount const>(roots, 1), diags.sink())) return;
+    if (!tc.init(StrView(storeDir), Span<Root const>(roots, 1), diags.sink())) return;
     KILN_REQUIRE(
         cook::install_provider(tc.ctx, cook::ProviderDesc{.storeMode = cook::StoreMode::Memory}).ok());
 
@@ -752,11 +752,11 @@ KILN_TEST(Provider, PolicyOverridesSidecarAndCanRefuse) {
     format(path, sizeof path, "%s/tex.png.kiln", root);
     replace_file(path, Span<u8 const>(reinterpret_cast<u8 const*>(mips.data), mips.size));
 
-    Mount const roots[] = {
+    Root const roots[] = {
         {{}, StrView(root)}
     };
     TestContext tc;
-    if (!tc.init(StrView(storeDir), Span<Mount const>(roots, 1))) return;
+    if (!tc.init(StrView(storeDir), Span<Root const>(roots, 1))) return;
     cook::ProviderDesc desc{.storeMode = cook::StoreMode::Memory};
     desc.policy.texture = &no_mips_policy;
     KILN_REQUIRE(cook::install_provider(tc.ctx, desc).ok());

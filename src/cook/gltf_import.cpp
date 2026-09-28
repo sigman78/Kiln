@@ -322,8 +322,8 @@ Status load_buffers(Ctx& c) noexcept {
         StrView const decoded = decode_uri(c.arena, uri);
         char resolved[kMaxAssetNameLen + 1];
         if (resolve_asset_name(c.src.assetPath, decoded, resolved, sizeof resolved) == 0)
-            IMPORT_FAIL(c, Code::ValidationFailed, kDiagGltfUriOutsideMount, StrView(where),
-                        "external buffer '%.*s' is absolute, leaves the mount or gives an invalid asset name",
+            IMPORT_FAIL(c, Code::ValidationFailed, kDiagGltfUriOutsideRoot, StrView(where),
+                        "external buffer '%.*s' is absolute, leaves the root or gives an invalid asset name",
                         KILN_SV(uri));
         Vec<u8> bytes(c.alloc, Tag::Cook);
         Status const st = c.src.resolver.fn(c.src.resolver.user, decoded, c.alloc, &bytes);

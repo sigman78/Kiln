@@ -820,8 +820,8 @@ KILN_TEST(MeshCook, CorpusExternalUriPercentEncoded) {
     KILN_CHECK_EQ(o.view.str(o.view.textures()[0].pathStr), StrView("external_uri_albedo.png"));
 }
 
-// A URI must name a file in the source's mount (K1020), and the source needs a valid name.
-KILN_TEST(MeshCook, ExternalUriStaysInTheMount) {
+// A URI must name a file in the source's root (K1020), and the source needs a valid name.
+KILN_TEST(MeshCook, ExternalUriStaysInTheRoot) {
     CorpusCook c;
     if (!cook_corpus("generated/external_uri.gltf", c)) return;
     StrView const text(reinterpret_cast<char const*>(c.bytes.data()), c.bytes.size());
@@ -849,7 +849,7 @@ KILN_TEST(MeshCook, ExternalUriStaysInTheMount) {
         Diags d;
         Result<cook::CookedMesh> r = cook_bytes(patched.span(), k.asset, d, default_settings(), &c.resolver);
         KILN_CHECK_EQ(r.code(), Code::ValidationFailed);
-        KILN_CHECK_EQ(d.firstErr, u32(cook::kDiagGltfUriOutsideMount));
+        KILN_CHECK_EQ(d.firstErr, u32(cook::kDiagGltfUriOutsideRoot));
     }
 
     Diags d;

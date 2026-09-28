@@ -77,8 +77,8 @@ struct Provider {
     CookSession session;
     Vec<char> storeDirBuf; ///< owned copy of store_dir(ctx), NUL-terminated
     StrView storeDir;
-    Vec<char> mountsBuf;     ///< owned copies of mounts(ctx), NUL-separated
-    Vec<Mount> mounts;       ///< views into mountsBuf
+    Vec<char> rootsBuf;      ///< owned copies of roots(ctx), NUL-separated
+    Vec<Root> roots;         ///< views into rootsBuf
     Vec<char> ruleStrings;   ///< owned copies of the name rule suffixes
     Vec<NameRule> nameRules; ///< suffixes point into ruleStrings
     Allocator const* alloc = nullptr;
@@ -102,7 +102,7 @@ struct Provider {
     std::atomic<bool> stopping{false};
 
     explicit Provider(Allocator const* a) noexcept
-        : storeDirBuf(a, Tag::Cook), mountsBuf(a, Tag::Cook), mounts(a, Tag::Cook), ruleStrings(a, Tag::Cook),
+        : storeDirBuf(a, Tag::Cook), rootsBuf(a, Tag::Cook), roots(a, Tag::Cook), ruleStrings(a, Tag::Cook),
           nameRules(a, Tag::Cook), alloc(a), records(a, Tag::Cook), emitted(a, Tag::Cook),
           strings(a, Tag::Cook) {}
 };
@@ -163,7 +163,7 @@ Status write_to_store(StrView storeDir, StrView name, AssetKind kind, Span<u8 co
                        overwrite);
 }
 
-/// A source file found in one of the provider's mounts.
+/// A source file found in one of the provider's roots.
 struct FoundSource {
     char path[1024] = {};
     usize len       = 0;
@@ -190,24 +190,24 @@ struct FoundSource {
            (webp_decode_enabled() && ext_is(path, "webp")) || ext_is(path, "ktx2");
 }
 
-/// The source file of the (sub-asset free) name `owner`: `<mount root>/<path>`. NotFound
+/// The source file of the (sub-asset free) name `owner`: `<root root>/<path>`. NotFound
 /// without a diagnostic when no such file exists, so the runtime reports a store miss.
 Status find_source(Provider const& p, StrView owner, FoundSource& out, DiagSink const* diag) noexcept {
     AssetNameParts const parts = split_asset_name(owner);
-    Mount const* mount         = nullptr;
-    for (Mount const& m : p.mounts)
-        if (m.name == parts.mount) mount = &m;
-    if (!mount) {
-        if (parts.mount.empty())
-            return diagf(diag, make_status(Code::InvalidArgument), kDiagUnknownMount, Severity::Error, owner,
-                         "request", "no default mount: the name needs a 'mount:' prefix");
-        return diagf(diag, make_status(Code::InvalidArgument), kDiagUnknownMount, Severity::Error, owner,
-                     "request", "unknown mount '%.*s'", KILN_SV(parts.mount));
+    Root const* root           = nullptr;
+    for (Root const& m : p.roots)
+        if (m.name == parts.root) root = &m;
+    if (!root) {
+        if (parts.root.empty())
+            return diagf(diag, make_status(Code::InvalidArgument), kDiagUnknownRoot, Severity::Error, owner,
+                         "request", "no default root: the name needs a 'root:' prefix");
+        return diagf(diag, make_status(Code::InvalidArgument), kDiagUnknownRoot, Severity::Error, owner,
+                     "request", "unknown root '%.*s'", KILN_SV(parts.root));
     }
-    out.len = format(out.path, sizeof out.path, "%.*s/%.*s", KILN_SV(mount->root), KILN_SV(parts.path));
+    out.len = format(out.path, sizeof out.path, "%.*s/%.*s", KILN_SV(root->dir), KILN_SV(parts.path));
     if (out.len >= sizeof out.path - 1) return make_status(Code::InvalidArgument);
     if (!io_file_exists(StrView(out.path, out.len))) return make_status(Code::NotFound);
-    if (!source_case_matches(mount->root, parts.path))
+    if (!source_case_matches(root->dir, parts.path))
         return diagf(diag, make_status(Code::InvalidArgument), kDiagSourceCase, Severity::Error, owner,
                      "request", "the file on disk differs in case: %.*s", int(out.len), out.path);
     return kOk;
@@ -744,8 +744,8 @@ bool source_case_matches(StrView root, StrView path) noexcept {
 }
 
 Status install_provider(Context* ctx, ProviderDesc const& desc) noexcept {
-    Span<Mount const> const ctxMounts = mounts(ctx);
-    if (ctxMounts.empty()) return make_status(Code::InvalidArgument);
+    Span<Root const> const ctxRoots = roots(ctx);
+    if (ctxRoots.empty()) return make_status(Code::InvalidArgument);
 
     ProviderDesc effective = desc;
     if (effective.storeMode == StoreMode::None) {
@@ -770,23 +770,23 @@ Status install_provider(Context* ctx, ProviderDesc const& desc) noexcept {
 
     // Roots lose a trailing separator: find_source() adds its own.
     usize total = 0;
-    for (Mount const& m : ctxMounts)
-        total += m.name.size + 1 + m.root.size + 1;
-    p->mountsBuf.resize(total);
-    p->mounts.reserve(ctxMounts.size);
+    for (Root const& m : ctxRoots)
+        total += m.name.size + 1 + m.dir.size + 1;
+    p->rootsBuf.resize(total);
+    p->roots.reserve(ctxRoots.size);
     usize offset    = 0;
     auto const copy = [p, &offset](StrView s) noexcept {
-        if (s.size) std::memcpy(p->mountsBuf.data() + offset, s.data, s.size);
-        p->mountsBuf[offset + s.size] = '\0';
-        StrView const v(p->mountsBuf.data() + offset, s.size);
+        if (s.size) std::memcpy(p->rootsBuf.data() + offset, s.data, s.size);
+        p->rootsBuf[offset + s.size] = '\0';
+        StrView const v(p->rootsBuf.data() + offset, s.size);
         offset += s.size + 1;
         return v;
     };
-    for (Mount const& m : ctxMounts) {
-        StrView root = m.root;
+    for (Root const& m : ctxRoots) {
+        StrView root = m.dir;
         while (root.size > 1 && (root[root.size - 1] == '/' || root[root.size - 1] == '\\'))
             --root.size;
-        p->mounts.push_back(Mount{copy(m.name), copy(root)});
+        p->roots.push_back(Root{copy(m.name), copy(root)});
     }
 
     usize ruleBytes = 0;

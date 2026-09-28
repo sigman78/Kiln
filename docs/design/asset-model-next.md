@@ -59,10 +59,10 @@ cooked usage.
 (done: `kiln/cook/sidecar.h`, K3005/K3006; see `settings.md`, "Sidecar files"). The layer order
 was then settled: host settings are defaults, a sidecar beats them, and a `CookPolicy` has the
 last word (`settings.md`, "Resolution layers").
-Then stage B, the extension in the name (I3, I5, I6), and stage C, named mounts (B1, B2, I1, I2):
+Then stage B, the extension in the name (I3, I5, I6), and stage C, named roots (B1, B2, I1, I2):
 both done, see "Implementation".
 
-**What stays from Parts 1 and 2:** identity as the exact source path with its extension, mounts,
+**What stays from Parts 1 and 2:** identity as the exact source path with its extension, roots,
 the path rules, and strict input rules. **Superseded:** anything that needs kiln to follow a
 reference. Each such item below is marked *Superseded by the retrospective*.
 
@@ -74,18 +74,18 @@ K1019, K1020, K5013-K5016 (`diagnostics.md`).
 - **Names.** `check_asset_name()` implements I1 and I2. The runtime checks a name at
   `request_*`/`register_*` (K5013) and compares it byte for byte; `AssetId` is FNV-1a 64 of the
   whole name (I6). There is no normalization any more.
-- **Mounts.** `ContextDesc::mounts` replaces `sourceRoots` (`Mount{name, root}`, empty name =
-  the default mount). `create()` checks the names. `kiln-cook`, `kiln-viewer`: `--mount n=dir`.
-- **Provider.** The source of `m:path` is `<root of m>/path`. The extension gives the kind (I5),
-  K5014 on a mismatch; an unknown mount is K5015. On Windows, a name that differs in case from
+- **Roots.** `ContextDesc::roots` replaces `sourceRoots` (`Root{name, dir}`, empty name =
+  the default root). `create()` checks the names. `kiln-cook`, `kiln-viewer`, `kiln-headless`: `--root [n=]dir`.
+- **Provider.** The source of `m:path` is `<dir of m>/path`. The extension gives the kind (I5),
+  K5014 on a mismatch; an unknown root is K5015. On Windows, a name that differs in case from
   the file on disk is K5016 (I2); elsewhere the file system already fails it.
 - **References (B2).** The mesh cook fails with K1020 when a buffer or image URI is absolute or
-  leaves the source's mount. `resolve_asset_name()` gives hosts the same resolution; the viewer
+  leaves the source's root. `resolve_asset_name()` gives hosts the same resolution; the viewer
   uses it for external texture bindings.
 
 Choices made during implementation, *Proposed* until the owner signs off:
 
-- **Store layout of a named mount:** `m:` becomes the directory `m#/`
+- **Store layout of a named root:** `m:` becomes the directory `m#/`
   (`<store>/pool#/tex/wood.png.ktx2`). `#` never occurs in a directory segment of a valid name,
   so no name maps to the same file, and no new path rule is needed.
 - **More reserved characters:** names also exclude `< > " | ? *`, which Windows does not allow in
@@ -94,8 +94,8 @@ Choices made during implementation, *Proposed* until the owner signs off:
 - **The kind check is in the provider, not at the call.** The runtime accepts any valid name, with
   or without a source extension: a store cooked elsewhere, or `register_*` content, has no source.
   So `request_mesh("x.png")` fails when the provider runs (K5014), not at the call.
-- **Mounts stay on `ContextDesc`**, as "Consequences" said, although B5 says the runtime does not
-  know mounts. The runtime only stores them for the provider; moving them to `ProviderDesc` is a
+- **Roots stay on `ContextDesc`**, as "Consequences" said, although B5 says the runtime does not
+  know roots. The runtime only stores them for the provider; moving them to `ProviderDesc` is a
   small change if B5 should win.
 - **Case check on Windows only.** On macOS (case-insensitive by default) a wrong-case name still
   cooks.
@@ -116,27 +116,27 @@ which source produces which asset. Symptoms seen so far:
 
 ## Part 1: Boundaries
 
-**B1. A project is one or more mounted source roots, one store and settings.** *Decided, watch real usage.*
+**B1. A project is one or more named source roots, one store and settings.** *Decided, watch real usage.*
 
-- A mount is a source root with a name. Mounts have separate namespaces (`pool:`, `game:`).
-- One mount is the default; its names have no prefix.
+- A root is a directory of sources with a name. Roots have separate namespaces (`pool:`, `game:`).
+- One root is the default; its names have no prefix.
 - The store is a cache for one (project, target) pair.
-- No project file yet: the mounts given to the provider or `kiln-cook` are the project.
+- No project file yet: the roots given to the provider or `kiln-cook` are the project.
 - Overlays (several roots in one namespace, where a later root replaces an asset, e.g. mods,
   DLC, patches) are a different dimension. They are deferred, not rejected.
-- Open: whether real usage needs more than one mount. The shared texture pool (B2) is the first
+- Open: whether real usage needs more than one root. The shared texture pool (B2) is the first
   case for it.
 
-**B2. File references stay inside their mount.** *Decided.*
+**B2. File references stay inside their root.** *Decided.*
 
-- A glTF URI resolves relative to the glTF file and must stay inside the same mount after
-  normalization. A URI that leaves the mount is a cook error.
-- Sharing across mounts goes by identity, not by path. Example: a material file
+- A glTF URI resolves relative to the glTF file and must stay inside the same root after
+  normalization. A URI that leaves the root is a cook error.
+- Sharing across roots goes by identity, not by path. Example: a material file
   (`material-name.toml`) names `pool:textures/wood_oak.png`. The material file is its own topic.
   *Superseded by the retrospective:* a material file is host policy; kiln does not read it.
 
 **B3. There is no separate ad-hoc mode.** *Decided.* Viewing a random `.glb` means a project whose
-default mount is the folder given as the source. If its references leave that folder, pick a
+default root is the folder given as the source. If its references leave that folder, pick a
 higher folder or the cook fails.
 
 **B4. Guarantees hold only for input that follows the rules.** *Decided in principle.* Input that breaks
@@ -147,18 +147,18 @@ dependency tracking and change reports are promised only for input that follows 
 and the diagnostic for each broken rule.
 
 **B5. The runtime knows the store and identities.** *Direction, not a hard wall.* It does not know
-mounts, source paths or dependencies. Change detection and the list of affected assets live on
+roots, source paths or dependencies. Change detection and the list of affected assets live on
 the cook side.
 
 **Strictness.** *Decided.* A broken rule is an error. There are no opt-outs.
 
 ## Part 2: Identity
 
-**I1. Syntax: `mount:path/file.ext#sub`.** *Decided.*
+**I1. Syntax: `root:path/file.ext#sub`.** *Decided.*
 
-- `pool:textures/wood_oak.png`: a file in mount `pool`.
-- `props/chair.glb#wood`: an image embedded in `props/chair.glb` in the default mount.
-- Mount names are `[a-z0-9_]`, at least 2 characters, so `c:` never looks like a drive letter.
+- `pool:textures/wood_oak.png`: a file in root `pool`.
+- `props/chair.glb#wood`: an image embedded in `props/chair.glb` in the default root.
+- Root names are `[a-z0-9_]`, at least 2 characters, so `c:` never looks like a drive letter.
 
 **I2. Path rules.** *Proposed with I1.*
 
@@ -170,7 +170,7 @@ the cook side.
   mismatch, so a name that works on Windows also works on Linux and consoles.
 
 **I3. The extension is part of the name.** *Decided.* The name is the exact source path in its
-mount. Reasons:
+root. Reasons:
 
 - The provider finds the source without guessing extensions.
 - Two sources can never claim one name, so no clash rule is needed.
@@ -194,7 +194,7 @@ The cooked file name in the store is a separate decision (store layout).
 `.jpeg`, `.webp`, `.ktx2`: texture. `#sub` of a model: texture. Requesting a mesh by a texture
 name is an error at the call.
 
-**I6. `AssetId` is FNV-1a 64 of the full identity**, mount and extension included. *Proposed.*
+**I6. `AssetId` is FNV-1a 64 of the full identity**, root and extension included. *Proposed.*
 Texture bindings in `.mesh` store full identities. This is a format break: every store must be
 re-cooked. *Superseded by the retrospective:* bindings store the URI as written; the host maps it
 to an identity.
@@ -214,7 +214,7 @@ the embedded images a glb wrote, because option (c) keeps them as outputs of the
   external images.
 - The provider's extension loop, owner guess and record of emitted textures go away.
 - The viewer maps texture references to names itself.
-- `ContextDesc::sourceRoots` becomes a list of named mounts.
+- `ContextDesc::sourceRoots` becomes a list of named roots (`ContextDesc::roots`).
 - Asset names gain their extension. Stores need a re-cook.
 
 ## Later topics

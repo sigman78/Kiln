@@ -157,8 +157,8 @@ void free_tables(Context* ctx) noexcept {
     free_array(a, ctx->compScratch, ctx->compCap, Tag::Registry);
     free_array(a, ctx->events, ctx->maxEvents, Tag::Registry);
     if (ctx->storeDir) free_array(a, ctx->storeDir, ctx->storeDirLen + 1, Tag::Registry);
-    free_array(a, ctx->mounts, ctx->mountCount, Tag::Registry);
-    free_array(a, ctx->mountChars, ctx->mountCharsLen, Tag::Registry);
+    free_array(a, ctx->roots, ctx->rootCount, Tag::Registry);
+    free_array(a, ctx->rootChars, ctx->rootCharsLen, Tag::Registry);
     ctx->meshMap.release();
     ctx->texMap.release();
     watch_free(ctx);
@@ -215,15 +215,15 @@ Result<Context*> create(ContextDesc const& desc) noexcept {
     if (desc.maxAssets == 0 || desc.maxAssets > (1u << 24) || desc.maxGroups == 0 || desc.maxEvents == 0)
         return diagf(&desc.diag, make_status(Code::InvalidArgument), kDiagRegistryFull, Severity::Error, {},
                      "create", "maxAssets / maxGroups / maxEvents out of range");
-    for (usize i = 0; i < desc.mounts.size; ++i) {
-        StrView const name = desc.mounts[i].name;
-        if (char const* why = name.empty() ? nullptr : check_mount_name(name))
+    for (usize i = 0; i < desc.roots.size; ++i) {
+        StrView const name = desc.roots[i].name;
+        if (char const* why = name.empty() ? nullptr : check_root_name(name))
             return diagf(&desc.diag, make_status(Code::InvalidArgument), kDiagBadAssetName, Severity::Error,
-                         name, "create", "invalid mount name: %s", why);
+                         name, "create", "invalid root name: %s", why);
         for (usize j = 0; j < i; ++j)
-            if (desc.mounts[j].name == name)
+            if (desc.roots[j].name == name)
                 return diagf(&desc.diag, make_status(Code::InvalidArgument), kDiagBadAssetName,
-                             Severity::Error, name, "create", "mount '%.*s' is given twice", KILN_SV(name));
+                             Severity::Error, name, "create", "root '%.*s' is given twice", KILN_SV(name));
     }
 
     Allocator const* a   = desc.alloc ? desc.alloc : default_allocator();
@@ -264,25 +264,25 @@ Result<Context*> create(ContextDesc const& desc) noexcept {
 
     ctx->storeDirLen = desc.storeDir.size;
     ctx->storeDir    = copy_str(a, desc.storeDir);
-    if (!desc.mounts.empty()) {
+    if (!desc.roots.empty()) {
         usize chars = 0;
-        for (Mount const& m : desc.mounts)
-            chars += m.name.size + 1 + m.root.size + 1;
-        ctx->mountCount    = u32(desc.mounts.size);
-        ctx->mounts        = alloc_array<Mount>(a, ctx->mountCount, Tag::Registry);
-        ctx->mountChars    = alloc_array<char>(a, chars, Tag::Registry);
-        ctx->mountCharsLen = chars;
-        char* p            = ctx->mountChars;
-        auto const copy    = [&p](StrView s) noexcept {
+        for (Root const& m : desc.roots)
+            chars += m.name.size + 1 + m.dir.size + 1;
+        ctx->rootCount    = u32(desc.roots.size);
+        ctx->roots        = alloc_array<Root>(a, ctx->rootCount, Tag::Registry);
+        ctx->rootChars    = alloc_array<char>(a, chars, Tag::Registry);
+        ctx->rootCharsLen = chars;
+        char* p           = ctx->rootChars;
+        auto const copy   = [&p](StrView s) noexcept {
             if (s.size) std::memcpy(p, s.data, s.size);
             p[s.size] = '\0';
             StrView const v(p, s.size);
             p += s.size + 1;
             return v;
         };
-        for (u32 i = 0; i < ctx->mountCount; ++i) {
-            ctx->mounts[i].name = copy(desc.mounts[i].name);
-            ctx->mounts[i].root = copy(desc.mounts[i].root);
+        for (u32 i = 0; i < ctx->rootCount; ++i) {
+            ctx->roots[i].name = copy(desc.roots[i].name);
+            ctx->roots[i].dir  = copy(desc.roots[i].dir);
         }
     }
 
@@ -367,8 +367,8 @@ ContextStats stats(Context* ctx) noexcept {
 StrView store_dir(Context* ctx) noexcept {
     return ctx ? StrView(ctx->storeDir, ctx->storeDirLen) : StrView{};
 }
-Span<Mount const> mounts(Context* ctx) noexcept {
-    return ctx ? Span<Mount const>(ctx->mounts, ctx->mountCount) : Span<Mount const>{};
+Span<Root const> roots(Context* ctx) noexcept {
+    return ctx ? Span<Root const>(ctx->roots, ctx->rootCount) : Span<Root const>{};
 }
 Allocator const* allocator(Context* ctx) noexcept { return ctx ? ctx->alloc : nullptr; }
 JobSystem const* jobs(Context* ctx) noexcept { return ctx ? &ctx->jobs : nullptr; }

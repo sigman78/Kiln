@@ -168,9 +168,9 @@ KILN_TEST(Runtime, AssetNameRules) {
     KILN_CHECK_EQ(asset_id("./a.png"), AssetId(0));
 
     AssetNameParts const p = split_asset_name("pool:props/chair.glb#wood");
-    KILN_CHECK(p.mount == "pool" && p.path == "props/chair.glb" && p.sub == "wood");
+    KILN_CHECK(p.root == "pool" && p.path == "props/chair.glb" && p.sub == "wood");
     AssetNameParts const d = split_asset_name("chair.glb");
-    KILN_CHECK(d.mount.empty() && d.path == "chair.glb" && d.sub.empty());
+    KILN_CHECK(d.root.empty() && d.path == "chair.glb" && d.sub.empty());
 }
 
 KILN_TEST(Runtime, ResolveAssetName) {
@@ -183,7 +183,7 @@ KILN_TEST(Runtime, ResolveAssetName) {
     KILN_CHECK(resolve("props/chair.glb", "../tex/wood.png") == "tex/wood.png");
     KILN_CHECK(resolve("chair.glb", "wood.png") == "wood.png");
     KILN_CHECK(resolve("pool:props/chair.glb", "../wood.png") == "pool:wood.png");
-    // Leaving the mount, absolute URIs and invalid results give 0.
+    // Leaving the root, absolute URIs and invalid results give 0.
     KILN_CHECK(resolve("chair.glb", "../wood.png").empty());
     KILN_CHECK(resolve("pool:chair.glb", "../wood.png").empty());
     KILN_CHECK(resolve("chair.glb", "/wood.png").empty());
@@ -219,20 +219,20 @@ KILN_TEST(Runtime, InvalidNamesAndMountsAreRejected) {
     KILN_CHECK_EQ(stats(rt.ctx).assets, 0u);
 
     for (StrView const name : {StrView("X"), StrView("Pool"), StrView("a-b")}) {
-        Mount const bad[] = {
+        Root const bad[] = {
             {name, "src"}
         };
         Rt r2;
         Result<NullAdapter*> a = null_adapter_create({}, &r2.adapter);
         KILN_REQUIRE(a.ok());
         r2.na = *a;
-        ContextDesc cd{.diag = r2.diags.sink(), .adapter = &r2.adapter, .mounts = Span<Mount const>(bad, 1)};
+        ContextDesc cd{.diag = r2.diags.sink(), .adapter = &r2.adapter, .roots = Span<Root const>(bad, 1)};
         Result<Context*> c = create(cd);
-        KILN_CHECK_MSG(c.failed(), "mount name '%.*s' should be rejected", KILN_SV(name));
+        KILN_CHECK_MSG(c.failed(), "root name '%.*s' should be rejected", KILN_SV(name));
         if (c.ok()) destroy(*c);
         KILN_CHECK(r2.diags.has(kDiagBadAssetName));
     }
-    Mount const twice[] = {
+    Root const twice[] = {
         {"lib", "a"},
         {"lib", "b"}
     };
@@ -240,7 +240,7 @@ KILN_TEST(Runtime, InvalidNamesAndMountsAreRejected) {
     Result<NullAdapter*> a = null_adapter_create({}, &r3.adapter);
     KILN_REQUIRE(a.ok());
     r3.na              = *a;
-    Result<Context*> c = create(ContextDesc{.adapter = &r3.adapter, .mounts = Span<Mount const>(twice, 2)});
+    Result<Context*> c = create(ContextDesc{.adapter = &r3.adapter, .roots = Span<Root const>(twice, 2)});
     KILN_CHECK(c.failed());
     if (c.ok()) destroy(*c);
 }

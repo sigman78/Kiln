@@ -227,18 +227,36 @@ void print_event(Context* ctx, Item* items, u32 count, Event const& e) {
     }
 }
 
+constexpr u32 kMaxRoots = 8;
+
 struct Options {
-    char const* store  = "cooked";
-    char const* source = nullptr;
-    double slowMs      = 0;
-    double latencyMs   = 0;
-    u32 frameMs        = 16;
-    u32 timeoutS       = 60;
-    bool trace         = false;
-    bool watch         = false;
+    char const* store = "cooked";
+    Root roots[kMaxRoots]; ///< --source and --root
+    u32 rootCount    = 0;
+    double slowMs    = 0;
+    double latencyMs = 0;
+    u32 frameMs      = 16;
+    u32 timeoutS     = 60;
+    bool trace       = false;
+    bool watch       = false;
     Item items[kMaxItems];
     u32 itemCount = 0;
 };
+
+/// `--root [<name>=]<dir>` and `--source <dir>`. A prefix before `=` that is a valid root name
+/// names the root; otherwise the argument is the default root. create() rejects a repeated root.
+bool add_root(void* user, char const* arg) {
+    auto* o = static_cast<Options*>(user);
+    if (o->rootCount == kMaxRoots) {
+        std::fprintf(stderr, "kiln-headless: too many roots (max %u)\n", kMaxRoots);
+        return false;
+    }
+    char const* const eq = std::strchr(arg, '=');
+    bool const named     = eq && !check_root_name(StrView(arg, usize(eq - arg)));
+    o->roots[o->rootCount++] =
+        named ? Root{StrView(arg, usize(eq - arg)), StrView(eq + 1)} : Root{{}, StrView(arg)};
+    return true;
+}
 
 bool add_item(void* user, char const* arg) {
     auto* o = static_cast<Options*>(user);
@@ -262,8 +280,14 @@ int main(int argc, char** argv) {
         {.name = "--store", .arg = "<dir>", .help = "cooked store root (default: cooked)", .str = &o.store},
         {.name = "--source",
          .arg  = "<dir>",
-         .help = "root of the default mount; enables cook-on-miss (needs kiln_cook)",
-         .str  = &o.source},
+         .help = "the default root; enables cook-on-miss (needs kiln_cook)",
+         .each = &add_root,
+         .user = &o},
+        {.name = "--root",
+         .arg  = "[<name>=]<dir>",
+         .help = "a source root for cook-on-miss; <name>=<dir> names <name>:<path> (repeatable)",
+         .each = &add_root,
+         .user = &o},
         {.name = "--slow",
          .arg  = "<ms>",
          .help = "artificial delay per MiB read or cooked (default: 0)",
@@ -319,13 +343,12 @@ int main(int argc, char** argv) {
 
     // 3. The context. Everything below runs on this thread, the pump thread.
     SlowIo slowIo;
-    Mount const defaultMount{{}, o.source ? StrView(o.source) : StrView{}};
     ContextDesc desc{
         .diag      = DiagSink{&diag_to_stdout, nullptr},
         .io        = slowIo.init(compat_io_backend(), o.slowMs, o.latencyMs),
         .adapter   = &adapter,
         .storeDir  = StrView(o.store),
-        .mounts    = Span<Mount const>(&defaultMount, o.source ? 1u : 0u),
+        .roots     = Span<Root const>(o.roots, o.rootCount),
         .hotReload = {.watchStore = o.watch},
     };
     Result<Context*> c = create(desc);
@@ -335,15 +358,15 @@ int main(int argc, char** argv) {
         return 2;
     }
     Context* ctx = c.value();
-    KILN_INFO("app", "context ready: store '%s'%s%s, slow %.0f ms/MiB, latency %.0f ms", o.store,
-              o.source ? ", sources " : "", o.source ? o.source : "", o.slowMs, o.latencyMs);
+    KILN_INFO("app", "context ready: store '%s', %u source root(s), slow %.0f ms/MiB, latency %.0f ms",
+              o.store, o.rootCount, o.slowMs, o.latencyMs);
 
-    // 4. Cook-on-miss (dev builds): assets missing from the store are cooked from the source root
+    // 4. Cook-on-miss (dev builds): assets missing from the store are cooked from the source roots
     //    on a worker and written to the store. The slow wrapper sits in front of the provider.
     SlowCook slowCook;
     bool providerInstalled = false;
 #if KILN_HEADLESS_HAS_COOK
-    if (o.source) {
+    if (o.rootCount) {
         Status const st = cook::install_provider(ctx, cook::ProviderDesc{.watchSources = o.watch});
         if (st.failed()) {
             KILN_ERROR("app", "install_provider: %s", code_name(st.code));
@@ -358,7 +381,7 @@ int main(int argc, char** argv) {
         }
     }
 #else
-    if (o.source) KILN_WARN("app", "built without kiln_cook: --source is ignored");
+    if (o.rootCount) KILN_WARN("app", "built without kiln_cook: --source and --root are ignored");
     (void)slowCook;
 #endif
 
