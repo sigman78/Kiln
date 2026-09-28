@@ -10,6 +10,7 @@ The notes follow HANDOFF v2 and mesh-format-spec draft v0.3 (magic `KMSH`, names
 
 | Note | Decides |
 |---|---|
+| [architecture.md](architecture.md) | Diagrams: building blocks and their dependencies, the asset load sequence, the hot reload sequence |
 | [dependencies.md](dependencies.md) | Third-party libraries, their scope and pinning, and dependency rules |
 | [error-model.md](error-model.md) | `Status`, `Result<T>`, diagnostics, diagnostic code ranges, panic policy |
 | [handles-and-states.md](handles-and-states.md) | Handles, `AssetId`, states and transitions (incl. `MetaReady`), hot reload, requests, events, placeholders, load groups |
