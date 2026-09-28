@@ -321,6 +321,38 @@ KILN_TEST(IoCompat, IoReadFileWholeFile) {
     KILN_CHECK(std::memcmp(got.data(), pattern.data(), pattern.size()) == 0);
 }
 
+KILN_TEST(IoCompat, StatSizeMtimeAndNotFound) {
+    char const* dir = kiln::test::sample_dir();
+    if (!dir) return;
+
+    char path[1024];
+    format(path, sizeof path, "%s/io_stat.bin", dir);
+    Vec<u8> pattern(default_allocator(), Tag::Test);
+    fill_pattern(pattern, 1234);
+    KILN_REQUIRE(write_file(path, pattern.span()));
+
+    IoBackend const* io = compat_io_backend();
+    KILN_REQUIRE(io->stat != nullptr);
+    IoStat st;
+    KILN_REQUIRE(io->stat(io->user, StrView(path), &st).ok());
+    KILN_CHECK_EQ(st.size, u64(1234));
+    KILN_CHECK(st.mtimeNs != 0);
+
+    // Rewriting with another size changes the stat.
+    fill_pattern(pattern, 99);
+    KILN_REQUIRE(write_file(path, pattern.span()));
+    IoStat st2;
+    KILN_REQUIRE(io->stat(io->user, StrView(path), &st2).ok());
+    KILN_CHECK_EQ(st2.size, u64(99));
+    KILN_CHECK(st2.mtimeNs >= st.mtimeNs);
+
+    char missing[1024];
+    format(missing, sizeof missing, "%s/io_stat_missing.bin", dir);
+    Status const nf = io->stat(io->user, StrView(missing), &st);
+    KILN_CHECK(nf.code == Code::NotFound);
+    KILN_CHECK(io->stat(io->user, StrView(dir), &st).code == Code::NotFound); // a directory is no file
+}
+
 KILN_TEST(IoCompat, FileExistsTrueFalseAndDirectory) {
     char const* dir = kiln::test::sample_dir();
     if (!dir) return;

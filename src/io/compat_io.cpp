@@ -51,8 +51,10 @@ Status compat_open(void*, StrView path, IoFile* out) {
     wchar_t wbuf[kMaxPath];
     if (!utf8_to_wide(path, wbuf)) return make_status(Code::InvalidArgument);
 
-    HANDLE h = CreateFileW(wbuf, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL,
-                           nullptr);
+    // FILE_SHARE_DELETE lets a writer replace the file by rename while it is open here
+    // (store rewrites under hot reload; docs/design/hot-reload.md).
+    HANDLE h = CreateFileW(wbuf, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+                           FILE_ATTRIBUTE_NORMAL, nullptr);
     if (h == INVALID_HANDLE_VALUE) {
         DWORD const err = GetLastError();
         Code const code =
@@ -98,6 +100,24 @@ Status compat_read_range(void*, IoFile f, u64 offset, u64 size, void* dst) {
 }
 
 void compat_close(void*, IoFile f) { CloseHandle(native_handle(f)); }
+
+Status compat_stat(void*, StrView path, IoStat* out) {
+    if (path.size >= kMaxPath) return make_status(Code::InvalidArgument);
+    wchar_t wbuf[kMaxPath];
+    if (!utf8_to_wide(path, wbuf)) return make_status(Code::InvalidArgument);
+    WIN32_FILE_ATTRIBUTE_DATA fa;
+    if (!GetFileAttributesExW(wbuf, GetFileExInfoStandard, &fa)) {
+        DWORD const err = GetLastError();
+        Code const code =
+            (err == ERROR_FILE_NOT_FOUND || err == ERROR_PATH_NOT_FOUND) ? Code::NotFound : Code::IoError;
+        return make_status(code, u16(err & 0xFFFFu));
+    }
+    if (fa.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) return make_status(Code::NotFound);
+    out->size = (u64(fa.nFileSizeHigh) << 32) | fa.nFileSizeLow;
+    // FILETIME counts 100 ns intervals.
+    out->mtimeNs = ((u64(fa.ftLastWriteTime.dwHighDateTime) << 32) | fa.ftLastWriteTime.dwLowDateTime) * 100;
+    return kOk;
+}
 
 bool stat_is_regular_file(StrView path) noexcept {
     if (path.size >= kMaxPath) return false;
@@ -154,6 +174,27 @@ Status compat_read_range(void*, IoFile f, u64 offset, u64 size, void* dst) {
 
 void compat_close(void*, IoFile f) { ::close(native_fd(f)); }
 
+Status compat_stat(void*, StrView path, IoStat* out) {
+    if (path.size >= kMaxPath) return make_status(Code::InvalidArgument);
+    char buf[kMaxPath];
+    std::memcpy(buf, path.data, path.size);
+    buf[path.size] = '\0';
+    struct stat st{};
+    if (::stat(buf, &st) != 0) {
+        int const e     = errno;
+        Code const code = (e == ENOENT || e == ENOTDIR) ? Code::NotFound : Code::IoError;
+        return make_status(code, u16(e & 0xFFFF));
+    }
+    if (!S_ISREG(st.st_mode)) return make_status(Code::NotFound);
+    out->size = u64(st.st_size);
+#if defined(__APPLE__)
+    out->mtimeNs = u64(st.st_mtimespec.tv_sec) * 1000000000u + u64(st.st_mtimespec.tv_nsec);
+#else
+    out->mtimeNs = u64(st.st_mtim.tv_sec) * 1000000000u + u64(st.st_mtim.tv_nsec);
+#endif
+    return kOk;
+}
+
 bool stat_is_regular_file(StrView path) noexcept {
     if (path.size >= kMaxPath) return false;
     char buf[kMaxPath];
@@ -166,7 +207,8 @@ bool stat_is_regular_file(StrView path) noexcept {
 
 #endif
 
-constexpr IoBackend g_compatBackend{&compat_open, &compat_size, &compat_read_range, &compat_close, nullptr};
+constexpr IoBackend g_compatBackend{&compat_open,  &compat_size, &compat_read_range,
+                                    &compat_close, &compat_stat, nullptr};
 
 } // namespace
 

@@ -68,6 +68,18 @@ struct DiagCapture {
     }
 };
 
+/// Outputs of the meta stage: validated metadata and the upload plan.
+struct MetaSet {
+    Buffer meta;                ///< mesh CPU region [0, gpuDataOffset)
+    mesh::MeshView meshView;    ///< points into `meta`
+    ktx2::TextureDesc texDesc;  ///< textures
+    u64* layout      = nullptr; ///< textures: [dstOffset | rowPitch | srcOffset | srcLength] x levels
+    u32 layoutLevels = 0;
+    u64 uploadSize   = 0; ///< bytes handed to begin_upload
+};
+
+struct Watch; // watch.cpp: store poller state
+
 struct Slot {
     // --- identity / registry (pump thread) --------------------------------------
     Context* ctx        = nullptr;
@@ -82,11 +94,14 @@ struct Slot {
     bool live           = false; ///< occupied (including zombies)
     bool zombie         = false; ///< released while a job was in flight
     bool jobInFlight    = false;
+    bool reloading      = false; ///< the running load is a reload: state stays Ready / Failed
+    bool reloadPending  = false; ///< reload requested while not settled; runs at settle
     u32 refcount        = 0;
     u32 version         = 0;
     u32 groupIndex      = kInvalid;
     u32 groupGen        = 0;
-    u64 groupBytes      = 0; ///< contribution to the group's bytesTotal
+    u64 groupBytes      = 0;              ///< contribution to the group's bytesTotal
+    State groupAs       = State::Pending; ///< how the group counts the slot (reloads never change it)
     // queue links (intrusive, over slot indices)
     QueueId queue  = QueueId::None;
     u32 qPrev      = kInvalid;
@@ -105,14 +120,14 @@ struct Slot {
     char path[kMaxPathLen] = {};
     u32 pathLen            = 0;
 
-    // --- meta stage output (worker), read-only afterwards -----------------------
-    Buffer meta;                ///< mesh CPU region [0, gpuDataOffset)
-    mesh::MeshView meshView;    ///< points into `meta`
-    ktx2::TextureDesc texDesc;  ///< textures
-    u64* layout      = nullptr; ///< textures: [dstOffset | rowPitch | srcOffset | srcLength] x levels
-    u32 layoutLevels = 0;
-    u64 uploadSize   = 0; ///< bytes handed to begin_upload
-    Vec<u8> cooked;       ///< cook provider output (memory source for both stages)
+    // --- metadata (docs/design/hot-reload.md) ----------------------------------------
+    // Queries answer from `cur` once Ready. The meta stage (worker) writes only `next`;
+    // the upload stage reads `next`; make_ready() swaps `next` into `cur` on the pump
+    // thread. While MetaReady on a first load, queries show `next`. The pump thread
+    // frees `next` only when no job is in flight.
+    MetaSet cur;
+    MetaSet next;
+    Vec<u8> cooked; ///< cook provider output (memory source for both stages)
     bool cookedValid = false;
 
     // --- job output (worker) ------------------------------------------------------
@@ -121,6 +136,8 @@ struct Slot {
     Status jobStatus = kOk;
     u32 jobDiag      = 0; ///< K5xxx for a Failed completion
     DiagCapture capture;
+    IoStat jobStat;            ///< meta stage: the store file's stat (store poller)
+    bool jobStatValid = false; ///< false: memory / cook output without a store file, or no stat
 };
 
 struct GroupRec {
@@ -197,6 +214,8 @@ struct Context {
 
     CookProvider provider;
 
+    rt::Watch* watch = nullptr; ///< store poller (null unless ContextDesc::hotReload.watchStore works)
+
     std::thread::id pumpThread;
     bool pumpBound      = false;
     u64 pumpIndex       = 0;
@@ -223,6 +242,9 @@ Slot* request_slot(Context* ctx, AssetKind kind, StrView path, RequestOptions co
                    bool rejectExisting) noexcept;
 void free_slot(Context* ctx, Slot& s) noexcept;
 void free_load_data(Slot& s) noexcept;
+void free_meta_set(Allocator const* a, MetaSet& m) noexcept;
+/// The metadata queries show: `cur` when Ready, `next` when MetaReady, else null.
+MetaSet const* shown_meta(Slot const& s) noexcept;
 void queue_push(Context* ctx, QueueId q, Slot& s) noexcept;
 void queue_remove(Context* ctx, Slot& s) noexcept;
 GroupRec* group_of(Context* ctx, Slot const& s) noexcept;
@@ -233,6 +255,9 @@ void boost_group(Context* ctx, Group g) noexcept;
 
 // --- loader.cpp (worker side) -------------------------------------------------------
 void run_job(void* arg) noexcept;
+/// The store file of an asset: `<storeDir>/<path>.mesh|.ktx2`. Returns the length
+/// `format` reports (>= cap - 1 means truncated). Reads only fields fixed at create().
+usize store_path(Context const* ctx, AssetKind kind, StrView path, char* out, usize cap) noexcept;
 /// Texture upload layout: levels ascending, each at `offsetAlign`, rows padded to
 /// `pitchAlign`. Writes [dstOffset] and [rowPitch] per level; returns the total size.
 u64 texture_layout(ktx2::TextureDesc const& d, u64 pitchAlign, u64 offsetAlign, u64* outOffset,
@@ -243,8 +268,25 @@ void push_event(Context* ctx, EventKind kind, AssetKind asset, u64 bits, u32 ver
 void fail_slot(Context* ctx, Slot& s, u32 code, Status st) noexcept;
 void submit_stage(Context* ctx, Slot& s, Stage stage) noexcept;
 PumpStats pump_impl(Context* ctx, PumpOptions const& opt, bool keepEvents) noexcept;
+/// request_reload(): start a reload of a settled file-source slot, or remember it
+/// (reloadPending) until the slot settles. Memory sources: K5012.
+void reload_slot(Context* ctx, Slot& s) noexcept;
 /// Poll non-self-submitting placeholder uploads (create() and pump()).
 void poll_placeholders(Context* ctx) noexcept;
+
+// --- watch.cpp (store poller; stubs without KILN_HOT_RELOAD) ----------------------------
+/// create(): start the poller if `desc.watchStore`; K5011 (Warning) if it cannot run.
+void watch_start(Context* ctx, HotReloadDesc const& desc) noexcept;
+/// destroy(): stop and join the poller. Safe when not started.
+void watch_stop(Context* ctx) noexcept;
+/// destroy(), after the jobs drained: free the poller's tables (the poller is joined).
+void watch_free(Context* ctx) noexcept;
+/// pump(): request a reload for every slot the poller reported (generation checked).
+void watch_drain(Context* ctx) noexcept;
+/// A slot settled (Ready or Failed, no job, not queued): watch its store file.
+void watch_arm(Context* ctx, Slot const& s) noexcept;
+/// A slot is loading again or unloaded: stop watching it.
+void watch_disarm(Context* ctx, u32 index) noexcept;
 
 } // namespace rt
 } // namespace kiln

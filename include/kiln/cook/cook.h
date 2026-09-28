@@ -177,10 +177,14 @@ KILN_API Result<CookedTexture> cook_texture(TextureSource const& src, TextureCoo
 KILN_API usize store_file_name(u64 key, StrView ext, char* out, usize cap) noexcept;
 
 /// Write `bytes` to `<dir>/<name>` atomically (temp file + rename). Creates `dir`
-/// if missing (one level). An existing file with the same name is left untouched
-/// (content-addressed: same key means same bytes) and Status is Ok.
-KILN_API Status store_write(StrView dir, StrView name, Span<u8 const> bytes,
-                            DiagSink const* diag = nullptr) noexcept;
+/// if missing (one level). Without `overwrite`, an existing file with the same name is
+/// left untouched (content-addressed: same key means same bytes) and Status is Ok. With
+/// `overwrite` (hot-reload re-cooks, whose names are not content-addressed) the rename
+/// replaces it; if the rename fails, for example because a reader on Windows holds the
+/// file open without FILE_SHARE_DELETE, the old file stays and the result is IoError, so
+/// the caller can retry.
+KILN_API Status store_write(StrView dir, StrView name, Span<u8 const> bytes, DiagSink const* diag = nullptr,
+                            bool overwrite = false) noexcept;
 
 /// True if `<dir>/<name>` exists.
 [[nodiscard]] KILN_API bool store_exists(StrView dir, StrView name) noexcept;

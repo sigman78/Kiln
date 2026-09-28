@@ -115,7 +115,8 @@ bool store_exists(StrView dir, StrView name) noexcept {
     return true;
 }
 
-Status store_write(StrView dir, StrView name, Span<u8 const> bytes, DiagSink const* diag) noexcept {
+Status store_write(StrView dir, StrView name, Span<u8 const> bytes, DiagSink const* diag,
+                   bool overwrite) noexcept {
     char dst[1024];
     if (!join_path(dst, sizeof dst, dir, name)) {
         return diagf(diag, make_status(Code::InvalidArgument), 0, Severity::Error, name, "store",
@@ -123,7 +124,7 @@ Status store_write(StrView dir, StrView name, Span<u8 const> bytes, DiagSink con
     }
 
     // Content-addressed: same name means same bytes.
-    if (store_exists(dir, name)) return kOk;
+    if (!overwrite && store_exists(dir, name)) return kOk;
 
     char dirBuf[1024];
     if (!to_cstr(dirBuf, sizeof dirBuf, dir)) {
@@ -173,8 +174,9 @@ Status store_write(StrView dir, StrView name, Span<u8 const> bytes, DiagSink con
 #endif
     if (!renamed) {
         // Another writer may have won the race for this content-addressed name
-        // between our existence check above and this rename; that's fine.
-        if (store_exists(dir, name)) {
+        // between our existence check above and this rename; that's fine. When
+        // overwriting, an existing file is the old content, so the rename must succeed.
+        if (!overwrite && store_exists(dir, name)) {
             std::remove(tmp);
             return kOk;
         }

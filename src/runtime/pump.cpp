@@ -29,27 +29,73 @@ void push_event(Context* ctx, EventKind kind, AssetKind asset, u64 bits, u32 ver
     e.status  = st;
 }
 
+namespace {
+
+char const* failure_text(u32 code) noexcept {
+    switch (code) {
+    case kDiagStoreMiss: return "not in the store";
+    case kDiagCookOnMissFailed: return "cook on miss failed";
+    case kDiagAdapterRejected: return "adapter rejected the asset";
+    default: return "load failed";
+    }
+}
+
+/// A slot reached Ready or Failed with no job and no queue: run the reload requested
+/// meanwhile, or let the store poller watch it.
+void settle(Context* ctx, Slot& s) noexcept {
+    if (s.reloadPending) {
+        s.reloadPending = false;
+        reload_slot(ctx, s);
+        return;
+    }
+    watch_arm(ctx, s);
+}
+
+/// A reload of a Ready slot failed: drop the new metadata and object, keep serving the
+/// current version. One K5010, no event.
+void fail_reload(Context* ctx, Slot& s, u32 code, Status st) noexcept {
+    queue_remove(ctx, s);
+    if (s.hasTarget) ctx->adapter.destroy_deferred(ctx->adapter.user, s.target.object);
+    s.hasTarget = false;
+    s.reloading = false;
+    s.phase     = Phase::Done;
+    free_meta_set(ctx->alloc, s.next);
+    s.cooked.release();
+    s.cookedValid = false;
+    diagf(&ctx->diag, st, kDiagReloadFailed, Severity::Error, path_of(s),
+          s.kind == AssetKind::Mesh ? "mesh" : "texture", "reload failed, keeping version %u: %s (%s)%s%s",
+          s.version, failure_text(code), code_name(st.code), s.capture.set ? ": " : "",
+          s.capture.set ? s.capture.msg : "");
+    ++ctx->cur.completed;
+    settle(ctx, s);
+}
+
+} // namespace
+
 void fail_slot(Context* ctx, Slot& s, u32 code, Status st) noexcept {
     if (st.ok()) st = make_status(Code::Unknown);
+    if (s.reloading && s.state == State::Ready) {
+        fail_reload(ctx, s, code, st);
+        return;
+    }
     queue_remove(ctx, s);
-    if (GroupRec* g = group_of(ctx, s)) {
-        --g->pending;
-        ++g->failed;
-        g->bytesTotal -= s.groupBytes; // a failed member contributes no bytes
+    if (s.hasTarget) ctx->adapter.destroy_deferred(ctx->adapter.user, s.target.object);
+    s.hasTarget = false;
+    if (!s.reloading) { // a reload from Failed: the group already counts the slot as failed
+        if (GroupRec* g = group_of(ctx, s)) {
+            --g->pending;
+            ++g->failed;
+            g->bytesTotal -= s.groupBytes; // a failed member contributes no bytes
+        }
+        s.groupBytes = 0;
+        s.groupAs    = State::Failed;
     }
-    s.groupBytes = 0;
-    s.state      = State::Failed;
-    s.phase      = Phase::Done;
+    s.reloading = false;
+    s.state     = State::Failed;
+    s.phase     = Phase::Done;
 
-    char const* what = "load failed";
-    switch (code) {
-    case kDiagStoreMiss: what = "not in the store"; break;
-    case kDiagCookOnMissFailed: what = "cook on miss failed"; break;
-    case kDiagAdapterRejected: what = "adapter rejected the asset"; break;
-    default: break;
-    }
     diagf(&ctx->diag, st, code, Severity::Error, path_of(s), s.kind == AssetKind::Mesh ? "mesh" : "texture",
-          "%s (%s)%s%s", what, code_name(st.code), s.capture.set ? ": " : "",
+          "%s (%s)%s%s", failure_text(code), code_name(st.code), s.capture.set ? ": " : "",
           s.capture.set ? s.capture.msg : "");
 
     push_event(ctx, EventKind::Failed, s.kind, handle_bits(s), s.version, st);
@@ -59,6 +105,29 @@ void fail_slot(Context* ctx, Slot& s, u32 code, Status st) noexcept {
         ctx->devPlaceholders && fp.ready)
         ctx->adapter.publish(ctx->adapter.user, s.id, fp.obj, s.version); // bindless slot shows the checker
     free_load_data(s);                                                    // Failed holds no metadata
+    settle(ctx, s);
+}
+
+void reload_slot(Context* ctx, Slot& s) noexcept {
+    if (s.source == SourceKind::Memory) {
+        diagf(&ctx->diag, make_status(Code::Unsupported), kDiagReloadMemorySource, Severity::Warning,
+              path_of(s), "reload", "registered in memory: there is no file to reload from");
+        return;
+    }
+    if (s.phase != Phase::Done) { // queued, loading or awaiting the GPU: runs once it settles
+        s.reloadPending = true;
+        return;
+    }
+    KILN_ASSERT(!s.jobInFlight && s.queue == QueueId::None);
+    KILN_ASSERT(s.state == State::Ready || s.state == State::Failed);
+    watch_disarm(ctx, s.index);
+    s.reloading  = true;
+    s.phase      = Phase::MetaQueued;
+    s.retryAfter = 0;
+    s.capture.reset();
+    s.cooked.release(); // re-read the store (or re-cook), never the last load's cook output
+    s.cookedValid = false;
+    queue_push(ctx, s.priority == Priority::High ? QueueId::MetaHigh : QueueId::MetaNormal, s);
 }
 
 void submit_stage(Context* ctx, Slot& s, Stage stage) noexcept {
@@ -91,14 +160,14 @@ QueueId upload_queue(Slot const& s) noexcept {
 bool formats_supported(Context* ctx, Slot& s) noexcept {
     Adapter const& a = ctx->adapter;
     if (s.kind == AssetKind::Texture) {
-        if (a.supports_format(a.user, s.texDesc.format, FormatUsage::SampledImage)) return true;
+        if (a.supports_format(a.user, s.next.texDesc.format, FormatUsage::SampledImage)) return true;
         s.capture.reset();
         format(s.capture.msg, sizeof s.capture.msg, "format %s is not supported",
-               format_name(s.texDesc.format));
+               format_name(s.next.texDesc.format));
         s.capture.set = true;
         return false;
     }
-    mesh::MeshView const& v = s.meshView;
+    mesh::MeshView const& v = s.next.meshView;
     for (u32 l = 0; l < v.layouts().size(); ++l) {
         mesh::VertexLayout const layout = v.layouts().get(l);
         for (u32 i = 0; i < layout.attribCount && i < mesh::kMaxAttribs; ++i) {
@@ -118,38 +187,68 @@ void on_meta_ready(Context* ctx, Slot& s) noexcept {
         fail_slot(ctx, s, kDiagAdapterRejected, make_status(Code::Unsupported));
         return;
     }
-    s.state = State::MetaReady;
     s.phase = Phase::UploadQueued;
+    if (s.reloading) { // no MetaReady event and no group accounting: straight to upload
+        queue_push(ctx, upload_queue(s), s);
+        return;
+    }
+    s.state = State::MetaReady;
     if (GroupRec* g = group_of(ctx, s)) {
-        s.groupBytes = s.uploadSize;
-        g->bytesTotal += s.uploadSize;
+        s.groupBytes = s.next.uploadSize;
+        g->bytesTotal += s.next.uploadSize;
     }
     push_event(ctx, EventKind::MetaReady, s.kind, handle_bits(s), s.version, kOk);
     ++ctx->cur.completed;
     queue_push(ctx, upload_queue(s), s);
 }
 
+/// First load and reload alike: swap `next` into `cur` and publish the new object.
+/// A reload bumps the content version and emits Changed (from Ready) or Ready (from
+/// Failed); a first load and a Failed -> Ready reload count in the group.
 void make_ready(Context* ctx, Slot& s) noexcept {
+    bool const reload   = s.reloading;
+    State const from    = s.state;
     GpuObject const old = s.realObj;
     s.realObj           = s.target.object;
     s.hasTarget         = false;
-    s.state             = State::Ready;
-    s.phase             = Phase::Done;
-    Adapter const& a    = ctx->adapter;
+    free_meta_set(ctx->alloc, s.cur);
+    s.cur       = s.next;
+    s.next      = {};
+    s.reloading = false;
+    if (reload) ++s.version;
+    s.state          = State::Ready;
+    s.phase          = Phase::Done;
+    Adapter const& a = ctx->adapter;
     if (a.publish) a.publish(a.user, s.id, s.realObj, s.version);
-    if (!old.is_null()) a.destroy_deferred(a.user, old); // hot reload (M5) swaps here
+    if (!old.is_null()) a.destroy_deferred(a.user, old);
     ++ctx->cur.uploadsCommitted;
     ++ctx->cur.completed;
-    if (GroupRec* g = group_of(ctx, s)) {
-        --g->pending;
-        ++g->ready;
-        g->bytesDone += s.groupBytes;
+    if (!reload) {
+        if (GroupRec* g = group_of(ctx, s)) {
+            --g->pending;
+            ++g->ready;
+            g->bytesDone += s.groupBytes;
+        }
+        s.groupAs = State::Ready;
+    } else if (from == State::Failed && s.groupAs == State::Failed) {
+        // Failed -> Ready is the asset's first success: the group moves it from failed to
+        // ready with its bytes. A reload of a Ready asset never touches the group.
+        if (GroupRec* g = group_of(ctx, s)) {
+            --g->failed;
+            ++g->ready;
+            s.groupBytes = s.cur.uploadSize;
+            g->bytesTotal += s.groupBytes;
+            g->bytesDone += s.groupBytes;
+        }
+        s.groupAs = State::Ready;
     }
-    push_event(ctx, EventKind::Ready, s.kind, handle_bits(s), s.version, kOk);
+    EventKind const ev = reload && from == State::Ready ? EventKind::Changed : EventKind::Ready;
+    push_event(ctx, ev, s.kind, handle_bits(s), s.version, kOk);
     // The payload is on the GPU: source bytes are no longer needed (metadata stays).
     s.memory.release();
     s.cooked.release();
     s.cookedValid = false;
+    settle(ctx, s);
 }
 
 void process(Context* ctx, Completion const& c) noexcept {
@@ -176,8 +275,6 @@ void process(Context* ctx, Completion const& c) noexcept {
         queue_push(ctx, QueueId::Await, s);
         break;
     case CompletionKind::Failed:
-        if (s.hasTarget) ctx->adapter.destroy_deferred(ctx->adapter.user, s.target.object);
-        s.hasTarget = false;
         fail_slot(ctx, s, s.jobDiag ? s.jobDiag : kDiagAssetLoadFailed, s.jobStatus);
         break;
     }
@@ -226,14 +323,15 @@ void dispatch_uploads(Context* ctx, u64 budget) noexcept {
             }
             // At least one upload starts per pump, so a single asset larger than the
             // budget still makes progress.
-            if (dispatched > 0 && started + s.uploadSize > budget) return;
+            u64 const size = s.next.uploadSize;
+            if (dispatched > 0 && started + size > budget) return;
             queue_remove(ctx, s);
             submit_stage(ctx, s, Stage::Upload);
             ++dispatched;
-            started += s.uploadSize;
+            started += size;
             if (s.retryAfter == 0) { // a Busy retry is counted once, in busyRetries
                 ++ctx->cur.uploadsStarted;
-                ctx->cur.uploadBytes += s.uploadSize;
+                ctx->cur.uploadBytes += size;
             }
             i = next;
         }
@@ -273,6 +371,7 @@ PumpStats pump_impl(Context* ctx, PumpOptions const& opt, bool keepEvents) noexc
     ctx->cur = {};
     if (!keepEvents) ctx->eventCount = 0;
     ctx->droppedWarned = false;
+    watch_drain(ctx); // reloads the store poller asked for; dispatched below
     poll_placeholders(ctx);
     drain_completions(ctx, opt.maxCompletions);
     poll_awaiting(ctx);

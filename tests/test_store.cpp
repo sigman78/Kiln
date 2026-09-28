@@ -223,3 +223,37 @@ KILN_TEST(Store, WriteUnderRegularFileIsIoError) {
     KILN_CHECK(st.failed());
     KILN_CHECK(st.code == Code::IoError);
 }
+
+KILN_TEST(Store, OverwriteReplacesExistingFile) {
+    char const* dir = kiln::test::sample_dir();
+    if (!dir) return;
+
+    char storeDir[1024];
+    format(storeDir, sizeof storeDir, "%s/store", dir);
+
+    // A fixed (not content-addressed) name, as hot-reload re-cooks write them.
+    StrView const nameView("overwrite_me.bin");
+    char path[1024];
+    format(path, sizeof path, "%s/%.*s", storeDir, KILN_SV(nameView));
+    std::remove(path); // left over from an earlier run
+
+    u8 const first[]  = {1, 2, 3};
+    u8 const second[] = {4, 5, 6, 7};
+    u8 const third[]  = {8, 9};
+
+    KILN_REQUIRE(store_write(StrView(storeDir), nameView, Span<u8 const>(first, sizeof first)).ok());
+
+    // Without overwrite the existing file wins.
+    KILN_REQUIRE(store_write(StrView(storeDir), nameView, Span<u8 const>(second, sizeof second)).ok());
+    Vec<u8> onDisk(default_allocator(), Tag::Test);
+    KILN_REQUIRE(read_whole_file(path, onDisk));
+    KILN_REQUIRE_EQ(onDisk.size(), sizeof first);
+    KILN_CHECK(std::memcmp(onDisk.data(), first, sizeof first) == 0);
+
+    // With overwrite the bytes are replaced.
+    KILN_REQUIRE(
+        store_write(StrView(storeDir), nameView, Span<u8 const>(third, sizeof third), nullptr, true).ok());
+    KILN_REQUIRE(read_whole_file(path, onDisk));
+    KILN_REQUIRE_EQ(onDisk.size(), sizeof third);
+    KILN_CHECK(std::memcmp(onDisk.data(), third, sizeof third) == 0);
+}

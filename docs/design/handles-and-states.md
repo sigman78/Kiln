@@ -87,7 +87,9 @@ All transitions become visible **only in `pump()`**, on the pump thread.
 | `Failed` | source changed, new version succeeds | `Ready` (version + 1) | `Ready` |
 | `Failed` | source changed, new version fails again | `Failed` | `Failed` (with new status) |
 
-The last four rows are hot reload (M5, not implemented).
+The last four rows are hot reload (M5, `hot-reload.md`). Load groups see only `Failed` -> `Ready`:
+the member moves from `failed` to `ready` with its bytes; the other reload rows leave group
+counters alone.
 
 - An asset never skips `MetaReady`: hosts see one event sequence for every asset.
 - A reload loads the new version in the background and emits no `MetaReady`.

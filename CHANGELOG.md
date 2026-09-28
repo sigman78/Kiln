@@ -8,6 +8,16 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
 ## [Unreleased]
 
 ### Added
+- M5 hot reload (`docs/design/hot-reload.md`). Runtime: `request_reload()` reloads a store-backed
+  asset while the old version stays servable; success bumps the content version, publishes the new
+  object, sends the old one to `destroy_deferred` and emits `Changed` (or `Ready` from `Failed`, which
+  also moves the asset from `failed` to `ready` in its load group); failure keeps the old version with
+  K5010; memory-registered assets give K5012. `ContextDesc::hotReload.watchStore` starts a store
+  poller (`KILN_HOT_RELOAD` builds; otherwise K5011). `IoBackend::stat` is a new optional entry, the
+  compat backend implements it and opens files with `FILE_SHARE_DELETE` on Windows. Cook side:
+  `ProviderDesc::watchSources` / `pollMs` start a source poller that re-cooks changed sources (a glb
+  with its embedded textures, a PNG or KTX2 on its own) into the store; `cook::store_write` gains
+  `bool overwrite = false`. `kiln-viewer --watch` and `kiln-headless --watch` turn both on.
 - `ContextDesc::workerPriority` passes a `ThreadPriority` to the built-in pool, so a host that lets kiln
   create the pool can still keep loading below its own threads.
 - M4: `kiln-viewer` draws cooked meshes through the example adapter with one pipeline per vertex

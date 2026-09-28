@@ -81,6 +81,7 @@ add_library(kiln_runtime STATIC
     src/runtime/loader.cpp
     src/runtime/pump.cpp
     src/runtime/register.cpp
+    src/runtime/watch.cpp
     include/kiln/adapter.h
     include/kiln/null_adapter.h
     src/runtime/null_adapter.cpp

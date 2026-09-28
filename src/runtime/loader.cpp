@@ -96,15 +96,8 @@ Status open_source(Context* ctx, Slot& s, Source& src, bool allowCook) noexcept 
         src.size   = src.mem.size;
         return kOk;
     }
-    char const* ext = s.kind == AssetKind::Mesh ? ".mesh" : ".ktx2";
     char file[1024];
-    char const* sep = "";
-    if (ctx->storeDirLen) {
-        char const last = ctx->storeDir[ctx->storeDirLen - 1];
-        sep             = (last == '/' || last == '\\') ? "" : "/";
-    }
-    usize const n = format(file, sizeof file, "%s%s%.*s%s", ctx->storeDir ? ctx->storeDir : "", sep,
-                           int(s.pathLen), s.path, ext);
+    usize const n = store_path(ctx, s.kind, path_of(s), file, sizeof file);
     if (n + 1 >= sizeof file) {
         note(s.capture, "store path too long");
         s.jobDiag          = kDiagAssetLoadFailed;
@@ -112,7 +105,11 @@ Status open_source(Context* ctx, Slot& s, Source& src, bool allowCook) noexcept 
     }
 
     IoBackend const* io = ctx->io;
-    Status st           = io->open(io->user, StrView(file, n), &src.file);
+    StrView const fileSv(file, n);
+    // Stat before open: if the file changes in between, the poller sees one extra change
+    // and reloads again, rather than missing the change.
+    if (allowCook && ctx->watch) s.jobStatValid = io->stat(io->user, fileSv, &s.jobStat).ok();
+    Status st = io->open(io->user, fileSv, &src.file);
     if (st.ok()) {
         src.io = io;
         st     = io->size(io->user, src.file, &src.size);
@@ -149,6 +146,8 @@ Status open_source(Context* ctx, Slot& s, Source& src, bool allowCook) noexcept 
         }
         return s.jobStatus = cs;
     }
+    // A provider that writes the store (storeMode Disk) leaves a file to watch.
+    if (ctx->watch) s.jobStatValid = io->stat(io->user, fileSv, &s.jobStat).ok();
     s.cooked      = std::move(out);
     s.cookedValid = true;
     src.memory    = true;
@@ -185,17 +184,18 @@ Status mesh_meta(Context* ctx, Slot& s, Source const& src) noexcept {
                      "file is %llu bytes, header needs %llu", static_cast<unsigned long long>(src.size),
                      static_cast<unsigned long long>(h.gpuDataOffset + h.gpuDataSize));
 
-    s.meta.allocate(ctx->alloc, usize(h.gpuDataOffset), Tag::Payload);
+    MetaSet& m = s.next;
+    m.meta.allocate(ctx->alloc, usize(h.gpuDataOffset), Tag::Payload);
     {
         IoBytes budget(ctx, h.gpuDataOffset);
-        KILN_TRY(src.read(0, h.gpuDataOffset, s.meta.data));
+        KILN_TRY(src.read(0, h.gpuDataOffset, m.meta.data));
     }
     mesh::OpenOptions opt;
     opt.validate             = true;
-    Result<mesh::MeshView> r = mesh::MeshView::open(s.meta.span(), opt, &sink, name);
+    Result<mesh::MeshView> r = mesh::MeshView::open(m.meta.span(), opt, &sink, name);
     if (r.failed()) return r.status();
-    s.meshView   = *r;
-    s.uploadSize = h.payloadDecodedSize;
+    m.meshView   = *r;
+    m.uploadSize = h.payloadDecodedSize;
     return kOk;
 }
 
@@ -229,9 +229,10 @@ Status texture_meta(Context* ctx, Slot& s, Source const& src) noexcept {
     ktx2::TextureDesc const d = v.desc();
     u32 const levels          = d.levels;
     u64* layout               = alloc_array<u64>(ctx->alloc, usize(levels) * 4, Tag::Payload);
-    s.layout                  = layout;
-    s.layoutLevels            = levels;
-    s.uploadSize =
+    MetaSet& m                = s.next;
+    m.layout                  = layout;
+    m.layoutLevels            = levels;
+    m.uploadSize =
         texture_layout(d, ctx->cc.optimalRowPitchAlign, ctx->cc.optimalOffsetAlign, layout, layout + levels);
     FormatInfo const& fi = v.info();
     for (u32 i = 0; i < levels && st.ok(); ++i) {
@@ -251,12 +252,13 @@ Status texture_meta(Context* ctx, Slot& s, Source const& src) noexcept {
                        "levelIndex", "level %u data lies outside the file (%llu bytes)", i,
                        static_cast<unsigned long long>(src.size));
     }
-    s.texDesc = d;
+    m.texDesc = d;
     prefix.release();
     return st;
 }
 
 CompletionKind run_meta(Context* ctx, Slot& s) noexcept {
+    s.jobStatValid = false;
     Source src;
     if (open_source(ctx, s, src, true).failed()) return CompletionKind::Failed;
     Status const st = s.kind == AssetKind::Mesh ? mesh_meta(ctx, s, src) : texture_meta(ctx, s, src);
@@ -276,7 +278,7 @@ CompletionKind run_meta(Context* ctx, Slot& s) noexcept {
 Status write_mesh(Context* ctx, Slot& s, Source const& src, u8* dst) noexcept {
     DiagSink const sink{&capture_fn, &s.capture};
     StrView const name        = path_of(s);
-    mesh::MeshView const& v   = s.meshView;
+    mesh::MeshView const& v   = s.next.meshView;
     mesh::FileHeader const& h = v.header();
     Span<u8> const out(dst, usize(h.payloadDecodedSize));
     if (h.gpuDataOffset > src.size || h.gpuDataSize > src.size - h.gpuDataOffset)
@@ -302,9 +304,10 @@ Status write_mesh(Context* ctx, Slot& s, Source const& src, u8* dst) noexcept {
 }
 
 Status write_texture(Context* ctx, Slot& s, Source const& src, u8* dst) noexcept {
-    ktx2::TextureDesc const& d = s.texDesc;
-    u32 const levels           = s.layoutLevels;
-    u64 const* layout          = s.layout;
+    MetaSet const& m           = s.next;
+    ktx2::TextureDesc const& d = m.texDesc;
+    u32 const levels           = m.layoutLevels;
+    u64 const* layout          = m.layout;
     Vec<u8> scratch(ctx->alloc, Tag::Io);
     u64 cursor = 0;
     for (u32 i = 0; i < levels; ++i) {
@@ -337,30 +340,31 @@ Status write_texture(Context* ctx, Slot& s, Source const& src, u8* dst) noexcept
         }
         cursor = dOff + pitch * rows;
     }
-    if (cursor < s.uploadSize) std::memset(dst + cursor, 0, usize(s.uploadSize - cursor));
+    if (cursor < m.uploadSize) std::memset(dst + cursor, 0, usize(m.uploadSize - cursor));
     return kOk;
 }
 
 CompletionKind run_upload(Context* ctx, Slot& s) noexcept {
     Adapter const& a = ctx->adapter;
+    MetaSet const& m = s.next;
     UploadDesc ud;
     ud.id   = s.id;
-    ud.size = s.uploadSize;
+    ud.size = m.uploadSize;
     MeshPayloadDesc md;
     TextureDesc td;
     if (s.kind == AssetKind::Mesh) {
-        mesh::FileHeader const& h = s.meshView.header();
+        mesh::FileHeader const& h = m.meshView.header();
         md.payloadDecodedSize     = h.payloadDecodedSize;
         md.payloadAlignment       = h.payloadAlignment;
         u32 indexSize             = 0;
-        for (u32 i = 0; i < s.meshView.lods().size(); ++i)
-            indexSize = max(indexSize, mesh::index_size(mesh::IndexType(s.meshView.lods()[i].indexType)));
+        for (u32 i = 0; i < m.meshView.lods().size(); ++i)
+            indexSize = max(indexSize, mesh::index_size(mesh::IndexType(m.meshView.lods()[i].indexType)));
         md.indexSize = indexSize ? indexSize : 4;
         ud.kind      = UploadKind::MeshPayload;
         ud.alignment = u32(max<u64>(h.payloadAlignment, ctx->cc.bufferOffsetAlign));
         ud.mesh      = &md;
     } else {
-        ktx2::TextureDesc const& d = s.texDesc;
+        ktx2::TextureDesc const& d = m.texDesc;
         td.format                  = d.format;
         td.width                   = d.width;
         td.height                  = d.height;
@@ -391,8 +395,8 @@ CompletionKind run_upload(Context* ctx, Slot& s) noexcept {
         st   = make_status(Code::Internal);
         diag = kDiagAdapterRejected;
     } else if (s.kind == AssetKind::Texture && t.rowPitchAlign > 1) {
-        for (u32 i = 0; i < s.layoutLevels; ++i) {
-            if (s.layout[s.layoutLevels + i] % t.rowPitchAlign != 0) {
+        for (u32 i = 0; i < m.layoutLevels; ++i) {
+            if (m.layout[m.layoutLevels + i] % t.rowPitchAlign != 0) {
                 note(s.capture, "adapter row pitch alignment %llu differs from copy_constraints (%llu)",
                      static_cast<unsigned long long>(t.rowPitchAlign),
                      static_cast<unsigned long long>(ctx->cc.optimalRowPitchAlign));
@@ -430,6 +434,17 @@ void post(Context* ctx, Completion const& c) noexcept {
 }
 
 } // namespace
+
+usize store_path(Context const* ctx, AssetKind kind, StrView path, char* out, usize cap) noexcept {
+    char const* ext = kind == AssetKind::Mesh ? ".mesh" : ".ktx2";
+    char const* sep = "";
+    if (ctx->storeDirLen) {
+        char const last = ctx->storeDir[ctx->storeDirLen - 1];
+        sep             = (last == '/' || last == '\\') ? "" : "/";
+    }
+    return format(out, cap, "%s%s%.*s%s", ctx->storeDir ? ctx->storeDir : "", sep, int(path.size), path.data,
+                  ext);
+}
 
 u64 texture_layout(ktx2::TextureDesc const& d, u64 pitchAlign, u64 offsetAlign, u64* outOffset,
                    u64* outPitch) noexcept {

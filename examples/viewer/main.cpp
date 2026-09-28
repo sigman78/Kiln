@@ -1,7 +1,8 @@
 // examples/viewer/main.cpp — kiln-viewer: loads cooked meshes through the example Vulkan adapter
 // and draws them (docs/design/viewer.md). The meshes on the command line form a boot group that
 // is waited on; their textures stream in afterwards under a per-frame upload budget, so the
-// first frames show placeholders. --offscreen renders without a window and can dump a PNG.
+// first frames show placeholders. --offscreen renders without a window and can dump a PNG. --watch
+// turns on hot reload (docs/design/hot-reload.md).
 #include <kiln/assets.h>
 #include <kiln/log.h>
 #if KILN_VIEWER_HAS_COOK
@@ -101,6 +102,7 @@ struct Options {
     bool validate      = false;
     bool offscreen     = false;
     bool noFit         = false;
+    bool watch         = false;
     u32 width          = 1280;
     u32 height         = 720;
     u32 budgetMiB      = 8;
@@ -137,6 +139,7 @@ struct Scene {
     Vec<Mat4> world;                ///< per-part scratch, sized once for the largest mesh
     Vec3 center;                    ///< union of the placed models' bounds
     f32 radius    = 1.0f;
+    bool fit      = true; ///< place_meshes argument, kept for re-placing a changed mesh
     bool warnedU8 = false;
     u32 frame     = 0; ///< the frame being prepared, for the event log
 };
@@ -172,6 +175,8 @@ void ensure_pipelines(Scene& s, MeshHandle h) {
     if (s.world.size() < v->parts().size()) s.world.resize(v->parts().size());
 }
 
+void place_meshes(Scene& s, bool fit);
+
 void handle_event(Scene& s, Event const& e) {
     if (e.asset == AssetKind::Mesh) {
         for (u32 i = 0; i < s.meshCount; ++i) {
@@ -185,8 +190,11 @@ void handle_event(Scene& s, Event const& e) {
                 KILN_ERROR("viewer", "  failed: %s", code_name(e.status.code));
                 return;
             }
+            // A changed mesh (--watch) may name new textures, use a new vertex layout or have
+            // new bounds: the same path as a first load, then the row is laid out again.
             ensure_pipelines(s, m.handle);
             if (e.kind != EventKind::MetaReady) request_textures(s, m);
+            if (e.kind == EventKind::Changed) place_meshes(s, s.fit);
             return;
         }
     } else {
@@ -516,6 +524,9 @@ int main(int argc, char** argv) {
          .number = &o.budgetMiB,
          .max    = 4096},
         {.name = "--offscreen", .help = "render into an image with no window", .flag = &o.offscreen},
+        {.name = "--watch",
+         .help = "hot reload: reload store files that change; with --source, also re-cook changed sources",
+         .flag = &o.watch},
         {.name = "--no-fit",
          .help = "keep native model sizes (default: scale each model to radius 1, 2.5 units apart)",
          .flag = &o.noFit},
@@ -629,6 +640,7 @@ int main(int argc, char** argv) {
               .adapter       = &adapter,
               .storeDir      = StrView(o.store),
               .sourceRoots   = Span<StrView const>(&sourceRoot, o.source ? 1u : 0u),
+              .hotReload     = {.watchStore = o.watch},
               .workerThreads = o.threads,
     });
     if (c.failed()) {
@@ -638,7 +650,7 @@ int main(int argc, char** argv) {
     app.ctx = c.value();
 #if KILN_VIEWER_HAS_COOK
     if (o.source) {
-        Status const st = cook::install_provider(app.ctx, cook::ProviderDesc{});
+        Status const st = cook::install_provider(app.ctx, cook::ProviderDesc{.watchSources = o.watch});
         if (st.failed()) {
             KILN_ERROR("viewer", "install_provider: %s", code_name(st.code));
             return 2;
@@ -656,6 +668,7 @@ int main(int argc, char** argv) {
     scene.ren       = app.ren;
     scene.meshes    = o.meshes;
     scene.meshCount = o.meshCount;
+    scene.fit       = !o.noFit;
     scene.textures.init(default_allocator(), Tag::General);
     scene.textures.reserve(64);
     scene.textureIndex.init(default_allocator(), Tag::General);

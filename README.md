@@ -94,10 +94,11 @@ All programs print their options with `--help`.
 - `kiln-info <file>` dumps a `.mesh` or `.ktx2`; `--check` decodes and verifies. Read-only, ships
   with the runtime side.
 - `kiln-headless` (`examples/headless`) drives the runtime with the null adapter and logs every event;
-  `--slow` and `--latency` simulate slow IO and cooking.
+  `--slow` and `--latency` simulate slow IO and cooking; `--watch` keeps it running to log hot reloads.
 - `kiln-viewer` (`examples/viewer`) draws cooked meshes through the example Vulkan 1.4 adapter:
   boot meshes are waited on as a group, textures stream in under a per-frame budget, so the first
   frames show placeholders. `--offscreen --frames N --dump out.png` renders without a window.
+  `--watch` hot-reloads changed store files and, with `--source`, re-cooks changed sources.
   `kiln-vk-smoke` exercises the adapter alone. Both need a Vulkan 1.4 driver to run.
 
 ```sh

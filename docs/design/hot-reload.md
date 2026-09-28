@@ -1,6 +1,6 @@
 # Hot reload (M5)
 
-Status: **Proposed** (2026-09-27). Implements the reload rows of `handles-and-states.md`. Done when
+Status: **Proposed** (2026-09-27; landed the same day: `src/runtime/watch.cpp`, the reload path in `pump.cpp`, the source poller in `src/cook/provider.cpp`; verified end to end with `kiln-viewer --watch`). Implements the reload rows of `handles-and-states.md`. Done when
 editing a glb or PNG updates the viewer in about a second without leaks or crashes.
 
 ## Decision
@@ -35,8 +35,10 @@ v0.5 relation: glb to its embedded textures.
 - **A failed reload changes nothing** except one Error diagnostic (K5010) and the `next` set being
   discarded. A `Failed` asset that reloads successfully becomes `Ready` with `Ready` (not
   `Changed`); one that fails again stays `Failed` and emits `Failed` with the new status.
-- Reload never emits `MetaReady`, never touches the handle generation, and never touches load
-  group counters (the group already counted the asset).
+- Reload never emits `MetaReady` and never touches the handle generation. A reload of a `Ready`
+  asset never touches load group counters (the group already counted it); a `Failed` asset that
+  reloads into `Ready` is its first success, so its group moves it from `failed` to `ready` and
+  adds its bytes to `bytesTotal` and `bytesDone`, as a first `Ready` would.
 - A reload requested while a load is in flight is remembered and runs after that load settles. A
   memory-registered asset has no file to reload from: K5012, warning, ignored.
 - `IoBackend::stat` is a new optional entry point (`IoStat { size, mtimeNs }`). The compat backend

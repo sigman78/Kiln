@@ -142,16 +142,17 @@ void join_group(Context* ctx, Slot& s, Group g) noexcept {
     s.groupIndex = g.index;
     s.groupGen   = g.generation;
     s.groupBytes = 0;
+    s.groupAs    = s.state;
     switch (s.state) {
     case State::Ready:
         ++r->ready;
-        s.groupBytes = s.uploadSize;
-        r->bytesDone += s.uploadSize;
+        s.groupBytes = s.cur.uploadSize;
+        r->bytesDone += s.cur.uploadSize;
         break;
     case State::Failed: ++r->failed; break;
     case State::MetaReady:
         ++r->pending;
-        s.groupBytes = s.uploadSize;
+        s.groupBytes = s.next.uploadSize;
         break;
     default: ++r->pending; break;
     }
@@ -160,7 +161,7 @@ void join_group(Context* ctx, Slot& s, Group g) noexcept {
 
 void leave_group(Context* ctx, Slot& s) noexcept {
     if (GroupRec* r = group_of(ctx, s)) {
-        switch (s.state) {
+        switch (s.groupAs) {
         case State::Ready:
             --r->ready;
             r->bytesDone -= s.groupBytes;
@@ -181,12 +182,21 @@ void leave_group(Context* ctx, Slot& s) noexcept {
 // Slots
 // ---------------------------------------------------------------------------
 
+void free_meta_set(Allocator const* a, MetaSet& m) noexcept {
+    m.meta.release();
+    if (m.layout) free_array(a, m.layout, usize(m.layoutLevels) * 4, Tag::Payload);
+    m = {};
+}
+
+MetaSet const* shown_meta(Slot const& s) noexcept {
+    if (s.state == State::Ready) return &s.cur;
+    if (s.state == State::MetaReady) return &s.next;
+    return nullptr;
+}
+
 void free_load_data(Slot& s) noexcept {
-    s.meta.release();
-    s.meshView = {};
-    if (s.layout) free_array(s.ctx->alloc, s.layout, usize(s.layoutLevels) * 4, Tag::Payload);
-    s.layout       = nullptr;
-    s.layoutLevels = 0;
+    free_meta_set(s.ctx->alloc, s.cur);
+    free_meta_set(s.ctx->alloc, s.next);
     s.memory.release();
     s.cooked.release();
     s.cookedValid = false;
@@ -201,6 +211,8 @@ void free_slot(Context* ctx, Slot& s) noexcept {
     s.phase                              = Phase::Free;
     s.refcount                           = 0;
     s.hasTarget                          = false;
+    s.reloading                          = false;
+    s.reloadPending                      = false;
     s.acquired                           = {};
     s.realObj                            = {};
     ctx->freeSlots[ctx->freeSlotCount++] = s.index;
@@ -248,30 +260,32 @@ Slot* request_slot(Context* ctx, AssetKind kind, StrView path, RequestOptions co
 
     Slot& s = ctx->slots[ctx->freeSlots[--ctx->freeSlotCount]];
     KILN_ASSERT(!s.live);
-    s.live        = true;
-    s.zombie      = false;
-    s.jobInFlight = false;
-    s.id          = id;
-    s.kind        = kind;
-    s.state       = State::Pending;
-    s.phase       = Phase::MetaQueued;
-    s.priority    = opt.priority;
-    s.texKind     = opt.textureKind < TextureKind::Count ? opt.textureKind : TextureKind::BaseColor;
-    s.refcount    = 1;
-    s.version     = 1;
-    s.groupIndex  = kInvalid;
-    s.groupGen    = 0;
-    s.groupBytes  = 0;
-    s.retryAfter  = 0;
-    s.acquired    = {};
-    s.realObj     = {};
-    s.preFail     = kOk;
-    s.hasTarget   = false;
-    s.target      = {};
-    s.uploadSize  = 0;
-    s.texDesc     = {};
-    s.jobStatus   = kOk;
-    s.jobDiag     = 0;
+    s.live          = true;
+    s.zombie        = false;
+    s.jobInFlight   = false;
+    s.id            = id;
+    s.kind          = kind;
+    s.state         = State::Pending;
+    s.phase         = Phase::MetaQueued;
+    s.priority      = opt.priority;
+    s.texKind       = opt.textureKind < TextureKind::Count ? opt.textureKind : TextureKind::BaseColor;
+    s.refcount      = 1;
+    s.version       = 1;
+    s.groupIndex    = kInvalid;
+    s.groupGen      = 0;
+    s.groupBytes    = 0;
+    s.retryAfter    = 0;
+    s.acquired      = {};
+    s.realObj       = {};
+    s.preFail       = kOk;
+    s.hasTarget     = false;
+    s.target        = {};
+    s.reloading     = false;
+    s.reloadPending = false;
+    s.groupAs       = State::Pending;
+    s.jobStatus     = kOk;
+    s.jobStatValid  = false;
+    s.jobDiag       = 0;
     s.capture.reset();
     std::memcpy(s.path, norm, len + 1);
     s.pathLen = u32(len);
@@ -306,6 +320,7 @@ void unload(Context* ctx, Slot& s) noexcept {
         s.hasTarget = false;
     }
     queue_remove(ctx, s);
+    watch_disarm(ctx, s.index);
     if (ctx->adapter.publish) ctx->adapter.publish(ctx->adapter.user, s.id, GpuObject{}, s.version);
     if (!s.realObj.is_null()) ctx->adapter.destroy_deferred(ctx->adapter.user, s.realObj);
     s.realObj = {};
@@ -440,8 +455,9 @@ GpuObject gpu(Context* ctx, TextureHandle h) noexcept {
 }
 
 mesh::MeshView const* mesh_view(Context* ctx, MeshHandle h) noexcept {
-    Slot const* s = resolve(ctx, h.bits(), AssetKind::Mesh);
-    return (s && (s->state == State::MetaReady || s->state == State::Ready)) ? &s->meshView : nullptr;
+    Slot const* s    = resolve(ctx, h.bits(), AssetKind::Mesh);
+    MetaSet const* m = s ? shown_meta(*s) : nullptr;
+    return m ? &m->meshView : nullptr;
 }
 
 TextureInfo texture_info(Context* ctx, TextureHandle h) noexcept {
@@ -449,10 +465,10 @@ TextureInfo texture_info(Context* ctx, TextureHandle h) noexcept {
     if (!ctx) return info;
     Slot const* s = resolve(ctx, h.bits(), AssetKind::Texture);
     info.gpu      = gpu(ctx, h);
-    if (s && (s->state == State::MetaReady || s->state == State::Ready)) {
-        info.desc            = s->texDesc;
-        info.levelOffsets    = {s->layout, s->layoutLevels};
-        info.levelRowPitches = {s->layout + s->layoutLevels, s->layoutLevels};
+    if (MetaSet const* m = s ? shown_meta(*s) : nullptr) {
+        info.desc            = m->texDesc;
+        info.levelOffsets    = {m->layout, m->layoutLevels};
+        info.levelRowPitches = {m->layout + m->layoutLevels, m->layoutLevels};
         info.version         = s->version;
         info.isPlaceholder   = s->state != State::Ready;
         return info;

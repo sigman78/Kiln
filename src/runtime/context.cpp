@@ -161,6 +161,7 @@ void free_tables(Context* ctx) noexcept {
     free_array(a, ctx->rootChars, ctx->rootCharsLen, Tag::Registry);
     ctx->meshMap.release();
     ctx->texMap.release();
+    watch_free(ctx);
 }
 
 void teardown(Context* ctx) noexcept {
@@ -304,6 +305,8 @@ Result<Context*> create(ContextDesc const& desc) noexcept {
         return st;
     }
 
+    watch_start(ctx, desc.hotReload);
+
     log_info(ctx, "context created: maxAssets %u, %u worker job slot(s), store '%s'", ctx->maxAssets,
              ctx->maxIoJobs, ctx->storeDir);
     return ctx;
@@ -311,6 +314,7 @@ Result<Context*> create(ContextDesc const& desc) noexcept {
 
 void destroy(Context* ctx) noexcept {
     if (!ctx) return;
+    watch_stop(ctx); // joins the poller before any table is freed
     teardown(ctx);
     log_info(ctx, "context destroyed");
     Allocator const* a = ctx->alloc;
@@ -359,7 +363,12 @@ Adapter const* adapter(Context* ctx) noexcept { return ctx ? &ctx->adapter : nul
 } // namespace kiln
 
 namespace kiln {
-// M5 in progress: replaced by the reload pipeline (docs/design/hot-reload.md).
-void request_reload(Context*, MeshHandle) noexcept {}
-void request_reload(Context*, TextureHandle) noexcept {}
+
+void request_reload(Context* ctx, MeshHandle h) noexcept {
+    if (rt::Slot* s = rt::resolve(ctx, h.bits(), AssetKind::Mesh)) rt::reload_slot(ctx, *s);
+}
+void request_reload(Context* ctx, TextureHandle h) noexcept {
+    if (rt::Slot* s = rt::resolve(ctx, h.bits(), AssetKind::Texture)) rt::reload_slot(ctx, *s);
+}
+
 } // namespace kiln

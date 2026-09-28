@@ -790,6 +790,442 @@ KILN_TEST(Runtime, SteadyStateNoAllocation) {
     release(rt.ctx, t);
 }
 
+// ---------------------------------------------------------------------------
+// Hot reload (docs/design/hot-reload.md)
+// ---------------------------------------------------------------------------
+
+namespace {
+
+bool write_bytes(char const* path, Span<u8 const> bytes) {
+    std::FILE* f = std::fopen(path, "wb");
+    if (!KILN_CHECK_MSG(f != nullptr, "cannot write %s", path)) return false;
+    bool const ok = bytes.size == 0 || std::fwrite(bytes.data, 1, bytes.size, f) == bytes.size;
+    std::fclose(f);
+    return KILN_CHECK(ok);
+}
+
+/// Copies golden `rel` + `ext` over `dst` with plain stdio.
+bool put_golden(char const* rel, char const* ext, char const* dst) {
+    Vec<u8> bytes(default_allocator(), Tag::Test);
+    return read_golden(rel, ext, bytes) && write_bytes(dst, bytes.span());
+}
+
+bool put_garbage(char const* dst) {
+    u8 garbage[300];
+    for (usize i = 0; i < sizeof garbage; ++i)
+        garbage[i] = u8(i * 37 + 11);
+    return write_bytes(dst, Span<u8 const>(garbage, sizeof garbage));
+}
+
+/// A scratch store `<samples>/reload_<name>` with mesh/ and ktx2/ below it, and the
+/// file path of `mesh/thing.mesh` (or `ktx2/thing.ktx2`). False (skip) without
+/// --samples / --golden.
+struct ReloadStore {
+    char dir[1024]  = {};
+    char mesh[1024] = {};
+    char tex[1024]  = {};
+
+    bool init(char const* name) {
+        if (!test::sample_dir() || !test::golden_dir()) return false;
+        char sub[1024];
+        format(dir, sizeof dir, "%s/reload_%s", test::sample_dir(), name);
+        if (!KILN_CHECK(ensure_dir(dir))) return false;
+        format(sub, sizeof sub, "%s/mesh", dir);
+        if (!KILN_CHECK(ensure_dir(sub))) return false;
+        format(sub, sizeof sub, "%s/ktx2", dir);
+        if (!KILN_CHECK(ensure_dir(sub))) return false;
+        format(mesh, sizeof mesh, "%s/mesh/thing.mesh", dir);
+        format(tex, sizeof tex, "%s/ktx2/thing.ktx2", dir);
+        return true;
+    }
+};
+
+u32 count_code(DiagLog const& d, u32 code) {
+    u32 n = 0;
+    for (u32 i = 0; i < d.count; ++i)
+        n += d.codes[i] == code ? 1u : 0u;
+    return n;
+}
+
+u32 count_events(Rt const& rt, EventKind kind, u64 bits, usize from = 0) {
+    u32 n = 0;
+    for (usize i = from; i < rt.events.size(); ++i)
+        n += (rt.events[i].kind == kind && rt.events[i].handle == bits) ? 1u : 0u;
+    return n;
+}
+
+struct MeshCounts {
+    u32 parts = 0, lods = 0, submeshes = 0;
+    u64 decoded                              = 0;
+    bool operator==(MeshCounts const&) const = default;
+};
+
+MeshCounts counts_of(mesh::MeshView const& v) {
+    return {u32(v.parts().size()), u32(v.lods().size()), u32(v.submeshes().size()), v.decoded_size()};
+}
+
+bool golden_counts(char const* rel, MeshCounts& out) {
+    Vec<u8> bytes(default_allocator(), Tag::Test);
+    if (!read_golden(rel, ".mesh", bytes)) return false;
+    Result<mesh::MeshView> v = mesh::MeshView::open(bytes.span());
+    if (!KILN_CHECK(v.ok())) return false;
+    out = counts_of(*v);
+    return true;
+}
+
+} // namespace
+
+KILN_TEST(Runtime, ReloadSwapsVersion) {
+    ReloadStore store;
+    if (!store.init("swap")) return;
+    MeshCounts boxCounts, multiCounts;
+    if (!golden_counts("mesh/Box", boxCounts) || !golden_counts("mesh/MultiUVTest", multiCounts)) return;
+    KILN_REQUIRE(!(boxCounts == multiCounts));
+    KILN_REQUIRE(put_golden("mesh/Box", ".mesh", store.mesh));
+
+    Rt rt;
+    ContextDesc cd;
+    cd.storeDir = store.dir;
+    if (!rt.init({}, cd)) return;
+    MeshHandle m = request_mesh(rt.ctx, "mesh/thing");
+    KILN_REQUIRE(rt.pump_until([&] { return is_ready(rt.ctx, m); }));
+    KILN_CHECK_EQ(version(rt.ctx, m), 1u);
+    mesh::MeshView const* v1 = mesh_view(rt.ctx, m);
+    KILN_REQUIRE(v1 != nullptr);
+    KILN_CHECK(counts_of(*v1) == boxCounts);
+    GpuObject const oldObj = gpu(rt.ctx, m);
+
+    null_adapter_flush_deferred(rt.na);
+    NullAdapterStats const st0 = null_adapter_stats(rt.na);
+    usize const ev0            = rt.events.size();
+    KILN_REQUIRE(put_golden("mesh/MultiUVTest", ".mesh", store.mesh));
+    request_reload(rt.ctx, m);
+
+    bool alwaysReady = true, oldViewUntilSwap = true;
+    KILN_REQUIRE(rt.pump_until([&] {
+        alwaysReady        = alwaysReady && is_ready(rt.ctx, m);
+        bool const changed = rt.find_event(EventKind::Changed, m.bits(), ev0) >= 0;
+        if (!changed) { // the old version is served until the swap
+            mesh::MeshView const* v = mesh_view(rt.ctx, m);
+            oldViewUntilSwap        = oldViewUntilSwap && v && counts_of(*v) == boxCounts &&
+                               version(rt.ctx, m) == 1 && gpu(rt.ctx, m).native == oldObj.native;
+        }
+        return changed;
+    }));
+    KILN_CHECK(alwaysReady);
+    KILN_CHECK(oldViewUntilSwap);
+    KILN_CHECK_EQ(version(rt.ctx, m), 2u);
+    int const ch = rt.find_event(EventKind::Changed, m.bits(), ev0);
+    if (ch >= 0) KILN_CHECK_EQ(rt.events[usize(ch)].version, 2u);
+    KILN_CHECK_EQ(count_events(rt, EventKind::MetaReady, m.bits(), ev0), 0u);
+    KILN_CHECK_EQ(count_events(rt, EventKind::Ready, m.bits(), ev0), 0u);
+    mesh::MeshView const* v2 = mesh_view(rt.ctx, m);
+    KILN_REQUIRE(v2 != nullptr);
+    KILN_CHECK(counts_of(*v2) == multiCounts);
+
+    GpuObject const newObj = gpu(rt.ctx, m);
+    KILN_CHECK(newObj.native != oldObj.native);
+    Vec<u8> file(default_allocator(), Tag::Test), decoded(default_allocator(), Tag::Test);
+    if (decoded_golden_mesh("mesh/MultiUVTest", file, decoded)) {
+        Span<u8 const> got = null_adapter_payload(rt.na, newObj);
+        KILN_CHECK(got.size == decoded.size() && bytes_equal(got.data, decoded.data(), got.size));
+    }
+    NullAdapterStats const st1 = null_adapter_stats(rt.na);
+    KILN_CHECK_EQ(st1.publishes, st0.publishes + 1);
+    KILN_CHECK_EQ(null_adapter_flush_deferred(rt.na), 1u); // the old object
+    KILN_CHECK(null_adapter_payload(rt.na, oldObj).size == 0);
+    KILN_CHECK_EQ(rt.diags.count, 0u);
+    release(rt.ctx, m);
+}
+
+KILN_TEST(Runtime, ReloadFailureKeepsOld) {
+    ReloadStore store;
+    if (!store.init("fail")) return;
+    MeshCounts boxCounts;
+    if (!golden_counts("mesh/Box", boxCounts)) return;
+    KILN_REQUIRE(put_golden("mesh/Box", ".mesh", store.mesh));
+
+    Rt rt;
+    ContextDesc cd;
+    cd.storeDir = store.dir;
+    if (!rt.init({}, cd)) return;
+    Group g = group(rt.ctx);
+    RequestOptions ro;
+    ro.group     = g;
+    MeshHandle m = request_mesh(rt.ctx, "mesh/thing", ro);
+    KILN_REQUIRE(rt.pump_until([&] { return is_ready(rt.ctx, m); }));
+    mesh::MeshView const* v1   = mesh_view(rt.ctx, m);
+    GpuObject const obj        = gpu(rt.ctx, m);
+    GroupStatus const gs0      = progress(rt.ctx, g);
+    NullAdapterStats const st0 = null_adapter_stats(rt.na);
+    usize const ev0            = rt.events.size();
+
+    KILN_REQUIRE(put_garbage(store.mesh));
+    request_reload(rt.ctx, m);
+    bool alwaysReady = true;
+    KILN_REQUIRE(rt.pump_until([&] {
+        alwaysReady = alwaysReady && is_ready(rt.ctx, m);
+        return rt.diags.has(kDiagReloadFailed);
+    }));
+    for (int i = 0; i < 5; ++i)
+        rt.pump_once();
+    KILN_CHECK(alwaysReady);
+    KILN_CHECK_EQ(state(rt.ctx, m), State::Ready);
+    KILN_CHECK_EQ(version(rt.ctx, m), 1u);
+    KILN_CHECK(mesh_view(rt.ctx, m) == v1);
+    KILN_CHECK(counts_of(*v1) == boxCounts); // still readable: the old view stays valid
+    KILN_CHECK_EQ(gpu(rt.ctx, m).native, obj.native);
+    KILN_CHECK_EQ(count_code(rt.diags, kDiagReloadFailed), 1u);
+    KILN_CHECK_EQ(rt.diags.count, 1u);
+    KILN_CHECK_EQ(rt.events.size(), ev0);
+    KILN_CHECK_EQ(null_adapter_stats(rt.na).publishes, st0.publishes);
+    GroupStatus const gs1 = progress(rt.ctx, g);
+    KILN_CHECK_EQ(gs1.ready, gs0.ready);
+    KILN_CHECK_EQ(gs1.failed, gs0.failed);
+    KILN_CHECK_EQ(gs1.bytesDone, gs0.bytesDone);
+    release(rt.ctx, m);
+    release(rt.ctx, g);
+}
+
+KILN_TEST(Runtime, ReloadFromFailed) {
+    ReloadStore store;
+    if (!store.init("from_failed")) return;
+    MeshCounts multiCounts;
+    if (!golden_counts("mesh/MultiUVTest", multiCounts)) return;
+    KILN_REQUIRE(put_garbage(store.mesh));
+
+    Rt rt;
+    ContextDesc cd;
+    cd.storeDir = store.dir;
+    if (!rt.init({}, cd)) return;
+    Group g = group(rt.ctx);
+    RequestOptions ro;
+    ro.group     = g;
+    MeshHandle m = request_mesh(rt.ctx, "mesh/thing", ro);
+    KILN_REQUIRE(rt.pump_until([&] { return state(rt.ctx, m) == State::Failed; }));
+    KILN_CHECK(rt.diags.has(kDiagAssetLoadFailed));
+    KILN_CHECK_EQ(version(rt.ctx, m), 1u);
+    GroupStatus const gs0 = progress(rt.ctx, g);
+    KILN_CHECK_EQ(gs0.failed, 1u);
+    KILN_CHECK_EQ(gs0.ready, 0u);
+    KILN_CHECK_EQ(gs0.bytesTotal, 0u);
+
+    // Fails again: stays Failed, a Failed event with the new status, no K5010.
+    usize ev0 = rt.events.size();
+    request_reload(rt.ctx, m);
+    KILN_REQUIRE(rt.pump_until([&] { return rt.find_event(EventKind::Failed, m.bits(), ev0) >= 0; }));
+    KILN_CHECK_EQ(state(rt.ctx, m), State::Failed);
+    KILN_CHECK(!rt.diags.has(kDiagReloadFailed));
+    KILN_CHECK_EQ(progress(rt.ctx, g).failed, 1u); // failing again is not counted twice
+    KILN_CHECK_EQ(progress(rt.ctx, g).ready, 0u);
+
+    // Succeeds: Ready (not Changed), content version 2.
+    KILN_REQUIRE(put_golden("mesh/MultiUVTest", ".mesh", store.mesh));
+    ev0 = rt.events.size();
+    request_reload(rt.ctx, m);
+    KILN_REQUIRE(rt.pump_until([&] { return rt.find_event(EventKind::Ready, m.bits(), ev0) >= 0; }));
+    KILN_CHECK(is_ready(rt.ctx, m));
+    KILN_CHECK_EQ(version(rt.ctx, m), 2u);
+    KILN_CHECK_EQ(rt.events[usize(rt.find_event(EventKind::Ready, m.bits(), ev0))].version, 2u);
+    KILN_CHECK_EQ(count_events(rt, EventKind::Changed, m.bits(), ev0), 0u);
+    KILN_CHECK_EQ(count_events(rt, EventKind::MetaReady, m.bits(), ev0), 0u);
+    mesh::MeshView const* v = mesh_view(rt.ctx, m);
+    KILN_REQUIRE(v != nullptr);
+    KILN_CHECK(counts_of(*v) == multiCounts);
+    // Failed -> Ready is a first success: the group moves the member from failed to
+    // ready and counts its bytes.
+    GroupStatus const gs1 = progress(rt.ctx, g);
+    KILN_CHECK_EQ(gs1.failed, 0u);
+    KILN_CHECK_EQ(gs1.ready, 1u);
+    KILN_CHECK_EQ(gs1.pending, 0u);
+    KILN_CHECK(gs1.bytesDone > 0);
+    KILN_CHECK_EQ(gs1.bytesDone, gs1.bytesTotal);
+    KILN_CHECK_EQ(gs1.bytesDone, v->decoded_size());
+    release(rt.ctx, m);
+    GroupStatus const gs2 = progress(rt.ctx, g); // leaving undoes what was counted
+    KILN_CHECK_EQ(gs2.ready, 0u);
+    KILN_CHECK_EQ(gs2.failed, 0u);
+    KILN_CHECK_EQ(gs2.bytesDone, 0u);
+    KILN_CHECK_EQ(gs2.bytesTotal, 0u);
+    release(rt.ctx, g);
+}
+
+KILN_TEST(Runtime, ReloadTexture) {
+    ReloadStore store;
+    if (!store.init("texture")) return;
+    KILN_REQUIRE(put_golden("ktx2/color_srgb", ".ktx2", store.tex));
+
+    Rt rt;
+    NullAdapterDesc nd;
+    nd.bindless = true;
+    ContextDesc cd;
+    cd.storeDir = store.dir;
+    if (!rt.init(nd, cd)) return;
+    TextureHandle t          = request_texture(rt.ctx, "ktx2/thing");
+    GpuObject const acquired = gpu(rt.ctx, t);
+    KILN_REQUIRE(acquired.slot != kInvalid);
+    KILN_REQUIRE(rt.pump_until([&] { return is_ready(rt.ctx, t); }));
+    TextureInfo const ti1 = texture_info(rt.ctx, t);
+    GpuObject const obj1  = gpu(rt.ctx, t);
+    KILN_CHECK_EQ(null_adapter_slot(rt.na, acquired.slot).native, obj1.native);
+
+    usize const ev0 = rt.events.size();
+    KILN_REQUIRE(put_golden("ktx2/height16", ".ktx2", store.tex));
+    request_reload(rt.ctx, t);
+    bool oldInfo = true;
+    KILN_REQUIRE(rt.pump_until([&] {
+        bool const changed = rt.find_event(EventKind::Changed, t.bits(), ev0) >= 0;
+        if (!changed) {
+            TextureInfo const ti = texture_info(rt.ctx, t);
+            oldInfo = oldInfo && !ti.isPlaceholder && ti.version == 1 && ti.desc.format == ti1.desc.format &&
+                      ti.desc.width == ti1.desc.width;
+        }
+        return changed;
+    }));
+    KILN_CHECK(oldInfo);
+    TextureInfo const ti2 = texture_info(rt.ctx, t);
+    KILN_CHECK(!ti2.isPlaceholder);
+    KILN_CHECK_EQ(ti2.version, 2u);
+    KILN_CHECK(ti2.desc.format != ti1.desc.format || ti2.desc.width != ti1.desc.width ||
+               ti2.desc.height != ti1.desc.height);
+    KILN_CHECK_EQ(ti2.levelOffsets.size, usize(ti2.desc.levels));
+    GpuObject const obj2 = gpu(rt.ctx, t);
+    KILN_CHECK(obj2.native != obj1.native);
+    KILN_CHECK_EQ(ti2.gpu.native, obj2.native);
+    KILN_CHECK_EQ(null_adapter_slot(rt.na, acquired.slot).native, obj2.native);
+    KILN_CHECK_EQ(null_adapter_flush_deferred(rt.na), 1u);
+    release(rt.ctx, t);
+}
+
+KILN_TEST(Runtime, ReloadWhileLoading) {
+    ReloadStore store;
+    if (!store.init("while_loading")) return;
+    MeshCounts boxCounts, multiCounts;
+    if (!golden_counts("mesh/Box", boxCounts) || !golden_counts("mesh/MultiUVTest", multiCounts)) return;
+    KILN_REQUIRE(put_golden("mesh/Box", ".mesh", store.mesh));
+
+    Rt rt;
+    ContextDesc cd;
+    cd.storeDir = store.dir;
+    if (!rt.init({}, cd)) return;
+
+    // Queued: the reload waits for the first load to settle, then runs once.
+    MeshHandle m = request_mesh(rt.ctx, "mesh/thing");
+    request_reload(rt.ctx, m);
+    KILN_REQUIRE(put_golden("mesh/MultiUVTest", ".mesh", store.mesh));
+    KILN_REQUIRE(rt.pump_until([&] { return rt.find_event(EventKind::Changed, m.bits()) >= 0; }));
+    int const meta    = rt.find_event(EventKind::MetaReady, m.bits());
+    int const ready   = rt.find_event(EventKind::Ready, m.bits());
+    int const changed = rt.find_event(EventKind::Changed, m.bits());
+    KILN_CHECK(meta >= 0 && ready > meta && changed > ready);
+    if (ready >= 0) KILN_CHECK_EQ(rt.events[usize(ready)].version, 1u);
+    if (changed >= 0) KILN_CHECK_EQ(rt.events[usize(changed)].version, 2u);
+    KILN_CHECK_EQ(count_events(rt, EventKind::MetaReady, m.bits()), 1u);
+    KILN_CHECK_EQ(version(rt.ctx, m), 2u);
+    KILN_CHECK(counts_of(*mesh_view(rt.ctx, m)) == multiCounts);
+
+    // Job in flight: a reload requested during a reload runs after it.
+    KILN_REQUIRE(put_golden("mesh/Box", ".mesh", store.mesh));
+    usize const ev0 = rt.events.size();
+    request_reload(rt.ctx, m);
+    rt.pump_once();                               // dispatches the meta stage
+    KILN_CHECK(stats(rt.ctx).ioJobsInFlight > 0); // popped only by the next pump
+    request_reload(rt.ctx, m);
+    KILN_REQUIRE(rt.pump_until([&] { return count_events(rt, EventKind::Changed, m.bits(), ev0) == 2; }));
+    for (int i = 0; i < 5; ++i)
+        rt.pump_once();
+    KILN_CHECK_EQ(count_events(rt, EventKind::Changed, m.bits(), ev0), 2u);
+    KILN_CHECK_EQ(version(rt.ctx, m), 4u);
+    KILN_CHECK(counts_of(*mesh_view(rt.ctx, m)) == boxCounts);
+    KILN_CHECK_EQ(rt.diags.count, 0u);
+    release(rt.ctx, m);
+}
+
+KILN_TEST(Runtime, ReloadMemorySourceWarns) {
+    if (!test::golden_dir()) return;
+    Vec<u8> meshBytes(default_allocator(), Tag::Test);
+    if (!read_golden("mesh/Box", ".mesh", meshBytes)) return;
+    Rt rt;
+    if (!rt.init()) return;
+    MeshHandle m = register_mesh(rt.ctx, "gen/box", meshBytes.span());
+    KILN_REQUIRE(!m.is_null());
+    KILN_REQUIRE(rt.pump_until([&] { return is_ready(rt.ctx, m); }));
+    usize const ev0            = rt.events.size();
+    NullAdapterStats const st0 = null_adapter_stats(rt.na);
+    request_reload(rt.ctx, m);
+    for (int i = 0; i < 5; ++i)
+        rt.pump_once();
+    KILN_CHECK_EQ(rt.diags.count, 1u);
+    KILN_CHECK_EQ(count_code(rt.diags, kDiagReloadMemorySource), 1u);
+    KILN_CHECK_EQ(rt.events.size(), ev0);
+    KILN_CHECK_EQ(version(rt.ctx, m), 1u);
+    KILN_CHECK_EQ(null_adapter_stats(rt.na).beginUploads, st0.beginUploads);
+    release(rt.ctx, m);
+}
+
+KILN_TEST(Runtime, HotReloadUnavailableWarns) {
+    IoBackend noStat = *compat_io_backend();
+    noStat.stat      = nullptr;
+    Rt rt;
+    ContextDesc cd;
+    cd.storeDir  = "nowhere";
+    cd.io        = &noStat;
+    cd.hotReload = {.watchStore = true, .pollMs = 20};
+    if (!rt.init({}, cd)) return;
+    KILN_CHECK_EQ(count_code(rt.diags, kDiagHotReloadUnavailable), 1u);
+    rt.shutdown();
+
+#if !(defined(KILN_HOT_RELOAD) && KILN_HOT_RELOAD)
+    Rt rt2;
+    ContextDesc cd2;
+    cd2.storeDir  = "nowhere";
+    cd2.hotReload = {.watchStore = true};
+    if (!rt2.init({}, cd2)) return;
+    KILN_CHECK_EQ(count_code(rt2.diags, kDiagHotReloadUnavailable), 1u);
+#endif
+}
+
+#if defined(KILN_HOT_RELOAD) && KILN_HOT_RELOAD
+KILN_TEST(Runtime, StorePollerDetectsChange) {
+    ReloadStore store;
+    if (!store.init("poller")) return;
+    MeshCounts multiCounts;
+    if (!golden_counts("mesh/MultiUVTest", multiCounts)) return;
+    KILN_REQUIRE(put_golden("mesh/Box", ".mesh", store.mesh));
+
+    Rt rt;
+    ContextDesc cd;
+    cd.storeDir  = store.dir;
+    cd.hotReload = {.watchStore = true, .pollMs = 20};
+    if (!rt.init({}, cd)) return;
+    KILN_CHECK(!rt.diags.has(kDiagHotReloadUnavailable));
+    MeshHandle m = request_mesh(rt.ctx, "mesh/thing");
+    KILN_REQUIRE(rt.pump_until([&] { return is_ready(rt.ctx, m); }));
+    usize const ev0 = rt.events.size();
+
+    // Unchanged file: nothing happens for a few poll rounds.
+    for (int i = 0; i < 20; ++i) {
+        rt.pump_once();
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    KILN_CHECK_EQ(rt.events.size(), ev0);
+
+    // A different size changes the stat even where mtime resolution is coarse.
+    KILN_REQUIRE(put_golden("mesh/MultiUVTest", ".mesh", store.mesh));
+    bool changed = false;
+    for (int i = 0; i < 1000 && !changed; ++i) { // ~5 s
+        rt.pump_once();
+        changed = rt.find_event(EventKind::Changed, m.bits(), ev0) >= 0;
+        if (!changed) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    KILN_REQUIRE(changed);
+    KILN_CHECK_EQ(version(rt.ctx, m), 2u);
+    KILN_CHECK(counts_of(*mesh_view(rt.ctx, m)) == multiCounts);
+    KILN_CHECK_EQ(rt.diags.count, 0u);
+    release(rt.ctx, m);
+}
+#endif
+
 KILN_TEST(RuntimePanic, WaitOffThread) {
     if (!test::selected_exactly("RuntimePanic.WaitOffThread")) return;
     set_panic_handler(&exit_on_panic, nullptr);

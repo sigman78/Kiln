@@ -1,6 +1,7 @@
 // examples/headless/main.cpp — load assets through the runtime with no GPU and log every step:
 // requests, IO, cook-on-miss, MetaReady, Ready, Failed. --slow and --latency add artificial
-// delays so large files visibly take several frames.
+// delays so large files visibly take several frames. --watch keeps pumping after the assets
+// settle and logs Changed events (hot reload, docs/design/hot-reload.md).
 #include <kiln/assets.h>
 #include <kiln/log.h>
 #include <kiln/null_adapter.h>
@@ -58,8 +59,12 @@ struct SlowIo {
         inner     = in;
         msPerMiB  = perMiB;
         latencyMs = latency;
-        backend =
-            IoBackend{.open = &open, .size = &size, .read_range = &read_range, .close = &close, .user = this};
+        backend   = IoBackend{.open       = &open,
+                              .size       = &size,
+                              .read_range = &read_range,
+                              .close      = &close,
+                              .stat       = in->stat ? &stat : nullptr, // --watch polls through it, undelayed
+                              .user       = this};
         return &backend;
     }
 
@@ -81,6 +86,10 @@ struct SlowIo {
     static void close(void* u, IoFile f) {
         auto* s = static_cast<SlowIo*>(u);
         s->inner->close(s->inner->user, f);
+    }
+    static Status stat(void* u, StrView path, IoStat* out) {
+        auto* s = static_cast<SlowIo*>(u);
+        return s->inner->stat(s->inner->user, path, out);
     }
 };
 
@@ -213,7 +222,7 @@ void print_event(Context* ctx, Item* items, u32 count, Event const& e) {
         break;
     }
     case EventKind::Failed: KILN_ERROR("app", "  failed: %s", code_name(e.status.code)); break;
-    case EventKind::Changed: break;
+    case EventKind::Changed: print_meta(ctx, *it); break; // the new version's metadata
     }
 }
 
@@ -225,6 +234,7 @@ struct Options {
     u32 frameMs        = 16;
     u32 timeoutS       = 60;
     bool trace         = false;
+    bool watch         = false;
     Item items[kMaxItems];
     u32 itemCount = 0;
 };
@@ -270,6 +280,9 @@ int main(int argc, char** argv) {
          .help   = "give up after this many seconds (default: 60)",
          .number = &o.timeoutS},
         {.name = "--trace", .help = "also show the runtime's debug log", .flag = &o.trace},
+        {.name = "--watch",
+         .help = "after settling, pump until --timeout and log hot reloads (re-cooks with --source)",
+         .flag = &o.watch},
     };
     cli::Spec const spec{
         .program  = "kiln-headless",
@@ -311,6 +324,7 @@ int main(int argc, char** argv) {
         .adapter     = &adapter,
         .storeDir    = StrView(o.store),
         .sourceRoots = Span<StrView const>(&sourceRoot, o.source ? 1u : 0u),
+        .hotReload   = {.watchStore = o.watch},
     };
     Result<Context*> c = create(desc);
     if (c.failed()) {
@@ -328,7 +342,7 @@ int main(int argc, char** argv) {
     bool providerInstalled = false;
 #if KILN_HEADLESS_HAS_COOK
     if (o.source) {
-        Status const st = cook::install_provider(ctx, cook::ProviderDesc{});
+        Status const st = cook::install_provider(ctx, cook::ProviderDesc{.watchSources = o.watch});
         if (st.failed()) {
             KILN_ERROR("app", "install_provider: %s", code_name(st.code));
         } else {
@@ -359,26 +373,33 @@ int main(int argc, char** argv) {
                   state_name(it.last));
     }
 
-    // 6. The frame loop. pump() is the only place where state changes become visible.
-    u32 frame           = 0;
-    u32 const maxFrames = o.frameMs ? (o.timeoutS * 1000u) / o.frameMs : 1000u * o.timeoutS;
-    GroupStatus gs      = progress(ctx, g);
-    bool timedOut       = false;
+    // 6. The frame loop. pump() is the only place where state changes become visible. With
+    //    --watch it keeps going after the group settles, until --timeout, so reloads show up.
+    u32 frame            = 0;
+    double const limitMs = double(o.timeoutS) * 1000.0; // wall clock: sleeps are coarse on Windows
+    GroupStatus gs       = progress(ctx, g);
+    bool timedOut        = false;
+    bool watching        = false;
     for (;;) {
         PumpStats const ps = pump(ctx);
         for (Event const& e : events(ctx))
             print_event(ctx, o.items, o.itemCount, e);
         gs = progress(ctx, g);
-        if (ps.completed != 0 || ps.uploadsCommitted != 0 || frame % 32 == 0) {
+        if (o.watch && !watching && gs.settled()) {
+            watching = true;
+            KILN_INFO("app", "settled; watching for changes until --timeout (%u s from start)", o.timeoutS);
+        }
+        if (ps.completed != 0 || ps.uploadsCommitted != 0 || (!watching && frame % 32 == 0)) {
             ContextStats const cs = stats(ctx);
             KILN_INFO("app",
                       "frame %u: ready %u failed %u pending %u, %llu/%llu bytes, io jobs %u, uploads %u",
                       frame, gs.ready, gs.failed, gs.pending, ull(gs.bytesDone), ull(gs.bytesTotal),
                       cs.ioJobsInFlight, cs.uploadsInFlight);
         }
-        if (gs.settled()) break;
-        if (++frame > maxFrames) {
-            timedOut = true;
+        if (gs.settled() && !o.watch) break;
+        ++frame;
+        if (now_ms() >= limitMs) {
+            timedOut = !gs.settled(); // with --watch, the end of the watch is not a timeout
             break;
         }
         sleep_ms(double(o.frameMs));
