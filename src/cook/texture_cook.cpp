@@ -23,7 +23,7 @@ void note(DiagSink const* diag, StrView asset, Severity sev, u32 code, char cons
     (void)diagf(diag, kOk, code, sev, asset, "texture", fmt, a, b, c, d);
 }
 
-Result<CookedTexture> pass_through(TextureSource const& src, u32 cap, Allocator const* alloc,
+Result<CookedTexture> pass_through(TextureSource const& src, u32 cap, u32 maxLayers, Allocator const* alloc,
                                    DiagSink const* diag, StrView asset, u64 sourceHash) noexcept {
     Result<ktx2::Ktx2View> r = ktx2::Ktx2View::open(src.bytes, diag, asset);
     if (r.failed())
@@ -34,10 +34,13 @@ Result<CookedTexture> pass_through(TextureSource const& src, u32 cap, Allocator 
     if (view.header().supercompressionScheme != 0)
         return fail(diag, asset, make_status(Code::Unsupported), kDiagImagePassthroughBad,
                     "supercompressed KTX2 cannot be passed through");
-    if (d.depth > 1 || d.isArray || d.isCube)
+    if (d.depth > 1 || (d.isArray && d.isCube))
         return fail(diag, asset, make_status(Code::Unsupported), kDiagImagePassthroughBad,
-                    "only plain 2D KTX2 can be passed through (depth %llu, array %llu, cube %llu)", d.depth,
-                    d.isArray ? 1u : 0u, d.isCube ? 1u : 0u);
+                    "only 2D, cube and array KTX2 can be passed through (depth %llu, cube array %llu)",
+                    d.depth, d.isArray && d.isCube ? 1u : 0u);
+    if (d.layers > maxLayers)
+        return fail(diag, asset, make_status(Code::Unsupported), kDiagImagePassthroughBad,
+                    "%llu array layers exceed the target limit %llu", d.layers, maxLayers);
     if (!view.has_all_level_data())
         return fail(diag, asset, make_status(Code::Corrupt), kDiagImagePassthroughBad,
                     "KTX2 file is missing level data");
@@ -230,7 +233,8 @@ Result<CookedTexture> cook_texture(TextureSource const& src, TextureCookSettings
     u32 const targetCap          = target.maxTextureSize ? target.maxTextureSize : kNoLimit;
     u32 const cap                = min(settingsCap, targetCap);
 
-    if (is_ktx2(src.bytes)) return pass_through(src, cap, alloc, diag, asset, sourceHash);
+    if (is_ktx2(src.bytes))
+        return pass_through(src, cap, target.maxArrayLayers, alloc, diag, asset, sourceHash);
     if (is_png(src.bytes) || is_jpeg(src.bytes) || is_webp(src.bytes))
         return cook_decoded(src, settings, target, cap, alloc, diag, JobBudget{env.jobs, env.maxThreads},
                             asset, sourceHash);

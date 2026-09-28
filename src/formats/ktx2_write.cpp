@@ -93,6 +93,13 @@ Result<Vec<u8>> write(WriteDesc const& desc, Allocator const* alloc, DiagSink co
     if (desc.width == 0 || desc.height == 0)
         return invalid(diag, kDiagKtxDimensions, "extent %llux%llu must be at least 1x1", desc.width,
                        desc.height);
+    if (desc.faces != 1 && desc.faces != 6)
+        return invalid(diag, kDiagKtxDimensions, "%llu faces, must be 1 or 6", desc.faces);
+    if (desc.faces == 6 && desc.width != desc.height)
+        return invalid(diag, kDiagKtxDimensions, "cube faces must be square, not %llux%llu", desc.width,
+                       desc.height);
+    if (desc.layers == 0 || (!desc.isArray && desc.layers != 1))
+        return invalid(diag, kDiagKtxDimensions, "%llu layers given; more than 1 needs isArray", desc.layers);
     u32 const maxLevels = u32(std::bit_width(max(desc.width, desc.height)));
     if (desc.levels.size == 0 || desc.levels.size > maxLevels)
         return invalid(diag, kDiagKtxDimensions, "%llu levels given, must be 1..%llu", desc.levels.size,
@@ -131,7 +138,8 @@ Result<Vec<u8>> write(WriteDesc const& desc, Allocator const* alloc, DiagSink co
     u32 const levelCount = u32(desc.levels.size);
     for (u32 i = 0; i < levelCount; ++i) {
         u64 const expected =
-            format_image_bytes(desc.format, max(desc.width >> i, 1u), max(desc.height >> i, 1u));
+            format_image_bytes(desc.format, max(desc.width >> i, 1u), max(desc.height >> i, 1u)) *
+            desc.layers * desc.faces;
         if (desc.levels[i].size != expected)
             return invalid(diag, kDiagKtxLevelIndex, "level %llu has %llu bytes, expected %llu", i,
                            desc.levels[i].size, expected);
@@ -169,8 +177,8 @@ Result<Vec<u8>> write(WriteDesc const& desc, Allocator const* alloc, DiagSink co
     h.pixelWidth             = desc.width;
     h.pixelHeight            = desc.height;
     h.pixelDepth             = 0;
-    h.layerCount             = 0;
-    h.faceCount              = 1;
+    h.layerCount             = desc.isArray ? desc.layers : 0;
+    h.faceCount              = desc.faces;
     h.levelCount             = levelCount;
     h.supercompressionScheme = u32(Supercompression::None);
     h.dfdByteOffset          = dfdOffset;

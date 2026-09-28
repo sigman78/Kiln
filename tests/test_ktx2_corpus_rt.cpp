@@ -17,8 +17,8 @@ namespace {
 bool writer_can_express(corpus::Entry const& e) {
     if (!e.expectOk || e.format == Format::Undefined) return false;
     FormatInfo const* info = format_info(e.format);
-    return info && !info->compressed && e.depth == 0 && e.layers == 0 && e.faces == 1 && e.levels != 0 &&
-           e.supercompression == 0;
+    return info && !info->compressed && e.depth == 0 && e.levels != 0 && e.supercompression == 0 &&
+           (e.faces == 1 || (e.faces == 6 && e.layers == 0));
 }
 
 /// Report every differing DFD byte (up to a limit) as "offset: orig -> ours".
@@ -71,10 +71,13 @@ void round_trip(corpus::Entry const& e, Span<u8 const> bytes, char const* sample
 
     corpus::DiagCapture wcap;
     DiagSink wsink          = wcap.sink();
-    WriteDesc const w       = {.format = d.format,
-                               .width  = d.width,
-                               .height = d.height,
-                               .levels = Span<Span<u8 const> const>(levels, d.levels)};
+    WriteDesc const w       = {.format  = d.format,
+                               .width   = d.width,
+                               .height  = d.height,
+                               .layers  = d.layers,
+                               .faces   = d.faces,
+                               .isArray = d.isArray,
+                               .levels  = Span<Span<u8 const> const>(levels, d.levels)};
     Result<Vec<u8>> written = write(w, default_allocator(), &wsink);
     if (!KILN_CHECK_MSG(written.ok(), "%s: kiln write failed: %s", name, wcap.msg)) return;
     Vec<u8> const out = std::move(written).value();

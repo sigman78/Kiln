@@ -98,6 +98,7 @@ struct TargetProfile {
     StrView name                   = "desktop";
     u32 maxTextureSize             = 16384;
     VertexProfile maxVertexProfile = VertexProfile::Precise; ///< highest profile the target accepts
+    u32 maxArrayLayers             = 2048;                   ///< more layers is an error (K2004), not a clamp
 };
 
 enum class StoreMode : u8 { Disk = 0, Memory, None }; ///< store / cache-less / validate only

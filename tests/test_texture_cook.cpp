@@ -345,6 +345,31 @@ KILN_TEST(texture_cook, ktx2_passthrough) {
     KILN_CHECK(log.has(kDiagImagePassthroughBad, Severity::Error));
 }
 
+// A cube or array KTX2 passes through with its shape; the target caps the array layers.
+KILN_TEST(texture_cook, ktx2_cube_and_array_passthrough) {
+    char const* dir = kiln::test::corpus_dir();
+    char path[1024];
+    Vec<u8> cube(default_allocator(), Tag::Test), array(default_allocator(), Tag::Test);
+    format(path, sizeof path, "%s/generated/cube_rgba8_srgb_mip.ktx2", dir);
+    KILN_REQUIRE(kiln::test::corpus::read_file(path, cube));
+    format(path, sizeof path, "%s/khronos/r8g8b8a8_srgb_array_7_mip.ktx2", dir);
+    KILN_REQUIRE(kiln::test::corpus::read_file(path, array));
+
+    Result<CookedTexture> c = run_cook(cube.span(), kColor);
+    KILN_REQUIRE(c.ok());
+    KILN_CHECK(c->passthrough && c->desc.isCube && c->desc.faces == 6);
+    Result<CookedTexture> a = run_cook(array.span(), kColor);
+    KILN_REQUIRE(a.ok());
+    KILN_CHECK(a->passthrough && a->desc.isArray && a->desc.layers == 7);
+
+    TargetProfile small;
+    small.maxArrayLayers = 4;
+    DiagLog log;
+    Result<CookedTexture> over = run_cook(array.span(), kColor, &log, small);
+    KILN_CHECK_EQ(over.code(), Code::Unsupported);
+    KILN_CHECK(log.has(kDiagImagePassthroughBad, Severity::Error));
+}
+
 KILN_TEST(texture_cook, ktx2_zstd_rejected) {
     char const* dir = kiln::test::corpus_dir();
     char path[1024];

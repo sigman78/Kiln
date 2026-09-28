@@ -4,6 +4,7 @@
 #include "kiln/cook/ktx2_writer.h"
 #include "kiln/ktx2.h"
 
+#include <bit>
 #include <cstdio>
 
 using namespace kiln;
@@ -372,4 +373,63 @@ KILN_TEST(Ktx2, WriteSampleFiles) {
     Vec<u8> const snormFile = write_ok(snorm.desc());
     KILN_REQUIRE(!snormFile.empty());
     write_sample_file(dir, "sample_r16g16_snorm.ktx2", snormFile.span());
+}
+
+// Cube and array textures: every level holds all faces or layers (writer and reader agree).
+KILN_TEST(Ktx2, WriteCubeAndArray) {
+    struct Case {
+        char const* sample;
+        u32 w, h, layers, faces;
+        bool isArray;
+    };
+    Case const cases[] = {
+        {"sample_cube_rgba8.ktx2",   8, 8, 1, 6, false},
+        {"sample_array3_rgba8.ktx2", 8, 4, 3, 1, true },
+        {"sample_array1_rgba8.ktx2", 4, 4, 1, 1, true },
+    };
+    for (Case const& c : cases) {
+        u32 const levels = u32(std::bit_width(max(c.w, c.h)));
+        Vec<u8> data[kMaxLevels];
+        Span<u8 const> spans[kMaxLevels];
+        for (u32 i = 0; i < levels; ++i) {
+            u64 const n = format_image_bytes(Format::R8G8B8A8_SRGB, max(c.w >> i, 1u), max(c.h >> i, 1u)) *
+                          c.layers * c.faces;
+            data[i].init(default_allocator(), Tag::Test);
+            data[i].resize(usize(n));
+            for (usize k = 0; k < data[i].size(); ++k)
+                data[i][k] = u8(i * 13u + k * 5u);
+            spans[i] = data[i].span();
+        }
+        WriteDesc const d{.format  = Format::R8G8B8A8_SRGB,
+                          .width   = c.w,
+                          .height  = c.h,
+                          .layers  = c.layers,
+                          .faces   = c.faces,
+                          .isArray = c.isArray,
+                          .levels  = Span<Span<u8 const> const>(spans, levels)};
+        Vec<u8> const file = write_ok(d);
+        KILN_REQUIRE(!file.empty());
+        Result<Ktx2View> v = Ktx2View::open(file.span());
+        KILN_REQUIRE(v.ok());
+        TextureDesc const o = v->desc();
+        KILN_CHECK(o.layers == c.layers && o.faces == c.faces && o.isArray == c.isArray &&
+                   o.isCube == (c.faces == 6) && o.levels == levels);
+        for (u32 i = 0; i < levels; ++i)
+            KILN_CHECK(bytes_equal(v->level_data(i), spans[i]));
+        write_sample_file(kiln::test::sample_dir(), c.sample, file.span());
+    }
+}
+
+KILN_TEST(Ktx2, WriterRejectsBadShapes) {
+    u8 pixels[8 * 4 * 4 * 6] = {};
+    Span<u8 const> level(pixels, 8 * 4 * 4 * 6);
+    auto const bad = [&](WriteDesc d) {
+        d.format = Format::R8G8B8A8_UNORM;
+        d.levels = Span<Span<u8 const> const>(&level, 1);
+        KILN_CHECK_EQ(write(d, default_allocator()).code(), Code::InvalidArgument);
+    };
+    bad({.width = 8, .height = 4, .faces = 6});                   // cube faces must be square
+    bad({.width = 8, .height = 4, .faces = 3});                   // 1 or 6 faces
+    bad({.width = 8, .height = 4, .layers = 6});                  // layers without isArray
+    bad({.width = 8, .height = 4, .layers = 0, .isArray = true}); // no layers
 }

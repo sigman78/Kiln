@@ -205,6 +205,7 @@ u64 hash_target(TargetProfile const& t) noexcept {
     h.update(t.name);
     h.update_value(t.maxTextureSize);
     h.update_value(u8(t.maxVertexProfile));
+    // maxArrayLayers only rejects inputs and never changes an output, so it is not hashed.
     return h.digest();
 }
 

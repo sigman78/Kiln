@@ -804,3 +804,31 @@ KILN_TEST(Provider, CliMainAppliesThePolicy) {
     KILN_REQUIRE(v2.ok());
     KILN_CHECK(v2->desc().levels > 1u);
 }
+
+// A cube KTX2 cooks on miss and loads as a cube when the request expects one.
+KILN_TEST(Provider, CubeKtx2CooksAndLoads) {
+    char root[1024], storeDir[1024];
+    scratch_dir("provider_cube_src", root, sizeof root);
+    scratch_dir("provider_cube_store", storeDir, sizeof storeDir);
+    make_dir(root);
+    char src[1100], dst[1100];
+    format(src, sizeof src, "%s/generated/cube_rgba8_srgb_mip.ktx2", kiln::test::corpus_dir());
+    format(dst, sizeof dst, "%s/sky.ktx2", root);
+    copy_file(src, dst);
+
+    Root const roots[] = {
+        {{}, StrView(root)}
+    };
+    TestContext tc;
+    if (!tc.init(StrView(storeDir), Span<Root const>(roots, 1))) return;
+    KILN_REQUIRE(cook::install_provider(tc.ctx, cook::ProviderDesc{.storeMode = cook::StoreMode::Disk}).ok());
+
+    TextureHandle const sky =
+        request_texture(tc.ctx, "sky.ktx2", RequestOptions{.textureShape = TextureShape::Cube});
+    KILN_REQUIRE_EQ(pump_until_settled(tc.ctx, sky), State::Ready);
+    TextureInfo const ti = texture_info(tc.ctx, sky);
+    KILN_CHECK(!ti.isPlaceholder && ti.desc.isCube && ti.desc.faces == 6);
+    char storeFile[1100];
+    format(storeFile, sizeof storeFile, "%s/sky.ktx2.ktx2", storeDir);
+    KILN_CHECK(file_exists(storeFile));
+}

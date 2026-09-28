@@ -8,6 +8,11 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
 ## [Unreleased]
 
 ### Added
+- KTX2 cube and array textures in the cook (`docs/design/texture-shapes.md`, step 2):
+  `ktx2::WriteDesc` gains `layers`, `faces` and `isArray`; a cube or array KTX2 source passes
+  through with its shape (a volume or cube array is still K2004); new
+  `TargetProfile::maxArrayLayers` (default 2048), where more layers is K2004 rather than a clamp.
+  CTest runs `ktx validate` on cube and array output and round-trips the corpus cube and array.
 - Cook: per-asset `.kiln` sidecar files (`wall_n.png.kiln`, `chair.glb.kiln`) set cook settings for
   one standalone texture or mesh. The syntax is a strict TOML subset parsed by kiln itself (no
   dependency); keys are the settings field names. `apply_sidecar()` in the new

@@ -1,7 +1,7 @@
 # Texture shapes: cube maps and arrays
 
-**Status:** Decided in part (owner, 2026-09-28): vertical strips, the cube face order below, no
-volumes for now. Step 1 of the rollout is implemented; the other steps await sign-off where marked.
+**Status:** Decided (owner, 2026-09-28): vertical strips, the cube face order below, no volumes for
+now, stacked name suffixes, errors on over-limit input. Steps 1 and 2 of the rollout are implemented.
 **Decides:** How one source image becomes a cube map or a texture array; the settings, name hints
 and sidecar keys for it; and how the runtime and the adapter carry a texture's shape.
 
@@ -42,7 +42,7 @@ slice at a time and keep less than the whole image in memory. That helps the coo
 help loading: KTX2 stores data by mip level, with every face and layer inside each level, so a
 loader cannot stream one slice at a time without a different file layout.
 
-### 2. Settings, name hints, sidecar keys *(proposed)*
+### 2. Settings, name hints, sidecar keys *(decided)*
 
 New fields in `TextureCookSettings` (texture settings schema 2):
 
@@ -60,16 +60,20 @@ New fields in `TextureCookSettings` (texture settings schema 2):
 - **Sidecar keys:** `shape = "cube"`, `slices = 16`.
 - **Mips:** per slice, with the existing `build_mip_chain`. Cube faces are filtered on their own,
   with no seam correction; seamless filtering is a later option.
-- **Limits:** `maxSize` and the target's `maxTextureSize` apply to each slice. A new
-  `TargetProfile::maxArrayLayers` (default 2048). A larger strip is an error, not a clamp: dropping
-  slices would change what the texture means.
+- **Limits:** `maxSize` and the target's `maxTextureSize` apply to each slice.
+  `TargetProfile::maxArrayLayers` (default 2048) caps the layers. More layers is an error, not a
+  clamp: dropping slices would change what the texture means. The limit only rejects input, so it
+  is not part of `hash_target()`.
 
-### 3. KTX2 writing and pass-through *(proposed)*
+### 3. KTX2 writing and pass-through *(implemented)*
 
-- `ktx2::WriteDesc` gains `layers` and `faces`. Each level span holds all slices of that level in
-  KTX2 order (layer, then face).
-- A KTX2 source whose shape matches the resolved shape passes through. With `shape = Auto` it passes
-  through with its own shape. Today the cook rejects any KTX2 that is not plain 2D.
+- `ktx2::WriteDesc` has `layers`, `faces` and `isArray`. Each level span holds all slices of that
+  level in KTX2 order (layer, then face). The writer rejects faces other than 1 or 6, non-square
+  cube faces, and several layers without `isArray`. `ktx validate` accepts its cube and array
+  output, and the corpus round trip matches libktx byte for byte, DFD included.
+- A cube or array KTX2 source passes through with its own shape; a volume or cube array is
+  rejected (K2004), and so is an array over `maxArrayLayers`. Once `shape` exists (step 3), a KTX2
+  whose shape differs from a non-Auto `shape` is an error too.
 
 ### 4. Runtime and adapter *(implemented)*
 
@@ -118,7 +122,7 @@ New fields in `TextureCookSettings` (texture settings schema 2):
 1. **Runtime and adapter plumbing** *(done)*: `TextureShape`, the adapter's `TextureDesc::shape`,
    `kCubeTextures` / `kArrayTextures`, `RequestOptions::textureShape`, K5017, placeholders per
    shape. KTX2 cube and array files load through the null adapter.
-2. **KTX2 writer and pass-through** for cubes and arrays.
+2. **KTX2 writer and pass-through** for cubes and arrays *(done)*.
 3. **Strip slicing in the texture cook:** `shape`, `slices`, K2010, per-slice mips, the array limit.
 4. **Name hints and sidecar keys:** suffix chains, `_cube` and `_array`, the `shape` and `slices`
    keys.
@@ -127,7 +131,3 @@ New fields in `TextureCookSettings` (texture settings schema 2):
 
 Later: seamless cube filtering, horizontal strips, slice-by-slice decode.
 
-## Open points for the owner
-
-- Confirm suffix chains in the name rules (a behavior change) and the hints `_cube`, `_array`.
-- Confirm errors, not clamps, for too many slices, and the default 2048 for `maxArrayLayers`.
