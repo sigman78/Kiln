@@ -10,7 +10,7 @@ links it.
 | Concern | Choice | License | Scope | Pinning |
 |---|---|---|---|---|
 | glTF parsing | **cgltf** | MIT | cook only | vendored in `third_party/cgltf/` |
-| PNG decode | **wuffs** | Apache-2.0 | cook only | vendored single release `.c` file in `third_party/wuffs/` |
+| PNG, JPEG, WebP decode | **wuffs** (WebP only with `KILN_WEBP=ON`) | Apache-2.0 | cook only | vendored single release `.c` file in `third_party/wuffs/` |
 | KTX2 read | **own** minimal reader | n/a | runtime | in-tree `src/formats/` |
 | KTX2 write | **own** minimal writer (raw formats only) | n/a | cook only | in-tree `src/formats/` |
 | Mesh optimization | **meshoptimizer** | MIT | cook only (decoder sources may later join `kiln_runtime`) | FetchContent, commit hash |
@@ -38,11 +38,17 @@ ships with codec `None` only, which needs no library.
 - fastgltf is faster but pulls in simdjson and a larger C++ surface. kiln never parses glTF at
   runtime, and cook time is dominated by tangents, optimization and mips.
 
-### PNG: wuffs
+### PNG, JPEG, WebP: wuffs
 
-- Memory-safe by construction, fast, one release `.c` file compiled with the PNG modules only, no
-  allocation of its own (the caller provides work buffers).
+- Memory-safe by construction, fast, one release `.c` file compiled with the needed modules only
+  (`third_party/wuffs/wuffs_modules.h`), no allocation of its own (the caller provides work buffers).
 - Decodes 8-bit and 16-bit PNG; 16-bit keeps 16 bits per channel (height maps, precise normal maps).
+- JPEG (owner decision, 2026-09-27): core glTF allows `image/png` and `image/jpeg`, and many GLB
+  files embed JPEG. The decoder is in the same release file, so JPEG adds no dependency. Baseline
+  and progressive decode; arithmetic coding, 12/16-bit, lossless and hierarchical JPEG are rejected.
+- WebP (owner decision, 2026-09-27): `EXT_texture_webp` and loose `.webp` sources, lossy and
+  lossless, behind the CMake option `KILN_WEBP` (default OFF), which adds the `VP8` and `WEBP`
+  modules. Off, WebP sources fail with K2002.
 - stb_image was the fallback and is not needed.
 
 ### KTX2: own reader and writer

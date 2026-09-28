@@ -14,7 +14,7 @@ it; the shipping presets and the CI job that keeps the contract green.
 
 A product that ships pre-cooked assets links **`kiln_core` + `kiln_runtime` only** (HANDOFF rule).
 
-- `kiln_runtime` never writes files, never imports source formats (glTF, PNG), never encodes, and
+- `kiln_runtime` never writes files, never imports source formats (glTF, PNG, JPEG, WebP), never encodes, and
   has no dependency, symbol reference or link edge to `kiln_cook`.
 - `kiln_runtime` reaches cooking only through the `CookProvider` function-pointer table that
   `kiln::cook::install_provider` registers. The provider is the only seam, and it is absent by

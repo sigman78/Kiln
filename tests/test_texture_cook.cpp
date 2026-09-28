@@ -1,6 +1,8 @@
 // tests/test_texture_cook.cpp — cook_texture (PNG -> KTX2, KTX2 pass-through); cook-only.
-// Inputs come from png_writer.h and the KTX2 corpus. Every output is re-opened with Ktx2View
-// and, with --samples, written as <samples>/cooked_<case>.ktx2 for `ktx validate`.
+// Inputs come from png_writer.h, the KTX2 corpus and image_fixtures.h (JPEG). Every output is
+// re-opened with Ktx2View and, with --samples, written as <samples>/cooked_<case>.ktx2 for
+// `ktx validate`.
+#include "image_fixtures.h"
 #include "kiln_test.h"
 #include "ktx2_corpus.h"
 #include "png_writer.h"
@@ -17,6 +19,7 @@
 using namespace kiln;
 using namespace kiln::cook;
 namespace png = kiln::test::png;
+namespace img = kiln::test::img;
 
 namespace {
 
@@ -355,6 +358,35 @@ KILN_TEST(texture_cook, ktx2_zstd_rejected) {
     Result<CookedTexture> r = run_cook(bytes.span(), kColor, &log);
     KILN_CHECK_EQ(r.code(), Code::Unsupported);
     KILN_CHECK(log.has(kDiagImagePassthroughBad, Severity::Error));
+}
+
+KILN_TEST(texture_cook, jpeg_color) {
+    Result<CookedTexture> r = run_cook(img::kJpegGradientRgbBytes, kColor);
+    KILN_REQUIRE(r.ok());
+    KILN_CHECK(!r->passthrough);
+    KILN_CHECK_EQ(r->desc.format, Format::R8G8B8A8_SRGB);
+    KILN_CHECK_EQ(r->desc.width, u32(img::kWJpegGradientRgb));
+    KILN_CHECK_EQ(r->desc.height, u32(img::kHJpegGradientRgb));
+    KILN_REQUIRE(check_file(*r, "jpeg_color"));
+}
+
+KILN_TEST(texture_cook, jpeg_normal_warns_lossy_source) {
+    DiagLog log;
+    Result<CookedTexture> r = run_cook(
+        img::kJpegGradientRgbBytes, {.colorSpace = ColorSpace::Linear, .usage = TextureUsage::Normal}, &log);
+    KILN_REQUIRE(r.ok());
+    KILN_CHECK(log.has(kDiagImageLossySource, Severity::Warning));
+}
+
+KILN_TEST(texture_cook, png_normal_does_not_warn_lossy_source) {
+    u8 rgba[7 * 5 * 4];
+    pattern(rgba, sizeof rgba, 11);
+    Vec<u8> f = png::encode({.width = 7, .height = 5, .colorType = 6, .depth = 8, .pixels = rgba});
+    DiagLog log;
+    Result<CookedTexture> r =
+        run_cook(f.span(), {.colorSpace = ColorSpace::Linear, .usage = TextureUsage::Normal}, &log);
+    KILN_REQUIRE(r.ok());
+    KILN_CHECK(!log.has(kDiagImageLossySource, Severity::Warning));
 }
 
 KILN_TEST(texture_cook, unknown_format) {

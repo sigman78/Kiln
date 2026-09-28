@@ -90,7 +90,7 @@ Inference (layer 2, `usage_from_slot`, `color_space_for`):
 | `normalTexture` | Normal | Linear |
 | `metallicRoughnessTexture` | Orm | Linear |
 | `occlusionTexture` | Orm | Linear |
-| standalone PNG, no slot | Color | Srgb |
+| standalone image (PNG, JPEG, WebP), no slot | Color | Srgb |
 
 An image bound to two slots with different inferred usages is cooked with the first slot's usage
 and a K1017 warning.

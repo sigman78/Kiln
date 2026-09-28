@@ -54,7 +54,7 @@ Rule: a blocking API never hangs on misuse. It panics at entry, before blocking.
 | `Unsupported` | format, extension or feature not supported (Draco, sparse accessors, compressed `.mesh` codecs in v0.5) |
 | `IoError` | OS-level IO failure; `detail` carries the OS error |
 | `IoEof` | read past end of file (truncated file) |
-| `ParseError` | malformed input: glTF JSON, PNG, KTX2 header, config |
+| `ParseError` | malformed input: glTF JSON, PNG/JPEG/WebP, KTX2 header, config |
 | `ValidationFailed` | well-formed input that breaks a semantic rule (index out of range, bad settings combination) |
 | `Corrupt` | cooked data failed integrity checks (section bounds, `BLOB` ranges or overlaps, decoded size mismatch, store entry mismatch) |
 | `VersionMismatch` | cooked data from an incompatible `.mesh` version (other major, or other minor while the major is 0) or cooker version |
@@ -151,7 +151,7 @@ Never a crash, never a silent failure (v0.5 exit criterion).
 | Range | Area |
 |---|---|
 | K1000-1999 | glTF import (unsupported extensions, sparse accessors, Draco, bad node names, missing UVs) |
-| K2000-2999 | image import and encode (PNG decode, KTX2 pass-through, size, channel checks) |
+| K2000-2999 | image import and encode (PNG/JPEG/WebP decode, KTX2 pass-through, size, channel checks) |
 | K3000-3999 | settings resolution (invalid combinations, unknown keys later) |
 | K4000-4999 | `.mesh` and KTX2 validation (reader and writer checks, including `BLOB` table checks) |
 | K5000-5999 | runtime and store (store miss, corrupt entry, adapter failures, placeholder failures) |

@@ -10,18 +10,18 @@ the shipping install, or `kiln_cook`'s own installed/consumer-facing interface â
 |---|---|---|---|---|
 | [cgltf](https://github.com/jkuhlmann/cgltf) | `v1.15`, commit `360db1a95480fe102ae9c69b27c5d101167ff5ba` | MIT | `kiln_cook` (glTF import) | Vendored header `third_party/cgltf/cgltf.h` + `LICENSE`, compiled once via `third_party/cgltf/cgltf.c` (`#define CGLTF_IMPLEMENTATION`). |
 | [MikkTSpace](https://github.com/mmikk/MikkTSpace) | `master` @ commit `3e895b49d05ea07e4c2133156cfa94369e19e409` | zlib | `kiln_cook` (tangent-space generation, reference implementation) | Vendored `mikktspace.c` / `mikktspace.h`. Upstream has no top-level `LICENSE` file; the zlib license text is copied from the header comment in `mikktspace.c` into `third_party/mikktspace/LICENSE.txt` (with a note). |
-| [wuffs](https://github.com/google/wuffs) | release file `release/c/wuffs-v0.4.c` @ commit `ba25980637db55730c62b466f188fae33b9289f6` | Apache-2.0 (dual MIT/Apache-2.0 upstream; kiln takes the Apache-2.0 terms) | `kiln_cook` (PNG decode) | Vendored single-file release `third_party/wuffs/wuffs-v0.4.c` + `LICENSE`. Compiled once via `third_party/wuffs/wuffs_impl.c`, which defines `WUFFS_IMPLEMENTATION` and the PNG-only module set (see below) before including the release file, so the compiled object stays small. |
+| [wuffs](https://github.com/google/wuffs) | release file `release/c/wuffs-v0.4.c` @ commit `ba25980637db55730c62b466f188fae33b9289f6` | Apache-2.0 (dual MIT/Apache-2.0 upstream; kiln takes the Apache-2.0 terms) | `kiln_cook` (PNG, JPEG, optional WebP decode) | Vendored single-file release `third_party/wuffs/wuffs-v0.4.c` + `LICENSE`. Compiled once via `third_party/wuffs/wuffs_impl.c`, which defines `WUFFS_IMPLEMENTATION` and includes the module set in `wuffs_modules.h` (see below) before the release file, so the compiled object stays small. |
 | [meshoptimizer](https://github.com/zeux/meshoptimizer) | `v1.3`, commit `9e1f07b159d3cb777f1c67ed31fc11fd117986f4` | MIT | `kiln_cook` (mesh optimization: vertex cache / overdraw / vertex fetch) | `FetchContent`, pinned to the commit hash (never a floating tag/branch), declared in `third_party/CMakeLists.txt`. Options: `MESHOPT_BUILD_DEMO=OFF`, `MESHOPT_BUILD_GLTFPACK=OFF`, `MESHOPT_BUILD_SHARED_LIBS=OFF`, `MESHOPT_INSTALL=OFF` (kiln installs the target itself, into the `kilnCookTargets` export set, instead). `FETCHCONTENT_UPDATES_DISCONNECTED=ON` for reproducible offline rebuilds after the first fetch. |
 | [Vulkan-Headers](https://github.com/KhronosGroup/Vulkan-Headers) | `vulkan-sdk-1.4.357.0`, commit `e3b1eec08173d6b825cd3ac88c885a63b621504a` | Apache-2.0 / MIT | `kiln-viewer`, `kiln-vk-smoke` (examples only) | `FetchContent` in `examples/viewer/CMakeLists.txt`, `SYSTEM`; only when `KILN_BUILD_VIEWER=ON`. Never reaches a library target. |
 | [volk](https://github.com/zeux/volk) | commit `7f46f79751d7e3b3a6df20e38d3e3986585bcdf4` (1.4.364) | MIT | `kiln-viewer`, `kiln-vk-smoke` (examples only) | `FetchContent`, `SYSTEM`; loads Vulkan entry points at runtime, no loader link. |
 | [GLFW](https://github.com/glfw/glfw) | `3.5.1`, commit `70a9bb3881fe80fd483236e2b203cb451c6ecf40` | zlib | `kiln-viewer` (example only) | `FetchContent`, `SYSTEM`, static, examples/tests/docs/install off, Wayland off (X11 only on Linux). |
 
-## wuffs: PNG-only module selection
+## wuffs: module selection
 
-`third_party/wuffs/wuffs_impl.c` defines exactly these `WUFFS_CONFIG__MODULE__*`
-macros before including the release file, which is all PNG decode needs
-(PNG's filter/scanline layer sits on DEFLATE, which needs ADLER32 for zlib
-checksums and CRC32 for PNG chunk checksums):
+`third_party/wuffs/wuffs_modules.h` defines exactly these `WUFFS_CONFIG__MODULE__*`
+macros. `wuffs_impl.c` (implementation) and `src/cook/image_decode.cpp` (declarations)
+include it before the release file. PNG's filter/scanline layer sits on DEFLATE, which
+needs ADLER32 for zlib checksums and CRC32 for PNG chunk checksums:
 
 - `WUFFS_CONFIG__MODULES` (opt in to the module system instead of compiling everything)
 - `WUFFS_CONFIG__MODULE__BASE`
@@ -30,8 +30,11 @@ checksums and CRC32 for PNG chunk checksums):
 - `WUFFS_CONFIG__MODULE__DEFLATE`
 - `WUFFS_CONFIG__MODULE__PNG`
 - `WUFFS_CONFIG__MODULE__ZLIB`
+- `WUFFS_CONFIG__MODULE__JPEG`
+- `WUFFS_CONFIG__MODULE__VP8` and `WUFFS_CONFIG__MODULE__WEBP`, only with `KILN_WEBP=ON`
+  (VP8 is the lossy WebP bitstream)
 
-No other codec modules (GIF, BMP, JPEG, ...) are compiled in.
+No other codec modules (GIF, BMP, ...) are compiled in.
 
 ## Retrieval commands used to vendor these
 

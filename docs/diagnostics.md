@@ -55,7 +55,7 @@ is dropped entirely and the sink prints just `<asset> <where>: <message> (<statu
 | Range | Area | Milestone | Status |
 |---|---|---|---|
 | K1000-1999 | glTF import (unsupported extensions, sparse accessors, Draco, bad node names, missing UVs) | M2 | populated, see §3.1 |
-| K2000-2999 | Image import and encode (PNG decode, KTX2 pass-through, size and channel checks) | M2 | populated, see §3.2 |
+| K2000-2999 | Image import and encode (PNG/JPEG/WebP decode, KTX2 pass-through, size and channel checks) | M2 | populated, see §3.2 |
 | K3000-3999 | Settings resolution (invalid combinations, unknown keys) | M2 | populated, see §3.3 |
 | K4000-4099 | `.mesh` validation and decode | M1 | populated, see §3.4 |
 | K4100-4199 | KTX2 validation | M1 | populated, see §3.5 |
@@ -118,8 +118,8 @@ collide with another material's name (K1012).
 
 ### 3.2 K2000-2999 — Image import and encode
 
-Source: `kiln::cook::ImageDiagCode` in `include/kiln/cook/image.h`. Emitted by the PNG decoder
-(`src/cook/png_decode.cpp`) and the texture cooker (`src/cook/texture_cook.cpp`);
+Source: `kiln::cook::ImageDiagCode` in `include/kiln/cook/image.h`. Emitted by the image decoders
+(`src/cook/image_decode.cpp`; the diagnostic's `where` is `png`, `jpeg`, `webp` or `image`) and the texture cooker (`src/cook/texture_cook.cpp`);
 `src/cook/image.cpp`'s pixel operations (`convert_image`, `downsample_2x`, ...) take no
 `DiagSink` and never emit diagnostics themselves, but their `InvalidArgument` failures surface
 under K2002 when the texture cooker wraps them. Where a code is emitted with more than one
@@ -127,14 +127,15 @@ under K2002 when the texture cooker wraps them. Where a code is emitted with mor
 
 | Code | Name | Status | Severity | Meaning | Typical cause / fix |
 |---|---|---|---|---|---|
-| K2001 | `kDiagImageDecodeFailed` | ParseError | Error | The PNG stream is malformed or truncated: bad signature, missing/truncated IHDR, invalid extent, invalid color type/bit depth, an IHDR/decoder extent mismatch, or a wuffs decode failure not recognized as "unsupported". | Re-export/re-save the PNG, or re-fetch it if the file is truncated in transit. |
-| K2002 | `kDiagImageUnsupported` | Unsupported (a PNG feature wuffs reports as unsupported), InvalidArgument (the post-decode channel/bit-depth conversion, `convert_image`, rejected the image) | Error | A PNG feature this build cannot decode, or the conversion to the target channel count/bit depth failed. | Re-export the PNG with a supported color type/bit depth (8/16-bit gray, gray+alpha, RGB, RGBA, or palette). |
-| K2003 | `kDiagImageUnknownFormat` | Unsupported | Error | The source bytes are neither a PNG signature nor a KTX2 identifier. | Supply a PNG or KTX2 file; check the asset was not corrupted or mislabeled. |
+| K2001 | `kDiagImageDecodeFailed` | ParseError | Error | The PNG, JPEG or WebP stream is malformed or truncated: bad signature, missing/truncated PNG IHDR, invalid extent, invalid color type/bit depth, a header/decoder extent mismatch, or a wuffs decode failure not recognized as "unsupported". | Re-export/re-save the image, or re-fetch it if the file is truncated in transit. |
+| K2002 | `kDiagImageUnsupported` | Unsupported (a feature wuffs reports as unsupported, or a WebP source in a build without `KILN_WEBP`), InvalidArgument (the post-decode channel/bit-depth conversion, `convert_image`, rejected the image) | Error | An image feature this build cannot decode (for JPEG: arithmetic coding, 12/16-bit precision, lossless or hierarchical coding), WebP without `KILN_WEBP=ON`, or the conversion to the target channel count/bit depth failed. | Re-export the image as baseline/progressive 8-bit JPEG or as PNG; for WebP, configure with `-DKILN_WEBP=ON`. |
+| K2003 | `kDiagImageUnknownFormat` | Unsupported | Error | The source bytes start with no PNG, JPEG, WebP or KTX2 signature. The decoder is chosen by signature, never by file extension or glTF `mimeType`. | Supply a PNG, JPEG, WebP or KTX2 file; check the asset was not corrupted or mislabeled. |
 | K2004 | `kDiagImagePassthroughBad` | (whatever `Ktx2View::open` reported, e.g. Corrupt/Unsupported — see K4100-4199), Unsupported, Corrupt | Error | A KTX2 source was rejected for pass-through: the reader itself rejected it, it is supercompressed, it is not a plain 2D texture (has depth, is an array, or is a cube), it is missing level data (Corrupt), or its extent exceeds the size cap and pass-through cannot downscale (Unsupported). | Recook the KTX2 as a plain, non-supercompressed 2D texture under the size cap, or supply a PNG source instead so the cooker can re-encode it. |
 | K2005 | `kDiagImageDownscaled` | kOk | Info | The source image exceeds the resolved size cap (settings `maxSize` and/or the target's cap); the top mip level(s) were dropped before building the chain. | Informational. Lower the source resolution, or raise `maxSize`/the target cap if the drop is unwanted. |
 | K2006 | `kDiagImageNpotMips` | kOk | Info | A non-power-of-two image is building a mip chain; levels use floor halving instead of exact halving. | Informational. Use power-of-two dimensions if exact mip alignment matters. |
 | K2007 | `kDiagImageChannelMismatch` | kOk | Warning | The channel count is unusual for the usage: fewer than 3 channels for a Normal map (expanded to RGBA), or more than 2 channels for a Mask/Height texture (only the first channel is kept). | Author the source image with the channel count the usage expects, or accept the automatic expansion/truncation. |
-| K2008 | `kDiagImageTooLarge` | Unsupported | Error | A PNG dimension exceeds 16384, the decoded byte size would exceed 2^32, or the decoder's required work buffer would exceed twice that limit. | Downscale the source image before cooking. |
+| K2008 | `kDiagImageTooLarge` | Unsupported | Error | An image dimension exceeds 16384, the decoded byte size would exceed 2^32, or the decoder's required work buffer would exceed twice that limit. | Downscale the source image before cooking. |
+| K2009 | `kDiagImageLossySource` | kOk | Warning | A Normal or Height texture comes from a lossy source (JPEG or lossy WebP). Block artifacts turn into visible shading noise, and a later BCn encode loses quality a second time. | Author normal and height maps as PNG (or lossless WebP). |
 
 ### 3.3 K3000-3999 — Settings resolution
 

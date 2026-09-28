@@ -1,4 +1,6 @@
-// tests/test_image.cpp — cook-side image pipeline; decode_png input comes from png_writer.h.
+// tests/test_image.cpp — cook-side image pipeline; decode_png input comes from png_writer.h,
+// decode_jpeg / decode_webp input comes from image_fixtures.h.
+#include "image_fixtures.h"
 #include "kiln_test.h"
 #include "png_writer.h"
 
@@ -13,6 +15,7 @@
 using namespace kiln;
 using namespace kiln::cook;
 namespace png = kiln::test::png;
+namespace img = kiln::test::img;
 
 namespace {
 
@@ -958,6 +961,150 @@ KILN_TEST(image, renormalize_8bit_table_matches_divide) {
         run_rows(kernels::renormalize_kernel_scalar(8, ch), scalar);
         KILN_CHECK_MSG(same_image(fast, want), "dispatched kernel, %u channels", ch);
         KILN_CHECK_MSG(same_image(scalar, want), "scalar kernel, %u channels", ch);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// JPEG / WebP (tests/corpus/images/generate.py; bytes and reference pixels in
+// tests/image_fixtures.h)
+// ---------------------------------------------------------------------------
+
+namespace {
+
+/// Every decoded byte within `tol` of the reference source pixels.
+bool pixels_close(Image const& im, Span<u8 const> want, u32 tol) {
+    if (!KILN_CHECK_EQ(im.pixels.size(), want.size)) return false;
+    u32 worst = 0;
+    for (usize i = 0; i < want.size; ++i) {
+        u32 const a = im.pixels[i], b = want[i];
+        worst = max(worst, a > b ? a - b : b - a);
+    }
+    return KILN_CHECK_MSG(worst <= tol, "max channel delta %u exceeds tolerance %u", worst, tol);
+}
+
+} // namespace
+
+KILN_TEST(image, jpeg_webp_signatures) {
+    Span<u8 const> const jpeg     = img::kJpegGradientRgbBytes;
+    Span<u8 const> const lossless = img::kWebpLosslessRgbaBytes;
+    Span<u8 const> const lossy    = img::kWebpLossyRgbBytes;
+
+    KILN_CHECK(is_jpeg(jpeg));
+    KILN_CHECK(!is_webp(jpeg));
+    KILN_CHECK(!is_png(jpeg));
+    KILN_CHECK(is_lossy_image(jpeg));
+
+    KILN_CHECK(is_webp(lossless));
+    KILN_CHECK(!is_jpeg(lossless));
+    KILN_CHECK(!is_lossy_image(lossless)); // lossless WebP is not a lossy source
+
+    KILN_CHECK(is_webp(lossy));
+    KILN_CHECK(!is_jpeg(lossy));
+    KILN_CHECK(is_lossy_image(lossy));
+
+    u8 const tooShort[2] = {0xFF, 0xD8};
+    KILN_CHECK(!is_jpeg(tooShort));
+    KILN_CHECK(!is_lossy_image(tooShort));
+}
+
+KILN_TEST(image, jpeg_decode_gradient_rgb) {
+    DiagLog log;
+    DiagSink const sink = log.sink();
+    Result<Image> r     = decode_jpeg(img::kJpegGradientRgbBytes, default_allocator(), &sink, "gradient.jpg");
+    KILN_REQUIRE(r.ok());
+    KILN_CHECK_EQ(r->width, u32(img::kWJpegGradientRgb));
+    KILN_CHECK_EQ(r->height, u32(img::kHJpegGradientRgb));
+    KILN_CHECK_EQ(r->channels, u32(img::kCJpegGradientRgb));
+    KILN_CHECK_EQ(r->bitsPerChannel, 8u);
+    pixels_close(*r, img::kJpegGradientRgbPixels, 6);
+    KILN_CHECK_EQ(log.count, 0);
+}
+
+KILN_TEST(image, jpeg_decode_gray) {
+    Result<Image> r = decode_jpeg(img::kJpegGrayBytes, default_allocator(), nullptr, "gray.jpg");
+    KILN_REQUIRE(r.ok());
+    KILN_CHECK_EQ(r->width, u32(img::kWJpegGray));
+    KILN_CHECK_EQ(r->height, u32(img::kHJpegGray));
+    KILN_CHECK_EQ(r->channels, u32(img::kCJpegGray));
+    KILN_CHECK_EQ(r->channels, 1u);
+    pixels_close(*r, img::kJpegGrayPixels, 6);
+}
+
+KILN_TEST(image, jpeg_decode_progressive) {
+    Result<Image> r =
+        decode_jpeg(img::kJpegProgressiveBytes, default_allocator(), nullptr, "progressive.jpg");
+    KILN_REQUIRE(r.ok());
+    KILN_CHECK_EQ(r->width, u32(img::kWJpegProgressive));
+    KILN_CHECK_EQ(r->height, u32(img::kHJpegProgressive));
+    KILN_CHECK_EQ(r->channels, u32(img::kCJpegProgressive));
+    pixels_close(*r, img::kJpegProgressivePixels, 6);
+}
+
+KILN_TEST(image, jpeg_truncated_fails) {
+    Span<u8 const> const full(img::kJpegGradientRgbBytes);
+
+    DiagLog log;
+    DiagSink const sink = log.sink();
+    Result<Image> r     = decode_jpeg(full.first(full.size - 100), default_allocator(), &sink, "cut.jpg");
+    KILN_CHECK_EQ(r.code(), Code::ParseError);
+    KILN_CHECK(log.has(kDiagImageDecodeFailed));
+
+    DiagLog log2;
+    DiagSink const sink2 = log2.sink();
+    Result<Image> r2     = decode_jpeg(full.first(10), default_allocator(), &sink2, "head.jpg");
+    KILN_CHECK_EQ(r2.code(), Code::ParseError);
+    KILN_CHECK(log2.has(kDiagImageDecodeFailed));
+}
+
+KILN_TEST(image, decode_image_dispatch) {
+    u8 rgba[2 * 2 * 4];
+    pattern(rgba, sizeof rgba, 30);
+    Vec<u8> pngFile = png::encode({.width = 2, .height = 2, .colorType = 6, .depth = 8, .pixels = rgba});
+    Result<Image> p = decode_image(pngFile.span(), default_allocator());
+    KILN_REQUIRE(p.ok());
+    KILN_CHECK_EQ(p->channels, 4u);
+
+    Result<Image> j = decode_image(img::kJpegGrayBytes, default_allocator());
+    KILN_REQUIRE(j.ok());
+    KILN_CHECK_EQ(j->width, u32(img::kWJpegGray));
+    KILN_CHECK_EQ(j->channels, 1u);
+
+    DiagLog log;
+    DiagSink const sink = log.sink();
+    u8 const junk[16]   = {'n', 'o', 't', ' ', 'a', 'n', ' ', 'i', 'm', 'a', 'g', 'e'};
+    Result<Image> r3    = decode_image(junk, default_allocator(), &sink, "junk.bin");
+    KILN_CHECK_EQ(r3.code(), Code::Unsupported);
+    KILN_CHECK(log.has(kDiagImageUnknownFormat));
+}
+
+KILN_TEST(image, webp_decode) {
+    if (webp_decode_enabled()) {
+        DiagLog log;
+        DiagSink const sink = log.sink();
+        Result<Image> l =
+            decode_webp(img::kWebpLosslessRgbaBytes, default_allocator(), &sink, "lossless.webp");
+        KILN_REQUIRE(l.ok());
+        KILN_CHECK_EQ(l->width, u32(img::kWWebpLosslessRgba));
+        KILN_CHECK_EQ(l->height, u32(img::kHWebpLosslessRgba));
+        KILN_CHECK_EQ(l->channels, 4u);
+        KILN_CHECK_EQ(l->bitsPerChannel, 8u);
+        KILN_REQUIRE_EQ(l->pixels.size(), sizeof img::kWebpLosslessRgbaPixels);
+        KILN_CHECK(std::memcmp(l->pixels.data(), img::kWebpLosslessRgbaPixels, l->pixels.size()) == 0);
+        KILN_CHECK_EQ(log.count, 0);
+
+        Result<Image> y = decode_webp(img::kWebpLossyRgbBytes, default_allocator(), nullptr, "lossy.webp");
+        KILN_REQUIRE(y.ok());
+        KILN_CHECK_EQ(y->width, u32(img::kWWebpLossyRgb));
+        KILN_CHECK_EQ(y->height, u32(img::kHWebpLossyRgb));
+        KILN_CHECK_EQ(y->channels, 3u);
+        pixels_close(*y, img::kWebpLossyRgbPixels, 24);
+    } else {
+        DiagLog log;
+        DiagSink const sink = log.sink();
+        Result<Image> l =
+            decode_webp(img::kWebpLosslessRgbaBytes, default_allocator(), &sink, "lossless.webp");
+        KILN_CHECK_EQ(l.code(), Code::Unsupported);
+        KILN_CHECK(log.has(kDiagImageUnsupported));
     }
 }
 

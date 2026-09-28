@@ -1,9 +1,10 @@
-// tools/kiln-cook/main.cpp — cook glTF/GLB, PNG and KTX2 sources into the store. Options: README.md.
-// Exit codes: 0 all inputs cooked, 1 usage, 2 IO failure, 3 one or more cook errors.
+// tools/kiln-cook/main.cpp — cook glTF/GLB, PNG, JPEG, WebP and KTX2 sources into the store. Options:
+// README.md. Exit codes: 0 all inputs cooked, 1 usage, 2 IO failure, 3 one or more cook errors.
 #include "cli.h"
 
 #include "kiln/containers.h"
 #include "kiln/cook/cook.h"
+#include "kiln/cook/image.h"
 #include "kiln/cook/settings.h"
 #include "kiln/hash.h"
 #include "kiln/io.h"
@@ -92,7 +93,8 @@ bool iequals(StrView a, char const* b) {
 }
 
 bool is_source_ext(StrView ext) {
-    return iequals(ext, "glb") || iequals(ext, "gltf") || iequals(ext, "png") || iequals(ext, "ktx2");
+    return iequals(ext, "glb") || iequals(ext, "gltf") || iequals(ext, "png") || iequals(ext, "jpg") ||
+           iequals(ext, "jpeg") || (iequals(ext, "webp") && webp_decode_enabled()) || iequals(ext, "ktx2");
 }
 
 /// mkdir -p for forward-slash paths.

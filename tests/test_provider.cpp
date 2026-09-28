@@ -2,6 +2,7 @@
 // cook-only. Needs `--samples <dir>` (scratch store and sources) and `--corpus <dir>` (uses
 // `<dir>/../gltf/generated` and `<dir>/../gltf/khronos`).
 // Every test no-ops when either flag is missing.
+#include "image_fixtures.h"
 #include "kiln_test.h"
 #include "png_writer.h"
 
@@ -276,6 +277,31 @@ KILN_TEST(Provider, DiskModeCooksAndWritesNamedStoreFiles) {
     }
 }
 
+// generated/jpeg_texture.glb has no source of its own for its "albedo" image (embedded
+// JPEG): cooking it cooks the owning mesh, same path as pbr_textures/hull_albedo (PNG).
+KILN_TEST(Provider, DiskModeCooksEmbeddedJpegTexture) {
+    char storeDir[1024], gltfDir[1024];
+    if (!scratch_dir("provider_jpeg_embedded_store", storeDir, sizeof storeDir)) return;
+    if (!gltf_generated_dir(gltfDir, sizeof gltfDir)) return;
+
+    StrView const roots[] = {StrView(gltfDir)};
+    TestContext tc;
+    if (!tc.init(StrView(storeDir), Span<StrView const>(roots, 1))) return;
+    Status const installed =
+        cook::install_provider(tc.ctx, cook::ProviderDesc{.storeMode = cook::StoreMode::Disk});
+    KILN_REQUIRE(installed.ok());
+
+    TextureHandle const tex = request_texture(tc.ctx, "jpeg_texture/albedo");
+    KILN_REQUIRE(tex);
+    KILN_CHECK_EQ(pump_until_settled(tc.ctx, tex), State::Ready);
+
+    char meshPath[1024], texPath[1024];
+    store_path(storeDir, "jpeg_texture.mesh", meshPath, sizeof meshPath);
+    store_path(storeDir, "jpeg_texture/albedo.ktx2", texPath, sizeof texPath);
+    KILN_CHECK(file_exists(meshPath));
+    KILN_CHECK_MSG(file_exists(texPath), "cook-on-miss did not write %s", texPath);
+}
+
 // Memory mode: cache-less, cooks every miss, never touches the store.
 KILN_TEST(Provider, MemoryModeNeverWritesTheStore) {
     char storeDir[1024];
@@ -320,6 +346,33 @@ KILN_TEST(Provider, MissingSourceFailsWithStoreMiss) {
     KILN_REQUIRE(mesh);
     KILN_CHECK_EQ(pump_until_settled(tc.ctx, mesh), State::Failed);
     KILN_CHECK_EQ(diags.firstCode, u32(kDiagStoreMiss));
+}
+
+// A texture whose only source is `<root>/tex.jpg` cooks like any other source extension
+// (provider_cook's texExts tries png, jpg, jpeg, webp, ktx2 in order).
+KILN_TEST(Provider, DiskModeCooksJpegSource) {
+    char root[1024], storeDir[1024];
+    if (!scratch_dir("provider_jpeg_src", root, sizeof root)) return;
+    if (!scratch_dir("provider_jpeg_store", storeDir, sizeof storeDir)) return;
+    make_dir(root);
+
+    char srcPath[1100], texPath[1100];
+    format(srcPath, sizeof srcPath, "%s/tex.jpg", root);
+    format(texPath, sizeof texPath, "%s/tex.ktx2", storeDir);
+    std::remove(texPath);
+    replace_file(srcPath, kiln::test::img::kJpegGradientRgbBytes);
+
+    StrView const roots[] = {StrView(root)};
+    TestContext tc;
+    if (!tc.init(StrView(storeDir), Span<StrView const>(roots, 1))) return;
+    Status const installed =
+        cook::install_provider(tc.ctx, cook::ProviderDesc{.storeMode = cook::StoreMode::Disk});
+    KILN_REQUIRE(installed.ok());
+
+    TextureHandle const tex = request_texture(tc.ctx, "tex");
+    KILN_REQUIRE(tex);
+    KILN_CHECK_EQ(pump_until_settled(tc.ctx, tex), State::Ready);
+    KILN_CHECK_MSG(file_exists(texPath), "cook-on-miss did not write %s", texPath);
 }
 
 // The source poller re-cooks a PNG whose file changed and overwrites its store file. This

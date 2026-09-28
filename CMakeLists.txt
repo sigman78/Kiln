@@ -25,6 +25,7 @@ endif()
 option(KILN_BUILD_COOK            "Build kiln_cook (cooker library)"                 ON)
 option(KILN_BUILD_TOOLS           "Build kiln-cook / kiln-info CLI tools"            ON)
 option(KILN_HOT_RELOAD            "Compile hot-reload support into kiln_runtime"     ON)
+option(KILN_WEBP                  "Decode WebP texture sources in kiln_cook"         OFF)
 option(KILN_BUILD_TESTS           "Build unit tests"                                 ${KILN_IS_TOP_LEVEL})
 option(KILN_BUILD_EXAMPLES        "Build examples (null adapter, ...)"               OFF)
 option(KILN_BUILD_VIEWER          "Build the Vulkan example viewer (headers fetched; no SDK)" OFF)
@@ -122,7 +123,7 @@ if(KILN_BUILD_COOK)
         src/cook/kernels.h
         src/cook/parallel.h
         src/cook/parallel.cpp
-        src/cook/png_decode.cpp
+        src/cook/image_decode.cpp
         src/cook/texture_cook.cpp
         src/cook/cook_internal.h
         src/cook/gltf_import.cpp
@@ -135,6 +136,9 @@ set_target_properties(kiln_cook PROPERTIES EXPORT_NAME cook)
     kiln_apply_defaults(kiln_cook)
     target_link_libraries(kiln_cook PUBLIC kiln_runtime)
     target_link_libraries(kiln_cook PRIVATE kiln_third_party_cook)
+    if(KILN_WEBP)
+        target_compile_definitions(kiln_cook PRIVATE KILN_WEBP=1)
+    endif()
 endif()
 
 # ---------------------------------------------------------------------------

@@ -3,7 +3,8 @@
 # Cook-only third-party dependencies (docs/design/dependencies.md, M2):
 #   - cgltf (MIT)         -- glTF import: vendored header, one-line .c TU
 #   - MikkTSpace (zlib)   -- reference tangent-space generation: vendored .c/.h
-#   - wuffs (Apache-2.0)  -- PNG decode: vendored single-file release .c, PNG-only modules
+#   - wuffs (Apache-2.0)  -- PNG/JPEG (+ WebP with KILN_WEBP) decode: vendored single-file release .c,
+#                            modules listed in wuffs/wuffs_modules.h
 #   - meshoptimizer (MIT) -- FetchContent, pinned to a commit hash
 #
 # All of it is compiled into one static library, kiln_third_party_cook, which
@@ -62,6 +63,9 @@ endif()
 
 if(MSVC)
     target_compile_definitions(kiln_third_party_cook PRIVATE _CRT_SECURE_NO_WARNINGS)
+endif()
+if(KILN_WEBP)
+    target_compile_definitions(kiln_third_party_cook PRIVATE KILN_WEBP=1)
 endif()
 
 # Include dirs are an INTERFACE usage requirement of this target, but

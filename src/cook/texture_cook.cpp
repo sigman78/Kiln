@@ -1,5 +1,5 @@
-// src/cook/texture_cook.cpp — texture cooking: PNG -> KTX2 (decode, convert per usage,
-// mips) or KTX2 pass-through.
+// src/cook/texture_cook.cpp — texture cooking: PNG/JPEG/WebP -> KTX2 (decode, convert per
+// usage, mips) or KTX2 pass-through.
 #include "cook_internal.h"
 
 #include "kiln/cook/image.h"
@@ -118,19 +118,24 @@ Plan plan_for(Image const& img, TextureUsage usage, ColorSpace cs, DiagSink cons
 
 bool is_pow2(u32 v) noexcept { return v != 0 && (v & (v - 1)) == 0; }
 
-Result<CookedTexture> cook_png(TextureSource const& src, TextureCookSettings const& settings,
-                               TargetProfile const& target, u32 cap, Allocator const* alloc,
-                               DiagSink const* diag, JobBudget const& budget, StrView asset,
-                               u64 sourceHash) noexcept {
+Result<CookedTexture> cook_decoded(TextureSource const& src, TextureCookSettings const& settings,
+                                   TargetProfile const& target, u32 cap, Allocator const* alloc,
+                                   DiagSink const* diag, JobBudget const& budget, StrView asset,
+                                   u64 sourceHash) noexcept {
     detail::Stopwatch const swTotal;
     detail::Stopwatch const swDecode;
-    KILN_TRY_ASSIGN(Image decoded, decode_png(src.bytes, alloc, diag, asset));
+    KILN_TRY_ASSIGN(Image decoded, decode_image(src.bytes, alloc, diag, asset));
     u64 const decodeUs = swDecode.elapsed_us();
 
     TextureUsage const usage = settings.usage == TextureUsage::Auto ? TextureUsage::Color : settings.usage;
     ColorSpace const cs =
         settings.colorSpace == ColorSpace::Auto ? color_space_for(usage) : settings.colorSpace;
     Plan plan = plan_for(decoded, usage, cs, diag, asset);
+    if ((usage == TextureUsage::Normal || usage == TextureUsage::Height) && is_lossy_image(src.bytes))
+        (void)diagf(
+            diag, kOk, kDiagImageLossySource, Severity::Warning, asset, "texture",
+            "%s texture comes from a lossy source (JPEG or lossy WebP); artifacts show as shading noise",
+            usage == TextureUsage::Normal ? "Normal" : "Height");
 
     detail::Stopwatch const swPrepare;
     Result<Image> converted =
@@ -226,11 +231,11 @@ Result<CookedTexture> cook_texture(TextureSource const& src, TextureCookSettings
     u32 const cap                = min(settingsCap, targetCap);
 
     if (is_ktx2(src.bytes)) return pass_through(src, cap, alloc, diag, asset, sourceHash);
-    if (is_png(src.bytes))
-        return cook_png(src, settings, target, cap, alloc, diag, JobBudget{env.jobs, env.maxThreads}, asset,
-                        sourceHash);
+    if (is_png(src.bytes) || is_jpeg(src.bytes) || is_webp(src.bytes))
+        return cook_decoded(src, settings, target, cap, alloc, diag, JobBudget{env.jobs, env.maxThreads},
+                            asset, sourceHash);
     return fail(diag, asset, make_status(Code::Unsupported), kDiagImageUnknownFormat,
-                "source is neither PNG nor KTX2 (%llu bytes)", src.bytes.size);
+                "source is not PNG, JPEG, WebP or KTX2 (%llu bytes)", src.bytes.size);
 }
 
 } // namespace kiln::cook

@@ -2,6 +2,7 @@
 // All memory lives in the cook arena; external URIs go through MeshSource::resolver.
 #include "cook_internal.h"
 
+#include "kiln/cook/image.h"
 #include "kiln/log.h"
 
 #include <cmath>
@@ -949,10 +950,13 @@ Status traverse(Ctx& c) noexcept {
 
 void read_texture_view(Ctx& c, cgltf_texture_view const& v, ImportTexture& out) noexcept {
     if (!v.texture) return;
-    out.present            = true;
-    cgltf_image const* img = v.texture->image ? v.texture->image : v.texture->basisu_image;
-    out.image              = img ? u32(cgltf_image_index(c.data, img)) : kInvalid;
-    cgltf_int tc           = v.texcoord;
+    out.present = true;
+    // The core source (PNG/JPEG) wins over EXT_texture_webp: it is never lossier.
+    cgltf_image const* img = v.texture->image;
+    if (!img && webp_decode_enabled()) img = v.texture->webp_image;
+    if (!img) img = v.texture->basisu_image;
+    out.image    = img ? u32(cgltf_image_index(c.data, img)) : kInvalid;
+    cgltf_int tc = v.texcoord;
     if (v.has_transform && v.transform.has_texcoord) tc = v.transform.texcoord;
     out.texcoord = tc > 0 ? u32(tc) : 0;
 }

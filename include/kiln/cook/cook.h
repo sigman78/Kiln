@@ -1,4 +1,4 @@
-// kiln/cook/cook.h — the cooker: glTF/GLB -> .mesh, PNG/KTX2 -> KTX2, and the
+// kiln/cook/cook.h — the cooker: glTF/GLB -> .mesh, PNG/JPEG/WebP/KTX2 -> KTX2, and the
 // content-hashed store. Pure functions over caller memory: no global state,
 // thread-safe, deterministic output.
 #pragma once
@@ -57,7 +57,7 @@ enum GltfDiagCode : u32 {
 // ---------------------------------------------------------------------------
 
 struct CookStats {
-    // Texture: decode_png, prepare_image (convert + flip green + renormalize),
+    // Texture: decode_image, prepare_image (convert + flip green + renormalize),
     // build_mip_chain, ktx2::write.
     u64 decodeUs  = 0;
     u64 prepareUs = 0;
@@ -144,7 +144,7 @@ KILN_API Result<CookedMesh> cook_mesh(MeshSource const& src, MeshCookSettings co
 // ---------------------------------------------------------------------------
 
 struct TextureSource {
-    Span<u8 const> bytes = {}; ///< PNG or KTX2
+    Span<u8 const> bytes = {}; ///< PNG, JPEG, WebP or KTX2
     StrView assetPath    = {}; ///< e.g. "meshes/ship_hauler_a/hull_albedo"
     StrView sourcePath   = {}; ///< for diagnostics
     u64 sourceHash       = 0;  ///< 0 = computed
@@ -158,7 +158,7 @@ struct CookedTexture {
     CookStats stats;
 };
 
-/// Cook a PNG (decode, convert per usage, mips) or pass a suitable KTX2 through.
+/// Cook a PNG, JPEG or WebP (decode, convert per usage, mips) or pass a suitable KTX2 through.
 /// `settings` must be resolved (resolve_texture).
 KILN_API Result<CookedTexture> cook_texture(TextureSource const& src, TextureCookSettings const& settings,
                                             TargetProfile const& target, CookEnv const& env = {}) noexcept;

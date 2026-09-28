@@ -12,7 +12,7 @@ Hot reload is two independent pollers joined by the store on disk:
    changes, the asset reloads from the store. This alone covers "someone re-ran `kiln-cook`" and any
    external pipeline, and needs no cook code.
 2. **`kiln_cook`'s provider watches sources.** The cook-on-miss provider remembers which source file
-   produced each asset it cooked (a glb produces the mesh and its embedded textures; a PNG or KTX2
+   produced each asset it cooked (a glb produces the mesh and its embedded textures; a PNG, JPEG, WebP or KTX2
    produces one texture). A poll thread stats those sources; when one changes it re-cooks through the
    same functions as cook-on-miss and rewrites the store files, which the runtime poller then sees.
 
@@ -54,7 +54,7 @@ v0.5 relation: glb to its embedded textures.
 - `ProviderDesc::watchSources` and `pollMs` start the source poller in `install_provider`.
 - The provider records per cooked asset: source path, its `IoStat` at cook time, and the asset paths
   it produced. Re-cook happens on the poller thread through the existing cook-on-miss functions with
-  `storeMode` Disk, so a glb rewrites its mesh and its embedded textures; a PNG rewrites its texture.
+  `storeMode` Disk, so a glb rewrites its mesh and its embedded textures; an image rewrites its texture.
   Diagnostics from a re-cook go to the log (`KILN_WARN` / `KILN_ERROR`), since there is no pump
   thread to replay them on.
 - `store_write` gains an `overwrite` flag. Cook-on-miss keeps the existing leave-if-present rule;

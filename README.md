@@ -1,7 +1,7 @@
 # Kiln
 
 Kiln is a graphics-API-agnostic asset cook and load library for C++23. It cooks source assets
-(`.glb`, `.png`, `.ktx2`) into GPU-ready runtime formats (`.mesh` and KTX2), loads them
+(`.glb`, `.png`, `.jpg`, `.ktx2`) into GPU-ready runtime formats (`.mesh` and KTX2), loads them
 asynchronously straight into memory the renderer provides, and will hot-reload them on source
 change. The library never calls a graphics API: every GPU interaction goes through a small adapter
 struct that the renderer fills in.
@@ -10,7 +10,7 @@ struct that the renderer fills in.
 breaks are listed in `CHANGELOG.md`.
 
 ```
-source (glb, png, ktx2) --> cook (kiln_cook, in-process or kiln-cook CLI) --> store (<store>/<asset>.mesh|.ktx2)
+source (glb, png, jpg, ktx2) --> cook (kiln_cook, in-process or kiln-cook CLI) --> store (<store>/<asset>.mesh|.ktx2)
                                                                                      |
 renderer (Vulkan, sokol, bgfx, ...) <-- adapter <-- kiln_runtime: async load, pump() per frame, placeholders
 ```
@@ -34,7 +34,7 @@ read-only `*-shipping` presets (Release, cook, tools and hot reload off; see
 |---|---|---|
 | `kiln_core` | vocabulary types, allocators, containers, hashing, logging, `Result` | yes |
 | `kiln_runtime` | `.mesh` and KTX2 readers, IO backend and thread pool, the async runtime, null adapter | yes |
-| `kiln_cook` | glTF and PNG import, image kernels, cooker, settings, store writer | no |
+| `kiln_cook` | glTF, PNG and JPEG import (WebP optional), image kernels, cooker, settings, store writer | no |
 
 | Option | Default | Meaning |
 |---|---|---|
@@ -44,6 +44,7 @@ read-only `*-shipping` presets (Release, cook, tools and hot reload off; see
 | `KILN_BUILD_EXAMPLES` | OFF (presets: ON) | `kiln-headless` |
 | `KILN_BUILD_VIEWER` | OFF (presets: ON) | `kiln-viewer`, `kiln-vk-smoke`; fetches Vulkan-Headers, volk and GLFW, no SDK needed |
 | `KILN_HOT_RELOAD` | ON | hot-reload support in `kiln_runtime` (M5) |
+| `KILN_WEBP` | OFF | WebP texture sources in `kiln_cook` (`.webp`, `EXT_texture_webp`) |
 | `KILN_WARNINGS_AS_ERRORS` | ON when top-level | |
 | `KILN_INSTALL` | ON when top-level | install rules and the `kiln` CMake package |
 

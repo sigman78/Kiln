@@ -66,7 +66,7 @@ A kernel lives in `src/cook/kernels.h` (internal, never installed) and follows t
 
 ### What stays scalar
 
-PNG decode (wuffs, inherently serial), the KTX2 and `.mesh` writers (memcpy), the mesh cooker's
+image decode (wuffs, inherently serial), the KTX2 and `.mesh` writers (memcpy), the mesh cooker's
 own arithmetic, and `generate_normals` (order-dependent float accumulation).
 
 ## Rollout
@@ -100,7 +100,7 @@ default budget of 3 threads captures most of it.
 | Alternative | Why not now |
 |---|---|
 | ISPC or Highway | A dependency for a handful of kernels; revisit if step 5 shows real ISA-specific work |
-| Threading the PNG decode | wuffs is serial; the gain would come from decoding straight into the target layout instead |
+| Threading the image decode | wuffs is serial; the gain would come from decoding straight into the target layout instead |
 | SIMD in the mesh cooker | meshoptimizer and MikkTSpace dominate; task parallelism is the lever |
 | A general job graph | The two split shapes (rows, items) cover every kernel here |
 

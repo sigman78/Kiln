@@ -17,7 +17,7 @@ jobs:
       fail-fast: false
       matrix:
         config:
-          - { name: debug, preset: win-msvc-debug }
+          - { name: debug, preset: win-msvc-debug, extra: -DKILN_WEBP=ON }
           - { name: release, preset: win-msvc-release }
     steps:
       - uses: actions/checkout@v4
@@ -36,7 +36,7 @@ jobs:
           & "$PWD/ktxtools/bin/ktx.exe" --version
 
       - name: Configure
-        run: cmake --preset ${{ matrix.config.preset }}
+        run: cmake --preset ${{ matrix.config.preset }} ${{ matrix.config.extra }}
 
       - name: Build
         run: cmake --build --preset ${{ matrix.config.preset }}
@@ -89,7 +89,7 @@ jobs:
         include:
           - { compiler: gcc, preset: linux-gcc-debug }
           - { compiler: gcc, preset: linux-gcc-release }
-          - { compiler: clang, preset: linux-clang-debug }
+          - { compiler: clang, preset: linux-clang-debug, extra: -DKILN_WEBP=ON }
           - { compiler: clang, preset: linux-clang-release }
     steps:
       - uses: actions/checkout@v4
@@ -108,7 +108,7 @@ jobs:
           ktx --version
 
       - name: Configure
-        run: cmake --preset ${{ matrix.preset }}
+        run: cmake --preset ${{ matrix.preset }} ${{ matrix.extra }}
 
       - name: Build
         run: cmake --build --preset ${{ matrix.preset }}

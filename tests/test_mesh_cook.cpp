@@ -724,6 +724,26 @@ KILN_TEST(MeshCook, CorpusPbrTextures) {
                   0); // MR and AO: both Orm
 }
 
+// generated/jpeg_texture.glb: baseColorTexture is a real embedded JPEG (image/jpeg), not
+// the pure-Python PNGs every other corpus file embeds.
+KILN_TEST(MeshCook, CorpusJpegTexture) {
+    CorpusCook c;
+    if (!cook_corpus("generated/jpeg_texture.glb", c) || !c.opened.ok) return;
+    Vec<cook::TextureRef> const& t = c.result->textures;
+    KILN_REQUIRE_EQ(t.size(), usize(1));
+    KILN_CHECK_EQ(t[0].assetPath, StrView("meshes/jpeg_texture/albedo"));
+    KILN_CHECK_EQ(t[0].slot, cook::SlotHint::BaseColor);
+    KILN_CHECK(t[0].srgb);
+    KILN_CHECK(t[0].uri.empty());
+    KILN_CHECK_EQ(t[0].mimeType, StrView("image/jpeg"));
+    KILN_REQUIRE(t[0].embedded.size >= 3);
+    KILN_CHECK(t[0].embedded[0] == 0xFF && t[0].embedded[1] == 0xD8 && t[0].embedded[2] == 0xFF);
+
+    mesh::MeshView const& v = c.opened.view;
+    KILN_REQUIRE_EQ(v.textures().size(), 1u);
+    KILN_CHECK_EQ(v.materials()[0].textureCount, 1u);
+}
+
 KILN_TEST(MeshCook, CorpusRejects) {
     CorpusCook draco;
     if (!cook_corpus("generated/draco_required.glb", draco)) return;

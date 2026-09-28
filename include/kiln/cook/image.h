@@ -31,9 +31,9 @@ struct Image {
 // ---------------------------------------------------------------------------
 
 enum ImageDiagCode : u32 {
-    kDiagImageDecodeFailed   = 2001, ///< PNG stream malformed or truncated (ParseError)
-    kDiagImageUnsupported    = 2002, ///< PNG feature or bit depth kiln does not decode (Unsupported)
-    kDiagImageUnknownFormat  = 2003, ///< bytes are neither PNG nor KTX2 (Unsupported)
+    kDiagImageDecodeFailed = 2001, ///< image stream malformed or truncated (ParseError)
+    kDiagImageUnsupported  = 2002, ///< image feature kiln does not decode, or WebP not built in (Unsupported)
+    kDiagImageUnknownFormat  = 2003, ///< bytes are not PNG, JPEG, WebP or KTX2 (Unsupported)
     kDiagImagePassthroughBad = 2004, ///< KTX2 pass-through rejected (supercompressed, unsupported format,
                                      ///< invalid) (Unsupported/Corrupt)
     kDiagImageDownscaled = 2005,     ///< image larger than maxSize / target cap; top levels dropped (Info)
@@ -41,17 +41,38 @@ enum ImageDiagCode : u32 {
     kDiagImageChannelMismatch =
         2007,                  ///< channel count unusual for the usage (e.g. RGBA for Height) (Warning)
     kDiagImageTooLarge = 2008, ///< dimension exceeds 16384 or byte size exceeds 2^32 (Unsupported)
+    kDiagImageLossySource =
+        2009, ///< lossy source (JPEG, lossy WebP) for a Normal or Height texture (Warning)
 };
 
-/// True if `bytes` start with the PNG signature / KTX2 identifier.
+/// True if `bytes` start with the signature of that format.
 [[nodiscard]] KILN_API bool is_png(Span<u8 const> bytes) noexcept;
+[[nodiscard]] KILN_API bool is_jpeg(Span<u8 const> bytes) noexcept;
+[[nodiscard]] KILN_API bool is_webp(Span<u8 const> bytes) noexcept;
 [[nodiscard]] KILN_API bool is_ktx2(Span<u8 const> bytes) noexcept;
+/// True for JPEG and lossy WebP.
+[[nodiscard]] KILN_API bool is_lossy_image(Span<u8 const> bytes) noexcept;
+/// True if this build decodes WebP (CMake option KILN_WEBP, off by default).
+[[nodiscard]] KILN_API bool webp_decode_enabled() noexcept;
 
-/// Decode a PNG (8- or 16-bit; gray, gray+alpha, RGB, RGBA, palette expanded to
-/// RGB/RGBA) into an Image allocated from `alloc` (Tag::Cook). Interlaced PNGs are
-/// accepted. Malformed input returns ParseError with a K2xxx diagnostic.
+// Decoders return an Image allocated from `alloc` (Tag::Cook). Malformed input returns
+// ParseError, an unsupported feature returns Unsupported; both emit a K2xxx diagnostic.
+
+/// PNG: 8- or 16-bit; gray, gray+alpha, RGB, RGBA, palette expanded to RGB/RGBA. Interlaced
+/// PNGs are accepted.
 KILN_API Result<Image> decode_png(Span<u8 const> bytes, Allocator const* alloc,
                                   DiagSink const* diag = nullptr, StrView asset = {}) noexcept;
+/// JPEG: baseline and progressive, to 1 channel (gray) or 3 (RGB), 8-bit. Arithmetic
+/// coding, 12/16-bit precision, lossless and hierarchical JPEG return Unsupported.
+KILN_API Result<Image> decode_jpeg(Span<u8 const> bytes, Allocator const* alloc,
+                                   DiagSink const* diag = nullptr, StrView asset = {}) noexcept;
+/// WebP: lossy and lossless, first frame only, to 3 channels (opaque) or 4, 8-bit.
+/// Returns Unsupported when webp_decode_enabled() is false.
+KILN_API Result<Image> decode_webp(Span<u8 const> bytes, Allocator const* alloc,
+                                   DiagSink const* diag = nullptr, StrView asset = {}) noexcept;
+/// Picks the decoder from the signature. Other bytes return Unsupported (K2003).
+KILN_API Result<Image> decode_image(Span<u8 const> bytes, Allocator const* alloc,
+                                    DiagSink const* diag = nullptr, StrView asset = {}) noexcept;
 
 // ---------------------------------------------------------------------------
 // sRGB transfer, integer-exact

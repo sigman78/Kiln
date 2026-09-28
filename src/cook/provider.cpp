@@ -14,6 +14,7 @@
 #include "kiln/cook/provider.h"
 
 #include "kiln/cook/cook.h"
+#include "kiln/cook/image.h"
 #include "kiln/io.h"
 #include "kiln/log.h"
 
@@ -171,24 +172,25 @@ struct FoundSource {
     usize len       = 0;
 };
 
-/// Tries `<root>/<assetPath>.<ext1>` then `<root>/<assetPath>.<ext2>` for each
-/// root in turn (root order outer, extension order inner).
-bool find_source(Provider const& p, StrView assetPath, char const* ext1, char const* ext2,
+/// Tries `<root>/<assetPath>.<ext>` for each root and extension (root order outer,
+/// extension order inner). A null entry in `exts` is skipped.
+bool find_source(Provider const& p, StrView assetPath, Span<char const* const> exts,
                  FoundSource& out) noexcept {
     for (StrView const& root : p.roots) {
-        usize n = format(out.path, sizeof out.path, "%.*s/%.*s.%s", KILN_SV(root), KILN_SV(assetPath), ext1);
-        if (io_file_exists(StrView(out.path, n))) {
-            out.len = n;
-            return true;
-        }
-        n = format(out.path, sizeof out.path, "%.*s/%.*s.%s", KILN_SV(root), KILN_SV(assetPath), ext2);
-        if (io_file_exists(StrView(out.path, n))) {
-            out.len = n;
-            return true;
+        for (char const* ext : exts) {
+            if (!ext) continue;
+            usize const n =
+                format(out.path, sizeof out.path, "%.*s/%.*s.%s", KILN_SV(root), KILN_SV(assetPath), ext);
+            if (io_file_exists(StrView(out.path, n))) {
+                out.len = n;
+                return true;
+            }
         }
     }
     return false;
 }
+
+constexpr char const* kMeshExts[] = {"glb", "gltf"};
 
 // Mesh URI resolver: external buffers/images relative to the source file.
 
@@ -509,8 +511,10 @@ Status provider_cook(void* user, AssetKind kind, StrView assetPath, Allocator co
     auto* p = static_cast<Provider*>(user);
 
     if (kind == AssetKind::Texture) {
+        char const* const texExts[] = {"png", "jpg", "jpeg", webp_decode_enabled() ? "webp" : nullptr,
+                                       "ktx2"};
         FoundSource tex;
-        if (find_source(*p, assetPath, "png", "ktx2", tex))
+        if (find_source(*p, assetPath, texExts, tex))
             return cook_texture_on_miss(*p, StrView(tex.path, tex.len), assetPath, alloc, out, diag);
 
         // No source of its own: it must be embedded in its owning mesh
@@ -520,13 +524,13 @@ Status provider_cook(void* user, AssetKind kind, StrView assetPath, Allocator co
         StrView const meshAssetPath = assetPath.substr(0, slash);
 
         FoundSource mesh;
-        if (!find_source(*p, meshAssetPath, "glb", "gltf", mesh)) return make_status(Code::NotFound);
+        if (!find_source(*p, meshAssetPath, kMeshExts, mesh)) return make_status(Code::NotFound);
         return cook_mesh_on_miss(*p, meshAssetPath, StrView(mesh.path, mesh.len), AssetKind::Texture,
                                  assetPath, alloc, out, diag);
     }
 
     FoundSource mesh;
-    if (!find_source(*p, assetPath, "glb", "gltf", mesh)) return make_status(Code::NotFound);
+    if (!find_source(*p, assetPath, kMeshExts, mesh)) return make_status(Code::NotFound);
     return cook_mesh_on_miss(*p, assetPath, StrView(mesh.path, mesh.len), AssetKind::Mesh, assetPath, alloc,
                              out, diag);
 }
