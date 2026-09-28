@@ -95,9 +95,9 @@ struct CookEnv {
 // Mesh cooking
 // ---------------------------------------------------------------------------
 
-/// Resolves an external URI referenced by a .gltf (buffers, images). Returns the
-/// bytes (allocated from `alloc`, Tag::Cook) or a failed Status. Not needed for .glb
-/// with embedded buffers and images.
+/// Resolves an external URI referenced by a .gltf (buffers, images). `uri` is already
+/// percent-decoded. Returns the bytes (allocated from `alloc`, Tag::Cook) or a failed
+/// Status. Not needed for .glb with embedded buffers and images.
 struct UriResolver {
     Status (*fn)(void* user, StrView uri, Allocator const* alloc, Vec<u8>* out) = nullptr;
     void* user                                                                  = nullptr;
@@ -115,8 +115,9 @@ struct MeshSource {
 /// using `slot` for usage inference. Views point into CookedMesh::strings or the
 /// source bytes.
 struct TextureRef {
-    StrView assetPath       = {}; ///< cooked texture asset path: "<mesh assetPath>/<image stem>"
-    StrView uri             = {}; ///< source-relative URI for external images; empty when embedded
+    StrView assetPath = {};       ///< cooked texture asset path: "<mesh assetPath>/<image stem>"
+    StrView uri       = {};       ///< source-relative path of an external image (URI percent-decoded);
+                                  ///< empty when embedded
     Span<u8 const> embedded = {}; ///< image bytes when embedded in the GLB (points into MeshSource::bytes)
     StrView mimeType        = {}; ///< "image/png", "image/ktx2", ... (may be empty for external)
     SlotHint slot;                ///< first slot that referenced it

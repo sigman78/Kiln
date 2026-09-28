@@ -786,6 +786,35 @@ KILN_TEST(MeshCook, CorpusExternalUri) {
         KILN_CHECK(same_bytes(c.result->file.span(), again.result->file.span()));
 }
 
+KILN_TEST(MeshCook, CorpusExternalUriPercentEncoded) {
+    CorpusCook c;
+    if (!cook_corpus("generated/external_uri.gltf", c)) return;
+    // Encode the '_' in both URIs as %5F; the resolver and TextureRef see plain file names.
+    Vec<u8> patched(default_allocator(), Tag::Test);
+    StrView const text(reinterpret_cast<char const*>(c.bytes.data()), c.bytes.size());
+    StrView const needles[] = {"\"external_uri.bin\"", "\"external_uri_albedo.png\""};
+    StrView const encoded[] = {"\"external%5Furi.bin\"", "\"external%5Furi%5Falbedo.png\""};
+    usize at                = 0;
+    for (usize i = 0; i < 2; ++i) {
+        usize pos = at;
+        while (pos + needles[i].size <= text.size && text.substr(pos, needles[i].size) != needles[i])
+            ++pos;
+        KILN_REQUIRE(pos + needles[i].size <= text.size);
+        patched.append(Span<u8 const>(c.bytes.data() + at, pos - at));
+        patched.append(Span<u8 const>(reinterpret_cast<u8 const*>(encoded[i].data), encoded[i].size));
+        at = pos + needles[i].size;
+    }
+    patched.append(Span<u8 const>(c.bytes.data() + at, c.bytes.size() - at));
+
+    Diags d;
+    Result<cook::CookedMesh> r =
+        cook_bytes(patched.span(), "meshes/external_uri", d, default_settings(), &c.resolver);
+    if (!KILN_CHECK_MSG(r.ok(), "%s", d.msg)) return;
+    KILN_REQUIRE_EQ(r->textures.size(), usize(1));
+    KILN_CHECK_EQ(r->textures[0].uri, StrView("external_uri_albedo.png"));
+    KILN_CHECK_EQ(r->textures[0].mimeType, StrView("image/png"));
+}
+
 namespace {
 
 bool same_diags(Diags const& a, Diags const& b) {
