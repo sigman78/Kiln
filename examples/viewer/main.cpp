@@ -102,6 +102,7 @@ struct Options {
     Root roots[kMaxRoots]; ///< --source and --root
     u32 rootCount    = 0;
     char const* dump = nullptr;
+    char const* sky  = nullptr; ///< a cube map drawn behind the scene
     bool validate    = false;
     bool offscreen   = false;
     bool noFit       = false;
@@ -435,7 +436,9 @@ f32 framing_distance(Scene const& s, Vec3 dir, f32 aspect) {
     return dist > 0 ? dist : s.radius / std::sin(kFovY * 0.5f);
 }
 
-void write_uniforms(Scene const& s, Camera const& cam, VkExtent2D extent, vkx::FrameUniforms* u) {
+/// The frame uniforms, and the camera basis the sky shader turns into a ray per pixel.
+void write_uniforms(Scene const& s, Camera const& cam, VkExtent2D extent, vkx::FrameUniforms* u,
+                    vkx::SkyPush* sky) {
     f32 const aspect = extent.height ? f32(extent.width) / f32(extent.height) : 1.0f;
     Vec3 const dir{std::cos(cam.elevation) * std::sin(cam.azimuth), std::sin(cam.elevation),
                    std::cos(cam.elevation) * std::cos(cam.azimuth)};
@@ -454,6 +457,21 @@ void write_uniforms(Scene const& s, Camera const& cam, VkExtent2D extent, vkx::F
     u->lightDir[1]   = light.y;
     u->lightDir[2]   = light.z;
     u->lightDir[3]   = 0.0f;
+
+    // The same basis as look_at(); right and up span the view at distance 1.
+    Vec3 const f    = vkx::normalize(s.center - eye);
+    Vec3 const side = vkx::normalize(vkx::cross(f, Vec3{0, 1, 0}));
+    Vec3 const up   = vkx::cross(side, f);
+    f32 const tanV  = std::tan(kFovY * 0.5f);
+    Vec3 const r    = side * (tanV * aspect);
+    Vec3 const v    = up * tanV;
+    *sky            = vkx::SkyPush{
+                   .forward  = {f.x, f.y, f.z, 0},
+                   .right    = {r.x, r.y, r.z, 0},
+                   .up       = {v.x, v.y, v.z, 0},
+                   .cubeSlot = kInvalid,
+                   .pad      = {}
+    };
 }
 
 Input* input_of(GLFWwindow* w) { return static_cast<Input*>(glfwGetWindowUserPointer(w)); }
@@ -582,6 +600,10 @@ int main(int argc, char** argv) {
          .arg  = "<file.png>",
          .help = "offscreen: write the last frame as a PNG",
          .str  = &o.dump},
+        {.name = "--sky",
+         .arg  = "<name>",
+         .help = "a cube texture drawn behind the scene, e.g. sky_cube.png (a vertical strip of 6 faces)",
+         .str  = &o.sky},
         {.name   = "--threads",
          .arg    = "<n>",
          .help   = "kiln worker threads (default: 0 = auto)",
@@ -744,6 +766,19 @@ int main(int argc, char** argv) {
         request_textures(scene, o.meshes[i]);
     }
     place_meshes(scene, !o.noFit);
+    // The sky is one more texture item, so its events show in the log like the others.
+    u32 skyItem = kInvalid;
+    if (o.sky) {
+        TextureItem t;
+        t.textureId = hash_name(StrView(o.sky));
+        t.handle =
+            request_texture(app.ctx, StrView(o.sky), RequestOptions{.textureShape = TextureShape::Cube});
+        t.last = state(app.ctx, t.handle);
+        format(t.path, sizeof t.path, "%s", o.sky);
+        skyItem = u32(scene.textures.size());
+        scene.textures.push_back(t);
+        KILN_INFO("viewer", "request sky %s (cube) -> %s", o.sky, state_name(t.last));
+    }
     KILN_INFO("viewer",
               "scene: %u mesh(es)%s, row radius %.3f, %u texture(s) streaming, budget %u MiB per frame",
               o.meshCount, o.noFit ? " at native size" : " fitted to radius 1", double(scene.radius),
@@ -782,7 +817,14 @@ int main(int argc, char** argv) {
             if (app.window) glfwWaitEventsTimeout(0.05); // minimized or resizing
             continue;
         }
-        write_uniforms(scene, input.camera, vkx::renderer_extent(app.ren), vkx::renderer_uniforms(app.ren));
+        vkx::SkyPush sky{};
+        write_uniforms(scene, input.camera, vkx::renderer_extent(app.ren), vkx::renderer_uniforms(app.ren),
+                       &sky);
+        if (skyItem != kInvalid) {
+            // The slot serves the cube placeholder until the real cube is published.
+            sky.cubeSlot = gpu(app.ctx, scene.textures[skyItem].handle).slot;
+            if (sky.cubeSlot != kInvalid) vkx::renderer_draw_sky(app.ren, cmd, sky);
+        }
         draw_scene(scene, cmd);
         bool const last = o.offscreen && frames + 1 == maxFrames;
         vkx::renderer_end(app.ren, last && o.dump != nullptr);

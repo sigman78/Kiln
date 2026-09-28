@@ -1,7 +1,7 @@
 # Texture shapes: cube maps and arrays
 
 **Status:** Decided (owner, 2026-09-28): vertical strips, the cube face order below, no volumes for
-now, stacked name suffixes, errors on over-limit input. Steps 1 to 4 of the rollout are implemented.
+now, stacked name suffixes, errors on over-limit input. All five rollout steps are implemented.
 **Decides:** How one source image becomes a cube map or a texture array; the settings, name hints
 and sidecar keys for it; and how the runtime and the adapter carry a texture's shape.
 
@@ -127,8 +127,9 @@ New fields in `TextureCookSettings` (texture settings schema 2):
    size cap, the array limit. A slice is copied out of the strip once and gets its own mip chain.
 4. **Name hints and sidecar keys** *(done)*: stacked suffixes, `_cube` and `_array`, the `shape` and
    `slices` keys.
-5. **Viewer:** cube and array views in the example adapter, and a skybox pass, so that step 3 can
-   be checked by eye. Until then the checks are unit tests and `kiln-info`.
+5. **Viewer** *(done)*: the example adapter creates cube and array views, keeps one bindless
+   binding per shape and declares both caps; `kiln-viewer --sky <name>` draws a cube behind the
+   scene. Cube sampling flips Z: the cube frame is left-handed, the viewer's world right-handed.
 
 Later: seamless cube filtering, horizontal strips, slice-by-slice decode.
 

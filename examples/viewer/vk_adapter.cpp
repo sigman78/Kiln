@@ -5,6 +5,7 @@
 
 #include <kiln/containers.h>
 #include <kiln/log.h>
+#include <kiln/placeholders.h>
 
 #include <atomic>
 #include <mutex>
@@ -437,7 +438,8 @@ Status create_image(VkAdapter* a, Object& o, TextureDesc const& t) noexcept {
     info.queueFamilyIndexCount = sh.count;
     info.pQueueFamilyIndices   = sh.families;
     info.initialLayout         = VK_IMAGE_LAYOUT_UNDEFINED;
-    VkResult r                 = vkCreateImage(a->device, &info, nullptr, &o.image);
+    if (t.shape == TextureShape::Cube) info.flags = VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
+    VkResult r = vkCreateImage(a->device, &info, nullptr, &o.image);
     if (r != VK_SUCCESS) {
         KILN_WARN("vk-adapter", "vkCreateImage(%s %ux%ux%u, %u levels, %u layers) failed: %s",
                   format_name(t.format), t.width, t.height, t.depth, t.levels, t.layers, result_name(r));
@@ -450,9 +452,10 @@ Status create_image(VkAdapter* a, Object& o, TextureDesc const& t) noexcept {
     VkImageViewCreateInfo view{};
     view.sType            = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
     view.image            = o.image;
-    view.viewType         = is3d           ? VK_IMAGE_VIEW_TYPE_3D
-                            : t.layers > 1 ? VK_IMAGE_VIEW_TYPE_2D_ARRAY
-                                           : VK_IMAGE_VIEW_TYPE_2D;
+    view.viewType         = is3d                             ? VK_IMAGE_VIEW_TYPE_3D
+                            : t.shape == TextureShape::Cube  ? VK_IMAGE_VIEW_TYPE_CUBE
+                            : t.shape == TextureShape::Array ? VK_IMAGE_VIEW_TYPE_2D_ARRAY
+                                                             : VK_IMAGE_VIEW_TYPE_2D;
     view.format           = info.format;
     view.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, t.levels, 0, t.layers};
     r                     = vkCreateImageView(a->device, &view, nullptr, &o.view);
@@ -483,7 +486,8 @@ u64 texture_layout(TextureDesc const& t, u64* offsets, u64* pitches) noexcept {
     return cur;
 }
 
-void write_slot(VkAdapter* a, u32 slot, VkImageView view) noexcept {
+/// Binding 0 holds 2D views, 1 cube views, 2 array views; a slot index is shared by all three.
+void write_slot(VkAdapter* a, u32 slot, VkImageView view, TextureShape shape) noexcept {
     VkDescriptorImageInfo image{};
     image.sampler     = a->sampler;
     image.imageView   = view;
@@ -491,7 +495,7 @@ void write_slot(VkAdapter* a, u32 slot, VkImageView view) noexcept {
     VkWriteDescriptorSet write{};
     write.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     write.dstSet          = a->set;
-    write.dstBinding      = 0;
+    write.dstBinding      = u32(shape);
     write.dstArrayElement = slot;
     write.descriptorCount = 1;
     write.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
@@ -618,7 +622,7 @@ void vk_copy_constraints(void* /*user*/, CopyConstraints* out) noexcept {
     out->bufferOffsetAlign    = kBufferOffsetAlign;
 }
 
-Status vk_acquire(void* user, AssetId id, UploadKind kind, TextureKind texKind, TextureShape /*shape*/,
+Status vk_acquire(void* user, AssetId id, UploadKind kind, TextureKind texKind, TextureShape shape,
                   GpuObject* out) noexcept {
     *out = GpuObject{};
     if (kind != UploadKind::TextureLevels) return kOk; // meshes have no slot
@@ -636,11 +640,11 @@ Status vk_acquire(void* user, AssetId id, UploadKind kind, TextureKind texKind, 
         a->freeSlots.pop_back();
         a->assetSlots.insert(id, slot);
     }
-    // The kind placeholder, or the BaseColor one while that kind's is not published yet.
-    u32 const kindId = u32(kFirstPlaceholderId) + u32(texKind);
-    Object const* ph = object_of(a, a->placeholders[kindId]);
-    if (!ph) ph = object_of(a, a->placeholders[kFirstPlaceholderId]);
-    if (ph && ph->view) write_slot(a, slot, ph->view);
+    // The placeholder of the kind and shape, or the shape's BaseColor one while that is not
+    // published yet.
+    Object const* ph = object_of(a, a->placeholders[placeholder_asset_id(texKind, shape)]);
+    if (!ph) ph = object_of(a, a->placeholders[placeholder_asset_id(TextureKind::BaseColor, shape)]);
+    if (ph && ph->view) write_slot(a, slot, ph->view, shape);
     *out = GpuObject{.native = 0, .slot = slot, .kind = u32(kind)};
     return kOk;
 }
@@ -660,8 +664,10 @@ Status vk_begin_upload(void* user, UploadDesc const& desc, UploadTarget* out) no
         TextureDesc const& t = *desc.texture;
         u64 offsets[kMaxLevels];
         u64 pitches[kMaxLevels];
-        // The bindless array holds 2D views only; this adapter sets no kCubeTextures / kArrayTextures.
-        if (t.shape != TextureShape::Tex2D || t.levels == 0 || t.levels > kMaxLevels || t.layers == 0 ||
+        bool const shapeOk = t.shape == TextureShape::Array ||
+                             (t.shape == TextureShape::Cube && t.layers == 6 && t.width == t.height) ||
+                             (t.shape == TextureShape::Tex2D && t.layers == 1);
+        if (!shapeOk || t.levels == 0 || t.levels > kMaxLevels || t.layers == 0 ||
             (t.depth > 1 && t.layers > 1) || texture_layout(t, offsets, pitches) > desc.size) {
             KILN_WARN("vk-adapter", "texture %016llx: unsupported shape or layout",
                       static_cast<unsigned long long>(desc.id));
@@ -771,7 +777,7 @@ void vk_publish(void* user, AssetId id, GpuObject obj, u32 /*version*/) noexcept
         a->slotReleases.push_back(SlotRelease{.slot = slot, .frame = a->frame});
         return;
     }
-    if (o && o->view) write_slot(a, slot, o->view);
+    if (o && o->view) write_slot(a, slot, o->view, o->texture.shape);
 }
 
 void vk_destroy_deferred(void* user, GpuObject obj) noexcept {
@@ -833,27 +839,33 @@ Status create_vulkan_objects(VkAdapter* a) noexcept {
     pci.queueFamilyIndex = d.transferFamily;
     VKX_CHECK(vkCreateCommandPool(a->device, &pci, nullptr, &a->pool));
 
-    // Bindless set: binding 0 = sampler2D[maxSlots], partially bound, update after bind.
-    VkDescriptorSetLayoutBinding binding{};
-    binding.binding                             = 0;
-    binding.descriptorType                      = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    binding.descriptorCount                     = a->desc.maxSlots;
-    binding.stageFlags                          = VK_SHADER_STAGE_ALL_GRAPHICS;
-    VkDescriptorBindingFlags const bindingFlags = VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT |
-                                                  VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT |
-                                                  VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT;
+    // Bindless set: bindings 0, 1, 2 = sampler2D, samplerCube, sampler2DArray [maxSlots], one per
+    // TextureShape, partially bound, update after bind.
+    constexpr u32 kBindings = u32(TextureShape::Count);
+    VkDescriptorSetLayoutBinding bindings[kBindings]{};
+    VkDescriptorBindingFlags bindingFlags[kBindings]{};
+    for (u32 i = 0; i < kBindings; ++i) {
+        bindings[i].binding         = i;
+        bindings[i].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        bindings[i].descriptorCount = a->desc.maxSlots;
+        bindings[i].stageFlags      = VK_SHADER_STAGE_ALL_GRAPHICS;
+        bindingFlags[i]             = VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT |
+                          VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT |
+                          VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT;
+    }
     VkDescriptorSetLayoutBindingFlagsCreateInfo flagsInfo{};
     flagsInfo.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO;
-    flagsInfo.bindingCount  = 1;
-    flagsInfo.pBindingFlags = &bindingFlags;
+    flagsInfo.bindingCount  = kBindings;
+    flagsInfo.pBindingFlags = bindingFlags;
     VkDescriptorSetLayoutCreateInfo lci{};
     lci.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
     lci.pNext        = &flagsInfo;
     lci.flags        = VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT;
-    lci.bindingCount = 1;
-    lci.pBindings    = &binding;
+    lci.bindingCount = kBindings;
+    lci.pBindings    = bindings;
     VKX_CHECK(vkCreateDescriptorSetLayout(a->device, &lci, nullptr, &a->setLayout));
-    VkDescriptorPoolSize const poolSize{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, a->desc.maxSlots};
+    VkDescriptorPoolSize const poolSize{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                                        a->desc.maxSlots * kBindings};
     VkDescriptorPoolCreateInfo dpci{};
     dpci.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     dpci.flags         = VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT;
@@ -894,9 +906,12 @@ Result<VkAdapter*> adapter_create(AdapterDesc const& desc, Adapter* out) noexcep
     p2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
     p2.pNext = &p12;
     vkGetPhysicalDeviceProperties2(d.physical, &p2);
-    if (desc.maxSlots > p12.maxPerStageDescriptorUpdateAfterBindSampledImages ||
-        desc.maxSlots > p12.maxDescriptorSetUpdateAfterBindSampledImages) {
-        KILN_ERROR("vk-adapter", "maxSlots %u exceeds the device's update-after-bind sampled image limit %u",
+    // Three bindings of maxSlots each (2D, cube, array).
+    u64 const sampled = u64(desc.maxSlots) * u32(TextureShape::Count);
+    if (sampled > p12.maxPerStageDescriptorUpdateAfterBindSampledImages ||
+        sampled > p12.maxDescriptorSetUpdateAfterBindSampledImages) {
+        KILN_ERROR("vk-adapter",
+                   "3 x maxSlots %u exceeds the device's update-after-bind sampled image limit %u",
                    desc.maxSlots, p12.maxPerStageDescriptorUpdateAfterBindSampledImages);
         return make_status(Code::Unsupported);
     }
@@ -962,7 +977,7 @@ Result<VkAdapter*> adapter_create(AdapterDesc const& desc, Adapter* out) noexcep
     out->is_upload_complete = &vk_is_upload_complete;
     out->publish            = &vk_publish;
     out->destroy_deferred   = &vk_destroy_deferred;
-    out->caps               = kSelfSubmitting;
+    out->caps               = kSelfSubmitting | kCubeTextures | kArrayTextures;
     out->user               = a;
     KILN_ASSERT(adapter_is_valid(*out));
     return a;

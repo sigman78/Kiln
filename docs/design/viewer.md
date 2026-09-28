@@ -14,8 +14,9 @@ offscreen mode.
 
 - **`vk_adapter.{h,cpp}`: the example adapter** (namespace `kiln::vkx`). A `kiln::Adapter` on raw
   Vulkan 1.4 that is self-submitting (dedicated transfer queue, one timeline semaphore) and
-  bindless (one sampled-image descriptor array; `acquire` writes the kind placeholder into a slot,
-  `publish` overwrites the same slot). It shows that an adapter is a few hundred lines. It knows
+  bindless (one descriptor array per `TextureShape`: 2D, cube, array, sharing one slot index;
+  `acquire` writes the placeholder of the kind and shape into a slot, `publish` overwrites the
+  same slot). It declares `kCubeTextures` and `kArrayTextures`. It shows that an adapter is a few hundred lines. It knows
   nothing about windows, swapchains, pipelines or drawing.
 - **The viewer:** `vk_device.{h,cpp}` (instance and device bring-up, shared with the smoke test),
   `viewer_render.{h,cpp}` (swapchain or offscreen image, frames in flight, one pipeline per vertex
@@ -71,14 +72,18 @@ The library never sees a Vulkan header.
   swapchain, reads it back after the last frame and writes a PNG (the encoder is the test helper
   `tests/png_writer.h`). This mode never initializes GLFW and runs on a headless machine or a
   software Vulkan driver.
+- **Sky.** `--sky <name>` requests a cube texture (`RequestOptions::textureShape = Cube`), for
+  example a vertical strip `sky_cube.png` (`texture-shapes.md`), and draws it behind the scene:
+  a full-screen triangle whose fragment shader turns the camera basis into a ray per pixel. The
+  cube placeholder shows until the cube is published.
 - **Placement and camera.** Each boot model is scaled to bounding radius 1 and placed in a row 2.5
   units apart; `--no-fit` keeps native sizes. The camera orbits the union of the placed bounds and
   frames every model; mouse drag and wheel in the window, fixed in offscreen mode.
 
 ### Shaders
 
-`shaders/mesh.vert` and `shaders/mesh.frag` (GLSL 460, Vulkan) with their `.spv` committed next to
-them and embedded into the executable as `uint32_t` arrays at configure time. The `viewer-shaders`
+`shaders/mesh.vert`, `shaders/mesh.frag`, `shaders/sky.vert` and `shaders/sky.frag` (GLSL 460,
+Vulkan) with their `.spv` committed next to them and embedded into the executable as `uint32_t` arrays at configure time. The `viewer-shaders`
 target rebuilds the `.spv` when `glslang` or `glslc` is on `PATH`; it is never part of `ALL`, and
 the build needs no shader compiler.
 

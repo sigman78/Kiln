@@ -21,15 +21,17 @@ struct AdapterDesc {
 
 struct VkAdapter;
 
-/// Fills `out` (kSelfSubmitting, bindless). `out` must outlive its users.
+/// Fills `out` (kSelfSubmitting, kCubeTextures, kArrayTextures, bindless). `out` must outlive its users.
 [[nodiscard]] Result<VkAdapter*> adapter_create(AdapterDesc const& desc, Adapter* out) noexcept;
 /// Waits for the transfer queue to go idle, then frees everything, including deferred objects.
 void adapter_destroy(VkAdapter* a) noexcept;
 
 // --- What the renderer needs from the adapter (render thread) ---------------------------
 
-/// The bindless set: binding 0 = sampler2D array of `maxSlots` (combined image samplers,
-/// partially bound, update after bind). The viewer binds it once per frame.
+/// The bindless set: bindings 0, 1, 2 = sampler2D, samplerCube and sampler2DArray arrays of
+/// `maxSlots` (combined image samplers, partially bound, update after bind), one per
+/// TextureShape. A slot index is shared: a texture's slot is valid in the binding of its shape.
+/// The viewer binds the set once per frame.
 [[nodiscard]] VkDescriptorSetLayout adapter_set_layout(VkAdapter* a) noexcept;
 [[nodiscard]] VkDescriptorSet adapter_descriptor_set(VkAdapter* a) noexcept;
 

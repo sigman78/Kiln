@@ -48,6 +48,10 @@ kiln-viewer --source path/to/models --store build/my-store Robot.glb
 kiln-viewer --source examples/assets/khronos --root gen=tests/corpus/gltf/generated \
     --store build/roots-store WaterBottle.glb gen:external_uri.gltf
 
+# a sky: a cube texture behind the scene, here a vertical strip of 6 faces (+X -X +Y -Y +Z -Z)
+kiln-viewer --source examples/assets/khronos --root sky=path/to/skies --sky sky:clouds_cube.png \
+    --store build/demo-store WaterBottle.glb
+
 # hot reload: re-export Robot.glb and the view updates in about a second
 kiln-viewer --watch --source path/to/models --store build/my-store Robot.glb
 ```

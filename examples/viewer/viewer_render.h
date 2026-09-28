@@ -34,6 +34,17 @@ struct DrawPush {
 };
 static_assert(sizeof(DrawPush) == 112); // mat4 + 2 vec4 + 4 uint, as laid out by the shaders
 
+/// The sky shaders' push constant block `Sky`: the camera basis, right and up scaled by the half
+/// extents of the view at distance 1, and the cube's bindless slot.
+struct SkyPush {
+    f32 forward[4];
+    f32 right[4];
+    f32 up[4];
+    u32 cubeSlot;
+    u32 pad[3];
+};
+static_assert(sizeof(SkyPush) <= sizeof(DrawPush)); // shares the pipeline layout's push range
+
 enum DrawFlags : u32 {
     kDrawBaseColor   = 1u << 0, ///< baseColorSlot holds a bindless slot
     kDrawVertexColor = 1u << 1, ///< the material uses vertex color
@@ -82,6 +93,9 @@ void renderer_wait_frame(Renderer* r) noexcept;
 [[nodiscard]] VkExtent2D renderer_extent(Renderer* r) noexcept;
 /// This frame's uniform block, host-visible; write it between begin and end.
 [[nodiscard]] FrameUniforms* renderer_uniforms(Renderer* r) noexcept;
+/// Draws the cube in `push.cubeSlot` behind everything: call right after renderer_begin(),
+/// before the meshes. No depth test and no depth write.
+void renderer_draw_sky(Renderer* r, VkCommandBuffer cmd, SkyPush const& push) noexcept;
 /// Step 3: ends rendering and submits, waiting on the adapter's upload watermark; presents in
 /// window mode. `readback` (offscreen only) also copies the color image into the readback
 /// buffer for renderer_read_back().

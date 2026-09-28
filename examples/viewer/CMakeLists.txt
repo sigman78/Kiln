@@ -33,7 +33,7 @@ FetchContent_MakeAvailable(VulkanHeaders volk glfw)
 # Shaders: the committed .spv are embedded as uint32_t arrays. `viewer-shaders`
 # rebuilds them from the GLSL when a compiler is on PATH; it is never part of ALL.
 # ---------------------------------------------------------------------------
-set(KILN_VIEWER_SHADERS mesh.vert mesh.frag)
+set(KILN_VIEWER_SHADERS mesh.vert mesh.frag sky.vert sky.frag)
 set(KILN_VIEWER_SHADER_HEADERS)
 foreach(shader IN LISTS KILN_VIEWER_SHADERS)
     set(spv ${CMAKE_CURRENT_SOURCE_DIR}/shaders/${shader}.spv)

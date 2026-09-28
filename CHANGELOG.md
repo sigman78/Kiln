@@ -8,6 +8,10 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
 ## [Unreleased]
 
 ### Added
+- `kiln-viewer --sky <name>` draws a cube texture behind the scene (a sky pass with
+  `shaders/sky.{vert,frag}`). The example Vulkan adapter now takes cube and array textures: one
+  bindless binding per `TextureShape` (2D, cube, array) sharing a slot index, cube-compatible
+  images, and `kCubeTextures | kArrayTextures` (`docs/design/texture-shapes.md`, step 5).
 - Cube and array textures from one strip image (`docs/design/texture-shapes.md`, steps 3 and 4):
   `TextureCookSettings::shape` (`CookShape`) and `slices` cut a vertical strip into faces or layers,
   each with its own mip chain and size cap; a bad strip is the new K2010. Name rules stack
