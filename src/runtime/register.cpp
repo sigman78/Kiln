@@ -9,10 +9,13 @@ namespace {
 Slot* register_impl(Context* ctx, AssetKind kind, StrView path, Span<u8 const> bytes,
                     RequestOptions const& opt) noexcept {
     if (!ctx) return nullptr;
-    char norm[kMaxPathLen];
-    usize const len    = normalize_path(path, norm, sizeof norm);
-    StrView const name = len == StrView::kNpos ? path : StrView(norm, len);
-    if (len != StrView::kNpos && len != 0 && map_for(ctx, kind).contains(fnv1a64(name))) {
+    StrView const name = path;
+    if (char const* why = check_asset_name(name)) {
+        diagf(&ctx->diag, make_status(Code::InvalidArgument), kDiagBadAssetName, Severity::Error, name,
+              "register", "invalid asset name: %s", why);
+        return nullptr;
+    }
+    if (map_for(ctx, kind).contains(fnv1a64(name))) {
         diagf(&ctx->diag, make_status(Code::AlreadyExists), kDiagDuplicateRegister, Severity::Error, name,
               "register", "path is already registered or requested");
         return nullptr;

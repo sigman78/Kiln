@@ -35,9 +35,14 @@ generation" wording but keeps its intent.
 
 ### `AssetId`
 
-- `using AssetId = u64`: FNV-1a 64 of the normalized cooked asset path (`asset_id()`).
-- Normalization: forward slashes, no leading `./` or `/`, **no extension**, case-sensitive.
-  Example: `"meshes/ship_hauler_a/hull_albedo"`. The normalized path is at most 255 bytes.
+- An asset name is `mount:path/file.ext#sub`. The extension is part of the name; the runtime does
+  not normalize names (no stripped extension, no `./` removal, no slash collapsing). A name is
+  checked once where it enters kiln (`check_asset_name()`) and compared byte for byte after that.
+  See `docs/design/asset-model-next.md` Part 2 (decision I3) and `include/kiln/assets.h`.
+  Example: `"meshes/ship_hauler_a.glb#hull_albedo"`. A name is at most 255 bytes
+  (`kMaxAssetNameLen`), case-sensitive.
+- `using AssetId = u64`: FNV-1a 64 of the full name, mount and extension included (`asset_id()`);
+  returns 0 for an invalid name.
 - Matches mesh-format-spec §3, so `ModelInfo.assetId` and `TextureBinding.textureId` are usable as
   `AssetId`s.
 - Id 0 is "none". Ids 1..15 are reserved for built-in placeholders. A request whose path hashes
@@ -241,6 +246,7 @@ rejected for the reasons above.
   until the first completing `pump()`.
 - Confirm `RequestOptions.textureKind` and "first request's kind wins".
 - Confirm reserved ids 1..15 for placeholders.
-- Confirm `AssetId` normalization: no extension, case-sensitive.
+- **Decided (owner, asset-model-next I3):** the extension is part of the asset name; the runtime
+  does not normalize names.
 - Confirm the implemented deviations: first live group wins (R5g), `wait()`'s permanent raise to
   `High`, `pump()` off-thread as a debug assert only (R5i).

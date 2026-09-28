@@ -76,16 +76,16 @@ struct TestContext {
     TestContext& operator=(TestContext const&) = delete;
     TestContext() noexcept                     = default;
 
-    bool init(StrView storeDir, Span<StrView const> roots, DiagSink diag = {}) noexcept {
+    bool init(StrView storeDir, Span<Mount const> mounts, DiagSink diag = {}) noexcept {
         Result<NullAdapter*> na_ = null_adapter_create({}, &adapter);
         if (!KILN_CHECK_MSG(na_.ok(), "null_adapter_create failed")) return false;
         na = na_.value();
 
         ContextDesc desc{};
-        desc.adapter     = &adapter;
-        desc.storeDir    = storeDir;
-        desc.sourceRoots = roots;
-        desc.diag        = diag;
+        desc.adapter  = &adapter;
+        desc.storeDir = storeDir;
+        desc.mounts   = mounts;
+        desc.diag     = diag;
 
         Result<Context*> c = create(desc);
         if (!KILN_CHECK_MSG(c.ok(), "create() failed (%s)", code_name(c.code()))) return false;
@@ -190,7 +190,7 @@ cook::ProviderDesc const kWatchDesc{.storeMode = cook::StoreMode::Disk, .watchSo
 
 } // namespace
 
-KILN_TEST(Provider, EmptySourceRootsIsInvalidArgument) {
+KILN_TEST(Provider, NoMountsIsInvalidArgument) {
     char storeDir[1024];
     scratch_dir("provider_store_empty_roots", storeDir, sizeof storeDir);
 
@@ -209,32 +209,34 @@ KILN_TEST(Provider, DiskModeCooksAndWritesNamedStoreFiles) {
     scratch_dir("provider_store", storeDir, sizeof storeDir);
     gltf_generated_dir(gltfDir, sizeof gltfDir);
 
-    StrView const roots[] = {StrView(gltfDir)};
+    Mount const roots[] = {
+        {{}, StrView(gltfDir)}
+    };
 
     {
         TestContext tc;
-        if (!tc.init(StrView(storeDir), Span<StrView const>(roots, 1))) return;
+        if (!tc.init(StrView(storeDir), Span<Mount const>(roots, 1))) return;
 
         Status const installed =
             cook::install_provider(tc.ctx, cook::ProviderDesc{.storeMode = cook::StoreMode::Disk});
         KILN_REQUIRE(installed.ok());
 
-        MeshHandle const mesh = request_mesh(tc.ctx, "cube_basic");
+        MeshHandle const mesh = request_mesh(tc.ctx, "cube_basic.glb");
         KILN_REQUIRE(mesh);
         KILN_CHECK_EQ(pump_until_settled(tc.ctx, mesh), State::Ready);
 
         char meshPath[1024];
-        store_path(storeDir, "cube_basic.mesh", meshPath, sizeof meshPath);
+        store_path(storeDir, "cube_basic.glb.mesh", meshPath, sizeof meshPath);
         KILN_CHECK(file_exists(meshPath));
 
-        // pbr_textures#hull_albedo is embedded in pbr_textures.glb: cooking it cooks that
+        // pbr_textures.glb#hull_albedo is embedded in pbr_textures.glb: cooking it cooks that
         // mesh, which writes the mesh plus every embedded image it references.
-        TextureHandle const tex = request_texture(tc.ctx, "pbr_textures#hull_albedo");
+        TextureHandle const tex = request_texture(tc.ctx, "pbr_textures.glb#hull_albedo");
         KILN_REQUIRE(tex);
         KILN_CHECK_EQ(pump_until_settled(tc.ctx, tex), State::Ready);
 
         char pbrMeshPath[1024];
-        store_path(storeDir, "pbr_textures.mesh", pbrMeshPath, sizeof pbrMeshPath);
+        store_path(storeDir, "pbr_textures.glb.mesh", pbrMeshPath, sizeof pbrMeshPath);
         KILN_CHECK(file_exists(pbrMeshPath));
 
         // Distinct *referenced* textures in generated/pbr_textures.glb (manifest.txt):
@@ -243,13 +245,13 @@ KILN_TEST(Provider, DiskModeCooksAndWritesNamedStoreFiles) {
         static char const* const kTextures[] = {"hull_albedo", "hull_normal", "hull_orm", "hull_emissive"};
         for (char const* name : kTextures) {
             char rel[256];
-            format(rel, sizeof rel, "pbr_textures#%s.ktx2", name);
+            format(rel, sizeof rel, "pbr_textures.glb#%s.ktx2", name);
             char path[1024];
             store_path(storeDir, rel, path, sizeof path);
             KILN_CHECK_MSG(file_exists(path), "missing %s", path);
         }
         char heightPath[1024];
-        store_path(storeDir, "pbr_textures#hull_height.ktx2", heightPath, sizeof heightPath);
+        store_path(storeDir, "pbr_textures.glb#hull_height.ktx2", heightPath, sizeof heightPath);
         KILN_CHECK_MSG(!file_exists(heightPath), "hull_height should never be cooked (unreferenced)");
     }
 
@@ -259,37 +261,39 @@ KILN_TEST(Provider, DiskModeCooksAndWritesNamedStoreFiles) {
         TestContext tc2;
         if (!tc2.init(StrView(storeDir), {})) return;
 
-        MeshHandle const mesh = request_mesh(tc2.ctx, "cube_basic");
+        MeshHandle const mesh = request_mesh(tc2.ctx, "cube_basic.glb");
         KILN_REQUIRE(mesh);
         KILN_CHECK_EQ(pump_until_settled(tc2.ctx, mesh), State::Ready);
 
-        TextureHandle const tex = request_texture(tc2.ctx, "pbr_textures#hull_albedo");
+        TextureHandle const tex = request_texture(tc2.ctx, "pbr_textures.glb#hull_albedo");
         KILN_REQUIRE(tex);
         KILN_CHECK_EQ(pump_until_settled(tc2.ctx, tex), State::Ready);
     }
 }
 
 // generated/jpeg_texture.glb has no source of its own for its "albedo" image (embedded
-// JPEG): cooking it cooks the owning mesh, same path as pbr_textures#hull_albedo (PNG).
+// JPEG): cooking it cooks the owning mesh, same path as pbr_textures.glb#hull_albedo (PNG).
 KILN_TEST(Provider, DiskModeCooksEmbeddedJpegTexture) {
     char storeDir[1024], gltfDir[1024];
     scratch_dir("provider_jpeg_embedded_store", storeDir, sizeof storeDir);
     gltf_generated_dir(gltfDir, sizeof gltfDir);
 
-    StrView const roots[] = {StrView(gltfDir)};
+    Mount const roots[] = {
+        {{}, StrView(gltfDir)}
+    };
     TestContext tc;
-    if (!tc.init(StrView(storeDir), Span<StrView const>(roots, 1))) return;
+    if (!tc.init(StrView(storeDir), Span<Mount const>(roots, 1))) return;
     Status const installed =
         cook::install_provider(tc.ctx, cook::ProviderDesc{.storeMode = cook::StoreMode::Disk});
     KILN_REQUIRE(installed.ok());
 
-    TextureHandle const tex = request_texture(tc.ctx, "jpeg_texture#albedo");
+    TextureHandle const tex = request_texture(tc.ctx, "jpeg_texture.glb#albedo");
     KILN_REQUIRE(tex);
     KILN_CHECK_EQ(pump_until_settled(tc.ctx, tex), State::Ready);
 
     char meshPath[1024], texPath[1024];
-    store_path(storeDir, "jpeg_texture.mesh", meshPath, sizeof meshPath);
-    store_path(storeDir, "jpeg_texture#albedo.ktx2", texPath, sizeof texPath);
+    store_path(storeDir, "jpeg_texture.glb.mesh", meshPath, sizeof meshPath);
+    store_path(storeDir, "jpeg_texture.glb#albedo.ktx2", texPath, sizeof texPath);
     KILN_CHECK(file_exists(meshPath));
     KILN_CHECK_MSG(file_exists(texPath), "cook-on-miss did not write %s", texPath);
 }
@@ -301,20 +305,22 @@ KILN_TEST(Provider, MemoryModeNeverWritesTheStore) {
     scratch_dir("provider_store_memory", storeDir, sizeof storeDir);
     gltf_generated_dir(gltfDir, sizeof gltfDir);
 
-    StrView const roots[] = {StrView(gltfDir)};
+    Mount const roots[] = {
+        {{}, StrView(gltfDir)}
+    };
     TestContext tc;
-    if (!tc.init(StrView(storeDir), Span<StrView const>(roots, 1))) return;
+    if (!tc.init(StrView(storeDir), Span<Mount const>(roots, 1))) return;
 
     Status const installed =
         cook::install_provider(tc.ctx, cook::ProviderDesc{.storeMode = cook::StoreMode::Memory});
     KILN_REQUIRE(installed.ok());
 
-    MeshHandle const mesh = request_mesh(tc.ctx, "cube_basic");
+    MeshHandle const mesh = request_mesh(tc.ctx, "cube_basic.glb");
     KILN_REQUIRE(mesh);
     KILN_CHECK_EQ(pump_until_settled(tc.ctx, mesh), State::Ready);
 
     char meshPath[1024];
-    store_path(storeDir, "cube_basic.mesh", meshPath, sizeof meshPath);
+    store_path(storeDir, "cube_basic.glb.mesh", meshPath, sizeof meshPath);
     KILN_CHECK_MSG(!file_exists(meshPath), "Memory mode must not write %s", meshPath);
 }
 
@@ -325,23 +331,24 @@ KILN_TEST(Provider, MissingSourceFailsWithStoreMiss) {
     scratch_dir("provider_store_missing", storeDir, sizeof storeDir);
     gltf_generated_dir(gltfDir, sizeof gltfDir);
 
-    StrView const roots[] = {StrView(gltfDir)};
+    Mount const roots[] = {
+        {{}, StrView(gltfDir)}
+    };
     DiagCapture diags;
     TestContext tc;
-    if (!tc.init(StrView(storeDir), Span<StrView const>(roots, 1), diags.sink())) return;
+    if (!tc.init(StrView(storeDir), Span<Mount const>(roots, 1), diags.sink())) return;
 
     Status const installed =
         cook::install_provider(tc.ctx, cook::ProviderDesc{.storeMode = cook::StoreMode::Disk});
     KILN_REQUIRE(installed.ok());
 
-    MeshHandle const mesh = request_mesh(tc.ctx, "does_not_exist_in_the_corpus");
+    MeshHandle const mesh = request_mesh(tc.ctx, "does_not_exist_in_the_corpus.glb");
     KILN_REQUIRE(mesh);
     KILN_CHECK_EQ(pump_until_settled(tc.ctx, mesh), State::Failed);
     KILN_CHECK_EQ(diags.firstCode, u32(kDiagStoreMiss));
 }
 
-// A texture whose only source is `<root>/tex.jpg` cooks like any other source extension
-// (provider_cook's texExts tries png, jpg, jpeg, webp, ktx2 in order).
+// A texture named `tex.jpg` cooks from `<root>/tex.jpg` like any other source extension.
 KILN_TEST(Provider, DiskModeCooksJpegSource) {
     char root[1024], storeDir[1024];
     scratch_dir("provider_jpeg_src", root, sizeof root);
@@ -350,17 +357,19 @@ KILN_TEST(Provider, DiskModeCooksJpegSource) {
 
     char srcPath[1100], texPath[1100];
     format(srcPath, sizeof srcPath, "%s/tex.jpg", root);
-    format(texPath, sizeof texPath, "%s/tex.ktx2", storeDir);
+    format(texPath, sizeof texPath, "%s/tex.jpg.ktx2", storeDir);
     replace_file(srcPath, kiln::test::img::kJpegGradientRgbBytes);
 
-    StrView const roots[] = {StrView(root)};
+    Mount const roots[] = {
+        {{}, StrView(root)}
+    };
     TestContext tc;
-    if (!tc.init(StrView(storeDir), Span<StrView const>(roots, 1))) return;
+    if (!tc.init(StrView(storeDir), Span<Mount const>(roots, 1))) return;
     Status const installed =
         cook::install_provider(tc.ctx, cook::ProviderDesc{.storeMode = cook::StoreMode::Disk});
     KILN_REQUIRE(installed.ok());
 
-    TextureHandle const tex = request_texture(tc.ctx, "tex");
+    TextureHandle const tex = request_texture(tc.ctx, "tex.jpg");
     KILN_REQUIRE(tex);
     KILN_CHECK_EQ(pump_until_settled(tc.ctx, tex), State::Ready);
     KILN_CHECK_MSG(file_exists(texPath), "cook-on-miss did not write %s", texPath);
@@ -383,13 +392,15 @@ KILN_TEST(Provider, StandaloneTextureUsageFromName) {
         replace_file(path, test_png(rgba).span());
     }
 
-    StrView const roots[] = {StrView(root)};
+    Mount const roots[] = {
+        {{}, StrView(root)}
+    };
     TestContext tc;
-    if (!tc.init(StrView(storeDir), Span<StrView const>(roots, 1))) return;
+    if (!tc.init(StrView(storeDir), Span<Mount const>(roots, 1))) return;
     KILN_REQUIRE(cook::install_provider(tc.ctx, cook::ProviderDesc{.storeMode = cook::StoreMode::Disk}).ok());
 
-    TextureHandle const color  = request_texture(tc.ctx, "wall");
-    TextureHandle const normal = request_texture(tc.ctx, "wall_n");
+    TextureHandle const color  = request_texture(tc.ctx, "wall.png");
+    TextureHandle const normal = request_texture(tc.ctx, "wall_n.png");
     KILN_REQUIRE_EQ(pump_until_settled(tc.ctx, color), State::Ready);
     KILN_REQUIRE_EQ(pump_until_settled(tc.ctx, normal), State::Ready);
     KILN_CHECK(texture_info(tc.ctx, color).desc.format == Format::R8G8B8A8_SRGB);
@@ -420,15 +431,17 @@ KILN_TEST(Provider, SidecarSetsTextureUsage) {
     format(path, sizeof path, "%s/broken.png.kiln", root);
     replace_file(path, Span<u8 const>(reinterpret_cast<u8 const*>(broken.data), broken.size));
 
-    StrView const roots[] = {StrView(root)};
+    Mount const roots[] = {
+        {{}, StrView(root)}
+    };
     TestContext tc;
-    if (!tc.init(StrView(storeDir), Span<StrView const>(roots, 1))) return;
+    if (!tc.init(StrView(storeDir), Span<Mount const>(roots, 1))) return;
     KILN_REQUIRE(cook::install_provider(tc.ctx, cook::ProviderDesc{.storeMode = cook::StoreMode::Disk}).ok());
 
-    TextureHandle const wall = request_texture(tc.ctx, "wall_n");
+    TextureHandle const wall = request_texture(tc.ctx, "wall_n.png");
     KILN_REQUIRE_EQ(pump_until_settled(tc.ctx, wall), State::Ready);
     KILN_CHECK(texture_info(tc.ctx, wall).desc.format == Format::R8G8B8A8_SRGB);
-    TextureHandle const bad = request_texture(tc.ctx, "broken");
+    TextureHandle const bad = request_texture(tc.ctx, "broken.png");
     KILN_CHECK_EQ(pump_until_settled(tc.ctx, bad), State::Failed);
 }
 
@@ -445,14 +458,16 @@ KILN_TEST(Provider, SourcePollerRecooksOnSidecarChange) {
     char srcPath[1100], sidecar[1100], storeFile[1100];
     format(srcPath, sizeof srcPath, "%s/tex.png", root);
     format(sidecar, sizeof sidecar, "%s/tex.png.kiln", root);
-    format(storeFile, sizeof storeFile, "%s/tex.ktx2", storeDir);
+    format(storeFile, sizeof storeFile, "%s/tex.png.ktx2", storeDir);
     replace_file(srcPath, test_png(rgba).span());
 
-    StrView const roots[] = {StrView(root)};
+    Mount const roots[] = {
+        {{}, StrView(root)}
+    };
     TestContext tc;
-    if (!tc.init(StrView(storeDir), Span<StrView const>(roots, 1))) return;
+    if (!tc.init(StrView(storeDir), Span<Mount const>(roots, 1))) return;
     KILN_REQUIRE(cook::install_provider(tc.ctx, kWatchDesc).ok());
-    TextureHandle const tex = request_texture(tc.ctx, "tex");
+    TextureHandle const tex = request_texture(tc.ctx, "tex.png");
     KILN_REQUIRE_EQ(pump_until_settled(tc.ctx, tex), State::Ready);
     Vec<u8> before(default_allocator(), Tag::Test);
     KILN_REQUIRE(read_file(storeFile, before));
@@ -475,19 +490,21 @@ KILN_TEST(Provider, SourcePollerRecooksPng) {
 
     char srcPath[1100], storeFile[1100];
     format(srcPath, sizeof srcPath, "%s/tex.png", root);
-    format(storeFile, sizeof storeFile, "%s/tex.ktx2", storeDir);
+    format(storeFile, sizeof storeFile, "%s/tex.png.ktx2", storeDir);
 
     u8 first[4 * 4 * 4], second[4 * 4 * 4];
     test_pixels(first, 1);
     test_pixels(second, 100);
     replace_file(srcPath, test_png(first).span());
 
-    StrView const roots[] = {StrView(root)};
+    Mount const roots[] = {
+        {{}, StrView(root)}
+    };
     TestContext tc;
-    if (!tc.init(StrView(storeDir), Span<StrView const>(roots, 1))) return;
+    if (!tc.init(StrView(storeDir), Span<Mount const>(roots, 1))) return;
     KILN_REQUIRE(cook::install_provider(tc.ctx, kWatchDesc).ok());
 
-    TextureHandle const tex = request_texture(tc.ctx, "tex");
+    TextureHandle const tex = request_texture(tc.ctx, "tex.png");
     KILN_REQUIRE(tex);
     KILN_CHECK_EQ(pump_until_settled(tc.ctx, tex), State::Ready);
 
@@ -522,16 +539,18 @@ KILN_TEST(Provider, SourcePollerRecooksGlbAndTextures) {
     format(textured, sizeof textured, "%s/BoxTextured.glb", khronos);
     format(plain, sizeof plain, "%s/Box.glb", khronos);
     format(srcPath, sizeof srcPath, "%s/box.glb", root);
-    format(meshFile, sizeof meshFile, "%s/box.mesh", storeDir);
-    format(texFile, sizeof texFile, "%s/box#image0.ktx2", storeDir); // BoxTextured's one unnamed image
+    format(meshFile, sizeof meshFile, "%s/box.glb.mesh", storeDir);
+    format(texFile, sizeof texFile, "%s/box.glb#image0.ktx2", storeDir); // BoxTextured's one unnamed image
     copy_file(textured, srcPath);
 
-    StrView const roots[] = {StrView(root)};
+    Mount const roots[] = {
+        {{}, StrView(root)}
+    };
     TestContext tc;
-    if (!tc.init(StrView(storeDir), Span<StrView const>(roots, 1))) return;
+    if (!tc.init(StrView(storeDir), Span<Mount const>(roots, 1))) return;
     KILN_REQUIRE(cook::install_provider(tc.ctx, kWatchDesc).ok());
 
-    MeshHandle const mesh = request_mesh(tc.ctx, "box");
+    MeshHandle const mesh = request_mesh(tc.ctx, "box.glb");
     KILN_REQUIRE(mesh);
     KILN_CHECK_EQ(pump_until_settled(tc.ctx, mesh), State::Ready);
 
@@ -567,19 +586,21 @@ KILN_TEST(Provider, SourcePollerStopsOnUninstall) {
 
     char srcPath[1100], storeFile[1100];
     format(srcPath, sizeof srcPath, "%s/tex.png", root);
-    format(storeFile, sizeof storeFile, "%s/tex.ktx2", storeDir);
+    format(storeFile, sizeof storeFile, "%s/tex.png.ktx2", storeDir);
 
     u8 first[4 * 4 * 4], second[4 * 4 * 4];
     test_pixels(first, 3);
     test_pixels(second, 200);
     replace_file(srcPath, test_png(first).span());
 
-    StrView const roots[] = {StrView(root)};
+    Mount const roots[] = {
+        {{}, StrView(root)}
+    };
     TestContext tc;
-    if (!tc.init(StrView(storeDir), Span<StrView const>(roots, 1))) return;
+    if (!tc.init(StrView(storeDir), Span<Mount const>(roots, 1))) return;
     KILN_REQUIRE(cook::install_provider(tc.ctx, kWatchDesc).ok());
 
-    TextureHandle const tex = request_texture(tc.ctx, "tex");
+    TextureHandle const tex = request_texture(tc.ctx, "tex.png");
     KILN_REQUIRE(tex);
     KILN_CHECK_EQ(pump_until_settled(tc.ctx, tex), State::Ready);
     Vec<u8> before(default_allocator(), Tag::Test);
@@ -591,4 +612,111 @@ KILN_TEST(Provider, SourcePollerStopsOnUninstall) {
 
     Vec<u8> after(default_allocator(), Tag::Test);
     KILN_CHECK(!wait_for_change(storeFile, before, after, 200));
+}
+
+// A named mount: `lib:tex.png` cooks from the mount's root into `<store>/lib#/tex.png.ktx2`.
+KILN_TEST(Provider, NamedMountCooksIntoItsStoreDirectory) {
+    char root[1024], libRoot[1024], storeDir[1024];
+    scratch_dir("provider_mount_default", root, sizeof root);
+    scratch_dir("provider_mount_lib", libRoot, sizeof libRoot);
+    scratch_dir("provider_mount_store", storeDir, sizeof storeDir);
+    make_dir(root);
+    make_dir(libRoot);
+
+    u8 rgba[4 * 4 * 4];
+    test_pixels(rgba, 9);
+    char path[1100];
+    format(path, sizeof path, "%s/tex.png", libRoot);
+    replace_file(path, test_png(rgba).span());
+
+    Mount const mounts[] = {
+        {{},    StrView(root)   },
+        {"lib", StrView(libRoot)}
+    };
+    DiagCapture diags;
+    TestContext tc;
+    if (!tc.init(StrView(storeDir), Span<Mount const>(mounts, 2), diags.sink())) return;
+    KILN_REQUIRE(cook::install_provider(tc.ctx, cook::ProviderDesc{.storeMode = cook::StoreMode::Disk}).ok());
+
+    TextureHandle const tex = request_texture(tc.ctx, "lib:tex.png");
+    KILN_REQUIRE_EQ(pump_until_settled(tc.ctx, tex), State::Ready);
+    char storeFile[1100];
+    format(storeFile, sizeof storeFile, "%s/lib#/tex.png.ktx2", storeDir);
+    KILN_CHECK_MSG(file_exists(storeFile), "cook-on-miss did not write %s", storeFile);
+
+    // The same file is not in the default mount.
+    TextureHandle const missing = request_texture(tc.ctx, "tex.png");
+    KILN_CHECK_EQ(pump_until_settled(tc.ctx, missing), State::Failed);
+    KILN_CHECK_EQ(diags.firstCode, u32(kDiagStoreMiss));
+}
+
+KILN_TEST(Provider, UnknownMountFails) {
+    char root[1024], storeDir[1024];
+    scratch_dir("provider_unknown_mount_src", root, sizeof root);
+    scratch_dir("provider_unknown_mount_store", storeDir, sizeof storeDir);
+    make_dir(root);
+
+    Mount const roots[] = {
+        {{}, StrView(root)}
+    };
+    DiagCapture diags;
+    TestContext tc;
+    if (!tc.init(StrView(storeDir), Span<Mount const>(roots, 1), diags.sink())) return;
+    KILN_REQUIRE(cook::install_provider(tc.ctx, cook::ProviderDesc{}).ok());
+
+    TextureHandle const tex = request_texture(tc.ctx, "nope:tex.png");
+    KILN_CHECK_EQ(pump_until_settled(tc.ctx, tex), State::Failed);
+    KILN_CHECK_EQ(diags.firstCode, u32(kDiagCookOnMissFailed));
+}
+
+// The extension gives the kind: a mesh requested by a texture name, or the reverse, fails.
+KILN_TEST(Provider, ExtensionMustMatchKind) {
+    char storeDir[1024], gltfDir[1024];
+    scratch_dir("provider_kind_store", storeDir, sizeof storeDir);
+    gltf_generated_dir(gltfDir, sizeof gltfDir);
+
+    Mount const roots[] = {
+        {{}, StrView(gltfDir)}
+    };
+    DiagCapture diags;
+    TestContext tc;
+    if (!tc.init(StrView(storeDir), Span<Mount const>(roots, 1), diags.sink())) return;
+    KILN_REQUIRE(
+        cook::install_provider(tc.ctx, cook::ProviderDesc{.storeMode = cook::StoreMode::Memory}).ok());
+
+    TextureHandle const tex = request_texture(tc.ctx, "cube_basic.glb");
+    KILN_CHECK_EQ(pump_until_settled(tc.ctx, tex), State::Failed);
+    MeshHandle const mesh = request_mesh(tc.ctx, "pbr_textures.glb#hull_albedo");
+    KILN_CHECK_EQ(pump_until_settled(tc.ctx, mesh), State::Failed);
+    MeshHandle const noExt = request_mesh(tc.ctx, "cube_basic");
+    KILN_CHECK_EQ(pump_until_settled(tc.ctx, noExt), State::Failed);
+    KILN_CHECK_EQ(diags.firstCode, u32(kDiagCookOnMissFailed));
+    KILN_CHECK_EQ(diags.count, 3);
+}
+
+// A name in the wrong case never cooks: on Windows the file exists but differs in case (K5016),
+// elsewhere it does not exist (K5001).
+KILN_TEST(Provider, NameCaseMustMatchTheDisk) {
+    char storeDir[1024], gltfDir[1024];
+    scratch_dir("provider_case_store", storeDir, sizeof storeDir);
+    gltf_generated_dir(gltfDir, sizeof gltfDir);
+
+    Mount const roots[] = {
+        {{}, StrView(gltfDir)}
+    };
+    DiagCapture diags;
+    TestContext tc;
+    if (!tc.init(StrView(storeDir), Span<Mount const>(roots, 1), diags.sink())) return;
+    KILN_REQUIRE(
+        cook::install_provider(tc.ctx, cook::ProviderDesc{.storeMode = cook::StoreMode::Memory}).ok());
+
+    MeshHandle const mesh = request_mesh(tc.ctx, "Cube_Basic.glb");
+    KILN_CHECK_EQ(pump_until_settled(tc.ctx, mesh), State::Failed);
+#if defined(KILN_OS_WINDOWS)
+    KILN_CHECK_EQ(diags.firstCode, u32(kDiagCookOnMissFailed));
+    KILN_CHECK(!cook::source_case_matches(StrView(gltfDir), "Cube_Basic.glb"));
+    KILN_CHECK(cook::source_case_matches(StrView(gltfDir), "cube_basic.glb"));
+#else
+    KILN_CHECK_EQ(diags.firstCode, u32(kDiagStoreMiss));
+#endif
 }

@@ -319,8 +319,14 @@ Status load_buffers(Ctx& c) noexcept {
         if (!c.src.resolver.fn)
             IMPORT_FAIL(c, Code::NotFound, kDiagGltfExternalMissing, StrView(where),
                         "external buffer '%.*s' needs a UriResolver", KILN_SV(uri));
+        StrView const decoded = decode_uri(c.arena, uri);
+        char resolved[kMaxAssetNameLen + 1];
+        if (resolve_asset_name(c.src.assetPath, decoded, resolved, sizeof resolved) == 0)
+            IMPORT_FAIL(c, Code::ValidationFailed, kDiagGltfUriOutsideMount, StrView(where),
+                        "external buffer '%.*s' is absolute, leaves the mount or gives an invalid asset name",
+                        KILN_SV(uri));
         Vec<u8> bytes(c.alloc, Tag::Cook);
-        Status const st = c.src.resolver.fn(c.src.resolver.user, decode_uri(c.arena, uri), c.alloc, &bytes);
+        Status const st = c.src.resolver.fn(c.src.resolver.user, decoded, c.alloc, &bytes);
         if (st.failed())
             IMPORT_FAIL(c, Code::NotFound, kDiagGltfExternalMissing, StrView(where),
                         "external buffer '%.*s' could not be resolved (%s)", KILN_SV(uri),

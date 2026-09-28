@@ -436,14 +436,7 @@ void post(Context* ctx, Completion const& c) noexcept {
 } // namespace
 
 usize store_path(Context const* ctx, AssetKind kind, StrView path, char* out, usize cap) noexcept {
-    char const* ext = kind == AssetKind::Mesh ? ".mesh" : ".ktx2";
-    char const* sep = "";
-    if (ctx->storeDirLen) {
-        char const last = ctx->storeDir[ctx->storeDirLen - 1];
-        sep             = (last == '/' || last == '\\') ? "" : "/";
-    }
-    return format(out, cap, "%s%s%.*s%s", ctx->storeDir ? ctx->storeDir : "", sep, int(path.size), path.data,
-                  ext);
+    return store_file_path(StrView(ctx->storeDir, ctx->storeDirLen), kind, path, out, cap);
 }
 
 u64 texture_layout(ktx2::TextureDesc const& d, u64 pitchAlign, u64 offsetAlign, u64* outOffset,

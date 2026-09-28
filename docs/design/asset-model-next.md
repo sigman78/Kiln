@@ -1,8 +1,8 @@
 # Asset model (next)
 
-Status: **Draft, experimental** (2026-09-28, branch `exp/single-file-scope`). Nothing here is
-implemented. Parts 1 and 2 record an owner discussion; the retrospective below narrows its scope
-and marks what it supersedes.
+Status: **Draft, experimental** (2026-09-28, branch `exp/single-file-scope`). Parts 1 and 2
+record an owner discussion; the retrospective below narrows its scope and marks what it
+supersedes. "Implementation" below lists what is built and the choices made on the way.
 
 ## Retrospective: scope cut back to single files
 
@@ -58,10 +58,47 @@ cooked usage.
 `kTextureExternal`, `<mesh>#<name>`, K1019; see `mesh-format-spec.md` §5.7), then sidecars
 (done: `kiln/cook/sidecar.h`, K3005/K3006; see `settings.md`, "Sidecar files"). Sidecars apply
 after the session settings, not before them; that deviation is an open point in `settings.md`.
+Then stage B, the extension in the name (I3, I5, I6), and stage C, named mounts (B1, B2, I1, I2):
+both done, see "Implementation".
 
 **What stays from Parts 1 and 2:** identity as the exact source path with its extension, mounts,
 the path rules, and strict input rules. **Superseded:** anything that needs kiln to follow a
 reference. Each such item below is marked *Superseded by the retrospective*.
+
+## Implementation (stages B and C)
+
+*Done 2026-09-28.* API: `kiln/assets.h` ("Asset names"), `kiln/cook/provider.h`. Diagnostics:
+K1019, K1020, K5013-K5016 (`diagnostics.md`).
+
+- **Names.** `check_asset_name()` implements I1 and I2. The runtime checks a name at
+  `request_*`/`register_*` (K5013) and compares it byte for byte; `AssetId` is FNV-1a 64 of the
+  whole name (I6). There is no normalization any more.
+- **Mounts.** `ContextDesc::mounts` replaces `sourceRoots` (`Mount{name, root}`, empty name =
+  the default mount). `create()` checks the names. `kiln-cook`, `kiln-viewer`: `--mount n=dir`.
+- **Provider.** The source of `m:path` is `<root of m>/path`. The extension gives the kind (I5),
+  K5014 on a mismatch; an unknown mount is K5015. On Windows, a name that differs in case from
+  the file on disk is K5016 (I2); elsewhere the file system already fails it.
+- **References (B2).** The mesh cook fails with K1020 when a buffer or image URI is absolute or
+  leaves the source's mount. `resolve_asset_name()` gives hosts the same resolution; the viewer
+  uses it for external texture bindings.
+
+Choices made during implementation, *Proposed* until the owner signs off:
+
+- **Store layout of a named mount:** `m:` becomes the directory `m#/`
+  (`<store>/pool#/tex/wood.png.ktx2`). `#` never occurs in a directory segment of a valid name,
+  so no name maps to the same file, and no new path rule is needed.
+- **More reserved characters:** names also exclude `< > " | ? *`, which Windows does not allow in
+  file names. A name that works on Linux then works on Windows too, as with the case rule.
+  I2 said "the store layout escapes as needed"; rejecting is simpler and stricter.
+- **The kind check is in the provider, not at the call.** The runtime accepts any valid name, with
+  or without a source extension: a store cooked elsewhere, or `register_*` content, has no source.
+  So `request_mesh("x.png")` fails when the provider runs (K5014), not at the call.
+- **Mounts stay on `ContextDesc`**, as "Consequences" said, although B5 says the runtime does not
+  know mounts. The runtime only stores them for the provider; moving them to `ProviderDesc` is a
+  small change if B5 should win.
+- **Case check on Windows only.** On macOS (case-insensitive by default) a wrong-case name still
+  cooks.
+- **`kiln-headless`** keeps its argument form: a name plus `.mesh` or `.ktx2` for the kind.
 
 ## Why (the original symptoms)
 
@@ -167,7 +204,8 @@ but double the file count and weaken "sources are the truth". Worth exploring la
 
 ## Consequences for the current code
 
-Not a plan yet. After the retrospective:
+After the retrospective. All done with stages B and C. One exception: the provider still records
+the embedded images a glb wrote, because option (c) keeps them as outputs of the mesh cook.
 
 - The mesh cook stops cooking textures. `cook_mesh_full` in `src/cook/provider.cpp` loses its
   texture half, or keeps only the embedded-image outputs of option (c).

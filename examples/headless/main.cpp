@@ -150,7 +150,8 @@ char const* event_name(EventKind k) {
 
 char const* kind_name(AssetKind k) { return k == AssetKind::Mesh ? "mesh" : "texture"; }
 
-/// "mesh/Box.mesh" -> mesh "mesh/Box"; "ui/font.ktx2" -> texture "ui/font". False otherwise.
+/// An asset name plus a kind suffix: "props/chair.glb.mesh" -> mesh "props/chair.glb";
+/// "ui/font.png.ktx2" -> texture "ui/font.png". False otherwise.
 bool parse_item(char const* arg, Item& out) {
     usize const n = std::strlen(arg);
     if (n > 5 && std::strcmp(arg + n - 5, ".mesh") == 0) {
@@ -261,7 +262,7 @@ int main(int argc, char** argv) {
         {.name = "--store", .arg = "<dir>", .help = "cooked store root (default: cooked)", .str = &o.store},
         {.name = "--source",
          .arg  = "<dir>",
-         .help = "source root; enables cook-on-miss (needs kiln_cook)",
+         .help = "root of the default mount; enables cook-on-miss (needs kiln_cook)",
          .str  = &o.source},
         {.name = "--slow",
          .arg  = "<ms>",
@@ -289,7 +290,8 @@ int main(int argc, char** argv) {
         .synopsis = "[options] <asset>...",
         .options  = {opts, countof(opts)},
         .footer =
-            "<asset> is a store-relative path with its extension, e.g. mesh/Box.mesh or ui/font.ktx2.\n"
+            "<asset> is an asset name plus .mesh or .ktx2 for its kind, e.g. mesh/Box.glb.mesh or\n"
+            "ui/font.png.ktx2.\n"
             "Exit codes: 0 every asset Ready, 1 one or more Failed or timed out, 2 usage or setup error.",
         .positional = &add_item,
         .user       = &o,
@@ -317,14 +319,14 @@ int main(int argc, char** argv) {
 
     // 3. The context. Everything below runs on this thread, the pump thread.
     SlowIo slowIo;
-    StrView const sourceRoot = o.source ? StrView(o.source) : StrView{};
+    Mount const defaultMount{{}, o.source ? StrView(o.source) : StrView{}};
     ContextDesc desc{
-        .diag        = DiagSink{&diag_to_stdout, nullptr},
-        .io          = slowIo.init(compat_io_backend(), o.slowMs, o.latencyMs),
-        .adapter     = &adapter,
-        .storeDir    = StrView(o.store),
-        .sourceRoots = Span<StrView const>(&sourceRoot, o.source ? 1u : 0u),
-        .hotReload   = {.watchStore = o.watch},
+        .diag      = DiagSink{&diag_to_stdout, nullptr},
+        .io        = slowIo.init(compat_io_backend(), o.slowMs, o.latencyMs),
+        .adapter   = &adapter,
+        .storeDir  = StrView(o.store),
+        .mounts    = Span<Mount const>(&defaultMount, o.source ? 1u : 0u),
+        .hotReload = {.watchStore = o.watch},
     };
     Result<Context*> c = create(desc);
     if (c.failed()) {

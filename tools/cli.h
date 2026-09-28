@@ -12,7 +12,7 @@
 
 namespace kiln::cli {
 
-/// One option. Exactly one of flag / str / number / real receives the value. A value
+/// One option. Exactly one of flag / str / number / real / each receives the value. A value
 /// is given as "--name value" or "--name=value".
 struct Option {
     char const* name;                     ///< "--threads"
@@ -25,6 +25,9 @@ struct Option {
     double* real               = nullptr;     ///< decimal floating point
     u32 max                    = 0xFFFFFFFFu; ///< upper bound for `number`
     char const* const* choices = nullptr;     ///< null-terminated; the value must match one
+    /// Receives the value each time the option is given; false rejects it.
+    bool (*each)(void* user, char const* value) = nullptr;
+    void* user                                  = nullptr;
 };
 
 struct Spec {
@@ -94,6 +97,7 @@ inline bool apply(Spec const& spec, Option const& o, char const* value) {
         *o.str = value;
         return true;
     }
+    if (o.each) return o.each(o.user, value);
     char* end = nullptr;
     if (o.number) {
         unsigned long const v = std::strtoul(value, &end, 10);

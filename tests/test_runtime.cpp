@@ -146,13 +146,103 @@ void exit_on_panic(void*, char const* file, int line, char const* msg) {
 
 } // namespace
 
-KILN_TEST(Runtime, AssetIdNormalization) {
-    KILN_CHECK_EQ(asset_id("mesh/cube_basic"), "mesh/cube_basic"_h);
-    KILN_CHECK_EQ(asset_id("mesh/cube_basic.mesh"), "mesh/cube_basic"_h);
-    KILN_CHECK_EQ(asset_id("./mesh\\cube_basic.glb"), "mesh/cube_basic"_h);
-    KILN_CHECK_EQ(asset_id("/mesh//./cube_basic"), "mesh/cube_basic"_h);
-    KILN_CHECK_EQ(asset_id("a.b/c"), "a.b/c"_h);
+// A name is compared byte for byte: no normalization, and a name that breaks a rule has no id.
+KILN_TEST(Runtime, AssetNameRules) {
+    KILN_CHECK_EQ(asset_id("mesh/cube_basic.glb"), "mesh/cube_basic.glb"_h);
+    KILN_CHECK(asset_id("mesh/cube_basic.glb") != asset_id("mesh/cube_basic"));
+    KILN_CHECK_EQ(asset_id("pool:tex/wood.png"), "pool:tex/wood.png"_h);
     KILN_CHECK_EQ(asset_id("dir/.hidden"), "dir/.hidden"_h);
+
+    for (char const* ok : {"a", "a.b/c", "props/chair.glb#wood", "pool:tex/wood.png", "m_2:x.glb#image0",
+                           "d\xc3\xa9j\xc3\xa0/vu.png"})
+        KILN_CHECK_MSG(check_asset_name(StrView(ok)) == nullptr, "'%s' should be valid", ok);
+    for (char const* bad : {"",         "/abs.png", "a//b.png",   "dir/",         "./a.png",   "a/../b.png",
+                            "a\\b.png", "x:",       "c:/tex.png", "Pool:a.png",   "a:b:c.png", "a.glb#",
+                            "#sub",     "dir/#sub", "a.glb#x#y",  "a#b/c.png",    "a?.png",    "a*.png",
+                            "a<b.png",  "a|b.png",  "a\"b.png",   "tab\there.png"})
+        KILN_CHECK_MSG(check_asset_name(StrView(bad)) != nullptr, "'%s' should be invalid", bad);
+    char longName[300];
+    std::memset(longName, 'a', sizeof longName);
+    KILN_CHECK(check_asset_name(StrView(longName, kMaxAssetNameLen)) == nullptr);
+    KILN_CHECK(check_asset_name(StrView(longName, kMaxAssetNameLen + 1)) != nullptr);
+    KILN_CHECK_EQ(asset_id("./a.png"), AssetId(0));
+
+    AssetNameParts const p = split_asset_name("pool:props/chair.glb#wood");
+    KILN_CHECK(p.mount == "pool" && p.path == "props/chair.glb" && p.sub == "wood");
+    AssetNameParts const d = split_asset_name("chair.glb");
+    KILN_CHECK(d.mount.empty() && d.path == "chair.glb" && d.sub.empty());
+}
+
+KILN_TEST(Runtime, ResolveAssetName) {
+    char buf[256];
+    auto const resolve = [&buf](StrView owner, StrView uri) noexcept {
+        return StrView(buf, resolve_asset_name(owner, uri, buf, sizeof buf));
+    };
+    KILN_CHECK(resolve("props/chair.glb", "wood.png") == "props/wood.png");
+    KILN_CHECK(resolve("props/chair.glb", "./tex/wood.png") == "props/tex/wood.png");
+    KILN_CHECK(resolve("props/chair.glb", "../tex/wood.png") == "tex/wood.png");
+    KILN_CHECK(resolve("chair.glb", "wood.png") == "wood.png");
+    KILN_CHECK(resolve("pool:props/chair.glb", "../wood.png") == "pool:wood.png");
+    // Leaving the mount, absolute URIs and invalid results give 0.
+    KILN_CHECK(resolve("chair.glb", "../wood.png").empty());
+    KILN_CHECK(resolve("pool:chair.glb", "../wood.png").empty());
+    KILN_CHECK(resolve("chair.glb", "/wood.png").empty());
+    KILN_CHECK(resolve("chair.glb", "C:/wood.png").empty());
+    KILN_CHECK(resolve("chair.glb", "http://x/wood.png").empty());
+    KILN_CHECK(resolve("chair.glb", "a//wood.png").empty());
+    KILN_CHECK(resolve("chair.glb", "wood?.png").empty());
+    KILN_CHECK(resolve("chair.glb", "").empty());
+    KILN_CHECK(resolve("./chair.glb", "wood.png").empty());
+    KILN_CHECK_EQ(resolve_asset_name("props/chair.glb", "wood.png", buf, 8), usize(0));
+}
+
+KILN_TEST(Runtime, StoreFilePath) {
+    char buf[256];
+    auto const path = [&buf](StrView dir, AssetKind kind, StrView name) noexcept {
+        return StrView(buf, store_file_path(dir, kind, name, buf, sizeof buf));
+    };
+    KILN_CHECK(path("cooked", AssetKind::Mesh, "props/chair.glb") == "cooked/props/chair.glb.mesh");
+    KILN_CHECK(path("cooked/", AssetKind::Texture, "props/chair.glb#wood") ==
+               "cooked/props/chair.glb#wood.ktx2");
+    KILN_CHECK(path("cooked", AssetKind::Texture, "pool:tex/wood.png") == "cooked/pool#/tex/wood.png.ktx2");
+    KILN_CHECK(path("", AssetKind::Mesh, "a.glb") == "a.glb.mesh");
+}
+
+KILN_TEST(Runtime, InvalidNamesAndMountsAreRejected) {
+    Rt rt;
+    if (!rt.init()) return;
+    KILN_CHECK(request_mesh(rt.ctx, "./mesh/cube_basic").is_null());
+    KILN_CHECK(rt.diags.has(kDiagBadAssetName));
+    KILN_CHECK(request_texture(rt.ctx, "tex\\a.png").is_null());
+    u8 junk[16] = {};
+    KILN_CHECK(register_mesh(rt.ctx, "a//b", Span<u8 const>(junk, sizeof junk)).is_null());
+    KILN_CHECK_EQ(stats(rt.ctx).assets, 0u);
+
+    for (StrView const name : {StrView("X"), StrView("Pool"), StrView("a-b")}) {
+        Mount const bad[] = {
+            {name, "src"}
+        };
+        Rt r2;
+        Result<NullAdapter*> a = null_adapter_create({}, &r2.adapter);
+        KILN_REQUIRE(a.ok());
+        r2.na = *a;
+        ContextDesc cd{.diag = r2.diags.sink(), .adapter = &r2.adapter, .mounts = Span<Mount const>(bad, 1)};
+        Result<Context*> c = create(cd);
+        KILN_CHECK_MSG(c.failed(), "mount name '%.*s' should be rejected", KILN_SV(name));
+        if (c.ok()) destroy(*c);
+        KILN_CHECK(r2.diags.has(kDiagBadAssetName));
+    }
+    Mount const twice[] = {
+        {"lib", "a"},
+        {"lib", "b"}
+    };
+    Rt r3;
+    Result<NullAdapter*> a = null_adapter_create({}, &r3.adapter);
+    KILN_REQUIRE(a.ok());
+    r3.na              = *a;
+    Result<Context*> c = create(ContextDesc{.adapter = &r3.adapter, .mounts = Span<Mount const>(twice, 2)});
+    KILN_CHECK(c.failed());
+    if (c.ok()) destroy(*c);
 }
 
 KILN_TEST(Runtime, CreateDestroyPlaceholders) {
@@ -275,7 +365,7 @@ KILN_TEST(Runtime, LoadMesh) {
     }
 
     // Refcount: same handle; one release keeps it loaded, the second unloads.
-    MeshHandle m2 = request_mesh(rt.ctx, "mesh/cube_basic.mesh");
+    MeshHandle m2 = request_mesh(rt.ctx, "mesh/cube_basic");
     KILN_CHECK(m2 == m);
     KILN_CHECK(find_mesh(rt.ctx, "mesh/cube_basic"_h) == m);
     KILN_CHECK(find_texture(rt.ctx, "mesh/cube_basic"_h).is_null());
@@ -630,7 +720,7 @@ KILN_TEST(Runtime, RegisterInMemory) {
     TextureHandle t = register_texture(rt.ctx, "gen/tex", texBytes.span());
     KILN_REQUIRE(!m.is_null() && !t.is_null());
     KILN_CHECK(find_mesh(rt.ctx, asset_id("gen/mesh")) == m);
-    KILN_CHECK(find_texture(rt.ctx, asset_id("gen/tex.ktx2")) == t);
+    KILN_CHECK(find_texture(rt.ctx, asset_id("gen/tex")) == t);
     KILN_REQUIRE(rt.pump_until([&] { return is_ready(rt.ctx, m) && is_ready(rt.ctx, t); }));
     KILN_CHECK(rt.find_event(EventKind::MetaReady, m.bits()) >= 0);
     Vec<u8> file(default_allocator(), Tag::Test), decoded(default_allocator(), Tag::Test);

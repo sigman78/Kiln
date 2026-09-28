@@ -3,6 +3,7 @@
 // Also holds Stopwatch, a tiny CookStats timer shared with texture_cook.cpp.
 #pragma once
 
+#include "kiln/assets.h" // asset name rules
 #include "kiln/cook/cook.h"
 #include "kiln/mesh.h"
 

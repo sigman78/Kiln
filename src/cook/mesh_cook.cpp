@@ -601,22 +601,33 @@ void build_lod(LodTask& task, MeshCookSettings const& settings, Allocator const*
 }
 
 /// Names every embedded image: its glTF name, or "image<N>" when unnamed. The name becomes
-/// the sub-asset part of "<asset>#<name>", so it must be unique and free of `: # / \` and
-/// control characters.
+/// the sub-asset part of "<asset>#<name>", so it must be unique and give a valid asset name.
+/// An external image's URI must resolve to a name in the source's mount.
 Status name_embedded_images(Cook& k) {
     k.imageName.resize(k.scene.images.size);
     for (u32 i = 0; i < u32(k.scene.images.size); ++i) {
         ImportImage const& img = k.scene.images[i];
-        if (!img.uri.empty() || !img.usable) continue;
+        if (!img.uri.empty()) {
+            char resolved[kMaxAssetNameLen + 1];
+            if (resolve_asset_name(k.src.assetPath, img.uri, resolved, sizeof resolved) == 0)
+                COOK_FAIL(k, Code::ValidationFailed, kDiagGltfUriOutsideMount, img.uri,
+                          "image %u: URI '%.*s' is absolute, leaves the mount or gives an invalid asset name",
+                          i, KILN_SV(img.uri));
+            continue;
+        }
+        if (!img.usable) continue;
         StrView name = img.name;
         if (name.empty()) {
             char buf[32];
             name = k.arena.copy(StrView(buf, format(buf, sizeof buf, "image%u", i)));
         }
-        for (char const ch : name)
-            if (ch == ':' || ch == '#' || ch == '/' || ch == '\\' || u8(ch) < 0x20 || ch == 0x7f)
-                COOK_FAIL(k, Code::ValidationFailed, kDiagGltfImageName, name,
-                          "embedded image %u: name '%.*s' holds a reserved character", i, KILN_SV(name));
+        char full[kMaxAssetNameLen + 2];
+        usize const n   = format(full, sizeof full, "%.*s#%.*s", KILN_SV(k.src.assetPath), KILN_SV(name));
+        char const* why = n > kMaxAssetNameLen ? "longer than 255 bytes" : check_asset_name(StrView(full, n));
+        if (why)
+            COOK_FAIL(k, Code::ValidationFailed, kDiagGltfImageName, name,
+                      "embedded image %u: name '%.*s' does not give a valid texture name (%s)", i,
+                      KILN_SV(name), why);
         for (u32 j = 0; j < i; ++j)
             if (k.imageName[j] == name)
                 COOK_FAIL(k, Code::ValidationFailed, kDiagGltfImageName, name,
@@ -1141,6 +1152,10 @@ Result<CookedMesh> cook_mesh(MeshSource const& src, MeshCookSettings const& sett
     DiagSink const* const diag   = env.diag;
     Stopwatch const swTotal;
     Arena arena(Arena::Desc{alloc, usize(1) << 20, Tag::Cook});
+
+    if (char const* why = check_asset_name(src.assetPath))
+        return diagf(diag, make_status(Code::InvalidArgument), 0, Severity::Error, src.assetPath, "cook_mesh",
+                     "MeshSource::assetPath is not a valid asset name: %s", why);
 
     ImportScene scene;
     Stopwatch const swImport;
