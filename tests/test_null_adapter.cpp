@@ -28,11 +28,18 @@ KILN_TEST(NullAdapter, AcquireReturnsDistinctSlotsPerIdAndSameSlotForRepeat) {
     NullAdapter* na = created.value();
 
     GpuObject o1{}, o2{}, o1Again{};
-    KILN_REQUIRE(
-        adapter.acquire(adapter.user, 10, UploadKind::TextureLevels, TextureKind::BaseColor, &o1).ok());
-    KILN_REQUIRE(adapter.acquire(adapter.user, 20, UploadKind::TextureLevels, TextureKind::Normal, &o2).ok());
-    KILN_REQUIRE(
-        adapter.acquire(adapter.user, 10, UploadKind::TextureLevels, TextureKind::BaseColor, &o1Again).ok());
+    KILN_REQUIRE(adapter
+                     .acquire(adapter.user, 10, UploadKind::TextureLevels, TextureKind::BaseColor,
+                              TextureShape::Tex2D, &o1)
+                     .ok());
+    KILN_REQUIRE(adapter
+                     .acquire(adapter.user, 20, UploadKind::TextureLevels, TextureKind::Normal,
+                              TextureShape::Tex2D, &o2)
+                     .ok());
+    KILN_REQUIRE(adapter
+                     .acquire(adapter.user, 10, UploadKind::TextureLevels, TextureKind::BaseColor,
+                              TextureShape::Tex2D, &o1Again)
+                     .ok());
 
     KILN_CHECK(o1.slot != kInvalid);
     KILN_CHECK(o2.slot != kInvalid);
@@ -52,8 +59,10 @@ KILN_TEST(NullAdapter, NonBindlessAcquireReturnsNullObject) {
     NullAdapter* na = created.value();
 
     GpuObject obj{};
-    KILN_REQUIRE(
-        adapter.acquire(adapter.user, 10, UploadKind::TextureLevels, TextureKind::BaseColor, &obj).ok());
+    KILN_REQUIRE(adapter
+                     .acquire(adapter.user, 10, UploadKind::TextureLevels, TextureKind::BaseColor,
+                              TextureShape::Tex2D, &obj)
+                     .ok());
     KILN_CHECK(obj.is_null());
 
     null_adapter_destroy(na);
@@ -186,8 +195,10 @@ KILN_TEST(NullAdapter, PublishBindsSlotAndNullPublishFreesIt) {
     NullAdapter* na = created.value();
 
     GpuObject acquired{};
-    KILN_REQUIRE(
-        adapter.acquire(adapter.user, 42, UploadKind::TextureLevels, TextureKind::BaseColor, &acquired).ok());
+    KILN_REQUIRE(adapter
+                     .acquire(adapter.user, 42, UploadKind::TextureLevels, TextureKind::BaseColor,
+                              TextureShape::Tex2D, &acquired)
+                     .ok());
     u32 slot = acquired.slot;
     KILN_REQUIRE(slot != kInvalid);
     KILN_CHECK(null_adapter_slot(na, slot).is_null());
@@ -378,7 +389,10 @@ KILN_TEST(Placeholders, AssetIdsMatchReservedRange) {
     KILN_CHECK_EQ(placeholder_asset_id(TextureKind::Normal), AssetId(2));
     KILN_CHECK_EQ(placeholder_asset_id(TextureKind::Orm), AssetId(3));
     KILN_CHECK_EQ(placeholder_asset_id(TextureKind::Emissive), AssetId(4));
-    KILN_CHECK_EQ(kFailedPlaceholderId, AssetId(15));
+    KILN_CHECK_EQ(failed_placeholder_id(), AssetId(13));
+    KILN_CHECK_EQ(placeholder_asset_id(TextureKind::BaseColor, TextureShape::Cube), AssetId(5));
+    KILN_CHECK_EQ(placeholder_asset_id(TextureKind::Emissive, TextureShape::Array), AssetId(12));
+    KILN_CHECK_EQ(failed_placeholder_id(TextureShape::Array), AssetId(15));
 }
 
 } // namespace

@@ -1,4 +1,4 @@
-// src/runtime/names.cpp — asset name rules, URI resolution and the Named store layout.
+// src/runtime/names.cpp — asset name rules, URI resolution, the Named store layout, shape names.
 // The rules: docs/design/asset-model-next.md, Part 2.
 #include "kiln/assets.h"
 
@@ -42,6 +42,16 @@ namespace {
 }
 
 } // namespace
+
+char const* texture_shape_name(TextureShape s) noexcept {
+    switch (s) {
+    case TextureShape::Tex2D: return "2D";
+    case TextureShape::Cube: return "cube";
+    case TextureShape::Array: return "array";
+    case TextureShape::Count: break;
+    }
+    return "unsupported";
+}
 
 AssetNameParts split_asset_name(StrView name) noexcept {
     AssetNameParts p;

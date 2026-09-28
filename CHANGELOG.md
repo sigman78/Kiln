@@ -118,6 +118,20 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
   relative path, as the `UriResolver` already received for buffers.
 
 ### Changed
+- **Breaking (runtime, adapter):** textures carry a shape: 2D, cube or array
+  (`docs/design/texture-shapes.md`, step 1).
+  - New `TextureShape` and `texture_shape_name()` in `kiln/adapter.h`. The adapter's `TextureDesc`
+    gains `shape`; a cube still arrives as 6 layers, in the order +X, -X, +Y, -Y, +Z, -Z.
+  - `Adapter::acquire` gains a `TextureShape shape` parameter.
+  - New caps `kCubeTextures` and `kArrayTextures`. kiln uploads placeholders of a shape only for an
+    adapter that declares it, and a request for an undeclared shape fails with K5004.
+  - `RequestOptions::textureShape` (default `Tex2D`, first request wins) picks the placeholder. A
+    cooked texture of another shape fails with the new K5017.
+  - Placeholders exist per shape: `placeholder_asset_id(kind, shape)`, and
+    `failed_placeholder_id(shape)` replaces `kFailedPlaceholderId` (now id 13 for 2D). A context
+    creates up to 15 placeholder objects instead of 5.
+  - Migration: add the `shape` parameter to `acquire`, and set the caps bits if the adapter can
+    bind cube or array views.
 - **Breaking (cook):** settings resolve in a fixed layer order (`docs/design/settings.md`,
   "Resolution layers"): built-in defaults, host settings, sidecar, inference, `CookPolicy`, then
   validation. Host settings are defaults, so a sidecar beats them; the new `CookPolicy` (a texture

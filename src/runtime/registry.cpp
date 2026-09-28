@@ -234,6 +234,8 @@ Slot* request_slot(Context* ctx, AssetKind kind, StrView path, RequestOptions co
     s.phase         = Phase::MetaQueued;
     s.priority      = opt.priority;
     s.texKind       = opt.textureKind < TextureKind::Count ? opt.textureKind : TextureKind::BaseColor;
+    s.texShape      = kind == AssetKind::Texture && opt.textureShape < TextureShape::Count ? opt.textureShape
+                                                                                           : TextureShape::Tex2D;
     s.refcount      = 1;
     s.version       = 1;
     s.groupIndex    = kInvalid;
@@ -264,9 +266,11 @@ Slot* request_slot(Context* ctx, AssetKind kind, StrView path, RequestOptions co
     }
     map.insert(id, s.index); // reserved to maxAssets at create: never rehashes
 
-    if (ctx->adapter.acquire) {
+    if (!shape_supported(ctx, s.texShape)) {
+        s.preFail = make_status(Code::Unsupported); // the adapter lacks kCubeTextures / kArrayTextures
+    } else if (ctx->adapter.acquire) {
         UploadKind const uk = kind == AssetKind::Mesh ? UploadKind::MeshPayload : UploadKind::TextureLevels;
-        Status const st     = ctx->adapter.acquire(ctx->adapter.user, id, uk, s.texKind, &s.acquired);
+        Status const st = ctx->adapter.acquire(ctx->adapter.user, id, uk, s.texKind, s.texShape, &s.acquired);
         if (st.failed()) {
             s.preFail  = st;
             s.acquired = {};
@@ -310,16 +314,17 @@ void release_impl(Context* ctx, u64 bits, AssetKind kind) noexcept {
     if (--s->refcount == 0) unload(ctx, *s);
 }
 
-Placeholder const& kind_placeholder(Context* ctx, TextureKind k) noexcept {
-    return ctx->ph[u32(k) < u32(TextureKind::Count) ? u32(k) : 0];
+Placeholder const& kind_placeholder(Context* ctx, TextureKind k, TextureShape shape) noexcept {
+    return ctx->ph[placeholder_index(k < TextureKind::Count ? k : TextureKind::BaseColor, shape)];
 }
 
 /// The placeholder a texture shows in `s`'s state (or for a stale handle when s is null).
 Placeholder const& texture_placeholder(Context* ctx, Slot const* s) noexcept {
-    bool const failedLook = !s || s->state == State::Failed;
-    if (failedLook && ctx->devPlaceholders && ctx->ph[kFailedPlaceholder].ready)
-        return ctx->ph[kFailedPlaceholder];
-    return kind_placeholder(ctx, s ? s->texKind : TextureKind::BaseColor);
+    bool const failedLook    = !s || s->state == State::Failed;
+    TextureShape const shape = s ? s->texShape : TextureShape::Tex2D;
+    Placeholder const& fp    = ctx->ph[failed_placeholder_index(shape)];
+    if (failedLook && ctx->devPlaceholders && fp.ready) return fp;
+    return kind_placeholder(ctx, s ? s->texKind : TextureKind::BaseColor, shape);
 }
 
 GpuObject placeholder_obj(Placeholder const& p) noexcept { return p.ready ? p.obj : GpuObject{}; }

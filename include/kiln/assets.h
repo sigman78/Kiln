@@ -48,6 +48,9 @@ struct RequestOptions {
     Group group       = {}; ///< null = no group
     TextureKind textureKind =
         TextureKind::BaseColor; ///< textures: selects the placeholder (first request wins)
+    /// Textures: the shape the host expects; selects the placeholder (first request wins). A
+    /// cooked file of another shape fails the load (K5017).
+    TextureShape textureShape = TextureShape::Tex2D;
     // reserved: range (partial loads, v0.8)
 };
 
@@ -335,6 +338,7 @@ enum RuntimeDiagCode : u32 {
     kDiagHotReloadUnavailable = 5011, ///< not compiled in, or the IO backend has no stat (Warning)
     kDiagReloadMemorySource   = 5012, ///< reload requested for a memory-registered asset (Warning)
     kDiagBadAssetName         = 5013, ///< a request, registration or root breaks the name rules
+    kDiagTextureShapeMismatch = 5017, ///< the cooked texture's shape is not the requested one
 };
 
 } // namespace kiln

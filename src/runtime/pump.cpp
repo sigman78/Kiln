@@ -36,6 +36,7 @@ char const* failure_text(u32 code) noexcept {
     case kDiagStoreMiss: return "not in the store";
     case kDiagCookOnMissFailed: return "cook on miss failed";
     case kDiagAdapterRejected: return "adapter rejected the asset";
+    case kDiagTextureShapeMismatch: return "texture shape mismatch";
     default: return "load failed";
     }
 }
@@ -100,7 +101,7 @@ void fail_slot(Context* ctx, Slot& s, u32 code, Status st) noexcept {
 
     push_event(ctx, EventKind::Failed, s.kind, handle_bits(s), s.version, st);
     ++ctx->cur.completed;
-    Placeholder const& fp = ctx->ph[kFailedPlaceholder];
+    Placeholder const& fp = ctx->ph[failed_placeholder_index(s.texShape)];
     if (s.kind == AssetKind::Texture && ctx->adapter.publish && !s.acquired.is_null() &&
         ctx->devPlaceholders && fp.ready)
         ctx->adapter.publish(ctx->adapter.user, s.id, fp.obj, s.version); // bindless slot shows the checker

@@ -36,10 +36,11 @@ char* copy_str(Allocator const* a, StrView s) noexcept {
     return p;
 }
 
-/// Upload one placeholder image (reserved id) through begin/commit. Retries Busy for
-/// up to 10 s. Completion is polled by the caller.
-Status upload_placeholder(Context* ctx, u32 index, AssetId id, Format format, u32 w, u32 h,
-                          Span<u8 const> pixels) noexcept {
+/// Upload one placeholder image (reserved id) through begin/commit: `pixels` in every face or
+/// layer of `shape` (a cube has 6, an array 1). Retries Busy for up to 10 s. Completion is
+/// polled by the caller.
+Status upload_placeholder(Context* ctx, u32 index, AssetId id, TextureShape shape, Format format, u32 w,
+                          u32 h, Span<u8 const> pixels) noexcept {
     Placeholder& p = ctx->ph[index];
     p.id           = id;
     if ((format != Format::R8G8B8A8_UNORM && format != Format::R8G8B8A8_SRGB) || w == 0 || h == 0 ||
@@ -52,6 +53,10 @@ Status upload_placeholder(Context* ctx, u32 index, AssetId id, Format format, u3
     d.format             = format;
     d.width              = w;
     d.height             = h;
+    d.faces              = shape == TextureShape::Cube ? 6 : 1;
+    d.isCube             = shape == TextureShape::Cube;
+    d.isArray            = shape == TextureShape::Array;
+    u32 const slices     = d.layers * d.faces;
     u64 offset = 0, pitch = 0;
     u64 const size =
         texture_layout(d, ctx->cc.optimalRowPitchAlign, ctx->cc.optimalOffsetAlign, &offset, &pitch);
@@ -62,6 +67,8 @@ Status upload_placeholder(Context* ctx, u32 index, AssetId id, Format format, u3
     td.format = format;
     td.width  = w;
     td.height = h;
+    td.layers = slices;
+    td.shape  = shape;
     UploadDesc ud;
     ud.id        = id;
     ud.kind      = UploadKind::TextureLevels;
@@ -85,8 +92,8 @@ Status upload_placeholder(Context* ctx, u32 index, AssetId id, Format format, u3
     if (t.dst && pitchOk) {
         u8* dst            = static_cast<u8*>(t.dst);
         u64 const rowBytes = u64(w) * 4;
-        for (u32 r = 0; r < h; ++r) {
-            std::memcpy(dst + r * pitch, pixels.data + r * rowBytes, usize(rowBytes));
+        for (u32 r = 0; r < h * slices; ++r) {
+            std::memcpy(dst + r * pitch, pixels.data + (r % h) * rowBytes, usize(rowBytes));
             std::memset(dst + r * pitch + rowBytes, 0, usize(pitch - rowBytes));
         }
     }
@@ -105,25 +112,24 @@ Status upload_placeholder(Context* ctx, u32 index, AssetId id, Format format, u3
 }
 
 Status upload_placeholders(Context* ctx, ContextDesc const& desc) noexcept {
-    for (u32 k = 0; k < u32(TextureKind::Count); ++k) {
-        PlaceholderDesc const* host = nullptr;
-        for (PlaceholderDesc const& pd : desc.placeholders)
-            if (u32(pd.kind) == k) host = &pd;
-        Status st;
-        if (host) {
-            st = upload_placeholder(ctx, k, placeholder_asset_id(TextureKind(k)), host->format, host->width,
-                                    host->height, host->pixels);
-        } else {
-            PlaceholderImage const img = builtin_placeholder(TextureKind(k));
-            st = upload_placeholder(ctx, k, placeholder_asset_id(TextureKind(k)), img.format, img.width,
-                                    img.height, img.pixels);
+    for (u32 sh = 0; sh < u32(TextureShape::Count); ++sh) {
+        TextureShape const shape = TextureShape(sh);
+        if (!shape_supported(ctx, shape)) continue;
+        for (u32 k = 0; k < u32(TextureKind::Count); ++k) {
+            PlaceholderDesc const* host = nullptr;
+            for (PlaceholderDesc const& pd : desc.placeholders)
+                if (u32(pd.kind) == k) host = &pd;
+            PlaceholderImage img = builtin_placeholder(TextureKind(k));
+            if (host) img = {host->format, host->width, host->height, host->pixels};
+            KILN_TRY(upload_placeholder(ctx, placeholder_index(TextureKind(k), shape),
+                                        placeholder_asset_id(TextureKind(k), shape), shape, img.format,
+                                        img.width, img.height, img.pixels));
         }
-        if (st.failed()) return st;
-    }
-    if (ctx->devPlaceholders) {
-        PlaceholderImage const img = builtin_failed_placeholder();
-        KILN_TRY(upload_placeholder(ctx, kFailedPlaceholder, kFailedPlaceholderId, img.format, img.width,
-                                    img.height, img.pixels));
+        if (ctx->devPlaceholders) {
+            PlaceholderImage const img = builtin_failed_placeholder();
+            KILN_TRY(upload_placeholder(ctx, failed_placeholder_index(shape), failed_placeholder_id(shape),
+                                        shape, img.format, img.width, img.height, img.pixels));
+        }
     }
     if (ctx->adapter.caps & kSelfSubmitting) {
         auto const deadline = Clock::now() + std::chrono::seconds(10);

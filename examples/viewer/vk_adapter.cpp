@@ -618,7 +618,8 @@ void vk_copy_constraints(void* /*user*/, CopyConstraints* out) noexcept {
     out->bufferOffsetAlign    = kBufferOffsetAlign;
 }
 
-Status vk_acquire(void* user, AssetId id, UploadKind kind, TextureKind texKind, GpuObject* out) noexcept {
+Status vk_acquire(void* user, AssetId id, UploadKind kind, TextureKind texKind, TextureShape /*shape*/,
+                  GpuObject* out) noexcept {
     *out = GpuObject{};
     if (kind != UploadKind::TextureLevels) return kOk; // meshes have no slot
     VkAdapter* a = self(user);
@@ -659,8 +660,9 @@ Status vk_begin_upload(void* user, UploadDesc const& desc, UploadTarget* out) no
         TextureDesc const& t = *desc.texture;
         u64 offsets[kMaxLevels];
         u64 pitches[kMaxLevels];
-        if (t.levels == 0 || t.levels > kMaxLevels || t.layers == 0 || (t.depth > 1 && t.layers > 1) ||
-            texture_layout(t, offsets, pitches) > desc.size) {
+        // The bindless array holds 2D views only; this adapter sets no kCubeTextures / kArrayTextures.
+        if (t.shape != TextureShape::Tex2D || t.levels == 0 || t.levels > kMaxLevels || t.layers == 0 ||
+            (t.depth > 1 && t.layers > 1) || texture_layout(t, offsets, pitches) > desc.size) {
             KILN_WARN("vk-adapter", "texture %016llx: unsupported shape or layout",
                       static_cast<unsigned long long>(desc.id));
             return make_status(Code::Unsupported);

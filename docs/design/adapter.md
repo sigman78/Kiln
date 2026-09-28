@@ -60,7 +60,7 @@ and `publish`, a null `reserved[4]` and no unknown `caps` bits; `create()` rejec
 |---|---|
 | `supports_format` | Called on the pump thread when an asset reaches metadata: the texture format with `SampledImage`, every vertex attribute format with `VertexBuffer`. False fails the asset (K5004). Must be cheap and pure. |
 | `copy_constraints` | Called once in `create()`. kiln rounds each value up to a power of two. |
-| `acquire` | Called once per asset, on the first `request()` of its id, on the requesting thread. A bindless adapter allocates a descriptor slot, writes the placeholder for `texKind` into it, and returns a slot-bound object. A per-frame-lookup adapter returns a null object or leaves `acquire` null. Non-Ok moves the asset to `Failed` on the next `pump()`. `Busy` is not allowed. `texKind` is ignored for meshes. |
+| `acquire` | Called once per asset, on the first `request()` of its id, on the requesting thread. A bindless adapter allocates a descriptor slot of the type of `shape`, writes the placeholder for `texKind` and `shape` into it, and returns a slot-bound object. A per-frame-lookup adapter returns a null object or leaves `acquire` null. Non-Ok moves the asset to `Failed` on the next `pump()`. `Busy` is not allowed. `texKind` is ignored for meshes. |
 | `begin_upload` | Returns destination memory and the `GpuObject` it will hold. `Code::Busy` means "not now" (staging full): kiln retries on a later `pump()`. Any other failure moves the asset to `Failed` (K5004). |
 | `commit_upload` | kiln has finished writing `dst`. Always called after a successful `begin_upload`, even when the load then fails. The renderer records and submits the copy (itself if `kSelfSubmitting`, else with its next frame). |
 | `is_upload_complete` | Polled in `pump()` (and in `create()`'s placeholder spin). When true, the asset becomes `Ready` in the same pump. |
@@ -81,6 +81,14 @@ An adapter sets `kSelfSubmitting` only if both hold:
 `wait()` panics without it (K5007), and `create()` spins on the placeholder uploads only when it is
 set. An adapter that submits uploads inside the frame's command buffers must not set it. Its hosts
 call `pump()` every frame and show `progress()`.
+
+### `kCubeTextures`, `kArrayTextures`
+
+The adapter accepts textures of `TextureShape::Cube` or `Array` (`texture-shapes.md`). kiln then
+uploads the placeholders of that shape at `create()`, and `TextureDesc::shape` tells the adapter
+which image view to create. Without the bit, kiln sends no texture of that shape: a request for it
+fails with K5004. The example Vulkan adapter sets neither bit yet: its bindless array holds 2D
+views only.
 
 ### Two binding models
 
@@ -121,7 +129,8 @@ The renderer picks one; `gpu(ctx, handle)` (an allocation-free table lookup) ser
 
 ### Upload layouts
 
-**Texture layout.** kiln writes levels (and layers; cube faces count as layers) in ascending level
+**Texture layout.** kiln writes levels (and layers; a cube's 6 faces count as layers, in the order
++X, −X, +Y, −Y, +Z, −Z, and `TextureDesc::shape` is `Cube`) in ascending level
 order, each level starting at `optimalOffsetAlign`, rows padded to `optimalRowPitchAlign`.
 `texture_info()` returns the per-level offsets and row pitches, so the renderer builds its copy
 regions without recomputing anything. If `UploadTarget::rowPitchAlign` does not divide the planned

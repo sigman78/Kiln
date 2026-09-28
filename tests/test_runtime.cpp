@@ -255,9 +255,10 @@ KILN_TEST(Runtime, CreateDestroyPlaceholders) {
         cd.storeDir        = "does/not/exist";
         if (!rt.init(nd, cd)) return;
         NullAdapterStats st = null_adapter_stats(rt.na);
-        KILN_CHECK_EQ(st.beginUploads, dev ? 5u : 4u);
-        KILN_CHECK_EQ(st.completes, dev ? 5u : 4u);
-        KILN_CHECK_EQ(st.publishes, dev ? 5u : 4u);
+        // 4 kinds + the Failed checker, for each of Tex2D, Cube and Array.
+        KILN_CHECK_EQ(st.beginUploads, dev ? 15u : 12u);
+        KILN_CHECK_EQ(st.completes, dev ? 15u : 12u);
+        KILN_CHECK_EQ(st.publishes, dev ? 15u : 12u);
 
         // A fresh texture handle serves its kind placeholder (objects are created in kind order).
         RequestOptions ro;
@@ -581,7 +582,7 @@ KILN_TEST(Runtime, CorruptStoreFileFails) {
 KILN_TEST(Runtime, AdapterRejectFails) {
     Rt rt2;
     NullAdapterDesc nd2;
-    nd2.failEveryN = 6; // the 5 placeholder uploads succeed, the 6th (the mesh) fails
+    nd2.failEveryN = 16; // the 15 placeholder uploads succeed, the 16th (the mesh) fails
     ContextDesc cd;
     cd.devPlaceholders = true;
     if (!rt2.init(nd2, cd)) return;
@@ -1336,4 +1337,123 @@ KILN_TEST(RuntimePanic, WaitNotSelfSubmitting) {
     KILN_CHECK_MSG(false, "wait() without kSelfSubmitting did not panic");
     destroy(*c);
     null_adapter_destroy(*na);
+}
+
+// ---------------------------------------------------------------------------
+// Texture shapes (docs/design/texture-shapes.md)
+// ---------------------------------------------------------------------------
+
+namespace {
+
+/// A scratch store with KTX2 corpus files under short names: sky (cube), layers (array of 7),
+/// vol (volume) and flat (2D).
+struct ShapeStore {
+    char dir[1024] = {};
+
+    bool init() {
+        format(dir, sizeof dir, "%s/shapes", test::sample_dir());
+        if (!KILN_CHECK(ensure_dir(dir))) return false;
+        struct Copy {
+            char const* from;
+            char const* to;
+        };
+        Copy const files[] = {
+            {"generated/cube_rgba8_srgb_mip.ktx2",     "sky"   },
+            {"khronos/r8g8b8a8_srgb_array_7_mip.ktx2", "layers"},
+            {"khronos/r8g8b8a8_srgb_3d_7.ktx2",        "vol"   },
+            {"khronos/r8g8b8a8_srgb.ktx2",             "flat"  },
+        };
+        for (Copy const& c : files) {
+            char src[1024], dst[1024];
+            format(src, sizeof src, "%s/%s", test::corpus_dir(), c.from);
+            format(dst, sizeof dst, "%s/%s.ktx2", dir, c.to);
+            Vec<u8> bytes(default_allocator(), Tag::Test);
+            if (!KILN_CHECK_MSG(test::corpus::read_file(src, bytes), "cannot read %s", src)) return false;
+            if (!write_bytes(dst, bytes.span())) return false;
+        }
+        return true;
+    }
+};
+
+TextureHandle request_shape(Rt& rt, char const* name, TextureShape shape) {
+    RequestOptions ro;
+    ro.textureShape = shape;
+    return request_texture(rt.ctx, name, ro);
+}
+
+} // namespace
+
+KILN_TEST(Runtime, ShapePlaceholders) {
+    Rt rt;
+    ContextDesc cd;
+    cd.storeDir = "does/not/exist";
+    if (!rt.init({}, cd)) return;
+    TextureHandle const cube = request_shape(rt, "tex/cube", TextureShape::Cube);
+    TextureInfo ti           = texture_info(rt.ctx, cube);
+    KILN_CHECK(ti.isPlaceholder);
+    KILN_CHECK(ti.desc.isCube && ti.desc.faces == 6);
+    TextureHandle const arr = request_shape(rt, "tex/array", TextureShape::Array);
+    ti                      = texture_info(rt.ctx, arr);
+    KILN_CHECK(ti.desc.isArray && !ti.desc.isCube);
+    release(rt.ctx, cube);
+    release(rt.ctx, arr);
+}
+
+KILN_TEST(Runtime, CubeAndArrayLoad) {
+    ShapeStore store;
+    if (!store.init()) return;
+    Rt rt;
+    ContextDesc cd;
+    cd.storeDir = StrView(store.dir);
+    if (!rt.init({}, cd)) return;
+    TextureHandle const sky    = request_shape(rt, "sky", TextureShape::Cube);
+    TextureHandle const layers = request_shape(rt, "layers", TextureShape::Array);
+    KILN_REQUIRE(rt.pump_until([&] { return is_ready(rt.ctx, sky) && is_ready(rt.ctx, layers); }));
+    TextureInfo const cube = texture_info(rt.ctx, sky);
+    KILN_CHECK(!cube.isPlaceholder && cube.desc.isCube && cube.desc.faces == 6);
+    TextureInfo const arr = texture_info(rt.ctx, layers);
+    KILN_CHECK(!arr.isPlaceholder && arr.desc.isArray && arr.desc.layers == 7);
+    release(rt.ctx, sky);
+    release(rt.ctx, layers);
+}
+
+// The cooked shape must be the requested one. A volume never loads: the KTX2 reader rejects 3D.
+KILN_TEST(Runtime, TextureShapeMismatchFails) {
+    ShapeStore store;
+    if (!store.init()) return;
+    Rt rt;
+    ContextDesc cd;
+    cd.storeDir = StrView(store.dir);
+    if (!rt.init({}, cd)) return;
+    TextureHandle const cubeAs2D   = request_shape(rt, "sky", TextureShape::Tex2D);
+    TextureHandle const flatAsCube = request_shape(rt, "flat", TextureShape::Cube);
+    TextureHandle const vol        = request_shape(rt, "vol", TextureShape::Tex2D);
+    KILN_REQUIRE(rt.pump_until([&] {
+        return state(rt.ctx, cubeAs2D) == State::Failed && state(rt.ctx, flatAsCube) == State::Failed &&
+               state(rt.ctx, vol) == State::Failed;
+    }));
+    KILN_CHECK_EQ(count_code(rt.diags, kDiagTextureShapeMismatch), 2u);
+    KILN_CHECK_EQ(count_code(rt.diags, kDiagAssetLoadFailed), 1u);
+    release(rt.ctx, cubeAs2D);
+    release(rt.ctx, flatAsCube);
+    release(rt.ctx, vol);
+}
+
+// An adapter without kCubeTextures / kArrayTextures gets 2D placeholders only, and a request for
+// another shape fails as adapter-rejected.
+KILN_TEST(Runtime, AdapterWithoutShapeCaps) {
+    Rt rt;
+    Result<NullAdapter*> a = null_adapter_create({.bindless = false}, &rt.adapter);
+    KILN_REQUIRE(a.ok());
+    rt.na = *a;
+    rt.adapter.caps &= ~u32(kCubeTextures | kArrayTextures);
+    Result<Context*> c =
+        create(ContextDesc{.diag = rt.diags.sink(), .adapter = &rt.adapter, .storeDir = "none"});
+    KILN_REQUIRE(c.ok());
+    rt.ctx = *c;
+    KILN_CHECK_EQ(null_adapter_stats(rt.na).beginUploads, KILN_DEBUG ? 5u : 4u);
+    TextureHandle const cube = request_shape(rt, "tex/cube", TextureShape::Cube);
+    KILN_REQUIRE(rt.pump_until([&] { return state(rt.ctx, cube) == State::Failed; }));
+    KILN_CHECK(rt.diags.has(kDiagAdapterRejected));
+    release(rt.ctx, cube);
 }

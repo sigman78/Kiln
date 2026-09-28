@@ -45,7 +45,8 @@ generation" wording but keeps its intent.
   returns 0 for an invalid name.
 - Matches mesh-format-spec §3, so `ModelInfo.assetId` and `TextureBinding.textureId` are usable as
   `AssetId`s.
-- Id 0 is "none". Ids 1..15 are reserved for built-in placeholders. A request whose path hashes
+- Id 0 is "none". Ids 1..15 are reserved for built-in placeholders: 1..12 are the four kinds for each
+  shape (Tex2D 1..4, Cube 5..8, Array 9..12), 13..15 the Failed checker per shape. A request whose path hashes
   into 0..15 fails with K5003 (R5i).
 - Collisions: every slot stores its path, and a request whose id matches a live slot with a
   different path panics, in all builds.
@@ -112,7 +113,7 @@ and emits one `Severity::Error` diagnostic, no `Failed` event.
 live asset. There is no request by id and no find by path. `register_mesh` / `register_texture`
 add in-memory cooked bytes under a path.
 
-`RequestOptions { priority = Normal; group = {}; textureKind = BaseColor; }`; a `range` field is
+`RequestOptions { priority = Normal; group = {}; textureKind = BaseColor; textureShape = Tex2D; }`; a `range` field is
 reserved for partial loads (v0.8).
 
 - A request increments a refcount. Requesting a live path returns **the same handle**.
@@ -149,12 +150,15 @@ so a partially loaded scene still looks plausibly lit.
 | `Emissive` | black, sRGB |
 | Failed (`devPlaceholders`) | magenta checker (8x8), sRGB |
 
+- The shape comes from `RequestOptions.textureShape` (`texture-shapes.md`); each shape the adapter
+  supports has its own set: a cube placeholder is six faces of the pixel, an array placeholder one
+  layer. The first request wins, like the kind. A cooked texture of another shape fails with K5017.
 - The kind comes from `RequestOptions.textureKind`. `texture_kind_for_slot()` maps a `.mesh`
   `TextureSlot` to a kind (`MetalRough` and `Occlusion` map to `Orm`). Other usages use
   `BaseColor`. If a texture is requested with two kinds, the first request wins.
 - Created through the adapter at `create()` with reserved ids (`adapter.md`). Never unloaded.
 - **Host-overridable per kind** via `ContextDesc.placeholders` (a span of `PlaceholderDesc`: kind,
-  RGBA8 format, extent, pixels). Kinds without an entry use the built-in one.
+  RGBA8 format, extent, pixels), for every shape. Kinds without an entry use the built-in one.
 - **Failed placeholder:** `ContextDesc.devPlaceholders` (default `KILN_DEBUG != 0`). When true, a
   `Failed` texture and a stale handle serve the magenta checker. When false, a failed texture
   serves its kind placeholder.

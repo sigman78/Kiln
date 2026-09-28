@@ -15,9 +15,16 @@ struct Context;
 
 namespace rt {
 
-inline constexpr usize kMaxPathLen      = kMaxAssetNameLen + 1; ///< asset name incl. terminator
-inline constexpr u32 kPlaceholderCount  = u32(TextureKind::Count) + 1;
-inline constexpr u32 kFailedPlaceholder = u32(TextureKind::Count); ///< index in Context::ph
+inline constexpr usize kMaxPathLen = kMaxAssetNameLen + 1; ///< asset name incl. terminator
+/// Context::ph holds, per shape, one placeholder per kind and then the Failed one.
+inline constexpr u32 kPlaceholdersPerShape = u32(TextureKind::Count) + 1;
+inline constexpr u32 kPlaceholderCount     = kPlaceholdersPerShape * u32(TextureShape::Count);
+[[nodiscard]] constexpr u32 placeholder_index(TextureKind kind, TextureShape shape) noexcept {
+    return u32(shape) * kPlaceholdersPerShape + u32(kind);
+}
+[[nodiscard]] constexpr u32 failed_placeholder_index(TextureShape shape) noexcept {
+    return u32(shape) * kPlaceholdersPerShape + u32(TextureKind::Count);
+}
 
 /// Heap bytes with 16-byte alignment (MeshView needs >= 8). Owned explicitly: the
 /// owner calls release(); never copied implicitly.
@@ -82,26 +89,27 @@ struct Watch; // watch.cpp: store poller state
 
 struct Slot {
     // --- identity / registry (pump thread) --------------------------------------
-    Context* ctx        = nullptr;
-    u32 index           = 0;
-    u32 generation      = 1;
-    AssetId id          = 0;
-    AssetKind kind      = AssetKind::Mesh;
-    State state         = State::Unloaded;
-    Phase phase         = Phase::Free;
-    Priority priority   = Priority::Normal;
-    TextureKind texKind = TextureKind::BaseColor;
-    bool live           = false; ///< occupied (including zombies)
-    bool zombie         = false; ///< released while a job was in flight
-    bool jobInFlight    = false;
-    bool reloading      = false; ///< the running load is a reload: state stays Ready / Failed
-    bool reloadPending  = false; ///< reload requested while not settled; runs at settle
-    u32 refcount        = 0;
-    u32 version         = 0;
-    u32 groupIndex      = kInvalid;
-    u32 groupGen        = 0;
-    u64 groupBytes      = 0;              ///< contribution to the group's bytesTotal
-    State groupAs       = State::Pending; ///< how the group counts the slot (reloads never change it)
+    Context* ctx          = nullptr;
+    u32 index             = 0;
+    u32 generation        = 1;
+    AssetId id            = 0;
+    AssetKind kind        = AssetKind::Mesh;
+    State state           = State::Unloaded;
+    Phase phase           = Phase::Free;
+    Priority priority     = Priority::Normal;
+    TextureKind texKind   = TextureKind::BaseColor;
+    TextureShape texShape = TextureShape::Tex2D; ///< requested; fixed while the slot lives
+    bool live             = false;               ///< occupied (including zombies)
+    bool zombie           = false;               ///< released while a job was in flight
+    bool jobInFlight      = false;
+    bool reloading        = false; ///< the running load is a reload: state stays Ready / Failed
+    bool reloadPending    = false; ///< reload requested while not settled; runs at settle
+    u32 refcount          = 0;
+    u32 version           = 0;
+    u32 groupIndex        = kInvalid;
+    u32 groupGen          = 0;
+    u64 groupBytes        = 0;              ///< contribution to the group's bytesTotal
+    State groupAs         = State::Pending; ///< how the group counts the slot (reloads never change it)
     // queue links (intrusive, over slot indices)
     QueueId queue  = QueueId::None;
     u32 qPrev      = kInvalid;
@@ -248,6 +256,17 @@ void boost(Context* ctx, Slot& s) noexcept;
 void boost_group(Context* ctx, Group g) noexcept;
 [[nodiscard]] inline u64 handle_bits(Slot const& s) noexcept { return (u64(s.generation) << 32) | s.index; }
 [[nodiscard]] inline StrView path_of(Slot const& s) noexcept { return {s.path, s.pathLen}; }
+/// Tex2D always; Cube and Array only when the adapter declares them (AdapterCaps).
+[[nodiscard]] inline bool shape_supported(Context const* ctx, TextureShape shape) noexcept {
+    if (shape == TextureShape::Cube) return (ctx->adapter.caps & kCubeTextures) != 0;
+    if (shape == TextureShape::Array) return (ctx->adapter.caps & kArrayTextures) != 0;
+    return shape == TextureShape::Tex2D;
+}
+/// The shape of a KTX2 texture; Count for one kiln does not load (a volume or a cube array).
+[[nodiscard]] inline TextureShape shape_of(ktx2::TextureDesc const& d) noexcept {
+    if (d.depth > 1 || (d.isCube && d.isArray)) return TextureShape::Count;
+    return d.isCube ? TextureShape::Cube : d.isArray ? TextureShape::Array : TextureShape::Tex2D;
+}
 
 // --- loader.cpp (worker side) -------------------------------------------------------
 void run_job(void* arg) noexcept;

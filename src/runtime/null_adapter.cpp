@@ -59,7 +59,7 @@ void null_copy_constraints(void* user, CopyConstraints* out) noexcept {
     out->bufferOffsetAlign    = na->desc.offsetAlign;
 }
 
-Status null_acquire(void* user, AssetId id, UploadKind kind, TextureKind /*texKind*/,
+Status null_acquire(void* user, AssetId id, UploadKind kind, TextureKind /*texKind*/, TextureShape /*shape*/,
                     GpuObject* out) noexcept {
     NullAdapter* na = self(user);
     std::lock_guard<std::mutex> lock(na->mutex);
@@ -100,6 +100,9 @@ Status null_begin_upload(void* user, UploadDesc const& desc, UploadTarget* out) 
     }
 
     KILN_VERIFY(na->table.size() < na->desc.maxObjects);
+    if (desc.kind == UploadKind::TextureLevels && desc.texture && desc.texture->shape == TextureShape::Cube &&
+        (desc.texture->layers != 6 || desc.texture->width != desc.texture->height))
+        return make_status(Code::InvalidArgument); // a cube is 6 square faces
 
     usize align = desc.alignment ? usize(desc.alignment) : 1;
     u8* bytes = static_cast<u8*>(alloc(na->allocator, desc.size ? usize(desc.size) : 1, align, Tag::Payload));
@@ -199,7 +202,7 @@ Result<NullAdapter*> null_adapter_create(NullAdapterDesc const& desc, Adapter* o
     out->is_upload_complete = &null_is_upload_complete;
     out->publish            = &null_publish;
     out->destroy_deferred   = &null_destroy_deferred;
-    out->caps               = kSelfSubmitting;
+    out->caps               = kSelfSubmitting | kCubeTextures | kArrayTextures;
     out->user               = na;
 
     KILN_ASSERT(adapter_is_valid(*out));

@@ -227,11 +227,19 @@ Status texture_meta(Context* ctx, Slot& s, Source const& src) noexcept {
     }
     ktx2::Ktx2View const& v   = *r;
     ktx2::TextureDesc const d = v.desc();
-    u32 const levels          = d.levels;
-    u64* layout               = alloc_array<u64>(ctx->alloc, usize(levels) * 4, Tag::Payload);
-    MetaSet& m                = s.next;
-    m.layout                  = layout;
-    m.layoutLevels            = levels;
+    // Before the level checks: a volume or cube array is reported as a shape, not a layout.
+    if (TextureShape const shape = shape_of(d); shape != s.texShape) {
+        prefix.release();
+        note(s.capture, "the cooked texture is %s, the request expects %s", texture_shape_name(shape),
+             texture_shape_name(s.texShape));
+        s.jobDiag = kDiagTextureShapeMismatch;
+        return make_status(Code::ValidationFailed);
+    }
+    u32 const levels = d.levels;
+    u64* layout      = alloc_array<u64>(ctx->alloc, usize(levels) * 4, Tag::Payload);
+    MetaSet& m       = s.next;
+    m.layout         = layout;
+    m.layoutLevels   = levels;
     m.uploadSize =
         texture_layout(d, ctx->cc.optimalRowPitchAlign, ctx->cc.optimalOffsetAlign, layout, layout + levels);
     FormatInfo const& fi = v.info();
@@ -265,7 +273,7 @@ CompletionKind run_meta(Context* ctx, Slot& s) noexcept {
     src.close();
     if (st.failed()) {
         s.jobStatus = st;
-        s.jobDiag   = kDiagAssetLoadFailed;
+        if (s.jobDiag == 0) s.jobDiag = kDiagAssetLoadFailed;
         return CompletionKind::Failed;
     }
     return CompletionKind::MetaReady;
@@ -370,6 +378,7 @@ CompletionKind run_upload(Context* ctx, Slot& s) noexcept {
         td.height                  = d.height;
         td.depth                   = d.depth;
         td.layers                  = d.layers * d.faces; // cube faces are layers at the boundary
+        td.shape                   = s.texShape;
         td.levels                  = d.levels;
         td.firstLevel              = 0;
         ud.kind                    = UploadKind::TextureLevels;

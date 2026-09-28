@@ -7,7 +7,7 @@
 
 namespace kiln {
 
-/// FNV-1a 64 of the normalized cooked asset path (forward slashes, no extension).
+/// FNV-1a 64 of the asset name (`asset_id()` in kiln/assets.h).
 using AssetId = u64;
 
 /// Ids 1..15 are reserved for the built-in placeholders (handles-and-states.md).
@@ -19,11 +19,21 @@ enum class UploadKind : u8 { MeshPayload = 0, TextureLevels = 1 };
 /// Selects the placeholder served while a texture is Pending or Failed.
 enum class TextureKind : u8 { BaseColor = 0, Normal, Orm, Emissive, Count };
 
+/// The image type of a texture (docs/design/texture-shapes.md). A cube's 6 faces arrive as
+/// `TextureDesc::layers == 6`, in the order +X, -X, +Y, -Y, +Z, -Z.
+enum class TextureShape : u8 { Tex2D = 0, Cube, Array, Count };
+/// "2D", "cube", "array"; "unsupported" for Count (a volume or a cube array).
+[[nodiscard]] KILN_API char const* texture_shape_name(TextureShape s) noexcept;
+
 enum AdapterCaps : u32 {
     /// commit_upload submits to a queue by itself and is_upload_complete makes progress
     /// without the host recording a frame. Required by wait().
     kSelfSubmitting = 1u << 0,
-    // bits 1..31 reserved, must be 0
+    /// The adapter accepts TextureShape::Cube / Array. Without the bit, kiln uploads no
+    /// placeholder of that shape and a request for it fails (K5004).
+    kCubeTextures  = 1u << 1,
+    kArrayTextures = 1u << 2,
+    // bits 3..31 reserved, must be 0
 };
 
 struct CopyConstraints {
@@ -35,13 +45,14 @@ struct CopyConstraints {
 /// What kiln is about to place for a texture. Levels are uploaded in ascending
 /// level order, each starting at optimalOffsetAlign, rows padded to rowPitchAlign.
 struct TextureDesc {
-    Format format  = Format::Undefined;
-    u32 width      = 0;
-    u32 height     = 0;
-    u32 depth      = 1;
-    u32 layers     = 1;
-    u32 levels     = 1;
-    u32 firstLevel = 0; ///< reserved for partial loads (v0.8); 0 in v0.5
+    Format format      = Format::Undefined;
+    u32 width          = 0;
+    u32 height         = 0;
+    u32 depth          = 1;
+    u32 layers         = 1; ///< array layers, or 6 for a cube
+    u32 levels         = 1;
+    TextureShape shape = TextureShape::Tex2D;
+    u32 firstLevel     = 0; ///< reserved for partial loads (v0.8); 0 in v0.5
 };
 
 /// What kiln is about to place for a mesh payload (.mesh header values).
@@ -83,8 +94,10 @@ struct Adapter {
     bool (*supports_format)(void* user, Format f, FormatUsage usage) = nullptr;
     void (*copy_constraints)(void* user, CopyConstraints* out)       = nullptr;
     /// Called once per asset on its first request. Bindless adapters allocate a slot
-    /// bound to the placeholder and return it; others may return a null object.
-    Status (*acquire)(void* user, AssetId id, UploadKind kind, TextureKind texKind, GpuObject* out) = nullptr;
+    /// bound to the placeholder of `texKind` and `shape` and return it; others may return a
+    /// null object. Meshes pass Tex2D.
+    Status (*acquire)(void* user, AssetId id, UploadKind kind, TextureKind texKind, TextureShape shape,
+                      GpuObject* out) = nullptr;
     /// May return Code::Busy (back-pressure); kiln retries on a later pump.
     Status (*begin_upload)(void* user, UploadDesc const& desc, UploadTarget* out) = nullptr;
     void (*commit_upload)(void* user, u64 token)                                  = nullptr;
@@ -103,7 +116,7 @@ struct Adapter {
 [[nodiscard]] constexpr bool adapter_is_valid(Adapter const& a) noexcept {
     return a.supports_format && a.copy_constraints && a.begin_upload && a.commit_upload &&
            a.is_upload_complete && a.destroy_deferred && !a.reserved[0] && !a.reserved[1] && !a.reserved[2] &&
-           !a.reserved[3] && (a.caps & ~u32(kSelfSubmitting)) == 0;
+           !a.reserved[3] && (a.caps & ~u32(kSelfSubmitting | kCubeTextures | kArrayTextures)) == 0;
 }
 
 } // namespace kiln

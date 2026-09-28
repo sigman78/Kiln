@@ -1,5 +1,5 @@
 // kiln/placeholders.h — built-in placeholder images per texture kind and the Failed checker.
-// Uploaded through the adapter at create(), under reserved asset ids 1..15.
+// Uploaded through the adapter at create() for each supported shape, under reserved ids 1..15.
 // See docs/design/handles-and-states.md (Placeholders).
 #pragma once
 
@@ -20,11 +20,15 @@ struct PlaceholderImage {
 /// The 8x8 magenta/black checker served by a Failed texture in dev builds.
 [[nodiscard]] KILN_API PlaceholderImage builtin_failed_placeholder() noexcept;
 
-/// Reserved asset id for a kind placeholder: BaseColor=1 .. Emissive=4.
-[[nodiscard]] constexpr AssetId placeholder_asset_id(TextureKind kind) noexcept {
-    return kFirstPlaceholderId + u64(kind);
+/// Reserved asset id of a kind placeholder: 1..12, four kinds per shape (Tex2D 1..4).
+[[nodiscard]] constexpr AssetId placeholder_asset_id(TextureKind kind,
+                                                     TextureShape shape = TextureShape::Tex2D) noexcept {
+    return kFirstPlaceholderId + u64(shape) * u64(TextureKind::Count) + u64(kind);
 }
-/// Reserved asset id for the Failed placeholder.
-inline constexpr AssetId kFailedPlaceholderId = kLastPlaceholderId;
+/// Reserved asset id of the Failed placeholder of a shape: 13..15.
+[[nodiscard]] constexpr AssetId failed_placeholder_id(TextureShape shape = TextureShape::Tex2D) noexcept {
+    return kFirstPlaceholderId + u64(TextureShape::Count) * u64(TextureKind::Count) + u64(shape);
+}
+static_assert(failed_placeholder_id(TextureShape(u32(TextureShape::Count) - 1)) == kLastPlaceholderId);
 
 } // namespace kiln
