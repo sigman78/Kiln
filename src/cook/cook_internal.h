@@ -84,7 +84,7 @@ struct ImportMaterial {
 
 struct ImportImage {
     StrView name;         ///< as written; may be empty
-    StrView uri;          ///< external URI as written; empty for embedded / data: images
+    StrView uri;          ///< external URI, percent-decoded; empty for embedded / data: images
     StrView mimeType;     ///< may be empty
     Span<u8 const> bytes; ///< embedded bytes (buffer view or decoded data: URI)
     bool usable = false;  ///< has an external URI or embedded bytes

@@ -101,6 +101,9 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
   re-dispatched, so a run with back-pressure could report many times the bytes actually uploaded.
   Retries still consume the per-pump budget and show up in `busyRetries`.
 - KTX2 writer: the alpha sample of sRGB formats carried the EXPONENT qualifier (0x20) instead of LINEAR (0x10); found by `ktx validate`.
+- Cook: external glTF image URIs were not percent-decoded, so a texture such as `my%20wood.png`
+  could not be read (K1005 / "cannot read external texture"). `TextureRef::uri` is now the decoded
+  relative path, as the `UriResolver` already received for buffers.
 
 ### Changed
 - **Breaking (cook):** `cook_mesh` and `cook_texture` take `CookEnv const& env = {}` in place of the

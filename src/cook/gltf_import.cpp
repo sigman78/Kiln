@@ -1015,9 +1015,9 @@ void read_images(Ctx& c, Vec<ImportImage>& out) noexcept {
                     }
                 }
             } else {
-                ii.uri    = uri;
+                ii.uri    = decode_uri(c.arena, uri);
                 ii.usable = true;
-                if (ii.mimeType.empty()) ii.mimeType = mime_from_extension(uri);
+                if (ii.mimeType.empty()) ii.mimeType = mime_from_extension(ii.uri);
             }
         }
         out.push_back(ii);
