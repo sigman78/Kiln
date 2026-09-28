@@ -1,6 +1,6 @@
 // tests/test_texture_golden.cpp — texture cooker golden files (cook-only); see tests/golden/README.md.
 // Cases mirror test_texture_cook.cpp's color/normal/height ones at smaller, distinct sizes,
-// so a golden mismatch cannot be confused with theirs. Skips without --golden.
+// so a golden mismatch cannot be confused with theirs.
 #include "kiln_test.h"
 #include "ktx2_corpus.h" // read_file, bytes_equal
 #include "png_writer.h"
@@ -45,7 +45,6 @@ bool ensure_dir(char const* dir) {
 /// (with --update-golden) writes it.
 void check_golden_ktx2(char const* name, Span<u8 const> got) {
     char const* golden = kiln::test::golden_dir();
-    if (!golden) return;
     char path[1024];
     format(path, sizeof path, "%s/ktx2/%s.ktx2", golden, name);
 
@@ -90,7 +89,6 @@ Result<CookedTexture> run_cook(Span<u8 const> bytes, TextureCookSettings const& 
 } // namespace
 
 KILN_TEST(TextureGolden, ColorSrgb7x5) {
-    if (!kiln::test::golden_dir()) return;
     u8 rgba[7 * 5 * 4];
     pattern(rgba, sizeof rgba, 101);
     Vec<u8> f = png::encode({.width = 7, .height = 5, .colorType = 6, .depth = 8, .pixels = rgba});
@@ -101,7 +99,6 @@ KILN_TEST(TextureGolden, ColorSrgb7x5) {
 }
 
 KILN_TEST(TextureGolden, Normal8x8) {
-    if (!kiln::test::golden_dir()) return;
     u8 rgba[8 * 8 * 4];
     pattern(rgba, sizeof rgba, 102);
     Vec<u8> f = png::encode({.width = 8, .height = 8, .colorType = 6, .depth = 8, .pixels = rgba});
@@ -112,7 +109,6 @@ KILN_TEST(TextureGolden, Normal8x8) {
 }
 
 KILN_TEST(TextureGolden, Height16_4x4) {
-    if (!kiln::test::golden_dir()) return;
     u16 g[4 * 4];
     for (u32 i = 0; i < 16; ++i)
         g[i] = u16(i * 4093u);

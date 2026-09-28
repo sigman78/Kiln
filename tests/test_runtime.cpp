@@ -1,5 +1,5 @@
 // tests/test_runtime.cpp — runtime (kiln/assets.h) through the null adapter.
-// Golden-based tests use tests/golden as the store (`--golden <dir>`) and skip without it.
+// Tests that leave ContextDesc::storeDir empty use golden_dir() as the store.
 // RuntimePanic.* cases abort on purpose; they run only when selected by exact name (own CTest entries).
 #include "kiln_test.h"
 
@@ -74,7 +74,7 @@ struct Rt {
         na         = *a;
         cd.adapter = &adapter;
         cd.diag    = diags.sink();
-        if (cd.storeDir.empty() && test::golden_dir()) cd.storeDir = test::golden_dir();
+        if (cd.storeDir.empty()) cd.storeDir = test::golden_dir();
         Result<Context*> c = create(cd);
         if (!KILN_CHECK(c.ok())) return false;
         ctx = *c;
@@ -239,7 +239,6 @@ KILN_TEST(Runtime, HostPlaceholderOverride) {
 }
 
 KILN_TEST(Runtime, LoadMesh) {
-    if (!test::golden_dir()) return;
     Rt rt;
     if (!rt.init()) return;
     MeshHandle m = request_mesh(rt.ctx, "mesh/cube_basic");
@@ -300,7 +299,6 @@ KILN_TEST(Runtime, LoadMesh) {
 
 // Tight rows and a 256-byte row pitch.
 KILN_TEST(Runtime, LoadTexture) {
-    if (!test::golden_dir()) return;
     for (u64 pitchAlign : {u64(1), u64(256)}) {
         Rt rt;
         NullAdapterDesc nd;
@@ -357,7 +355,6 @@ KILN_TEST(Runtime, LoadTexture) {
 }
 
 KILN_TEST(Runtime, GoldenFolderGroupWait) {
-    if (!test::golden_dir()) return;
     Rt rt;
     if (!rt.init()) return;
     Group g = group(rt.ctx);
@@ -412,7 +409,6 @@ KILN_TEST(Runtime, GoldenFolderGroupWait) {
 }
 
 KILN_TEST(Runtime, WaitTimeoutAndMixedGroup) {
-    if (!test::golden_dir()) return;
     Rt rt;
     if (!rt.init()) return;
     Group g = group(rt.ctx);
@@ -442,7 +438,6 @@ KILN_TEST(Runtime, MissingAssetFails) {
         nd.bindless = false;
         ContextDesc cd;
         cd.devPlaceholders = dev;
-        cd.storeDir        = test::golden_dir() ? test::golden_dir() : "no/such/store";
         if (!rt.init(nd, cd)) return;
         TextureHandle t = request_texture(rt.ctx, "tex/nope");
         KILN_REQUIRE(rt.pump_until([&] { return state(rt.ctx, t) == State::Failed; }));
@@ -461,7 +456,6 @@ KILN_TEST(Runtime, MissingAssetFails) {
 }
 
 KILN_TEST(Runtime, CorruptStoreFileFails) {
-    if (!test::sample_dir()) return;
     char dir[1024], path[1024];
     format(dir, sizeof dir, "%s/store", test::sample_dir());
     KILN_REQUIRE(ensure_dir(dir));
@@ -495,7 +489,6 @@ KILN_TEST(Runtime, CorruptStoreFileFails) {
 }
 
 KILN_TEST(Runtime, AdapterRejectFails) {
-    if (!test::golden_dir()) return;
     Rt rt2;
     NullAdapterDesc nd2;
     nd2.failEveryN = 6; // the 5 placeholder uploads succeed, the 6th (the mesh) fails
@@ -510,7 +503,6 @@ KILN_TEST(Runtime, AdapterRejectFails) {
 }
 
 KILN_TEST(Runtime, BusyBackPressure) {
-    if (!test::golden_dir()) return;
     Rt rt;
     NullAdapterDesc nd;
     nd.busyEveryN = 2;
@@ -554,7 +546,6 @@ KILN_TEST(Runtime, BusyBackPressure) {
 }
 
 KILN_TEST(Runtime, UploadBudget) {
-    if (!test::golden_dir()) return;
     Rt rt;
     if (!rt.init()) return;
     MeshHandle meshes[6];
@@ -603,7 +594,6 @@ struct FakeProvider {
 };
 
 KILN_TEST(Runtime, CookProviderOnMiss) {
-    if (!test::golden_dir()) return;
     FakeProvider fp;
     if (!read_golden("mesh/cube_basic", ".mesh", fp.bytes)) return;
     Rt rt;
@@ -629,7 +619,6 @@ KILN_TEST(Runtime, CookProviderOnMiss) {
 }
 
 KILN_TEST(Runtime, RegisterInMemory) {
-    if (!test::golden_dir()) return;
     Vec<u8> meshBytes(default_allocator(), Tag::Test), texBytes(default_allocator(), Tag::Test);
     if (!read_golden("mesh/multi_material", ".mesh", meshBytes)) return;
     if (!read_golden("ktx2/color_srgb", ".ktx2", texBytes)) return;
@@ -670,7 +659,6 @@ KILN_TEST(Runtime, RegisterInMemory) {
 
 // Zombie slots, then registry reuse.
 KILN_TEST(Runtime, ReleaseWhileLoading) {
-    if (!test::golden_dir()) return;
     Rt rt;
     ContextDesc cd;
     cd.maxAssets = 4;
@@ -705,7 +693,6 @@ KILN_TEST(Runtime, ReleaseWhileLoading) {
 }
 
 KILN_TEST(Runtime, EventOverflowDropsOldest) {
-    if (!test::golden_dir()) return;
     Rt rt;
     ContextDesc cd;
     cd.maxEvents = 2;
@@ -727,7 +714,6 @@ KILN_TEST(Runtime, EventOverflowDropsOldest) {
 }
 
 KILN_TEST(Runtime, BindlessPublish) {
-    if (!test::golden_dir()) return;
     Rt rt;
     NullAdapterDesc nd;
     nd.bindless = true;
@@ -744,7 +730,6 @@ KILN_TEST(Runtime, BindlessPublish) {
 
 // No allocation in pump() or the queries.
 KILN_TEST(Runtime, SteadyStateNoAllocation) {
-    if (!test::golden_dir()) return;
     Rt rt;
     if (!rt.init()) return;
     MeshHandle meshes[4];
@@ -818,15 +803,13 @@ bool put_garbage(char const* dst) {
 }
 
 /// A scratch store `<samples>/reload_<name>` with mesh/ and ktx2/ below it, and the
-/// file path of `mesh/thing.mesh` (or `ktx2/thing.ktx2`). False (skip) without
-/// --samples / --golden.
+/// file path of `mesh/thing.mesh` (or `ktx2/thing.ktx2`).
 struct ReloadStore {
     char dir[1024]  = {};
     char mesh[1024] = {};
     char tex[1024]  = {};
 
     bool init(char const* name) {
-        if (!test::sample_dir() || !test::golden_dir()) return false;
         char sub[1024];
         format(dir, sizeof dir, "%s/reload_%s", test::sample_dir(), name);
         if (!KILN_CHECK(ensure_dir(dir))) return false;
@@ -1142,7 +1125,6 @@ KILN_TEST(Runtime, ReloadWhileLoading) {
 }
 
 KILN_TEST(Runtime, ReloadMemorySourceWarns) {
-    if (!test::golden_dir()) return;
     Vec<u8> meshBytes(default_allocator(), Tag::Test);
     if (!read_golden("mesh/Box", ".mesh", meshBytes)) return;
     Rt rt;

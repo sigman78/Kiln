@@ -29,15 +29,16 @@ int current_failures() noexcept;
 
 int run_all(int argc, char** argv) noexcept;
 
-/// Directory passed via `--samples <dir>`, or nullptr if the flag was not given.
+// The three directories default to paths compiled in by CMake; the flags override them.
+// They are never null: run_all() exits before any test if one is unusable.
+
+/// Scratch directory for files tests write (`--samples <dir>`). Created if missing.
 [[nodiscard]] char const* sample_dir() noexcept;
 
-/// Directory passed via `--corpus <dir>` (the KTX2 corpus root holding manifest.txt),
-/// or nullptr if the flag was not given.
+/// The KTX2 corpus root holding manifest.txt (`--corpus <dir>`); the glTF corpus is `../gltf`.
 [[nodiscard]] char const* corpus_dir() noexcept;
 
-/// Directory passed via `--golden <dir>` (holds golden/mesh/*.mesh, golden/ktx2/*.ktx2),
-/// or nullptr if the flag was not given. See tests/golden/README.md.
+/// Golden files: mesh/*.mesh, ktx2/*.ktx2 (`--golden <dir>`). See tests/golden/README.md.
 [[nodiscard]] char const* golden_dir() noexcept;
 
 /// True if `--update-golden` was given: golden-file tests write the golden instead

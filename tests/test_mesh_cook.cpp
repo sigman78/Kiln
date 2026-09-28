@@ -1,6 +1,6 @@
-// tests/test_mesh_cook.cpp — cook_mesh (glTF/GLB -> .mesh) tests; cook-only. Always run: an in-test GLB quad.
-// With `--corpus <dir>`: every entry of `<dir>/../gltf/manifest.txt` against the manifest, plus per-file
-// checks. With `--samples`: cooked files go to `<sample_dir()>/cooked_<stem>.mesh`.
+// tests/test_mesh_cook.cpp — cook_mesh (glTF/GLB -> .mesh) tests; cook-only. An in-test GLB quad, and
+// every entry of `<corpus_dir>/../gltf/manifest.txt` against the manifest plus per-file checks.
+// Cooked files go to `<sample_dir()>/cooked_<stem>.mesh`.
 #include "kiln_test.h"
 #include "ktx2_corpus.h" // read_file, parse_u32
 
@@ -102,7 +102,6 @@ void open_cooked(cook::CookedMesh const& m, Opened& o, char const* name) {
 
 void write_sample(char const* name, Span<u8 const> bytes) {
     char const* dir = kiln::test::sample_dir();
-    if (!dir) return;
     char path[1024];
     format(path, sizeof path, "%s/cooked_%s.mesh", dir, name);
     std::FILE* f = std::fopen(path, "wb");
@@ -403,12 +402,7 @@ struct GltfEntry {
     u32 code = 0, parts = 0, lods = 0, materials = 0, textures = 0, mounts = 0;
 };
 
-bool gltf_dir(char* out, usize cap) {
-    char const* dir = kiln::test::corpus_dir();
-    if (!dir) return false;
-    format(out, cap, "%s/../gltf", dir);
-    return true;
-}
+void gltf_dir(char* out, usize cap) { format(out, cap, "%s/../gltf", kiln::test::corpus_dir()); }
 
 bool load_gltf_manifest(char const* dir, Vec<char>& text, Vec<GltfEntry>& entries) {
     char path[1024];
@@ -459,7 +453,7 @@ struct CorpusCook {
 /// Cook `<gltf dir>/<rel>` with default settings (and a sibling-file resolver).
 bool cook_corpus(char const* rel, CorpusCook& c, bool withResolver = true, JobSystem const* jobs = nullptr) {
     char dir[1024];
-    if (!gltf_dir(dir, sizeof dir)) return false;
+    gltf_dir(dir, sizeof dir);
     char path[1400];
     format(path, sizeof path, "%s/%s", dir, rel);
     if (!KILN_CHECK_MSG(corpus::read_file(path, c.bytes), "cannot read %s", path)) return false;
@@ -483,7 +477,7 @@ bool cook_corpus(char const* rel, CorpusCook& c, bool withResolver = true, JobSy
 
 KILN_TEST(MeshCook, CorpusManifest) {
     char dir[1024];
-    if (!gltf_dir(dir, sizeof dir)) return;
+    gltf_dir(dir, sizeof dir);
     Vec<char> text(default_allocator(), Tag::Test);
     Vec<GltfEntry> entries(default_allocator(), Tag::Test);
     if (!load_gltf_manifest(dir, text, entries)) return;
@@ -862,7 +856,8 @@ KILN_TEST(MeshCook, threads_byte_identical) {
     }
 
     char dir[1024];
-    if (gltf_dir(dir, sizeof dir)) {
+    gltf_dir(dir, sizeof dir);
+    {
         Vec<char> text(default_allocator(), Tag::Test);
         Vec<GltfEntry> entries(default_allocator(), Tag::Test);
         if (load_gltf_manifest(dir, text, entries))

@@ -1,6 +1,6 @@
 // tests/test_texture_cook.cpp — cook_texture (PNG -> KTX2, KTX2 pass-through); cook-only.
 // Inputs come from png_writer.h, the KTX2 corpus and image_fixtures.h (JPEG). Every output is
-// re-opened with Ktx2View and, with --samples, written as <samples>/cooked_<case>.ktx2 for
+// re-opened with Ktx2View and written as <sample_dir>/cooked_<case>.ktx2 for
 // `ktx validate`.
 #include "image_fixtures.h"
 #include "kiln_test.h"
@@ -53,7 +53,6 @@ void pattern(u8* p, usize n, u32 seed) {
 
 void write_sample(char const* name, Span<u8 const> bytes) {
     char const* dir = kiln::test::sample_dir();
-    if (!dir) return;
     char path[1024];
     format(path, sizeof path, "%s/cooked_%s.ktx2", dir, name);
     std::FILE* f = std::fopen(path, "wb");
@@ -323,7 +322,6 @@ KILN_TEST(texture_cook, npot_info) {
 
 KILN_TEST(texture_cook, ktx2_passthrough) {
     char const* dir = kiln::test::corpus_dir();
-    if (!dir) return; // needs --corpus
     char path[1024];
     format(path, sizeof path, "%s/khronos/r8g8b8a8_srgb_mip.ktx2", dir);
     Vec<u8> bytes(default_allocator(), Tag::Test);
@@ -349,7 +347,6 @@ KILN_TEST(texture_cook, ktx2_passthrough) {
 
 KILN_TEST(texture_cook, ktx2_zstd_rejected) {
     char const* dir = kiln::test::corpus_dir();
-    if (!dir) return;
     char path[1024];
     format(path, sizeof path, "%s/generated/rgba8_srgb_mip_zstd.ktx2", dir);
     Vec<u8> bytes(default_allocator(), Tag::Test);

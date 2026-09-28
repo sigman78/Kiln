@@ -36,7 +36,7 @@ ctest --preset <preset> -R kiln_tests
 or run the test binary directly:
 
 ```sh
-build/<preset>/tests/kiln_tests --corpus tests/corpus/ktx2 --golden tests/golden --update-golden Golden
+build/<preset>/tests/kiln_tests --update-golden Golden
 ```
 
 Both write the golden files (creating `mesh/` / `ktx2/` if needed) and print what was

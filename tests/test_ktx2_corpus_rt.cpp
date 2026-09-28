@@ -118,7 +118,6 @@ void round_trip(corpus::Entry const& e, Span<u8 const> bytes, char const* sample
 
 KILN_TEST(Ktx2Corpus, WriterRoundTrip) {
     char const* dir = kiln::test::corpus_dir();
-    if (!dir) return; // no --corpus <dir>: nothing to check
 
     corpus::Manifest m;
     if (!corpus::load_manifest(dir, m)) return;

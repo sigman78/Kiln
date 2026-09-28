@@ -362,7 +362,6 @@ KILN_TEST(Ktx2, WriterRejectsBadInput) {
 // Writes the sample files that kiln-info's CTest entries read (tests/CMakeLists.txt).
 KILN_TEST(Ktx2, WriteSampleFiles) {
     char const* dir = kiln::test::sample_dir();
-    if (!dir) return; // no --samples <dir> given: nothing to do
 
     TestImage rgba(Format::R8G8B8A8_SRGB);
     Vec<u8> const rgbaFile = write_ok(rgba.desc());
