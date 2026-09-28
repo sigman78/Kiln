@@ -23,6 +23,7 @@
 #include <cerrno>
 #include <chrono>
 #include <condition_variable>
+#include <cwchar>
 #include <mutex>
 #include <thread>
 
@@ -78,8 +79,8 @@ struct Provider {
                                    ///< settings depend on SlotHint and are resolved per cook.
     Vec<char> storeDirBuf;         ///< owned copy of store_dir(ctx), NUL-terminated
     StrView storeDir;
-    Vec<char> rootsBuf;      ///< owned copies of source_roots(ctx), NUL-separated
-    Vec<StrView> roots;      ///< views into rootsBuf
+    Vec<char> mountsBuf;     ///< owned copies of mounts(ctx), NUL-separated
+    Vec<Mount> mounts;       ///< views into mountsBuf
     Vec<char> ruleStrings;   ///< owned copies of the name rule suffixes
     Vec<NameRule> nameRules; ///< suffixes point into ruleStrings
     Allocator const* alloc = nullptr;
@@ -103,7 +104,7 @@ struct Provider {
     std::atomic<bool> stopping{false};
 
     explicit Provider(Allocator const* a) noexcept
-        : storeDirBuf(a, Tag::Cook), rootsBuf(a, Tag::Cook), roots(a, Tag::Cook), ruleStrings(a, Tag::Cook),
+        : storeDirBuf(a, Tag::Cook), mountsBuf(a, Tag::Cook), mounts(a, Tag::Cook), ruleStrings(a, Tag::Cook),
           nameRules(a, Tag::Cook), alloc(a), records(a, Tag::Cook), emitted(a, Tag::Cook),
           strings(a, Tag::Cook) {}
 };
@@ -143,65 +144,76 @@ void make_dirs(char* buf, usize n) noexcept {
     }
 }
 
-/// Directory portion of a store-relative asset path, e.g. "meshes/pbr_textures".
-StrView dir_part(StrView assetPath) noexcept {
-    usize const slash = assetPath.rfind('/');
-    return slash == StrView::kNpos ? StrView{} : assetPath.substr(0, slash);
-}
-/// Leaf portion, e.g. "hull_albedo" out of "meshes/pbr_textures/hull_albedo".
-StrView leaf_part(StrView assetPath) noexcept {
-    usize const slash = assetPath.rfind('/');
-    return slash == StrView::kNpos ? assetPath : assetPath.substr(slash + 1);
-}
 /// Directory containing a source file path, or "." if it names a bare file.
 StrView source_dir(StrView sourcePath) noexcept {
     usize const slash = sourcePath.rfind('/');
     return slash == StrView::kNpos ? StrView(".") : sourcePath.substr(0, slash);
 }
 
-/// Writes `bytes` to `<storeDir>/<assetPath>.<ext>` (Named layout), creating
-/// every intermediate directory kiln-cook's own default (named) mode would need.
+/// Writes `bytes` to the store file of `name` (store_file_path), creating its directories.
 /// `overwrite`: replace an existing file (re-cook) instead of leaving it (cook-on-miss).
-Status write_to_store(StrView storeDir, StrView assetPath, char const* ext, Span<u8 const> bytes,
-                      bool overwrite, DiagSink const* diag) noexcept {
-    StrView const dp = dir_part(assetPath);
-    StrView const lp = leaf_part(assetPath);
-
-    char dirBuf[1024];
-    usize const dn = dp.empty() ? format(dirBuf, sizeof dirBuf, "%.*s", KILN_SV(storeDir))
-                                : format(dirBuf, sizeof dirBuf, "%.*s/%.*s", KILN_SV(storeDir), KILN_SV(dp));
-    make_dirs(dirBuf, dn);
-
-    char nameBuf[300];
-    usize const nn = format(nameBuf, sizeof nameBuf, "%.*s.%s", KILN_SV(lp), ext);
-    return store_write(StrView(dirBuf, dn), StrView(nameBuf, nn), bytes, diag, overwrite);
+Status write_to_store(StrView storeDir, StrView name, AssetKind kind, Span<u8 const> bytes, bool overwrite,
+                      DiagSink const* diag) noexcept {
+    char path[1024];
+    usize const n = store_file_path(storeDir, kind, name, path, sizeof path);
+    if (n >= sizeof path - 1) return make_status(Code::InvalidArgument);
+    usize const slash = StrView(path, n).rfind('/');
+    if (slash == StrView::kNpos) return store_write(StrView("."), StrView(path, n), bytes, diag, overwrite);
+    path[slash] = '\0';
+    make_dirs(path, slash);
+    return store_write(StrView(path, slash), StrView(path + slash + 1, n - slash - 1), bytes, diag,
+                       overwrite);
 }
 
-/// A source file found under one of the provider's roots.
+/// A source file found in one of the provider's mounts.
 struct FoundSource {
     char path[1024] = {};
     usize len       = 0;
 };
 
-/// Tries `<root>/<assetPath>.<ext>` for each root and extension (root order outer,
-/// extension order inner). A null entry in `exts` is skipped.
-bool find_source(Provider const& p, StrView assetPath, Span<char const* const> exts,
-                 FoundSource& out) noexcept {
-    for (StrView const& root : p.roots) {
-        for (char const* ext : exts) {
-            if (!ext) continue;
-            usize const n =
-                format(out.path, sizeof out.path, "%.*s/%.*s.%s", KILN_SV(root), KILN_SV(assetPath), ext);
-            if (io_file_exists(StrView(out.path, n))) {
-                out.len = n;
-                return true;
-            }
-        }
+[[nodiscard]] bool ext_is(StrView path, char const* ext) noexcept {
+    usize const dot   = path.rfind('.');
+    usize const slash = path.rfind('/');
+    if (dot == StrView::kNpos || (slash != StrView::kNpos && slash > dot)) return false;
+    StrView const e = path.substr(dot + 1);
+    StrView const want(ext);
+    if (e.size != want.size) return false;
+    for (usize i = 0; i < e.size; ++i) {
+        char c = e[i];
+        if (c >= 'A' && c <= 'Z') c = char(c - 'A' + 'a');
+        if (c != want[i]) return false;
     }
-    return false;
+    return true;
 }
 
-constexpr char const* kMeshExts[] = {"glb", "gltf"};
+[[nodiscard]] bool is_model(StrView path) noexcept { return ext_is(path, "glb") || ext_is(path, "gltf"); }
+[[nodiscard]] bool is_image(StrView path) noexcept {
+    return ext_is(path, "png") || ext_is(path, "jpg") || ext_is(path, "jpeg") ||
+           (webp_decode_enabled() && ext_is(path, "webp")) || ext_is(path, "ktx2");
+}
+
+/// The source file of the (sub-asset free) name `owner`: `<mount root>/<path>`. NotFound
+/// without a diagnostic when no such file exists, so the runtime reports a store miss.
+Status find_source(Provider const& p, StrView owner, FoundSource& out, DiagSink const* diag) noexcept {
+    AssetNameParts const parts = split_asset_name(owner);
+    Mount const* mount         = nullptr;
+    for (Mount const& m : p.mounts)
+        if (m.name == parts.mount) mount = &m;
+    if (!mount) {
+        if (parts.mount.empty())
+            return diagf(diag, make_status(Code::InvalidArgument), kDiagUnknownMount, Severity::Error, owner,
+                         "request", "no default mount: the name needs a 'mount:' prefix");
+        return diagf(diag, make_status(Code::InvalidArgument), kDiagUnknownMount, Severity::Error, owner,
+                     "request", "unknown mount '%.*s'", KILN_SV(parts.mount));
+    }
+    out.len = format(out.path, sizeof out.path, "%.*s/%.*s", KILN_SV(mount->root), KILN_SV(parts.path));
+    if (out.len >= sizeof out.path - 1) return make_status(Code::InvalidArgument);
+    if (!io_file_exists(StrView(out.path, out.len))) return make_status(Code::NotFound);
+    if (!source_case_matches(mount->root, parts.path))
+        return diagf(diag, make_status(Code::InvalidArgument), kDiagSourceCase, Severity::Error, owner,
+                     "request", "the file on disk differs in case: %.*s", int(out.len), out.path);
+    return kOk;
+}
 
 void sidecar_path(StrView sourcePath, char (&buf)[1100], StrView& out) noexcept {
     out = StrView(buf, format(buf, sizeof buf, "%.*s%.*s", KILN_SV(sourcePath), KILN_SV(kSidecarExt)));
@@ -261,7 +273,8 @@ Status cook_texture_own_source(Provider const& p, StrView sourcePath, StrView as
     if (r.failed()) return r.status();
 
     if (p.desc.storeMode == StoreMode::Disk) {
-        Status const st = write_to_store(p.storeDir, assetPath, "ktx2", r->file.span(), overwrite, diag);
+        Status const st =
+            write_to_store(p.storeDir, assetPath, AssetKind::Texture, r->file.span(), overwrite, diag);
         if (st.failed()) return st;
     }
     *out = std::move(r->file);
@@ -310,7 +323,8 @@ Status cook_mesh_full(Provider const& p, StrView meshAssetPath, StrView sourcePa
     if (r.failed()) return r.status();
 
     if (p.desc.storeMode == StoreMode::Disk) {
-        Status const st = write_to_store(p.storeDir, meshAssetPath, "mesh", r->file.span(), overwrite, diag);
+        Status const st =
+            write_to_store(p.storeDir, meshAssetPath, AssetKind::Mesh, r->file.span(), overwrite, diag);
         if (st.failed()) return st;
     }
 
@@ -348,7 +362,7 @@ Status cook_mesh_full(Provider const& p, StrView meshAssetPath, StrView sourcePa
 
         if (p.desc.storeMode == StoreMode::Disk) {
             Status const st =
-                write_to_store(p.storeDir, t.assetPath, "ktx2", tr->file.span(), overwrite, diag);
+                write_to_store(p.storeDir, t.assetPath, AssetKind::Texture, tr->file.span(), overwrite, diag);
             if (st.failed()) {
                 if (isRequested) requestedTexStatus = st;
                 noteFailure(st);
@@ -548,32 +562,26 @@ Status cook_texture_on_miss(Provider& p, StrView sourcePath, StrView assetPath, 
     return s;
 }
 
-Status provider_cook(void* user, AssetKind kind, StrView assetPath, Allocator const* alloc, Vec<u8>* out,
+Status provider_cook(void* user, AssetKind kind, StrView name, Allocator const* alloc, Vec<u8>* out,
                      DiagSink const* diag) noexcept {
-    auto* p = static_cast<Provider*>(user);
+    auto* p                    = static_cast<Provider*>(user);
+    AssetNameParts const parts = split_asset_name(name);
+    bool const embedded        = !parts.sub.empty();
+    bool const kindOk          = kind == AssetKind::Mesh ? !embedded && is_model(parts.path)
+                                                         : (embedded ? is_model(parts.path) : is_image(parts.path));
+    if (!kindOk)
+        return diagf(diag, make_status(Code::InvalidArgument), kDiagSourceKind, Severity::Error, name,
+                     "request", "the extension does not name a %s source",
+                     kind == AssetKind::Mesh ? "mesh" : "texture");
 
-    if (kind == AssetKind::Texture) {
-        // "<mesh>#<image>": an image embedded in that mesh's source.
-        usize const hash = assetPath.find('#');
-        if (hash != StrView::kNpos) {
-            StrView const meshAssetPath = assetPath.substr(0, hash);
-            FoundSource mesh;
-            if (!find_source(*p, meshAssetPath, kMeshExts, mesh)) return make_status(Code::NotFound);
-            return cook_mesh_on_miss(*p, meshAssetPath, StrView(mesh.path, mesh.len), AssetKind::Texture,
-                                     assetPath, alloc, out, diag);
-        }
-
-        char const* const texExts[] = {"png", "jpg", "jpeg", webp_decode_enabled() ? "webp" : nullptr,
-                                       "ktx2"};
-        FoundSource tex;
-        if (!find_source(*p, assetPath, texExts, tex)) return make_status(Code::NotFound);
-        return cook_texture_on_miss(*p, StrView(tex.path, tex.len), assetPath, alloc, out, diag);
-    }
-
-    FoundSource mesh;
-    if (!find_source(*p, assetPath, kMeshExts, mesh)) return make_status(Code::NotFound);
-    return cook_mesh_on_miss(*p, assetPath, StrView(mesh.path, mesh.len), AssetKind::Mesh, assetPath, alloc,
-                             out, diag);
+    // "<mesh>#<image>": an image embedded in that mesh's source.
+    StrView const owner = embedded ? name.substr(0, name.size - parts.sub.size - 1) : name;
+    FoundSource src;
+    KILN_TRY(find_source(*p, owner, src, diag));
+    StrView const sourcePath(src.path, src.len);
+    if (kind == AssetKind::Texture && !embedded)
+        return cook_texture_on_miss(*p, sourcePath, name, alloc, out, diag);
+    return cook_mesh_on_miss(*p, owner, sourcePath, kind, name, alloc, out, diag);
 }
 
 // ---------------------------------------------------------------------------
@@ -699,9 +707,41 @@ void stop_poller(Provider* p) noexcept {
 
 } // namespace
 
+bool source_case_matches(StrView root, StrView path) noexcept {
+#if defined(KILN_OS_WINDOWS)
+    // FindFirstFileW returns the name as stored on disk; compare it segment by segment.
+    if (root.empty()) root = StrView(".");
+    char buf[1024];
+    usize const n = format(buf, sizeof buf, "%.*s/%.*s", KILN_SV(root), KILN_SV(path));
+    if (n >= sizeof buf - 1) return false;
+    usize seg = root.size + 1;
+    for (usize i = seg; i <= n; ++i) {
+        if (i < n && buf[i] != '/') continue;
+        char const saved = buf[i];
+        buf[i]           = '\0';
+        wchar_t full[1024], leaf[512];
+        int const leafLen = MultiByteToWideChar(CP_UTF8, 0, buf + seg, int(i - seg), leaf, 511);
+        if (MultiByteToWideChar(CP_UTF8, 0, buf, -1, full, 1024) == 0 || leafLen <= 0) return false;
+        leaf[leafLen] = L'\0';
+        WIN32_FIND_DATAW fd;
+        HANDLE const h = FindFirstFileW(full, &fd);
+        if (h == INVALID_HANDLE_VALUE) return false;
+        FindClose(h);
+        if (std::wcscmp(fd.cFileName, leaf) != 0) return false;
+        buf[i] = saved;
+        seg    = i + 1;
+    }
+    return true;
+#else
+    (void)root;
+    (void)path;
+    return true;
+#endif
+}
+
 Status install_provider(Context* ctx, ProviderDesc const& desc) noexcept {
-    Span<StrView const> const srcRoots = source_roots(ctx);
-    if (srcRoots.empty()) return make_status(Code::InvalidArgument);
+    Span<Mount const> const ctxMounts = mounts(ctx);
+    if (ctxMounts.empty()) return make_status(Code::InvalidArgument);
 
     ProviderDesc effective = desc;
     if (effective.storeMode == StoreMode::None) {
@@ -724,17 +764,25 @@ Status install_provider(Context* ctx, ProviderDesc const& desc) noexcept {
     p->storeDirBuf[dir.size] = '\0';
     p->storeDir              = StrView(p->storeDirBuf.data(), dir.size);
 
+    // Roots lose a trailing separator: find_source() adds its own.
     usize total = 0;
-    for (StrView const& r : srcRoots)
-        total += r.size + 1;
-    p->rootsBuf.resize(total);
-    p->roots.reserve(srcRoots.size);
-    usize offset = 0;
-    for (StrView const& r : srcRoots) {
-        std::memcpy(p->rootsBuf.data() + offset, r.data, r.size);
-        p->rootsBuf[offset + r.size] = '\0';
-        p->roots.push_back(StrView(p->rootsBuf.data() + offset, r.size));
-        offset += r.size + 1;
+    for (Mount const& m : ctxMounts)
+        total += m.name.size + 1 + m.root.size + 1;
+    p->mountsBuf.resize(total);
+    p->mounts.reserve(ctxMounts.size);
+    usize offset    = 0;
+    auto const copy = [p, &offset](StrView s) noexcept {
+        if (s.size) std::memcpy(p->mountsBuf.data() + offset, s.data, s.size);
+        p->mountsBuf[offset + s.size] = '\0';
+        StrView const v(p->mountsBuf.data() + offset, s.size);
+        offset += s.size + 1;
+        return v;
+    };
+    for (Mount const& m : ctxMounts) {
+        StrView root = m.root;
+        while (root.size > 1 && (root[root.size - 1] == '/' || root[root.size - 1] == '\\'))
+            --root.size;
+        p->mounts.push_back(Mount{copy(m.name), copy(root)});
     }
 
     usize ruleBytes = 0;

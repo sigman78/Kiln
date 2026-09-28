@@ -29,34 +29,38 @@ Every program prints its options with `--help`. Binaries land in `build/<preset>
 ```sh
 # the demo set by hand (what viewer-demo runs)
 kiln-viewer --source examples/assets/khronos --store build/demo-store \
-    Lantern.mesh WaterBottle.mesh Avocado.mesh SheenChair.mesh BoomBox.mesh DiffuseTransmissionTeacup.mesh
+    Lantern.glb WaterBottle.glb Avocado.glb SheenChair.glb BoomBox.glb DiffuseTransmissionTeacup.glb
 
-# an already cooked store, for example the test goldens
-kiln-viewer --store tests/golden mesh/Box.mesh mesh/BoxTextured.mesh
+# an already cooked store, for example the test goldens (no source, so no extension in the name)
+kiln-viewer --store tests/golden mesh/Box mesh/BoxTextured
 
 # no window: render 60 frames and write the last one
-kiln-viewer --offscreen --frames 60 --dump frame.png --store build/demo-store Lantern.mesh
+kiln-viewer --offscreen --frames 60 --dump frame.png --store build/demo-store Lantern.glb
 
 # watch textures stream in: a small budget makes it take several frames
-kiln-viewer --budget-mib 1 --store build/demo-store WaterBottle.mesh BoomBox.mesh
+kiln-viewer --budget-mib 1 --store build/demo-store WaterBottle.glb BoomBox.glb
 
-# your own glTF: the asset name is the file name without extension, relative to --source
-kiln-viewer --source path/to/models --store build/my-store Robot.mesh
+# your own glTF: the asset name is the file name, extension included, relative to --source
+kiln-viewer --source path/to/models --store build/my-store Robot.glb
+
+# a named mount instead of (or alongside) --source: positional names take its `<name>:` prefix
+kiln-viewer --mount lib=path/to/library --store build/my-store lib:props/chair.glb
 
 # hot reload: re-export Robot.glb and the view updates in about a second
-kiln-viewer --watch --source path/to/models --store build/my-store Robot.mesh
+kiln-viewer --watch --source path/to/models --store build/my-store Robot.glb
 ```
 
-`--source` enables cook-on-miss: a mesh missing from the store is cooked from `<source>/<name>.glb`
-(or `.gltf`) on a worker, written to the store, and loaded. Its textures are cooked with it.
+`--source` sets the default mount and enables cook-on-miss: a mesh missing from the store is cooked
+from `<source>/<name>` on a worker, written to the store, and loaded. Its embedded textures are cooked with
+it. `--mount <name>=<dir>` adds another named mount.
 
 ## Headless recipes
 
 ```sh
 kiln-headless --store tests/golden --slow 200 --latency 5 mesh/Box.mesh ktx2/color_srgb.ktx2
-kiln-headless --store build/demo-store --source examples/assets/khronos --latency 300 Lantern.mesh
+kiln-headless --store build/demo-store --source examples/assets/khronos --latency 300 Lantern.glb.mesh
 # log reloads for two minutes while you edit the source
-kiln-headless --watch --timeout 120 --store build/my-store --source path/to/models Robot.mesh
+kiln-headless --watch --timeout 120 --store build/my-store --source path/to/models Robot.glb.mesh
 ```
 
 ## Adapter smoke

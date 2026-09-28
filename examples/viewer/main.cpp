@@ -78,7 +78,7 @@ char const* event_name(EventKind k) {
 // --- Assets -------------------------------------------------------------------------------------
 
 struct MeshItem {
-    StrView path; ///< store-relative, extension stripped
+    StrView path; ///< the asset name, e.g. "mesh/Box.glb"
     MeshHandle handle;
     State last = State::Unloaded;
     Mat4 place;              ///< model root -> world: the slot in the row, the fit scale, the recentering
@@ -95,35 +95,54 @@ struct TextureItem {
     char path[160]{}; ///< copied: the mesh view that named it may be reloaded
 };
 
+constexpr u32 kMaxMounts = 8;
+
 struct Options {
     char const* store  = "cooked";
     char const* source = nullptr;
-    char const* dump   = nullptr;
-    bool validate      = false;
-    bool offscreen     = false;
-    bool noFit         = false;
-    bool watch         = false;
-    u32 width          = 1280;
-    u32 height         = 720;
-    u32 budgetMiB      = 8;
-    u32 frames         = 0; ///< 0 = 60 offscreen, until closed in a window
-    u32 threads        = 0;
+    Mount mounts[kMaxMounts];
+    u32 mountCount   = 0; ///< with --source, mounts[0] is the default mount
+    char const* dump = nullptr;
+    bool validate    = false;
+    bool offscreen   = false;
+    bool noFit       = false;
+    bool watch       = false;
+    u32 width        = 1280;
+    u32 height       = 720;
+    u32 budgetMiB    = 8;
+    u32 frames       = 0; ///< 0 = 60 offscreen, until closed in a window
+    u32 threads      = 0;
     MeshItem meshes[kMaxMeshes];
     u32 meshCount = 0;
 };
 
 bool add_mesh(void* user, char const* arg) {
-    auto* o       = static_cast<Options*>(user);
-    usize const n = std::strlen(arg);
-    if (n <= 5 || std::strcmp(arg + n - 5, ".mesh") != 0) {
-        std::fprintf(stderr, "kiln-viewer: '%s' needs a .mesh extension\n", arg);
+    auto* o = static_cast<Options*>(user);
+    if (char const* why = check_asset_name(StrView(arg))) {
+        std::fprintf(stderr, "kiln-viewer: '%s' is not an asset name (%s)\n", arg, why);
         return false;
     }
     if (o->meshCount == kMaxMeshes) {
         std::fprintf(stderr, "kiln-viewer: too many meshes (max %u)\n", kMaxMeshes);
         return false;
     }
-    o->meshes[o->meshCount++].path = StrView(arg, n - 5);
+    o->meshes[o->meshCount++].path = StrView(arg);
+    return true;
+}
+
+/// `--mount <name>=<dir>`; the name is checked by create().
+bool add_mount(void* user, char const* arg) {
+    auto* o              = static_cast<Options*>(user);
+    char const* const eq = std::strchr(arg, '=');
+    if (!eq || eq == arg || eq[1] == '\0') {
+        std::fprintf(stderr, "kiln-viewer: --mount: expected <name>=<dir>, got '%s'\n", arg);
+        return false;
+    }
+    if (o->mountCount == kMaxMounts - 1) {
+        std::fprintf(stderr, "kiln-viewer: too many mounts (max %u)\n", kMaxMounts - 1);
+        return false;
+    }
+    o->mounts[1 + o->mountCount++] = Mount{StrView(arg, usize(eq - arg)), StrView(eq + 1)};
     return true;
 }
 
@@ -145,38 +164,13 @@ struct Scene {
 };
 
 /// The texture asset name a binding refers to; this mapping is the viewer's policy, not kiln's.
-/// An embedded image carries its name. An external URI resolves against the mesh's directory,
-/// without its extension (asset names have none). Empty if the URI leaves the store root.
+/// An embedded image carries its name. An external URI names a file in the mesh's mount
+/// (resolve_asset_name). Empty if it leaves the mount.
 StrView texture_name(StrView meshPath, mesh::MeshView const& v, mesh::TextureBinding const& b,
                      char (&buf)[256]) {
     StrView const path = v.str(b.pathStr);
     if (!(b.flags & mesh::kTextureExternal)) return path;
-    if (path.empty() || path[0] == '/' || path.find(':') != StrView::kNpos) return {};
-
-    usize const slash = meshPath.rfind('/');
-    usize n =
-        slash == StrView::kNpos ? 0 : format(buf, sizeof buf, "%.*s", KILN_SV(meshPath.substr(0, slash)));
-    for (usize at = 0; at <= path.size;) {
-        usize end = at;
-        while (end < path.size && path[end] != '/')
-            ++end;
-        StrView const seg = path.substr(at, end - at);
-        at                = end + 1;
-        if (seg.empty() || seg == ".") continue;
-        if (seg == "..") {
-            if (n == 0) return {};
-            while (n > 0 && buf[n - 1] != '/')
-                --n;
-            if (n > 0) --n; // the separator itself
-            continue;
-        }
-        n += format(buf + n, sizeof buf - n, n ? "/%.*s" : "%.*s", KILN_SV(seg));
-    }
-    StrView name(buf, n);
-    usize const dot = name.rfind('.');
-    usize const sep = name.rfind('/');
-    if (dot != StrView::kNpos && (sep == StrView::kNpos || dot > sep + 1)) name = name.substr(0, dot);
-    return name;
+    return StrView(buf, resolve_asset_name(meshPath, path, buf, sizeof buf));
 }
 
 /// Requests every BaseColor texture the mesh's materials name, once per texture. They are
@@ -549,8 +543,13 @@ int main(int argc, char** argv) {
         {.name = "--store", .arg = "<dir>", .help = "cooked store root (default: cooked)", .str = &o.store},
         {.name = "--source",
          .arg  = "<dir>",
-         .help = "source root; enables cook-on-miss (needs kiln_cook)",
+         .help = "root of the default mount; enables cook-on-miss (needs kiln_cook)",
          .str  = &o.source},
+        {.name = "--mount",
+         .arg  = "<name>=<dir>",
+         .help = "a named mount for cook-on-miss: names <name>:<path> (repeatable)",
+         .each = &add_mount,
+         .user = &o},
         {.name = "--validate",
          .help = "enable the Vulkan validation layer if installed",
          .flag = &o.validate},
@@ -591,13 +590,13 @@ int main(int argc, char** argv) {
          .max    = 256},
     };
     cli::Spec const spec{
-        .program  = "kiln-viewer",
-        .synopsis = "[options] <asset.mesh>...",
-        .options  = {opts, countof(opts)},
-        .footer =
-            "<asset.mesh> is a store-relative path, e.g. mesh/Box.mesh. Window: left-drag orbits, wheel\n"
-            "zooms, Esc quits.\n"
-            "Exit codes: 0 ok, 1 a boot asset Failed, 2 usage or setup error.",
+        .program    = "kiln-viewer",
+        .synopsis   = "[options] <mesh>...",
+        .options    = {opts, countof(opts)},
+        .footer     = "<mesh> is an asset name, e.g. mesh/Box.glb or lib:props/chair.glb. Window: left-drag "
+                      "orbits, wheel\n"
+                      "zooms, Esc quits.\n"
+                      "Exit codes: 0 ok, 1 a boot asset Failed, 2 usage or setup error.",
         .positional = &add_mesh,
         .user       = &o,
     };
@@ -680,14 +679,16 @@ int main(int argc, char** argv) {
     app.ren   = rr.value();
     input.ren = app.ren;
 
-    StrView const sourceRoot = o.source ? StrView(o.source) : StrView{};
-    Result<Context*> c       = create(ContextDesc{
-              .diag          = diag,
-              .adapter       = &adapter,
-              .storeDir      = StrView(o.store),
-              .sourceRoots   = Span<StrView const>(&sourceRoot, o.source ? 1u : 0u),
-              .hotReload     = {.watchStore = o.watch},
-              .workerThreads = o.threads,
+    // mounts[0] is the default mount when --source is given.
+    if (o.source) o.mounts[0] = Mount{{}, StrView(o.source)};
+    u32 const firstMount = o.source ? 0u : 1u;
+    Result<Context*> c   = create(ContextDesc{
+          .diag          = diag,
+          .adapter       = &adapter,
+          .storeDir      = StrView(o.store),
+          .mounts        = Span<Mount const>(o.mounts + firstMount, o.mountCount + 1 - firstMount),
+          .hotReload     = {.watchStore = o.watch},
+          .workerThreads = o.threads,
     });
     if (c.failed()) {
         KILN_ERROR("viewer", "create: %s", code_name(c.code()));
@@ -695,7 +696,7 @@ int main(int argc, char** argv) {
     }
     app.ctx = c.value();
 #if KILN_VIEWER_HAS_COOK
-    if (o.source) {
+    if (o.source || o.mountCount) {
         Status const st = cook::install_provider(app.ctx, cook::ProviderDesc{.watchSources = o.watch});
         if (st.failed()) {
             KILN_ERROR("viewer", "install_provider: %s", code_name(st.code));

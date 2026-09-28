@@ -11,7 +11,7 @@ The format originated as Orbital's `.mesh` (magic `OMSH`); kiln adopts it under 
 > - Draw-facing offsets (`MeshLod`) now refer to the **decoded** payload.
 > - The v0.5 cooker emits uncompressed blobs only, and loaders must support at least codec `None`.
 
-> **v0.4 changes:** `TextureBinding.flags` bit1 `External` (§5.7): the binding names an image the source references by URI, which the cooker does not cook. Embedded images are named `<mesh>#<image name>`. `kVersionMinor` is 4.
+> **v0.4 changes:** `TextureBinding.flags` bit1 `External` (§5.7): the binding names an image the source references by URI, which the cooker does not cook. Embedded images are named `<mesh asset name>#<image name>`, where the mesh asset name includes its extension (e.g. `meshes/ship.glb#hull_albedo`). `kVersionMinor` is 4.
 
 > **v0.3 changes:** (resolves `docs/open-questions.md` B1-B27)
 > - Magic `KMSH`, namespace `kiln::mesh`, producer `kiln-cook` (B1). `kVersionMinor` is 3.
@@ -102,7 +102,7 @@ Section IDs for these are reserved (§9).
 | Quaternions | `x, y, z, w` |
 | Names | UTF-8 in `STRS`, plus a 64-bit hash stored next to each name |
 | Name hash | FNV-1a 64 over the exact name bytes (case-sensitive, no terminator) |
-| Asset / texture IDs | FNV-1a 64 of the cooked asset path, e.g. `"meshes/ship_hauler_a#hull_albedo"` (an embedded image) |
+| Asset / texture IDs | FNV-1a 64 of the asset name, e.g. `"meshes/ship_hauler_a.glb#hull_albedo"` (an embedded image) |
 | Invalid index | `0xFFFFFFFF` (`kInvalid`) |
 | Formats | Vertex formats are stored as `kiln::Format` values, which are numerically equal to `VkFormat`. A Vulkan renderer casts them directly; other renderers map them in their adapter. |
 
@@ -215,7 +215,7 @@ struct ModelInfo {                  // 48 bytes
     Bounds   bounds;                // model space, all parts at rest pose, LOD0
     uint32_t nameStr;               // asset name, e.g. "ship_hauler_a"
     uint32_t flags;                 // reserved
-    uint64_t assetId;               // FNV-1a 64 of cooked asset path
+    uint64_t assetId;               // FNV-1a 64 of asset name
 };
 static_assert(sizeof(ModelInfo) == 48);
 ```
@@ -358,8 +358,8 @@ enum class TextureSlot : uint8_t {
 };
 
 struct TextureBinding {             // 16 bytes
-    uint64_t textureId;             // FNV-1a 64 of the texture asset path; 0 with External
-    uint32_t pathStr;               // the texture asset path, or the URI with External
+    uint64_t textureId;             // FNV-1a 64 of the texture asset name; 0 with External
+    uint32_t pathStr;               // the texture asset name, or the URI with External
     uint8_t  slot;                  // TextureSlot
     uint8_t  uvSet;                 // which TexCoord semanticIndex to sample
     uint16_t flags;                 // bit0: sRGB (slot inference), bit1: External
@@ -369,8 +369,8 @@ static_assert(sizeof(TextureBinding) == 16);
 
 Textures are **separate cooked assets** (KTX2 / BCn). They are never embedded in `.mesh`, so they stream and hot-reload independently. A binding is one of two kinds:
 
-- **Embedded image** (bit1 clear). The image is inside the glTF source. The cooker writes it as a texture of its own named `<mesh asset path>#<image name>` (an unnamed image is `image<N>`, N its glTF index), and `textureId` is the FNV-1a 64 of that name. Two embedded images with one name, or a name holding `:` `#` `/` `\` or a control character, are a cook error (K1019).
-- **External image** (bit1 set). The source references the image by URI. `pathStr` holds the URI, percent-decoded and relative to the source file; `textureId` is 0, and a reader rejects a non-zero one. The cooker does not cook, name or track the image: the host maps the URI to a texture asset of its choosing (`docs/design/asset-model-next.md`).
+- **Embedded image** (bit1 clear). The image is inside the glTF source. The cooker writes it as a texture of its own named `<mesh asset name>#<image name>` — the mesh asset name includes its extension, e.g. `meshes/ship.glb#hull_albedo` (an unnamed image is `image<N>`, N its glTF index) — and `textureId` is the FNV-1a 64 of that name. Two embedded images with one name, or a combined name that is not a valid asset name, are a cook error (K1019).
+- **External image** (bit1 set). The source references the image by URI. `pathStr` holds the URI, percent-decoded and relative to the source file; `textureId` is 0, and a reader rejects a non-zero one. The cooker guarantees the URI resolves inside the source's mount (K1020 otherwise), but does not cook, name or track the image itself: hosts map it to a texture asset name with `resolve_asset_name(meshName, uri, ...)` (`include/kiln/assets.h`).
 
 The sRGB bit comes from the cooker's slot inference. For an embedded image it matches how the texture was cooked. For an external image it records the authored intent only; the texture's own cook decides its color space.
 

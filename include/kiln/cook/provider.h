@@ -1,6 +1,6 @@
 // kiln/cook/provider.h — cook-on-miss for dev builds: installs a CookProvider on a
-// runtime Context that cooks missing assets from the context's source roots into
-// its store (or only into memory in cache-less mode). kiln_cook only.
+// runtime Context that cooks missing assets from the context's mounts into its store
+// (or only into memory in cache-less mode). kiln_cook only.
 #pragma once
 
 #include "kiln/assets.h"
@@ -23,14 +23,24 @@ struct ProviderDesc {
     u32 pollMs        = 250;
 };
 
-/// Register the provider. Source lookup: `<root>/<assetPath>.glb|.gltf` for meshes,
-/// `<root>/<assetPath>.png|.jpg|.jpeg|.webp|.ktx2` for textures. A texture named
-/// `<mesh>#<image>` is an embedded image: the provider cooks `<mesh>`, which writes all
-/// of its embedded images. Images a mesh references by URI are not cooked with it; the
-/// host requests them under names of its own. Returns InvalidArgument if the context
-/// has no source roots.
+/// Register the provider. The source of `mount:path` is `<root of mount>/path`; the extension
+/// gives the kind: `.glb` `.gltf` a mesh; `.png` `.jpg` `.jpeg` `.webp` `.ktx2` a texture.
+/// A texture named `<mesh>#<image>` is an embedded image: the provider cooks `<mesh>`, which
+/// writes all of its embedded images. Images a mesh references by URI are not cooked with
+/// it; the host requests them by name. Returns InvalidArgument if the context has no mounts.
 /// Call install_provider and uninstall_provider on the pump thread.
 KILN_API Status install_provider(Context* ctx, ProviderDesc const& desc) noexcept;
 KILN_API void uninstall_provider(Context* ctx) noexcept;
+
+/// True if every segment of `path` (`/`-separated, relative to `root`) has the same case on
+/// disk. Case-insensitive file systems accept a name in the wrong case, which then fails
+/// elsewhere. Checked on Windows; true on other systems.
+[[nodiscard]] KILN_API bool source_case_matches(StrView root, StrView path) noexcept;
+
+enum ProviderDiagCode : u32 {
+    kDiagSourceKind   = 5014, ///< the name's extension does not give the requested kind
+    kDiagUnknownMount = 5015, ///< the name's mount is not one of the context's mounts
+    kDiagSourceCase   = 5016, ///< the name and the source file differ in case
+};
 
 } // namespace kiln::cook

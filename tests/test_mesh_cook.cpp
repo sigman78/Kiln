@@ -820,13 +820,52 @@ KILN_TEST(MeshCook, CorpusExternalUriPercentEncoded) {
     KILN_CHECK_EQ(o.view.str(o.view.textures()[0].pathStr), StrView("external_uri_albedo.png"));
 }
 
+// A URI must name a file in the source's mount (K1020), and the source needs a valid name.
+KILN_TEST(MeshCook, ExternalUriStaysInTheMount) {
+    CorpusCook c;
+    if (!cook_corpus("generated/external_uri.gltf", c)) return;
+    StrView const text(reinterpret_cast<char const*>(c.bytes.data()), c.bytes.size());
+    auto const patch = [&text](StrView needle, StrView with, Vec<u8>& out) {
+        usize pos = 0;
+        while (pos + needle.size <= text.size && text.substr(pos, needle.size) != needle)
+            ++pos;
+        KILN_REQUIRE(pos + needle.size <= text.size);
+        out.append(Span<u8 const>(reinterpret_cast<u8 const*>(text.data), pos));
+        out.append(Span<u8 const>(reinterpret_cast<u8 const*>(with.data), with.size));
+        out.append(Span<u8 const>(reinterpret_cast<u8 const*>(text.data) + pos + needle.size,
+                                  text.size - pos - needle.size));
+    };
+    struct Case {
+        StrView needle, with, asset;
+    };
+    Case const cases[] = {
+        {"\"external_uri.bin\"",        "\"../external_uri.bin\"",        "external_uri.gltf"       },
+        {"\"external_uri_albedo.png\"", "\"../external_uri_albedo.png\"", "external_uri.gltf"       },
+        {"\"external_uri_albedo.png\"", "\"/external_uri_albedo.png\"",   "meshes/external_uri.gltf"},
+    };
+    for (Case const& k : cases) {
+        Vec<u8> patched(default_allocator(), Tag::Test);
+        patch(k.needle, k.with, patched);
+        Diags d;
+        Result<cook::CookedMesh> r = cook_bytes(patched.span(), k.asset, d, default_settings(), &c.resolver);
+        KILN_CHECK_EQ(r.code(), Code::ValidationFailed);
+        KILN_CHECK_EQ(d.firstErr, u32(cook::kDiagGltfUriOutsideMount));
+    }
+
+    Diags d;
+    Result<cook::CookedMesh> r =
+        cook_bytes(c.bytes.span(), "./external_uri.gltf", d, default_settings(), &c.resolver);
+    KILN_CHECK_EQ(r.code(), Code::InvalidArgument);
+}
+
 // Embedded image names become "<mesh>#<name>", so a duplicate name or a reserved character is
 // an error (K1019). The corpus file is patched with same-length names, so GLB chunk sizes hold.
 KILN_TEST(MeshCook, EmbeddedImageNameRules) {
     CorpusCook c;
     if (!cook_corpus("generated/pbr_textures.glb", c)) return;
     KILN_REQUIRE(c.result.ok());
-    for (StrView const renamed : {StrView("\"hull_albedo\""), StrView("\"hull#normal\"")}) {
+    for (StrView const renamed :
+         {StrView("\"hull_albedo\""), StrView("\"hull#normal\""), StrView("\"hull?normal\"")}) {
         Vec<u8> patched(default_allocator(), Tag::Test);
         patched.append(c.bytes.span());
         StrView const from = "\"hull_normal\"";

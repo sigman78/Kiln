@@ -2,9 +2,11 @@
 // README.md. Exit codes: 0 all inputs cooked, 1 usage, 2 IO failure, 3 one or more cook errors.
 #include "cli.h"
 
+#include "kiln/assets.h"
 #include "kiln/containers.h"
 #include "kiln/cook/cook.h"
 #include "kiln/cook/image.h"
+#include "kiln/cook/provider.h"
 #include "kiln/cook/settings.h"
 #include "kiln/cook/sidecar.h"
 #include "kiln/hash.h"
@@ -29,8 +31,15 @@ using namespace kiln::cook;
 
 namespace {
 
+/// `--mount <name>=<dir>`: files under `dir` get names `name:<path in dir>`.
+struct NamedMount {
+    char name[64];
+    char root[1024];
+};
+
 struct Options {
     Vec<char const*> inputs{default_allocator(), Tag::General};
+    Vec<NamedMount> mounts{default_allocator(), Tag::General};
     char const* store      = "cooked";
     char const* root       = nullptr;
     char const* map        = nullptr;
@@ -185,22 +194,35 @@ void scan_dir(char const* dir, FileList& out) {
     }
 }
 
-/// Asset path: `path` relative to `root`, forward slashes, no extension.
-void asset_path_of(char const* path, char const* root, char* out, usize cap) {
-    usize rl        = std::strlen(root);
-    char const* rel = path;
-    if (rl && std::strncmp(path, root, rl) == 0 && (path[rl] == '/' || path[rl] == '\0'))
-        rel = path + rl + (path[rl] == '/' ? 1 : 0);
-    else {
-        char const* slash = std::strrchr(path, '/');
-        rel               = slash ? slash + 1 : path;
+/// True if `path` lies under the directory `root`.
+bool under(char const* path, char const* root) {
+    usize const rl = std::strlen(root);
+    return rl && std::strncmp(path, root, rl) == 0 && path[rl] == '/';
+}
+
+/// The asset name of the source `path`: `mount:<path in root>` for the named mount with the
+/// longest root that holds it, else the path relative to `root` (the default mount), with
+/// its extension. `*rootLen` gets the length of the root the name is relative to.
+void asset_name_of(Options const& o, char const* path, char const* root, char* out, usize cap,
+                   usize* rootLen) {
+    NamedMount const* best = nullptr;
+    for (NamedMount const& m : o.mounts)
+        if (under(path, m.root) && (!best || std::strlen(m.root) > std::strlen(best->root))) best = &m;
+    if (best) {
+        *rootLen = std::strlen(best->root);
+        format(out, cap, "%s:%s", best->name, path + *rootLen + 1);
+        return;
     }
-    usize n     = std::strlen(rel);
-    StrView ext = extension(StrView(rel, n));
-    if (!ext.empty()) n -= ext.size + 1;
-    if (n >= cap) n = cap - 1;
-    std::memcpy(out, rel, n);
-    out[n] = '\0';
+    char const* rel = path;
+    *rootLen        = 0;
+    if (under(path, root)) {
+        *rootLen = std::strlen(root);
+        rel      = path + *rootLen + 1;
+    } else if (char const* slash = std::strrchr(path, '/')) {
+        *rootLen = usize(slash - path);
+        rel      = slash + 1;
+    }
+    format(out, cap, "%s", rel);
 }
 
 struct DiagState {
@@ -247,24 +269,28 @@ Status resolve_uri_fn(void* user, StrView uri, Allocator const* alloc, Vec<u8>* 
     return kOk;
 }
 
-bool emit(Ctx& c, StrView assetPath, char const* ext, u64 key, Span<u8 const> bytes) {
+bool emit(Ctx& c, StrView assetPath, AssetKind kind, u64 key, Span<u8 const> bytes) {
     if (c.opt.check) return true;
+    char const* ext = kind == AssetKind::Mesh ? "mesh" : "ktx2";
     char name[1200];
+    char dir[1200];
+    format(dir, sizeof dir, "%s", c.opt.store);
     if (c.opt.hashed) {
         store_file_name(key, StrView(ext), name, sizeof name);
     } else {
-        // Named layout (default, kiln/assets.h StoreLayout::Named): <store>/<assetPath>.<ext>.
-        format(name, sizeof name, "%.*s.%s", KILN_SV(assetPath), ext);
-        char dir[1200];
-        format(dir, sizeof dir, "%s/%.*s", c.opt.store, KILN_SV(assetPath));
-        if (char* slash = std::strrchr(dir, '/')) {
-            *slash = '\0';
-            make_dirs(dir);
+        // Named layout (default, kiln/assets.h StoreLayout::Named).
+        if (store_file_path(StrView(c.opt.store), kind, assetPath, dir, sizeof dir) >= sizeof dir - 1) {
+            std::fprintf(stderr, "kiln-cook: %.*s: store path too long\n", KILN_SV(assetPath));
+            return false;
         }
+        char* slash = std::strrchr(dir, '/');
+        format(name, sizeof name, "%s", slash + 1);
+        *slash = '\0';
+        make_dirs(dir);
     }
-    Status st = store_write(StrView(c.opt.store), StrView(name), bytes, &c.sink);
+    Status st = store_write(StrView(dir), StrView(name), bytes, &c.sink);
     if (st.failed()) {
-        std::fprintf(stderr, "kiln-cook: cannot write %s/%s (%s)\n", c.opt.store, name, code_name(st.code));
+        std::fprintf(stderr, "kiln-cook: cannot write %s/%s (%s)\n", dir, name, code_name(st.code));
         return false;
     }
     if (c.map)
@@ -330,7 +356,7 @@ bool cook_one_texture(Ctx& c, Span<u8 const> bytes, StrView assetPath, StrView s
         cook_texture(src, *rs, c.opt.target, {.diag = &c.sink, .jobs = c.jobs, .maxThreads = c.maxThreads});
     if (r.failed()) return false;
     u64 key = store_key(r->sourceHash, hash_settings(*rs), hash_target(c.opt.target));
-    if (!emit(c, assetPath, "ktx2", key, r->file.span())) return false;
+    if (!emit(c, assetPath, AssetKind::Texture, key, r->file.span())) return false;
     if (c.opt.verbose) print_texture_stats(r->stats);
     return true;
 }
@@ -357,7 +383,7 @@ bool cook_one_mesh(Ctx& c, Span<u8 const> bytes, StrView assetPath, char const* 
         cook_mesh(src, *rs, c.opt.target, {.diag = &c.sink, .jobs = c.jobs, .maxThreads = c.maxThreads});
     if (r.failed()) return false;
     u64 key = store_key(r->sourceHash, hash_settings(*rs), hash_target(c.opt.target));
-    if (!emit(c, assetPath, "mesh", key, r->file.span())) return false;
+    if (!emit(c, assetPath, AssetKind::Mesh, key, r->file.span())) return false;
     if (c.opt.verbose) print_mesh_stats(r->stats);
 
     // Embedded images only; files the mesh references by URI are cooked as inputs of their own.
@@ -369,8 +395,19 @@ bool cook_one_mesh(Ctx& c, Span<u8 const> bytes, StrView assetPath, char const* 
 
 void cook_file(Ctx& c, char const* path, char const* root) {
     char assetPath[1024];
-    asset_path_of(path, root, assetPath, sizeof assetPath);
+    usize rootLen = 0;
+    asset_name_of(c.opt, path, root, assetPath, sizeof assetPath, &rootLen);
     StrView ext = extension(StrView(path));
+    if (char const* why = check_asset_name(StrView(assetPath))) {
+        std::fprintf(stderr, "kiln-cook: %s: '%s' is not a valid asset name (%s)\n", path, assetPath, why);
+        ++c.failed;
+        return;
+    }
+    if (!source_case_matches(StrView(path, rootLen), StrView(path + rootLen + (rootLen ? 1 : 0)))) {
+        std::fprintf(stderr, "kiln-cook: %s: the name differs in case from the file on disk\n", path);
+        ++c.failed;
+        return;
+    }
 
     Vec<u8> bytes(default_allocator(), Tag::Io);
     if (!read_file(path, bytes)) {
@@ -396,6 +433,33 @@ bool add_input(void* user, char const* arg) {
     return true;
 }
 
+bool add_mount(void* user, char const* arg) {
+    auto* o              = static_cast<Options*>(user);
+    char const* const eq = std::strchr(arg, '=');
+    NamedMount m{};
+    if (!eq || usize(eq - arg) >= sizeof m.name || eq[1] == '\0') {
+        std::fprintf(stderr, "kiln-cook: --mount: expected <name>=<dir>, got '%s'\n", arg);
+        return false;
+    }
+    format(m.name, sizeof m.name, "%.*s", int(eq - arg), arg);
+    if (char const* why = check_mount_name(StrView(m.name))) {
+        std::fprintf(stderr, "kiln-cook: --mount: '%s': %s\n", m.name, why);
+        return false;
+    }
+    format(m.root, sizeof m.root, "%s", eq + 1);
+    normalize_slashes(m.root);
+    usize n = std::strlen(m.root);
+    while (n > 1 && m.root[n - 1] == '/')
+        m.root[--n] = '\0';
+    for (NamedMount const& other : o->mounts)
+        if (std::strcmp(other.name, m.name) == 0) {
+            std::fprintf(stderr, "kiln-cook: --mount: '%s' is given twice\n", m.name);
+            return false;
+        }
+    o->mounts.push_back(m);
+    return true;
+}
+
 char const* const kProfiles[] = {"default", "precise", nullptr};
 char const* const kTargets[]  = {"desktop", nullptr};
 
@@ -412,11 +476,16 @@ int main(int argc, char** argv) {
          .str  = &o.store},
         {.name = "--root",
          .arg  = "<dir>",
-         .help = "source root for asset paths (default: the input directory)",
+         .help = "root of the default mount (default: the input directory)",
          .str  = &o.root},
+        {.name = "--mount",
+         .arg  = "<name>=<dir>",
+         .help = "a named mount: sources under <dir> are named <name>:<path> (repeatable)",
+         .each = &add_mount,
+         .user = &o},
         {.name = "--check", .help = "validate only: cook in memory, write nothing", .flag = &o.check},
         {.name = "--hashed",
-         .help = "content-hash file names instead of <store>/<assetPath>.<ext>",
+         .help = "content-hash file names instead of <store>/<asset name>.<ext>",
          .flag = &o.hashed},
         {.name = "--map",
          .arg  = "<file>",

@@ -15,7 +15,7 @@ struct Context;
 
 namespace rt {
 
-inline constexpr usize kMaxPathLen      = 256; ///< normalized asset path incl. terminator
+inline constexpr usize kMaxPathLen      = kMaxAssetNameLen + 1; ///< asset name incl. terminator
 inline constexpr u32 kPlaceholderCount  = u32(TextureKind::Count) + 1;
 inline constexpr u32 kFailedPlaceholder = u32(TextureKind::Count); ///< index in Context::ph
 
@@ -177,12 +177,12 @@ struct Context {
     CopyConstraints cc;
     bool devPlaceholders = true;
 
-    char* storeDir     = nullptr; ///< owned copy (null-terminated)
-    usize storeDirLen  = 0;
-    StrView* roots     = nullptr; ///< owned copies of sourceRoots
-    u32 rootCount      = 0;
-    char* rootChars    = nullptr;
-    usize rootCharsLen = 0;
+    char* storeDir      = nullptr; ///< owned copy (null-terminated)
+    usize storeDirLen   = 0;
+    Mount* mounts       = nullptr; ///< owned copies of ContextDesc::mounts
+    u32 mountCount      = 0;
+    char* mountChars    = nullptr;
+    usize mountCharsLen = 0;
 
     u32 maxAssets = 0, maxGroups = 0, maxEvents = 0, maxIoJobs = 0;
     u64 ioBudget = 0;
@@ -229,10 +229,6 @@ struct Context {
 namespace rt {
 
 // --- registry.cpp -------------------------------------------------------------------
-/// Normalize an asset path (forward slashes, no leading "./" or "/", "./" segments and
-/// repeated slashes collapsed, extension stripped). Returns the length, or StrView::kNpos
-/// if it does not fit `cap` (including the terminator).
-usize normalize_path(StrView in, char* out, usize cap) noexcept;
 Slot* resolve(Context* ctx, u64 bits, AssetKind kind) noexcept;
 HashMap<AssetId, u32>& map_for(Context* ctx, AssetKind kind) noexcept;
 /// Allocate and initialize a new slot (Pending, queued for the meta stage) or return an
@@ -255,7 +251,7 @@ void boost_group(Context* ctx, Group g) noexcept;
 
 // --- loader.cpp (worker side) -------------------------------------------------------
 void run_job(void* arg) noexcept;
-/// The store file of an asset: `<storeDir>/<path>.mesh|.ktx2`. Returns the length
+/// The store file of an asset (store_file_path()). Returns the length
 /// `format` reports (>= cap - 1 means truncated). Reads only fields fixed at create().
 usize store_path(Context const* ctx, AssetKind kind, StrView path, char* out, usize cap) noexcept;
 /// Texture upload layout: levels ascending, each at `offsetAlign`, rows padded to

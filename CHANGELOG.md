@@ -118,6 +118,32 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
   relative path, as the `UriResolver` already received for buffers.
 
 ### Changed
+- **Breaking (runtime, cook, store, tools):** asset names are `mount:path/file.ext#sub`, the source
+  path with its extension (`docs/design/asset-model-next.md`, Part 2).
+  - The runtime no longer normalizes names: no extension stripping, no `./`, `\` or `//` clean-up.
+    `request_*`/`register_*` check a name with the new `check_asset_name()` and reject a bad one
+    at the call (null handle, new K5013). `asset_id()` hashes the name as given (0 if invalid).
+    New helpers in `kiln/assets.h`: `check_mount_name`, `split_asset_name`, `resolve_asset_name`
+    (a relative URI in a source to a name in the same mount), `store_file_path`.
+  - `ContextDesc::sourceRoots` is now `ContextDesc::mounts` (`Mount{name, root}`; an empty name is
+    the default mount), and `source_roots()` is `mounts()`. `create()` rejects a bad or repeated
+    mount name (K5013).
+  - Store files are `<store>/<name>.mesh|.ktx2` (`props/chair.glb.mesh`,
+    `props/chair.glb#wood.ktx2`); a named mount `m:` is the directory `m#/`.
+  - The provider finds `<mount root>/<path>` with no extension search. The extension gives the
+    kind; a mismatch is K5014, an unknown mount K5015, a name that differs in case from the file
+    on disk K5016 (checked on Windows, `cook::source_case_matches`).
+  - Mesh cook: `MeshSource::assetPath` must be a valid name. An external URI that is absolute or
+    leaves the mount is the new error K1020. K1019 now checks `<mesh>#<image>` with the name rules,
+    which also reject `< > " | ? *`.
+  - `kiln-cook`: names keep the extension; new repeatable `--mount <name>=<dir>`. `kiln-viewer`
+    takes mesh names (`Lantern.glb`, `lib:props/chair.glb`) instead of `.mesh` store paths and also
+    gets `--mount`. `kiln-headless` arguments are a name plus `.mesh`/`.ktx2`
+    (`Lantern.glb.mesh`). `tools/cli.h` options gain an `each` callback for repeatable options.
+  - Migration: delete the store and re-cook. Request `chair.glb` instead of `chair` and
+    `chair.glb#wood` instead of `chair#wood`. Replace `sourceRoots = {dir}` with
+    `mounts = {Mount{{}, dir}}`. Resolve external texture URIs with `resolve_asset_name()`. A
+    store cooked elsewhere keeps working under names without a source extension.
 - **Breaking (format, cook, store):** a mesh cook no longer cooks the images its glTF references by
   URI (`docs/design/asset-model-next.md`, "one source file per cooked asset").
   - `.mesh` 0.4: `TextureBinding` flag `kTextureExternal` marks such a binding; `pathStr` is the

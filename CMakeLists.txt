@@ -79,6 +79,7 @@ add_library(kiln_runtime STATIC
     src/runtime/runtime_internal.h
     src/runtime/context.cpp
     src/runtime/registry.cpp
+    src/runtime/names.cpp
     src/runtime/loader.cpp
     src/runtime/pump.cpp
     src/runtime/register.cpp

@@ -45,11 +45,13 @@ enum GltfDiagCode : u32 {
     kDiagGltfLimit = 1014, ///< too many streams/attributes/vertices for the format (Unsupported)
     kDiagGltfExtrasDropped =
         1015, ///< mount extras pair with `;`/`=` in key or value, or non-scalar, dropped (Warning)
-    kDiagGltfEmptyMesh     = 1016, ///< a part ended up with zero triangles (Warning)
-    kDiagGltfUsageConflict = 1017, ///< the same image is bound to slots implying different usages (Warning)
-    kDiagGltfQuantFallback = 1018, ///< positions/UVs fell back to the precise profile (Info)
-    kDiagGltfImageName     = 1019, ///< two embedded images share a name, or a name holds `:` `#` `/` `\` or a
-                                   ///< control character (ValidationFailed)
+    kDiagGltfEmptyMesh     = 1016,   ///< a part ended up with zero triangles (Warning)
+    kDiagGltfUsageConflict = 1017,   ///< the same image is bound to slots implying different usages (Warning)
+    kDiagGltfQuantFallback = 1018,   ///< positions/UVs fell back to the precise profile (Info)
+    kDiagGltfImageName     = 1019,   ///< two embedded images share a name, or `<mesh>#<name>` is not a valid
+                                     ///< asset name (ValidationFailed)
+    kDiagGltfUriOutsideMount = 1020, ///< an external URI is absolute, leaves the mount or gives an invalid
+                                     ///< asset name (ValidationFailed)
 };
 
 // ---------------------------------------------------------------------------
@@ -108,10 +110,10 @@ struct UriResolver {
 
 struct MeshSource {
     Span<u8 const> bytes = {}; ///< .glb (or .gltf JSON) contents
-    StrView assetPath    = {}; ///< cooked asset path, e.g. "meshes/ship_hauler_a" (no extension)
-    StrView sourcePath   = {}; ///< for diagnostics and relative URIs, e.g. "assets/ship_hauler_a.glb"
-    u64 sourceHash       = 0;  ///< xxh64 of bytes; 0 = computed by cook_mesh
-    UriResolver resolver;      ///< optional
+    StrView assetPath  = {}; ///< a valid asset name, e.g. "meshes/ship_hauler_a.glb"; URIs resolve against it
+    StrView sourcePath = {}; ///< for diagnostics and relative URIs, e.g. "assets/ship_hauler_a.glb"
+    u64 sourceHash     = 0;  ///< xxh64 of bytes; 0 = computed by cook_mesh
+    UriResolver resolver;    ///< optional
 };
 
 /// An image embedded in the source, which the mesh cook outputs as a texture of its own.
@@ -148,7 +150,7 @@ KILN_API Result<CookedMesh> cook_mesh(MeshSource const& src, MeshCookSettings co
 
 struct TextureSource {
     Span<u8 const> bytes = {}; ///< PNG, JPEG, WebP or KTX2
-    StrView assetPath    = {}; ///< e.g. "meshes/ship_hauler_a/hull_albedo"
+    StrView assetPath    = {}; ///< e.g. "textures/hull_albedo.png"
     StrView sourcePath   = {}; ///< for diagnostics
     u64 sourceHash       = 0;  ///< 0 = computed
 };

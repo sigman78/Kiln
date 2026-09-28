@@ -25,39 +25,6 @@ void Buffer::release() noexcept {
 // Paths and ids
 // ---------------------------------------------------------------------------
 
-usize normalize_path(StrView in, char* out, usize cap) noexcept {
-    usize n = 0;
-    for (usize i = 0; i < in.size;) {
-        char const c        = in.data[i] == '\\' ? '/' : in.data[i];
-        bool const segStart = n == 0 || out[n - 1] == '/';
-        if (segStart && c == '/') { // leading or repeated slash
-            ++i;
-            continue;
-        }
-        if (segStart && c == '.' && (i + 1 == in.size || in.data[i + 1] == '/' || in.data[i + 1] == '\\')) {
-            ++i; // "./" segment; its slash is skipped as a repeated slash
-            continue;
-        }
-        if (n + 1 >= cap) return StrView::kNpos;
-        out[n++] = c;
-        ++i;
-    }
-    while (n > 0 && out[n - 1] == '/')
-        --n;
-    // Strip the extension: the last '.' of the last segment, unless it starts the segment.
-    usize slash = StrView::kNpos, dot = StrView::kNpos;
-    for (usize i = 0; i < n; ++i) {
-        if (out[i] == '/')
-            slash = i;
-        else if (out[i] == '.')
-            dot = i;
-    }
-    usize const segBegin = slash == StrView::kNpos ? 0 : slash + 1;
-    if (dot != StrView::kNpos && (slash == StrView::kNpos || dot > slash) && dot > segBegin) n = dot;
-    if (cap) out[n] = '\0';
-    return n;
-}
-
 HashMap<AssetId, u32>& map_for(Context* ctx, AssetKind kind) noexcept {
     return kind == AssetKind::Mesh ? ctx->meshMap : ctx->texMap;
 }
@@ -220,14 +187,12 @@ void free_slot(Context* ctx, Slot& s) noexcept {
 
 Slot* request_slot(Context* ctx, AssetKind kind, StrView path, RequestOptions const& opt, Buffer* memory,
                    bool rejectExisting) noexcept {
-    char norm[kMaxPathLen];
-    usize const len = normalize_path(path, norm, sizeof norm);
-    if (len == StrView::kNpos || len == 0) {
-        diagf(&ctx->diag, make_status(Code::InvalidArgument), kDiagAssetLoadFailed, Severity::Error, path,
-              "request", "asset path is empty or longer than %u bytes", u32(kMaxPathLen - 1));
+    if (char const* why = check_asset_name(path)) {
+        diagf(&ctx->diag, make_status(Code::InvalidArgument), kDiagBadAssetName, Severity::Error, path,
+              "request", "invalid asset name: %s", why);
         return nullptr;
     }
-    StrView const np(norm, len);
+    StrView const np           = path;
     AssetId const id           = fnv1a64(np);
     HashMap<AssetId, u32>& map = map_for(ctx, kind);
 
@@ -287,8 +252,9 @@ Slot* request_slot(Context* ctx, AssetKind kind, StrView path, RequestOptions co
     s.jobStatValid  = false;
     s.jobDiag       = 0;
     s.capture.reset();
-    std::memcpy(s.path, norm, len + 1);
-    s.pathLen = u32(len);
+    std::memcpy(s.path, np.data, np.size);
+    s.path[np.size] = '\0';
+    s.pathLen       = u32(np.size);
     if (memory) {
         s.source = SourceKind::Memory;
         s.memory = *memory;
@@ -367,12 +333,7 @@ using namespace rt;
 // Public API: ids, requests
 // ---------------------------------------------------------------------------
 
-AssetId asset_id(StrView path) noexcept {
-    char norm[1024];
-    usize const len = normalize_path(path, norm, sizeof norm);
-    if (len == StrView::kNpos) return 0;
-    return fnv1a64(StrView(norm, len));
-}
+AssetId asset_id(StrView name) noexcept { return check_asset_name(name) ? 0 : fnv1a64(name); }
 
 MeshHandle request_mesh(Context* ctx, StrView path, RequestOptions const& opt) noexcept {
     if (!ctx) return {};
