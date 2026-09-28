@@ -1,6 +1,6 @@
 // tests/test_mesh_golden.cpp — mesh cooker golden files (cook-only); see tests/golden/README.md.
-// Cooks every `ok` entry of `<--corpus dir>/../gltf/manifest.txt` with default resolved settings
-// and compares the bytes with <golden_dir>/mesh/<stem>.mesh. Skips without --golden.
+// Cooks every `ok` entry of `<corpus_dir>/../gltf/manifest.txt` with default resolved settings
+// and compares the bytes with <golden_dir>/mesh/<stem>.mesh.
 #include "kiln_test.h"
 #include "ktx2_corpus.h" // read_file, bytes_equal
 
@@ -31,12 +31,7 @@ struct GltfEntry {
     u32 code = 0, parts = 0, lods = 0, materials = 0, textures = 0, mounts = 0;
 };
 
-bool gltf_dir(char* out, usize cap) {
-    char const* dir = kiln::test::corpus_dir();
-    if (!dir) return false;
-    format(out, cap, "%s/../gltf", dir);
-    return true;
-}
+void gltf_dir(char* out, usize cap) { format(out, cap, "%s/../gltf", kiln::test::corpus_dir()); }
 
 bool load_gltf_manifest(char const* dir, Vec<char>& text, Vec<GltfEntry>& entries) {
     char path[1024];
@@ -133,7 +128,6 @@ char const* section_name(mesh::MeshView const& v, u64 offset) {
 /// (with --update-golden) writes it.
 void check_golden_mesh(char const* stem, Span<u8 const> got) {
     char const* golden = kiln::test::golden_dir();
-    if (!golden) return;
     char path[1024];
     format(path, sizeof path, "%s/mesh/%s.mesh", golden, stem);
 
@@ -180,9 +174,8 @@ void check_golden_mesh(char const* stem, Span<u8 const> got) {
 } // namespace
 
 KILN_TEST(MeshGolden, Corpus) {
-    if (!kiln::test::golden_dir()) return; // needs --golden
     char dir[1024];
-    if (!gltf_dir(dir, sizeof dir)) return; // needs --corpus
+    gltf_dir(dir, sizeof dir);
     Vec<char> text(default_allocator(), Tag::Test);
     Vec<GltfEntry> entries(default_allocator(), Tag::Test);
     if (!load_gltf_manifest(dir, text, entries)) return;

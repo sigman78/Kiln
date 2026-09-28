@@ -82,7 +82,7 @@ KILN_TEST(Store, FileNameCapacity) {
     KILN_CHECK_EQ(exact[21], '\0');
 }
 
-// store_write / store_exists tests need a real directory (--samples <dir>) and no-op without it.
+// store_write / store_exists tests write under sample_dir().
 
 namespace {
 
@@ -101,7 +101,6 @@ void seed_dir(StrView dir, u64 uniqueTag) {
 
 KILN_TEST(Store, WriteThenExists) {
     char const* dir = kiln::test::sample_dir();
-    if (!dir) return; // no --samples <dir>: nothing to do
 
     char storeDir[1024];
     format(storeDir, sizeof storeDir, "%s/store", dir);
@@ -126,7 +125,6 @@ KILN_TEST(Store, WriteThenExists) {
 
 KILN_TEST(Store, SecondWriteLeavesContentAddressedFileUntouched) {
     char const* dir = kiln::test::sample_dir();
-    if (!dir) return;
 
     char storeDir[1024];
     format(storeDir, sizeof storeDir, "%s/store", dir);
@@ -153,7 +151,6 @@ KILN_TEST(Store, SecondWriteLeavesContentAddressedFileUntouched) {
 
 KILN_TEST(Store, NoTempFileNameSurvivesAWrite) {
     char const* dir = kiln::test::sample_dir();
-    if (!dir) return;
 
     char storeDir[1024];
     format(storeDir, sizeof storeDir, "%s/store", dir);
@@ -176,7 +173,6 @@ KILN_TEST(Store, NoTempFileNameSurvivesAWrite) {
 
 KILN_TEST(Store, MissingDirIsCreated) {
     char const* dir = kiln::test::sample_dir();
-    if (!dir) return;
 
     char storeDir[1024];
     format(storeDir, sizeof storeDir, "%s/store", dir);
@@ -198,7 +194,6 @@ KILN_TEST(Store, MissingDirIsCreated) {
 
 KILN_TEST(Store, WriteUnderRegularFileIsIoError) {
     char const* dir = kiln::test::sample_dir();
-    if (!dir) return;
 
     char storeDir[1024];
     format(storeDir, sizeof storeDir, "%s/store", dir);
@@ -226,7 +221,6 @@ KILN_TEST(Store, WriteUnderRegularFileIsIoError) {
 
 KILN_TEST(Store, OverwriteReplacesExistingFile) {
     char const* dir = kiln::test::sample_dir();
-    if (!dir) return;
 
     char storeDir[1024];
     format(storeDir, sizeof storeDir, "%s/store", dir);

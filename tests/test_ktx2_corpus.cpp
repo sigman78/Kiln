@@ -1,6 +1,5 @@
 // tests/test_ktx2_corpus.cpp — real-world KTX2 corpus (tests/corpus/ktx2); reader-only, shipping runs it.
 // Khronos KTX-Software files plus `ktx create` variants; manifest.txt holds `ktx info` ground truth.
-// Runs only when kiln_tests gets `--corpus <dir>`.
 #include "kiln_test.h"
 #include "ktx2_corpus.h"
 
@@ -115,7 +114,6 @@ void check_unsupported_file(corpus::Entry const& e, Span<u8 const> bytes) {
 
 KILN_TEST(Ktx2Corpus, Manifest) {
     char const* dir = kiln::test::corpus_dir();
-    if (!dir) return; // no --corpus <dir>: nothing to check
 
     corpus::Manifest m;
     if (!corpus::load_manifest(dir, m)) return;

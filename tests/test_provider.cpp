@@ -1,7 +1,6 @@
 // tests/test_provider.cpp — cook-on-miss provider (kiln/cook/provider.h) on a null-adapter Context;
-// cook-only. Needs `--samples <dir>` (scratch store and sources) and `--corpus <dir>` (uses
-// `<dir>/../gltf/generated` and `<dir>/../gltf/khronos`).
-// Every test no-ops when either flag is missing.
+// cook-only. Scratch stores and sources live under sample_dir(); models come from
+// `<corpus_dir>/../gltf/generated` and `<corpus_dir>/../gltf/khronos`.
 #include "image_fixtures.h"
 #include "kiln_test.h"
 #include "png_writer.h"
@@ -38,28 +37,16 @@ bool store_path(char const* storeDir, char const* rel, char* out, usize cap) {
     return true;
 }
 
-/// `<sample_dir()>/<suffix>`, or false if `--samples <dir>` wasn't given.
-bool scratch_dir(char const* suffix, char* out, usize cap) {
-    char const* dir = kiln::test::sample_dir();
-    if (!dir) return false;
-    format(out, cap, "%s/%s", dir, suffix);
-    return true;
+void scratch_dir(char const* suffix, char* out, usize cap) {
+    format(out, cap, "%s/%s", kiln::test::sample_dir(), suffix);
 }
 
-/// `<corpus_dir()>/../gltf/khronos`, or false if `--corpus <dir>` wasn't given.
-bool gltf_khronos_dir(char* out, usize cap) {
-    char const* dir = kiln::test::corpus_dir();
-    if (!dir) return false;
-    format(out, cap, "%s/../gltf/khronos", dir);
-    return true;
+void gltf_khronos_dir(char* out, usize cap) {
+    format(out, cap, "%s/../gltf/khronos", kiln::test::corpus_dir());
 }
 
-/// `<corpus_dir()>/../gltf/generated`, or false if `--corpus <dir>` wasn't given.
-bool gltf_generated_dir(char* out, usize cap) {
-    char const* dir = kiln::test::corpus_dir();
-    if (!dir) return false;
-    format(out, cap, "%s/../gltf/generated", dir);
-    return true;
+void gltf_generated_dir(char* out, usize cap) {
+    format(out, cap, "%s/../gltf/generated", kiln::test::corpus_dir());
 }
 
 struct DiagCapture {
@@ -200,7 +187,7 @@ cook::ProviderDesc const kWatchDesc{.storeMode = cook::StoreMode::Disk, .watchSo
 
 KILN_TEST(Provider, EmptySourceRootsIsInvalidArgument) {
     char storeDir[1024];
-    if (!scratch_dir("provider_store_empty_roots", storeDir, sizeof storeDir)) return;
+    scratch_dir("provider_store_empty_roots", storeDir, sizeof storeDir);
 
     TestContext tc;
     if (!tc.init(StrView(storeDir), {})) return;
@@ -214,8 +201,8 @@ KILN_TEST(Provider, EmptySourceRootsIsInvalidArgument) {
 KILN_TEST(Provider, DiskModeCooksAndWritesNamedStoreFiles) {
     char storeDir[1024];
     char gltfDir[1024];
-    if (!scratch_dir("provider_store", storeDir, sizeof storeDir)) return;
-    if (!gltf_generated_dir(gltfDir, sizeof gltfDir)) return;
+    scratch_dir("provider_store", storeDir, sizeof storeDir);
+    gltf_generated_dir(gltfDir, sizeof gltfDir);
 
     StrView const roots[] = {StrView(gltfDir)};
 
@@ -281,8 +268,8 @@ KILN_TEST(Provider, DiskModeCooksAndWritesNamedStoreFiles) {
 // JPEG): cooking it cooks the owning mesh, same path as pbr_textures/hull_albedo (PNG).
 KILN_TEST(Provider, DiskModeCooksEmbeddedJpegTexture) {
     char storeDir[1024], gltfDir[1024];
-    if (!scratch_dir("provider_jpeg_embedded_store", storeDir, sizeof storeDir)) return;
-    if (!gltf_generated_dir(gltfDir, sizeof gltfDir)) return;
+    scratch_dir("provider_jpeg_embedded_store", storeDir, sizeof storeDir);
+    gltf_generated_dir(gltfDir, sizeof gltfDir);
 
     StrView const roots[] = {StrView(gltfDir)};
     TestContext tc;
@@ -306,8 +293,8 @@ KILN_TEST(Provider, DiskModeCooksEmbeddedJpegTexture) {
 KILN_TEST(Provider, MemoryModeNeverWritesTheStore) {
     char storeDir[1024];
     char gltfDir[1024];
-    if (!scratch_dir("provider_store_memory", storeDir, sizeof storeDir)) return;
-    if (!gltf_generated_dir(gltfDir, sizeof gltfDir)) return;
+    scratch_dir("provider_store_memory", storeDir, sizeof storeDir);
+    gltf_generated_dir(gltfDir, sizeof gltfDir);
 
     StrView const roots[] = {StrView(gltfDir)};
     TestContext tc;
@@ -330,8 +317,8 @@ KILN_TEST(Provider, MemoryModeNeverWritesTheStore) {
 KILN_TEST(Provider, MissingSourceFailsWithStoreMiss) {
     char storeDir[1024];
     char gltfDir[1024];
-    if (!scratch_dir("provider_store_missing", storeDir, sizeof storeDir)) return;
-    if (!gltf_generated_dir(gltfDir, sizeof gltfDir)) return;
+    scratch_dir("provider_store_missing", storeDir, sizeof storeDir);
+    gltf_generated_dir(gltfDir, sizeof gltfDir);
 
     StrView const roots[] = {StrView(gltfDir)};
     DiagCapture diags;
@@ -352,8 +339,8 @@ KILN_TEST(Provider, MissingSourceFailsWithStoreMiss) {
 // (provider_cook's texExts tries png, jpg, jpeg, webp, ktx2 in order).
 KILN_TEST(Provider, DiskModeCooksJpegSource) {
     char root[1024], storeDir[1024];
-    if (!scratch_dir("provider_jpeg_src", root, sizeof root)) return;
-    if (!scratch_dir("provider_jpeg_store", storeDir, sizeof storeDir)) return;
+    scratch_dir("provider_jpeg_src", root, sizeof root);
+    scratch_dir("provider_jpeg_store", storeDir, sizeof storeDir);
     make_dir(root);
 
     char srcPath[1100], texPath[1100];
@@ -379,8 +366,8 @@ KILN_TEST(Provider, DiskModeCooksJpegSource) {
 // checks the store only; the runtime reloading from it is the runtime's own test.
 KILN_TEST(Provider, SourcePollerRecooksPng) {
     char root[1024], storeDir[1024];
-    if (!scratch_dir("provider_watch_png_src", root, sizeof root)) return;
-    if (!scratch_dir("provider_watch_png_store", storeDir, sizeof storeDir)) return;
+    scratch_dir("provider_watch_png_src", root, sizeof root);
+    scratch_dir("provider_watch_png_store", storeDir, sizeof storeDir);
     make_dir(root);
 
     char srcPath[1100], storeFile[1100];
@@ -424,9 +411,9 @@ KILN_TEST(Provider, SourcePollerRecooksPng) {
 // A glb re-cook rewrites the mesh and the textures it embeds; for a glb without textures, only the mesh.
 KILN_TEST(Provider, SourcePollerRecooksGlbAndTextures) {
     char root[1024], storeDir[1024], khronos[1024];
-    if (!scratch_dir("provider_watch_glb_src", root, sizeof root)) return;
-    if (!scratch_dir("provider_watch_glb_store", storeDir, sizeof storeDir)) return;
-    if (!gltf_khronos_dir(khronos, sizeof khronos)) return;
+    scratch_dir("provider_watch_glb_src", root, sizeof root);
+    scratch_dir("provider_watch_glb_store", storeDir, sizeof storeDir);
+    gltf_khronos_dir(khronos, sizeof khronos);
     make_dir(root);
 
     char textured[1100], plain[1100], srcPath[1100], meshFile[1100], texFile[1100];
@@ -474,8 +461,8 @@ KILN_TEST(Provider, SourcePollerRecooksGlbAndTextures) {
 // After uninstall_provider the poller is gone: a changed source rewrites nothing.
 KILN_TEST(Provider, SourcePollerStopsOnUninstall) {
     char root[1024], storeDir[1024];
-    if (!scratch_dir("provider_watch_stop_src", root, sizeof root)) return;
-    if (!scratch_dir("provider_watch_stop_store", storeDir, sizeof storeDir)) return;
+    scratch_dir("provider_watch_stop_src", root, sizeof root);
+    scratch_dir("provider_watch_stop_store", storeDir, sizeof storeDir);
     make_dir(root);
 
     char srcPath[1100], storeFile[1100];

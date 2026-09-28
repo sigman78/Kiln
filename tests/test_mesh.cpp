@@ -784,7 +784,6 @@ KILN_TEST(Mesh, NoIndicesNoTextures) {
 // Writes the sample files that kiln-info's CTest entries read (tests/CMakeLists.txt).
 KILN_TEST(Mesh, WriteSampleFiles) {
     char const* dir = kiln::test::sample_dir();
-    if (!dir) return; // no --samples <dir> given: nothing to do
 
     TestMesh m;
 

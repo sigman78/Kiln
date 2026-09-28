@@ -181,7 +181,6 @@ void fill_pattern(Vec<u8>& v, usize n) {
 
 KILN_TEST(IoCompat, ReadRangesMiddleAndEnd) {
     char const* dir = kiln::test::sample_dir();
-    if (!dir) return;
 
     char path[1024];
     format(path, sizeof path, "%s/io_ranges.bin", dir);
@@ -231,7 +230,6 @@ void run_read_job(void* arg) {
 
 KILN_TEST(IoCompat, ConcurrentReadRangeFromPoolThreads) {
     char const* dir = kiln::test::sample_dir();
-    if (!dir) return;
 
     char path[1024];
     format(path, sizeof path, "%s/io_concurrent.bin", dir);
@@ -269,7 +267,6 @@ KILN_TEST(IoCompat, ConcurrentReadRangeFromPoolThreads) {
 
 KILN_TEST(IoCompat, ReadPastEofReturnsIoEof) {
     char const* dir = kiln::test::sample_dir();
-    if (!dir) return;
 
     char path[1024];
     format(path, sizeof path, "%s/io_eof.bin", dir);
@@ -290,7 +287,6 @@ KILN_TEST(IoCompat, ReadPastEofReturnsIoEof) {
 
 KILN_TEST(IoCompat, OpenMissingFileReturnsNotFound) {
     char const* dir = kiln::test::sample_dir();
-    if (!dir) return;
 
     char path[1024];
     format(path, sizeof path, "%s/io_does_not_exist_12345.bin", dir);
@@ -305,7 +301,6 @@ KILN_TEST(IoCompat, OpenMissingFileReturnsNotFound) {
 
 KILN_TEST(IoCompat, IoReadFileWholeFile) {
     char const* dir = kiln::test::sample_dir();
-    if (!dir) return;
 
     char path[1024];
     format(path, sizeof path, "%s/io_whole.bin", dir);
@@ -323,7 +318,6 @@ KILN_TEST(IoCompat, IoReadFileWholeFile) {
 
 KILN_TEST(IoCompat, StatSizeMtimeAndNotFound) {
     char const* dir = kiln::test::sample_dir();
-    if (!dir) return;
 
     char path[1024];
     format(path, sizeof path, "%s/io_stat.bin", dir);
@@ -355,7 +349,6 @@ KILN_TEST(IoCompat, StatSizeMtimeAndNotFound) {
 
 KILN_TEST(IoCompat, FileExistsTrueFalseAndDirectory) {
     char const* dir = kiln::test::sample_dir();
-    if (!dir) return;
 
     char path[1024];
     format(path, sizeof path, "%s/io_exists.bin", dir);
@@ -373,7 +366,6 @@ KILN_TEST(IoCompat, FileExistsTrueFalseAndDirectory) {
 
 KILN_TEST(IoCompat, NonAsciiPathRoundTrips) {
     char const* dir = kiln::test::sample_dir();
-    if (!dir) return;
 
     // "tést_ünïcode.bin" as UTF-8 bytes. The literal breaks after \xAF because a hex
     // escape would also eat the hex digit 'c' of "code".

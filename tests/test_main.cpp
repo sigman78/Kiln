@@ -4,6 +4,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <system_error>
 
 namespace kiln::test {
 
@@ -13,9 +15,9 @@ TestCase* g_head        = nullptr;
 TestCase* g_tail        = nullptr;
 int g_count             = 0;
 int g_failures          = 0; // in current test
-char const* g_sampleDir = nullptr;
-char const* g_corpusDir = nullptr;
-char const* g_goldenDir = nullptr;
+char const* g_sampleDir = KILN_TEST_SAMPLES_DIR;
+char const* g_corpusDir = KILN_TEST_CORPUS_DIR;
+char const* g_goldenDir = KILN_TEST_GOLDEN_DIR;
 bool g_updateGolden     = false;
 char const* g_filter    = nullptr;
 
@@ -83,6 +85,14 @@ void test_panic(void*, char const* file, int line, char const* msg) {
     std::abort();
 }
 
+bool dir_usable(char const* flag, char const* path, bool create) {
+    std::error_code ec;
+    if (create) std::filesystem::create_directories(path, ec);
+    if (std::filesystem::is_directory(path, ec)) return true;
+    std::fprintf(stderr, "kiln_tests: %s directory '%s' does not exist\n", flag, path);
+    return false;
+}
+
 bool matches(TestCase const* tc, char const* filter) {
     if (!filter) return true;
     char full[512];
@@ -120,6 +130,12 @@ int run_all(int argc, char** argv) noexcept {
             if (matches(tc, filter)) std::printf("%s.%s\n", tc->suite, tc->name);
         return 0;
     }
+
+    int badDirs = 0; // report every bad directory, not just the first
+    badDirs += !dir_usable("--samples", g_sampleDir, true);
+    badDirs += !dir_usable("--corpus", g_corpusDir, false);
+    badDirs += !dir_usable("--golden", g_goldenDir, false);
+    if (badDirs) return 2;
 
     int ran = 0, failed = 0;
     for (TestCase* tc = g_head; tc; tc = tc->next) {

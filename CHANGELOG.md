@@ -106,6 +106,9 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
   relative path, as the `UriResolver` already received for buffers.
 
 ### Changed
+- Tests: `kiln_tests` compiles in the corpus, golden and scratch (`<build>/tests/samples`)
+  directories, so running it by hand runs every test; `--corpus`, `--golden` and `--samples` still
+  override. A missing directory now stops the run (exit 2) instead of silently skipping tests.
 - **Breaking (cook):** `cook_mesh` and `cook_texture` take `CookEnv const& env = {}` in place of the
   trailing `Allocator const* alloc, DiagSink const* diag`. Migration:
   `cook_texture(src, s, target, alloc, &sink)` becomes `cook_texture(src, s, target, {.alloc = alloc, .diag = &sink})`;
