@@ -50,14 +50,15 @@ most to least specific:
    provider (`ProviderDesc::nameRules`) and `kiln-cook` to standalone texture sources.
 3. Default: color, sRGB.
 
-Explicit session overrides still win over all three. Rules and sidecars are layers 5 and 6 of
-`settings.md`. Proposed: warn when a host requests a texture with a kind that differs from the
+A sidecar and an explicit host usage win over the name rules; a `CookPolicy` wins over
+everything. The full order is the layer table in `settings.md`. Proposed: warn when a host requests a texture with a kind that differs from the
 cooked usage.
 
 **Order of work:** name rules (done), then the scope cut with option (c) (done: `.mesh` 0.4,
 `kTextureExternal`, `<mesh>#<name>`, K1019; see `mesh-format-spec.md` §5.7), then sidecars
-(done: `kiln/cook/sidecar.h`, K3005/K3006; see `settings.md`, "Sidecar files"). Sidecars apply
-after the session settings, not before them; that deviation is an open point in `settings.md`.
+(done: `kiln/cook/sidecar.h`, K3005/K3006; see `settings.md`, "Sidecar files"). The layer order
+was then settled: host settings are defaults, a sidecar beats them, and a `CookPolicy` has the
+last word (`settings.md`, "Resolution layers").
 Then stage B, the extension in the name (I3, I5, I6), and stage C, named mounts (B1, B2, I1, I2):
 both done, see "Implementation".
 

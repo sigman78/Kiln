@@ -121,24 +121,69 @@ enum SettingsDiagCode : u32 {
     kDiagSidecarSyntax           = 3005, ///< a `.kiln` sidecar is outside the TOML subset (ParseError)
     kDiagSidecarKey =
         3006, ///< a sidecar key is unknown, or its value has the wrong type or range (InvalidArgument)
+    kDiagPolicyRefused = 3007, ///< the CookPolicy refused the asset (its status)
 };
 
 // ---------------------------------------------------------------------------
-// Resolution (v0.5 layers: defaults, slot inference, session overrides)
+// Resolution: the last stage, after every layer (resolve_*_layers call these)
 // ---------------------------------------------------------------------------
 
-/// Resolve texture settings: defaults <- inference from `hint` <- explicit non-Auto
-/// fields of `overrides` <- session <- target caps. Every Auto field is concrete on
+/// Resolve texture settings: an Auto usage from `hint`, an Auto color space from the usage,
+/// Normal-only flags cleared for other usages, target caps. Every Auto field is concrete on
 /// return. An enum value out of range returns InvalidArgument (K3004).
 KILN_API Result<TextureCookSettings> resolve_texture(TextureCookSettings const& overrides, SlotHint hint,
                                                      TargetProfile const& target, CookSession const& session,
                                                      DiagSink const* diag = nullptr,
                                                      StrView asset        = {}) noexcept;
 
-/// Resolve mesh settings: defaults <- overrides <- session <- target caps.
+/// Resolve mesh settings: validation, session, target caps.
 KILN_API Result<MeshCookSettings> resolve_mesh(MeshCookSettings const& overrides, TargetProfile const& target,
                                                CookSession const& session, DiagSink const* diag = nullptr,
                                                StrView asset = {}) noexcept;
+
+// ---------------------------------------------------------------------------
+// Layered resolution (docs/design/settings.md, "Resolution layers")
+// ---------------------------------------------------------------------------
+
+/// The asset being cooked, as a CookPolicy sees it.
+struct CookAssetInfo {
+    StrView name       = {};             ///< the asset name, e.g. "props/chair.glb#wood"
+    StrView sourcePath = {};             ///< the file the cook reads; for an embedded image, its model
+    SlotHint slot      = SlotHint::None; ///< textures: the glTF slot of an embedded image
+};
+
+/// The host's last word on settings (layer 6), called once per cooked asset after every other
+/// layer and before validation. It may change any field, or refuse the asset with a failed
+/// Status (K3007). It runs on worker threads, possibly concurrently, so it must be thread-safe.
+/// It must be deterministic: the same asset, settings and target give the same result.
+/// A null function leaves that kind unchanged.
+struct CookPolicy {
+    Status (*texture)(void* user, CookAssetInfo const& asset, TargetProfile const& target,
+                      TextureCookSettings* s, DiagSink const* diag) = nullptr;
+    Status (*mesh)(void* user, CookAssetInfo const& asset, TargetProfile const& target, MeshCookSettings* s,
+                   DiagSink const* diag)                            = nullptr;
+    void* user                                                      = nullptr;
+};
+
+struct ResolveDesc {
+    CookAssetInfo asset;
+    StrView sidecar                = {}; ///< the sidecar text (layer 4); empty: none
+    StrView sidecarPath            = {}; ///< names the sidecar in diagnostics
+    Span<NameRule const> nameRules = {}; ///< layer 5 for a texture with no slot
+    CookPolicy policy              = {}; ///< layer 6
+    TargetProfile target           = {};
+    CookSession session            = {};
+    DiagSink const* diag           = nullptr;
+};
+
+/// Runs layers 4 to 6 over `base` (layers 1 to 3: the host's settings), then resolve_texture:
+/// the sidecar sets the keys it names; a still-Auto usage comes from the slot, else the name
+/// rules, else Color; the policy runs; then derived fields, validation and target caps.
+KILN_API Result<TextureCookSettings> resolve_texture_layers(TextureCookSettings const& base,
+                                                            ResolveDesc const& d) noexcept;
+/// Layers 4 and 6 over `base`, then resolve_mesh. Meshes have no inference layer.
+KILN_API Result<MeshCookSettings> resolve_mesh_layers(MeshCookSettings const& base,
+                                                      ResolveDesc const& d) noexcept;
 
 /// Usage inferred from a glTF slot (None -> Color).
 [[nodiscard]] constexpr TextureUsage usage_from_slot(SlotHint hint) noexcept {

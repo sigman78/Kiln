@@ -6,6 +6,7 @@
 #include "png_writer.h"
 
 #include "kiln/assets.h"
+#include "kiln/cook/cli.h"
 #include "kiln/cook/provider.h"
 #include "kiln/ktx2.h"
 #include "kiln/null_adapter.h"
@@ -719,4 +720,87 @@ KILN_TEST(Provider, NameCaseMustMatchTheDisk) {
 #else
     KILN_CHECK_EQ(diags.firstCode, u32(kDiagStoreMiss));
 #endif
+}
+
+namespace {
+
+/// Turns mips off for every texture and refuses `big.png`.
+Status no_mips_policy(void*, cook::CookAssetInfo const& asset, cook::TargetProfile const&,
+                      cook::TextureCookSettings* s, DiagSink const*) noexcept {
+    if (asset.name == "big.png") return make_status(Code::Unsupported);
+    s->genMips = false;
+    return kOk;
+}
+
+} // namespace
+
+// The policy has the last word: it beats the sidecar, and a refusal fails the asset.
+KILN_TEST(Provider, PolicyOverridesSidecarAndCanRefuse) {
+    char root[1024], storeDir[1024];
+    scratch_dir("provider_policy_src", root, sizeof root);
+    scratch_dir("provider_policy_store", storeDir, sizeof storeDir);
+    make_dir(root);
+
+    u8 rgba[4 * 4 * 4];
+    test_pixels(rgba, 4);
+    char path[1100];
+    for (char const* name : {"tex.png", "big.png"}) {
+        format(path, sizeof path, "%s/%s", root, name);
+        replace_file(path, test_png(rgba).span());
+    }
+    StrView const mips = "genMips = true\n";
+    format(path, sizeof path, "%s/tex.png.kiln", root);
+    replace_file(path, Span<u8 const>(reinterpret_cast<u8 const*>(mips.data), mips.size));
+
+    Mount const roots[] = {
+        {{}, StrView(root)}
+    };
+    TestContext tc;
+    if (!tc.init(StrView(storeDir), Span<Mount const>(roots, 1))) return;
+    cook::ProviderDesc desc{.storeMode = cook::StoreMode::Memory};
+    desc.policy.texture = &no_mips_policy;
+    KILN_REQUIRE(cook::install_provider(tc.ctx, desc).ok());
+
+    TextureHandle const tex = request_texture(tc.ctx, "tex.png");
+    KILN_REQUIRE_EQ(pump_until_settled(tc.ctx, tex), State::Ready);
+    KILN_CHECK_EQ(texture_info(tc.ctx, tex).desc.levels, 1u);
+    TextureHandle const big = request_texture(tc.ctx, "big.png");
+    KILN_CHECK_EQ(pump_until_settled(tc.ctx, big), State::Failed);
+}
+
+// A project cook tool is cook_cli_main plus its policy.
+KILN_TEST(Provider, CliMainAppliesThePolicy) {
+    char root[1024], storeDir[1024];
+    scratch_dir("cli_policy_src", root, sizeof root);
+    scratch_dir("cli_policy_store", storeDir, sizeof storeDir);
+    make_dir(root);
+
+    u8 rgba[4 * 4 * 4];
+    test_pixels(rgba, 5);
+    char src[1100];
+    format(src, sizeof src, "%s/tex.png", root);
+    replace_file(src, test_png(rgba).span());
+
+    char arg0[] = "kiln-cook", argO[] = "-o", argQ[] = "-q";
+    char* argv[] = {arg0, src, argO, storeDir, argQ};
+    cook::CookPolicy policy;
+    policy.texture = &no_mips_policy;
+    KILN_REQUIRE_EQ(cook::cook_cli_main(5, argv, policy), 0);
+
+    char storeFile[1100];
+    format(storeFile, sizeof storeFile, "%s/tex.png.ktx2", storeDir);
+    Vec<u8> bytes(default_allocator(), Tag::Test);
+    KILN_REQUIRE(read_file(storeFile, bytes));
+    Result<ktx2::Ktx2View> v = ktx2::Ktx2View::open(bytes.span());
+    KILN_REQUIRE(v.ok());
+    KILN_CHECK_EQ(v->desc().levels, 1u);
+
+    // Without the policy the same input gets its mips.
+    char* argv2[] = {arg0, src, argO, storeDir, argQ};
+    std::remove(storeFile);
+    KILN_REQUIRE_EQ(cook::cook_cli_main(5, argv2), 0);
+    KILN_REQUIRE(read_file(storeFile, bytes));
+    Result<ktx2::Ktx2View> v2 = ktx2::Ktx2View::open(bytes.span());
+    KILN_REQUIRE(v2.ok());
+    KILN_CHECK(v2->desc().levels > 1u);
 }

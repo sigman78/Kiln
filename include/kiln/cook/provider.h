@@ -10,11 +10,15 @@ namespace kiln::cook {
 
 struct ProviderDesc {
     StoreMode storeMode = StoreMode::Disk; ///< Disk: write cooked files to store_dir(ctx); Memory: cache-less
-    TargetProfile target        = {};
-    MeshCookSettings mesh       = {}; ///< session overrides for every mesh
-    TextureCookSettings texture = {}; ///< session overrides (usage/color space still inferred per slot)
-    /// Usage of a texture with a source file of its own, when `texture.usage` is Auto. Copied
-    /// at install; empty means standalone textures are cooked as Color.
+    TargetProfile target = {};
+    /// The host's settings (resolution layer 2): the base that sidecars, inference and the
+    /// policy build on (docs/design/settings.md, "Resolution layers").
+    MeshCookSettings meshDefaults       = {};
+    TextureCookSettings textureDefaults = {};
+    /// The host's last word on every asset (layer 6). Its `user` must outlive the provider.
+    CookPolicy policy = {};
+    /// Usage of a texture with a source file of its own when no earlier layer set it (layer 5).
+    /// Copied at install; empty means such textures are cooked as Color.
     Span<NameRule const> nameRules = kDefaultNameRules;
     bool fastPreview               = false;
     /// Dev builds: poll the source files of cooked assets and re-cook them into the store when

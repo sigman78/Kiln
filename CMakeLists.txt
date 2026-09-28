@@ -135,12 +135,16 @@ if(KILN_BUILD_COOK)
         src/cook/mesh_cook.cpp
         include/kiln/cook/provider.h
         src/cook/provider.cpp
+        include/kiln/cook/cli.h
+        src/cook/cli_main.cpp
     )
     add_library(kiln::cook ALIAS kiln_cook)
 set_target_properties(kiln_cook PROPERTIES EXPORT_NAME cook)
     kiln_apply_defaults(kiln_cook)
     target_link_libraries(kiln_cook PUBLIC kiln_runtime)
     target_link_libraries(kiln_cook PRIVATE kiln_third_party_cook)
+    # tools/cli.h: the option parser of cook_cli_main; header-only and never installed.
+    target_link_libraries(kiln_cook PRIVATE $<BUILD_INTERFACE:kiln_cli>)
     if(KILN_WEBP)
         target_compile_definitions(kiln_cook PRIVATE KILN_WEBP=1)
     endif()

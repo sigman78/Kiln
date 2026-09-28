@@ -2,6 +2,8 @@
 // Design: docs/design/settings.md.
 #include "kiln/cook/settings.h"
 
+#include "kiln/cook/sidecar.h"
+
 #include "kiln/log.h"
 
 #include <bit>
@@ -45,6 +47,43 @@ Result<TextureCookSettings> resolve_texture(TextureCookSettings const& overrides
     (void)session;
 
     return s;
+}
+
+namespace {
+
+Status refused(ResolveDesc const& d, Status st) noexcept {
+    return diagf(d.diag, st, kDiagPolicyRefused, Severity::Error, d.asset.name, "policy",
+                 "the cook policy refused the asset (%s)", code_name(st.code));
+}
+
+} // namespace
+
+Result<TextureCookSettings> resolve_texture_layers(TextureCookSettings const& base,
+                                                   ResolveDesc const& d) noexcept {
+    TextureCookSettings s = base;
+    if (!d.sidecar.empty()) KILN_TRY(apply_sidecar(d.sidecar, &s, d.diag, d.sidecarPath));
+    if (s.usage == TextureUsage::Auto) {
+        if (d.asset.slot != SlotHint::None)
+            s.usage = usage_from_slot(d.asset.slot);
+        else
+            s.usage = usage_from_name(d.asset.name, d.nameRules);
+        if (s.usage == TextureUsage::Auto) s.usage = TextureUsage::Color;
+    }
+    if (d.policy.texture) {
+        Status const st = d.policy.texture(d.policy.user, d.asset, d.target, &s, d.diag);
+        if (st.failed()) return refused(d, st);
+    }
+    return resolve_texture(s, d.asset.slot, d.target, d.session, d.diag, d.asset.name);
+}
+
+Result<MeshCookSettings> resolve_mesh_layers(MeshCookSettings const& base, ResolveDesc const& d) noexcept {
+    MeshCookSettings s = base;
+    if (!d.sidecar.empty()) KILN_TRY(apply_sidecar(d.sidecar, &s, d.diag, d.sidecarPath));
+    if (d.policy.mesh) {
+        Status const st = d.policy.mesh(d.policy.user, d.asset, d.target, &s, d.diag);
+        if (st.failed()) return refused(d, st);
+    }
+    return resolve_mesh(s, d.target, d.session, d.diag, d.asset.name);
 }
 
 TextureUsage usage_from_name(StrView path, Span<NameRule const> rules) noexcept {
