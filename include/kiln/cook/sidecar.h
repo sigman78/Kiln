@@ -1,4 +1,4 @@
-// kiln/cook/sidecar.h — per-asset `<source>.kiln` sidecar files (settings resolution layer 6).
+// kiln/cook/sidecar.h — per-asset `<source>.kiln` sidecar files (settings resolution layer 4).
 // Syntax and keys: docs/design/settings.md, "Sidecar files".
 #pragma once
 

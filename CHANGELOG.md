@@ -118,6 +118,19 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
   relative path, as the `UriResolver` already received for buffers.
 
 ### Changed
+- **Breaking (cook):** settings resolve in a fixed layer order (`docs/design/settings.md`,
+  "Resolution layers"): built-in defaults, host settings, sidecar, inference, `CookPolicy`, then
+  validation. Host settings are defaults, so a sidecar beats them; the new `CookPolicy` (a texture
+  and a mesh function plus `void* user`) has the last word and may refuse an asset (new K3007).
+  - `ProviderDesc::texture` / `mesh` are now `textureDefaults` / `meshDefaults`; new
+    `ProviderDesc::policy`.
+  - New `resolve_texture_layers` / `resolve_mesh_layers` and `ResolveDesc`, `CookAssetInfo`, used
+    by the provider and `kiln-cook`. The color space and the Normal-only flags are derived after
+    the policy.
+  - The `kiln-cook` CLI is now `cook_cli_main(argc, argv, policy)` in `kiln/cook/cli.h`; a
+    project's own cook tool calls it with its policy.
+  - Migration: rename the two `ProviderDesc` fields. A rule that must hold even against a sidecar
+    moves from the defaults into a `CookPolicy`.
 - **Breaking (runtime, cook, store, tools):** asset names are `mount:path/file.ext#sub`, the source
   path with its extension (`docs/design/asset-model-next.md`, Part 2).
   - The runtime no longer normalizes names: no extension stripping, no `./`, `\` or `//` clean-up.

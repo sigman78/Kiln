@@ -155,6 +155,7 @@ check failed.
 | K3004 | `kDiagSettingsEnumRange` | InvalidArgument | Error | An enum-typed settings field holds a value outside its valid range: texture `usage`/`colorSpace`, or mesh `profile`/`compression`. | Caller bug: the settings struct was built with a raw/unchecked enum value (e.g. from deserialization). Fix the caller. |
 | K3005 | `kDiagSidecarSyntax` | ParseError | Error | A `.kiln` sidecar holds text outside the supported TOML subset (arrays, inline tables, dotted or quoted keys, dates, multi-line strings, …), or a key or table is defined twice. `where` is `<file>:<line>`. | Fix the line; the subset is listed in `docs/design/settings.md`, "Sidecar files". |
 | K3006 | `kDiagSidecarKey` | InvalidArgument | Error | A `.kiln` sidecar key is unknown for the asset kind, its value has the wrong type or an unknown enum name, a number is out of range, or a key sits inside a table. `where` is `<file>:<line>`. | Use a key and value from the tables in `docs/design/settings.md`, "Sidecar files". |
+| K3007 | `kDiagPolicyRefused` | The status the policy returned | Error | The host's `CookPolicy` (`kiln/cook/settings.h`, resolution layer 6) refused the asset. The host's policy may emit its own diagnostic with the reason first. | Change the asset, or the policy's rule. |
 
 ### 3.4 K4000-4099 — `.mesh` validation and decode
 

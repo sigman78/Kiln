@@ -138,3 +138,129 @@ KILN_TEST(Sidecar, DiagnosticNamesFileAndLine) {
     KILN_CHECK_EQ(StrView(d.where), StrView("wall.png.kiln:3"));
     KILN_CHECK_EQ(d.count, 1);
 }
+
+// ---------------------------------------------------------------------------
+// Layered resolution: host settings, sidecar, inference, policy, resolve (settings.md)
+// ---------------------------------------------------------------------------
+
+namespace {
+
+/// A test policy: records the usage it saw, then applies its own changes.
+struct TestPolicy {
+    TextureUsage seen   = TextureUsage::Auto;
+    bool noMips         = false;
+    bool makeNormal     = false;
+    bool refuse         = false;
+    bool meshNoOptimize = false;
+
+    static Status texture(void* user, CookAssetInfo const&, TargetProfile const&, TextureCookSettings* s,
+                          DiagSink const*) noexcept {
+        auto* self = static_cast<TestPolicy*>(user);
+        self->seen = s->usage;
+        if (self->refuse) return make_status(Code::Unsupported);
+        if (self->noMips) s->genMips = false;
+        if (self->makeNormal) s->usage = TextureUsage::Normal;
+        return kOk;
+    }
+    static Status mesh(void* user, CookAssetInfo const&, TargetProfile const&, MeshCookSettings* s,
+                       DiagSink const*) noexcept {
+        if (static_cast<TestPolicy*>(user)->meshNoOptimize) s->optimize = false;
+        return kOk;
+    }
+    CookPolicy policy() noexcept { return CookPolicy{&texture, &mesh, this}; }
+};
+
+ResolveDesc desc_for(StrView name, StrView sidecar = {}, SlotHint slot = SlotHint::None) {
+    return ResolveDesc{
+        .asset = {name, name, slot},
+          .sidecar = sidecar, .nameRules = kDefaultNameRules
+    };
+}
+
+} // namespace
+
+KILN_TEST(Layers, SidecarBeatsHostSettings) {
+    TextureCookSettings host;
+    host.genMips                  = false;
+    Result<TextureCookSettings> r = resolve_texture_layers(host, desc_for("wall.png", "genMips = true\n"));
+    KILN_REQUIRE(r.ok());
+    KILN_CHECK(r->genMips);
+    // Keys the sidecar does not name keep the host's value.
+    host.maxSize = 512;
+    r            = resolve_texture_layers(host, desc_for("wall.png", "genMips = true\n"));
+    KILN_REQUIRE(r.ok());
+    KILN_CHECK_EQ(r->maxSize, 512u);
+}
+
+KILN_TEST(Layers, InferenceFillsOnlyAutoUsage) {
+    // Name rule, then slot, then Color.
+    Result<TextureCookSettings> r = resolve_texture_layers({}, desc_for("wall_n.png"));
+    KILN_REQUIRE(r.ok());
+    KILN_CHECK(r->usage == TextureUsage::Normal && r->colorSpace == ColorSpace::Linear);
+    r = resolve_texture_layers({}, desc_for("chair.glb#wall_n", {}, SlotHint::BaseColor));
+    KILN_REQUIRE(r.ok());
+    KILN_CHECK(r->usage == TextureUsage::Color);
+    r = resolve_texture_layers({}, desc_for("wall.png"));
+    KILN_REQUIRE(r.ok());
+    KILN_CHECK(r->usage == TextureUsage::Color && r->colorSpace == ColorSpace::Srgb);
+    // An explicit usage, from the sidecar or the host, is never replaced.
+    r = resolve_texture_layers({}, desc_for("wall_n.png", "usage = \"color\"\n"));
+    KILN_REQUIRE(r.ok());
+    KILN_CHECK(r->usage == TextureUsage::Color);
+    TextureCookSettings host;
+    host.usage = TextureUsage::Height;
+    r          = resolve_texture_layers(host, desc_for("wall_n.png"));
+    KILN_REQUIRE(r.ok());
+    KILN_CHECK(r->usage == TextureUsage::Height);
+}
+
+KILN_TEST(Layers, PolicyIsTheLastWord) {
+    TestPolicy tp;
+    tp.noMips                     = true;
+    ResolveDesc d                 = desc_for("wall_n.png", "genMips = true\n");
+    d.policy                      = tp.policy();
+    Result<TextureCookSettings> r = resolve_texture_layers({}, d);
+    KILN_REQUIRE(r.ok());
+    KILN_CHECK(!r->genMips);
+    KILN_CHECK(tp.seen == TextureUsage::Normal); // the policy sees the inferred usage
+}
+
+KILN_TEST(Layers, DerivedFieldsFollowThePolicy) {
+    TestPolicy tp;
+    tp.makeNormal                 = true;
+    ResolveDesc d                 = desc_for("wall.png");
+    d.policy                      = tp.policy();
+    Result<TextureCookSettings> r = resolve_texture_layers({}, d);
+    KILN_REQUIRE(r.ok());
+    KILN_CHECK(r->usage == TextureUsage::Normal);
+    KILN_CHECK(r->colorSpace == ColorSpace::Linear); // not the sRGB of the inferred Color
+    KILN_CHECK(r->normalRenormalize);
+}
+
+KILN_TEST(Layers, PolicyRefusalFails) {
+    TestPolicy tp;
+    tp.refuse = true;
+    DiagLast dl;
+    DiagSink const sink           = dl.sink();
+    ResolveDesc d                 = desc_for("wall.png");
+    d.policy                      = tp.policy();
+    d.diag                        = &sink;
+    Result<TextureCookSettings> r = resolve_texture_layers({}, d);
+    KILN_CHECK_EQ(r.code(), Code::Unsupported);
+    KILN_CHECK_EQ(dl.code, u32(kDiagPolicyRefused));
+}
+
+KILN_TEST(Layers, MeshSidecarThenPolicy) {
+    MeshCookSettings host;
+    host.genTangents           = false;
+    ResolveDesc d              = desc_for("chair.glb", "genTangents = true\noptimize = true\n");
+    Result<MeshCookSettings> r = resolve_mesh_layers(host, d);
+    KILN_REQUIRE(r.ok());
+    KILN_CHECK(r->genTangents && r->optimize);
+    TestPolicy tp;
+    tp.meshNoOptimize = true;
+    d.policy          = tp.policy();
+    r                 = resolve_mesh_layers(host, d);
+    KILN_REQUIRE(r.ok());
+    KILN_CHECK(r->genTangents && !r->optimize);
+}

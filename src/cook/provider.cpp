@@ -75,9 +75,7 @@ struct EmittedTexture {
 struct Provider {
     ProviderDesc desc;
     CookSession session;
-    MeshCookSettings resolvedMesh; ///< resolve_mesh() is session-static; per-texture
-                                   ///< settings depend on SlotHint and are resolved per cook.
-    Vec<char> storeDirBuf;         ///< owned copy of store_dir(ctx), NUL-terminated
+    Vec<char> storeDirBuf; ///< owned copy of store_dir(ctx), NUL-terminated
     StrView storeDir;
     Vec<char> mountsBuf;     ///< owned copies of mounts(ctx), NUL-separated
     Vec<Mount> mounts;       ///< views into mountsBuf
@@ -219,19 +217,33 @@ void sidecar_path(StrView sourcePath, char (&buf)[1100], StrView& out) noexcept 
     out = StrView(buf, format(buf, sizeof buf, "%.*s%.*s", KILN_SV(sourcePath), KILN_SV(kSidecarExt)));
 }
 
-/// Applies `<sourcePath>.kiln` to `*s` when it exists; `*found` says whether it did.
-template <class Settings>
-Status read_sidecar(StrView sourcePath, Settings* s, Allocator const* alloc, DiagSink const* diag,
-                    bool* found = nullptr) noexcept {
-    char buf[1100];
+/// The resolution inputs of one asset. The sidecar text, if any, lives in `sidecarBytes`.
+struct Layers {
+    ResolveDesc desc;
+    Vec<u8> sidecarBytes;
+    char sidecarBuf[1100] = {};
+};
+
+/// Fills `out` for the asset `name` read from `sourcePath`. With `readSidecar`, the source's
+/// `.kiln` file is read when it exists (embedded images have none).
+Status prepare_layers(Provider const& p, StrView name, StrView sourcePath, SlotHint slot, bool readSidecar,
+                      Allocator const* alloc, DiagSink const* diag, Layers* out) noexcept {
+    ResolveDesc& d = out->desc;
+    d.asset        = CookAssetInfo{name, sourcePath, slot};
+    d.nameRules    = Span<NameRule const>(p.nameRules.data(), p.nameRules.size());
+    d.policy       = p.desc.policy;
+    d.target       = p.desc.target;
+    d.session      = p.session;
+    d.diag         = diag;
+    if (!readSidecar) return kOk;
     StrView path;
-    sidecar_path(sourcePath, buf, path);
-    bool const exists = io_file_exists(path);
-    if (found) *found = exists;
-    if (!exists) return kOk;
-    Vec<u8> bytes(alloc, Tag::Cook);
-    KILN_TRY(io_read_file(compat_io_backend(), path, alloc, &bytes));
-    return apply_sidecar(StrView(reinterpret_cast<char const*>(bytes.data()), bytes.size()), s, diag, path);
+    sidecar_path(sourcePath, out->sidecarBuf, path);
+    if (!io_file_exists(path)) return kOk;
+    out->sidecarBytes.init(alloc, Tag::Cook);
+    KILN_TRY(io_read_file(compat_io_backend(), path, alloc, &out->sidecarBytes));
+    d.sidecar = StrView(reinterpret_cast<char const*>(out->sidecarBytes.data()), out->sidecarBytes.size());
+    d.sidecarPath = path;
+    return kOk;
 }
 
 // Mesh URI resolver: external buffers/images relative to the source file.
@@ -255,13 +267,9 @@ Status cook_texture_own_source(Provider const& p, StrView sourcePath, StrView as
     Vec<u8> bytes(alloc, Tag::Cook);
     KILN_TRY(io_read_file(compat_io_backend(), sourcePath, alloc, &bytes));
 
-    TextureCookSettings overrides = p.desc.texture;
-    if (overrides.usage == TextureUsage::Auto)
-        overrides.usage =
-            usage_from_name(sourcePath, Span<NameRule const>(p.nameRules.data(), p.nameRules.size()));
-    KILN_TRY(read_sidecar(sourcePath, &overrides, alloc, diag));
-    Result<TextureCookSettings> rs =
-        resolve_texture(overrides, SlotHint::None, p.desc.target, p.session, diag, assetPath);
+    Layers layers;
+    KILN_TRY(prepare_layers(p, assetPath, sourcePath, SlotHint::None, true, alloc, diag, &layers));
+    Result<TextureCookSettings> rs = resolve_texture_layers(p.desc.textureDefaults, layers.desc);
     if (rs.failed()) return rs.status();
 
     TextureSource src{};
@@ -306,20 +314,12 @@ Status cook_mesh_full(Provider const& p, StrView meshAssetPath, StrView sourcePa
     src.sourcePath = sourcePath;
     src.resolver   = {&resolve_uri_fn, &uctx};
 
-    // Without a sidecar the settings resolved at install apply.
-    MeshCookSettings settings    = p.resolvedMesh;
-    MeshCookSettings withSidecar = p.desc.mesh;
-    bool hasSidecar              = false;
-    KILN_TRY(read_sidecar(sourcePath, &withSidecar, alloc, diag, &hasSidecar));
-    if (hasSidecar) {
-        Result<MeshCookSettings> rm =
-            resolve_mesh(withSidecar, p.desc.target, p.session, diag, meshAssetPath);
-        if (rm.failed()) return rm.status();
-        settings = rm.value();
-    }
+    Layers layers;
+    KILN_TRY(prepare_layers(p, meshAssetPath, sourcePath, SlotHint::None, true, alloc, diag, &layers));
+    Result<MeshCookSettings> rm = resolve_mesh_layers(p.desc.meshDefaults, layers.desc);
+    if (rm.failed()) return rm.status();
 
-    Result<CookedMesh> r =
-        cook_mesh(src, settings, p.desc.target, {.alloc = alloc, .diag = diag, .jobs = p.jobs});
+    Result<CookedMesh> r = cook_mesh(src, *rm, p.desc.target, {.alloc = alloc, .diag = diag, .jobs = p.jobs});
     if (r.failed()) return r.status();
 
     if (p.desc.storeMode == StoreMode::Disk) {
@@ -341,8 +341,12 @@ Status cook_mesh_full(Provider const& p, StrView meshAssetPath, StrView sourcePa
         Span<u8 const> const texBytes = t.embedded;
         if (texBytes.empty()) continue; // the importer only emits refs with bytes
 
-        Result<TextureCookSettings> rs =
-            resolve_texture(p.desc.texture, t.slot, p.desc.target, p.session, diag, t.assetPath);
+        Layers texLayers;
+        Status const prepared =
+            prepare_layers(p, t.assetPath, sourcePath, t.slot, false, alloc, diag, &texLayers);
+        Result<TextureCookSettings> rs = prepared.ok()
+                                             ? resolve_texture_layers(p.desc.textureDefaults, texLayers.desc)
+                                             : Result<TextureCookSettings>(prepared);
         if (rs.failed()) {
             if (isRequested) requestedTexStatus = rs.status();
             noteFailure(rs.status());
@@ -798,12 +802,12 @@ Status install_provider(Context* ctx, ProviderDesc const& desc) noexcept {
     }
     p->desc.nameRules = {}; // the host's span may not outlive install_provider
 
-    Result<MeshCookSettings> rm = resolve_mesh(effective.mesh, effective.target, p->session);
+    // Invalid host defaults fail here instead of on every cook.
+    Result<MeshCookSettings> rm = resolve_mesh(effective.meshDefaults, effective.target, p->session);
     if (rm.failed()) {
         delete_object(alloc, p, Tag::Cook);
         return rm.status();
     }
-    p->resolvedMesh = rm.value();
 
     if (effective.storeMode == StoreMode::Disk) {
         p->records.reserve(kMaxSources);
