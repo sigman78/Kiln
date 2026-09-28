@@ -1,6 +1,6 @@
 // examples/headless/main.cpp — load assets through the runtime with no GPU and log every step:
 // requests, IO, cook-on-miss, MetaReady, Ready, Failed. --slow and --latency add artificial
-// delays so large files visibly take several frames. --watch keeps pumping after the assets
+// delays so large files visibly take a while. --watch keeps pumping after the assets
 // settle and logs Changed events (hot reload, docs/design/hot-reload.md).
 #include <kiln/assets.h>
 #include <kiln/log.h>
@@ -235,10 +235,10 @@ struct Options {
     u32 rootCount    = 0;
     double slowMs    = 0;
     double latencyMs = 0;
-    u32 fps          = 60; ///< pumps per second; 0 = as fast as possible
-    u32 timeoutS     = 60;
-    bool trace       = false;
-    bool watch       = false;
+
+    u32 timeoutS = 60;
+    bool trace   = false;
+    bool watch   = false;
     Item items[kMaxItems];
     u32 itemCount = 0;
 };
@@ -296,11 +296,7 @@ int main(int argc, char** argv) {
          .arg  = "<ms>",
          .help = "artificial delay per read call and per cook (default: 0)",
          .real = &o.latencyMs},
-        {.name   = "--fps",
-         .arg    = "<n>",
-         .help   = "simulated frames per second, one pump each (default: 60; 0 = unpaced)",
-         .number = &o.fps,
-         .max    = 1000},
+
         {.name   = "--timeout",
          .arg    = "<s>",
          .help   = "give up after this many seconds (default: 60)",
@@ -399,44 +395,48 @@ int main(int argc, char** argv) {
                   state_name(it.last));
     }
 
-    // 6. The frame loop. pump() is the only place where state changes become visible. With
+    // 6. The pump loop. pump() is the only place where state changes become visible. With
     //    --watch it keeps going after the group settles, until --timeout, so reloads show up.
-    u32 frame            = 0;
+    u32 pumps            = 0;
+    double lastProgress  = 0;
     double const limitMs = double(o.timeoutS) * 1000.0; // wall clock: sleeps are coarse on Windows
     GroupStatus gs       = progress(ctx, g);
     bool timedOut        = false;
     bool watching        = false;
     for (;;) {
         PumpStats const ps = pump(ctx);
-        for (Event const& e : events(ctx))
+        ++pumps;
+        Span<Event const> const evs = events(ctx);
+        for (Event const& e : evs)
             print_event(ctx, o.items, o.itemCount, e);
-        gs = progress(ctx, g);
+        bool const idle = evs.empty() && ps.completed == 0 && ps.uploadsCommitted == 0;
+        gs              = progress(ctx, g);
         if (o.watch && !watching && gs.settled()) {
             watching = true;
             KILN_INFO("app", "settled; watching for changes until --timeout (%u s from start)", o.timeoutS);
         }
-        if (ps.completed != 0 || ps.uploadsCommitted != 0 || (!watching && frame % 32 == 0)) {
+        // Progress when something completed, and about once a second while waiting.
+        if (!idle || (!watching && now_ms() - lastProgress >= 1000.0)) {
             ContextStats const cs = stats(ctx);
-            KILN_INFO("app",
-                      "frame %u: ready %u failed %u pending %u, %llu/%llu bytes, io jobs %u, uploads %u",
-                      frame, gs.ready, gs.failed, gs.pending, ull(gs.bytesDone), ull(gs.bytesTotal),
+            KILN_INFO("app", "ready %u failed %u pending %u, %llu/%llu bytes, io jobs %u, uploads %u",
+                      gs.ready, gs.failed, gs.pending, ull(gs.bytesDone), ull(gs.bytesTotal),
                       cs.ioJobsInFlight, cs.uploadsInFlight);
+            lastProgress = now_ms();
         }
         if (gs.settled() && !o.watch) break;
-        ++frame;
         if (now_ms() >= limitMs) {
             timedOut = !gs.settled(); // with --watch, the end of the watch is not a timeout
             break;
         }
-        if (o.fps) sleep_ms(1000.0 / o.fps);
+        if (idle) sleep_ms(1.0); // rest instead of spinning on an empty pump
     }
 
     // 7. Summary and teardown. release() is refcounted; destroy() drops whatever is left.
     NullAdapterStats const as = null_adapter_stats(na.value());
     KILN_INFO("app",
-              "%s after %u frames, %.1f ms: %u ready, %u failed, %u pending; adapter holds %llu bytes in %u "
+              "%s in %.1f ms (%u pumps): %u ready, %u failed, %u pending; adapter holds %llu bytes in %u "
               "object(s)",
-              timedOut ? "timed out" : "settled", frame, now_ms(), gs.ready, gs.failed, gs.pending,
+              timedOut ? "timed out" : "settled", now_ms(), pumps, gs.ready, gs.failed, gs.pending,
               ull(as.bytesUploaded), as.liveObjects);
 
     for (u32 i = 0; i < o.itemCount; ++i) {

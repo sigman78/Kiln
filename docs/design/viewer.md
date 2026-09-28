@@ -68,11 +68,20 @@ The library never sees a Vulkan header.
   before the first frame. Their textures are requested afterwards and stream in under a per-pump
   `uploadBytes` budget (`--budget-mib`), so the first frames show placeholders. The viewer logs
   per-frame CPU time and warns on frames over twice the running average.
-- **Offscreen.** `--offscreen --frames N --dump out.png` renders into an image instead of a
-  swapchain. Frames are paced like a display, `--fps` per second (default 60; `0` runs unpaced
-  for timing CPU work), so a frame count means the same time as in a window. It reads it back after the last frame and writes a PNG (the encoder is the test helper
-  `tests/png_writer.h`). This mode never initializes GLFW and runs on a headless machine or a
-  software Vulkan driver.
+- **Offscreen.** `--offscreen` renders into an image instead of a swapchain, and `--dump out.png`
+  reads back the last frame and writes a PNG (the encoder is the test helper `tests/png_writer.h`).
+  Offscreen frames are not paced: they follow each other as fast as the GPU allows, and a pump
+  with nothing to do rests 1 ms. So a frame count says nothing about time, and one of three
+  triggers picks the last frame:
+
+  | Trigger | Option | Use |
+  |---|---|---|
+  | The scene settles (default) | none; `--timeout <s>` caps the wait (60 s, then exit code 1) | the result of loading: every mesh and texture Ready or Failed, independent of machine speed |
+  | A time | `--at <ms>`: the first frame at or after `<ms>` since the first request | what a user sees mid-stream (placeholders, partial loads); depends on disk and CPU |
+  | A count | `--frames N` | exactly N frames, for the per-frame CPU statistics |
+
+  Log lines carry milliseconds since start, and event lines also their frame number. This mode
+  never initializes GLFW and runs on a headless machine or a software Vulkan driver.
 - **Sky.** `--sky <name>` requests a cube texture (`RequestOptions::textureShape = Cube`), for
   example a vertical strip `sky_cube.png` (`texture-shapes.md`), and draws it behind the scene:
   a full-screen triangle whose fragment shader turns the camera basis into a ray per pixel. The

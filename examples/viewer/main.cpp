@@ -45,13 +45,20 @@ constexpr f32 kFovY            = 60.0f * kPi / 180.0f;
 
 using Clock = std::chrono::steady_clock;
 
+Clock::time_point g_start = Clock::now();
+
+double ms_since(Clock::time_point t) {
+    return std::chrono::duration<double, std::milli>(Clock::now() - t).count();
+}
+
 void log_to_stdout(void*, LogLevel level, StrView category, StrView message) {
-    std::printf("%-5s %-9.*s %.*s\n", log_level_name(level), KILN_SV(category), KILN_SV(message));
+    std::printf("%9.1f ms  %-5s %-9.*s %.*s\n", ms_since(g_start), log_level_name(level), KILN_SV(category),
+                KILN_SV(message));
 }
 
 void diag_to_stdout(void*, Diagnostic const& d) {
-    std::printf("%-5s K%04u     %.*s%s%.*s: %.*s\n", severity_name(d.severity), d.code, KILN_SV(d.asset),
-                d.where.size ? " @" : "", KILN_SV(d.where), KILN_SV(d.message));
+    std::printf("%9.1f ms  %-5s K%04u     %.*s%s%.*s: %.*s\n", ms_since(g_start), severity_name(d.severity),
+                d.code, KILN_SV(d.asset), d.where.size ? " @" : "", KILN_SV(d.where), KILN_SV(d.message));
 }
 
 char const* state_name(State s) {
@@ -104,7 +111,8 @@ struct Options {
     u32 rootCount    = 0;
     char const* dump = nullptr;
     char const* sky  = nullptr; ///< a cube map drawn behind the scene
-    u32 fps          = 60;      ///< offscreen frame rate; 0 = as fast as possible
+    double atMs      = -1;      ///< offscreen --at: stop at the first frame at or after this time
+    u32 timeoutS     = 60;      ///< offscreen: give up waiting for the scene to settle
     bool validate    = false;
     bool offscreen   = false;
     bool noFit       = false;
@@ -438,6 +446,16 @@ f32 framing_distance(Scene const& s, Vec3 dir, f32 aspect) {
     return dist > 0 ? dist : s.radius / std::sin(kFovY * 0.5f);
 }
 
+/// Every mesh and texture of the scene is Ready or Failed.
+bool scene_settled(Scene const& s) {
+    auto const done = [](State st) { return st == State::Ready || st == State::Failed; };
+    for (u32 i = 0; i < s.meshCount; ++i)
+        if (!done(state(s.ctx, s.meshes[i].handle))) return false;
+    for (TextureItem const& t : s.textures)
+        if (!done(state(s.ctx, t.handle))) return false;
+    return true;
+}
+
 /// The frame uniforms, and the camera basis the sky shader turns into a ray per pixel.
 void write_uniforms(Scene const& s, Camera const& cam, VkExtent2D extent, vkx::FrameUniforms* u,
                     vkx::SkyPush* sky) {
@@ -596,17 +614,20 @@ int main(int argc, char** argv) {
          .flag = &o.noFit},
         {.name   = "--frames",
          .arg    = "<n>",
-         .help   = "frames to render, then exit (default: 60 offscreen, until closed in a window)",
+         .help   = "render exactly <n> frames, then exit (offscreen default: until the scene settles)",
          .number = &o.frames},
         {.name = "--dump",
          .arg  = "<file.png>",
          .help = "offscreen: write the last frame as a PNG",
          .str  = &o.dump},
-        {.name   = "--fps",
-         .arg    = "<n>",
-         .help   = "offscreen: frames per second, like a display (default: 60; 0 = unpaced)",
-         .number = &o.fps,
-         .max    = 1000},
+        {.name = "--at",
+         .arg  = "<ms>",
+         .help = "offscreen: stop at the first frame rendered at or after <ms> since the first request",
+         .real = &o.atMs},
+        {.name   = "--timeout",
+         .arg    = "<s>",
+         .help   = "offscreen: stop waiting for the scene to settle after <s> seconds (default: 60)",
+         .number = &o.timeoutS},
         {.name = "--sky",
          .arg  = "<name>",
          .help = "a cube texture drawn behind the scene, e.g. sky_cube.png (a vertical strip of 6 faces)",
@@ -624,7 +645,8 @@ int main(int argc, char** argv) {
         .footer     = "<mesh> is an asset name, e.g. mesh/Box.glb or lib:props/chair.glb. Window: left-drag "
                       "orbits, wheel\n"
                       "zooms, Esc quits.\n"
-                      "Exit codes: 0 ok, 1 a boot asset Failed, 2 usage or setup error.",
+                      "Exit codes: 0 ok, 1 a boot asset Failed or the scene did not settle within --timeout,\n"
+                      "2 usage or setup error.",
         .positional = &add_mesh,
         .user       = &o,
     };
@@ -638,7 +660,11 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "kiln-viewer: --dump needs --offscreen\n");
         return 2;
     }
-    u32 const maxFrames = o.frames ? o.frames : (o.offscreen ? 60u : 0u);
+    if (o.atMs >= 0 && (!o.offscreen || o.frames)) {
+        std::fprintf(stderr, "kiln-viewer: --at needs --offscreen and excludes --frames\n");
+        return 2;
+    }
+    u32 const maxFrames = o.frames;
     set_log_sink(LogSink{&log_to_stdout, nullptr});
     DiagSink const diag{&diag_to_stdout, nullptr};
     App app;
@@ -750,7 +776,7 @@ int main(int argc, char** argv) {
     Group const boot = group(app.ctx);
     for (u32 i = 0; i < o.meshCount; ++i)
         o.meshes[i].handle = request_mesh(app.ctx, o.meshes[i].path, RequestOptions{.group = boot});
-    Clock::time_point const bootStart = Clock::now();
+    Clock::time_point const bootStart = Clock::now(); // also the time --at counts from
     GroupStatus const gs              = wait(app.ctx, boot, WaitOptions{.timeoutMs = kBootTimeoutMs});
     double const bootMs = std::chrono::duration<double, std::milli>(Clock::now() - bootStart).count();
     KILN_INFO("viewer", "boot group settled in %.1f ms: %u ready, %u failed, %u pending", bootMs, gs.ready,
@@ -802,14 +828,14 @@ int main(int argc, char** argv) {
     u64 uploads     = 0;
     u64 uploadBytes = 0;
     u32 busyRetries = 0;
+    bool timedOut   = false;
     for (;;) {
         if (app.window) {
             glfwPollEvents();
             if (glfwWindowShouldClose(app.window)) break;
         }
-        if (maxFrames && frames >= maxFrames) break;
+        if (!o.offscreen && maxFrames && frames >= maxFrames) break;
 
-        Clock::time_point const frameStart = Clock::now();
         vkx::renderer_wait_frame(app.ren);
         Clock::time_point const t0 = Clock::now();
         scene.frame                = frames + 1;
@@ -817,8 +843,27 @@ int main(int argc, char** argv) {
         uploads += ps.uploadsCommitted;
         uploadBytes += ps.uploadBytes;
         busyRetries += ps.busyRetries;
-        for (Event const& e : events(app.ctx))
+        Span<Event const> const evs = events(app.ctx);
+        for (Event const& e : evs)
             handle_event(scene, e);
+
+        // Offscreen, one of three triggers picks the last frame: --at, --frames, or the scene
+        // settling (the default). The frame after the pump that settled it shows every texture.
+        bool last = false;
+        if (o.offscreen) {
+            if (o.atMs >= 0) {
+                last = ms_since(bootStart) >= o.atMs;
+            } else if (maxFrames) {
+                last = frames + 1 == maxFrames;
+            } else if (scene_settled(scene)) {
+                last = true;
+                KILN_INFO("viewer", "frame %u: scene settled", frames + 1);
+            } else if (ms_since(bootStart) >= o.timeoutS * 1000.0) {
+                last = timedOut = true;
+                KILN_WARN("viewer", "frame %u: not settled after %u s; this frame shows what is there",
+                          frames + 1, o.timeoutS);
+            }
+        }
 
         VkCommandBuffer const cmd = vkx::renderer_begin(app.ren);
         if (!cmd) {
@@ -834,7 +879,6 @@ int main(int argc, char** argv) {
             if (sky.cubeSlot != kInvalid) vkx::renderer_draw_sky(app.ren, cmd, sky);
         }
         draw_scene(scene, cmd);
-        bool const last = o.offscreen && frames + 1 == maxFrames;
         vkx::renderer_end(app.ren, last && o.dump != nullptr);
 
         double const ms = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
@@ -852,14 +896,15 @@ int main(int argc, char** argv) {
             warmMs += ms;
             ++warmFrames;
         }
-        // A window is paced by presenting; offscreen frames sleep out the rest of their period.
-        if (o.offscreen && o.fps)
-            std::this_thread::sleep_until(frameStart + std::chrono::microseconds(1000000 / o.fps));
+        if (last) break;
+        // Offscreen nothing paces the loop: rest a little when the pump had nothing to do.
+        if (o.offscreen && evs.empty() && ps.completed == 0 && ps.uploadsCommitted == 0)
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
     vkx::renderer_wait_idle(app.ren);
 
     // 5. The dump and the summary.
-    int exitCode = 0;
+    int exitCode = timedOut ? 1 : 0;
     if (o.dump && frames > 0) {
         Vec<u8> rgba(default_allocator(), Tag::General);
         u32 w = 0, h = 0;

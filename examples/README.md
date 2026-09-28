@@ -34,8 +34,11 @@ kiln-viewer --source examples/assets/khronos --store build/demo-store \
 # an already cooked store, for example the test goldens (no source, so no extension in the name)
 kiln-viewer --store tests/golden mesh/Box mesh/BoxTextured
 
-# no window: render 60 frames and write the last one
-kiln-viewer --offscreen --frames 60 --dump frame.png --store build/demo-store Lantern.glb
+# no window: render until every asset is Ready or Failed, then write that frame
+kiln-viewer --offscreen --dump frame.png --store build/demo-store Lantern.glb
+
+# no window: the frame at 50 ms after the first request, textures still streaming
+kiln-viewer --offscreen --at 50 --dump streaming.png --store build/demo-store Lantern.glb
 
 # watch textures stream in: a small budget makes it take several frames
 kiln-viewer --budget-mib 1 --store build/demo-store WaterBottle.glb BoomBox.glb
@@ -63,6 +66,9 @@ are cooked with it. `--root <name>=<dir>` adds a named root, whose assets are na
 a glTF file's references must stay inside its own root.
 
 ## Headless recipes
+
+`kiln-headless` pumps until every asset is Ready or Failed (or `--timeout`), resting 1 ms after a
+pump with nothing to do. Log lines carry milliseconds since start.
 
 ```sh
 kiln-headless --store tests/golden --slow 200 --latency 5 mesh/Box.mesh ktx2/color_srgb.ktx2
