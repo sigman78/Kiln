@@ -11,13 +11,13 @@ Slot* register_impl(Context* ctx, AssetKind kind, StrView path, Span<u8 const> b
     if (!ctx) return nullptr;
     StrView const name = path;
     if (char const* why = check_asset_name(name)) {
-        diagf(&ctx->diag, make_status(Code::InvalidArgument), kDiagBadAssetName, Severity::Error, name,
-              "register", "invalid asset name: %s", why);
+        (void)diagf(&ctx->diag, make_status(Code::InvalidArgument), kDiagBadAssetName, Severity::Error, name,
+                    "register", "invalid asset name: %s", why);
         return nullptr;
     }
     if (map_for(ctx, kind).contains(fnv1a64(name))) {
-        diagf(&ctx->diag, make_status(Code::AlreadyExists), kDiagDuplicateRegister, Severity::Error, name,
-              "register", "path is already registered or requested");
+        (void)diagf(&ctx->diag, make_status(Code::AlreadyExists), kDiagDuplicateRegister, Severity::Error,
+                    name, "register", "path is already registered or requested");
         return nullptr;
     }
 
@@ -36,8 +36,8 @@ Slot* register_impl(Context* ctx, AssetKind kind, StrView path, Span<u8 const> b
     }
     if (st.failed()) {
         copy.release();
-        diagf(&ctx->diag, st, kDiagAssetLoadFailed, Severity::Error, name, "register",
-              "registered bytes do not validate (%s)", code_name(st.code));
+        (void)diagf(&ctx->diag, st, kDiagAssetLoadFailed, Severity::Error, name, "register",
+                    "registered bytes do not validate (%s)", code_name(st.code));
         return nullptr;
     }
     Slot* s = request_slot(ctx, kind, path, opt, &copy, true);

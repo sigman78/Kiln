@@ -37,6 +37,23 @@ option(KILN_EXAMPLE_VK_BASIC      "Build the non-bindless Vulkan example (kiln-v
 option(KILN_EXAMPLE_NGA           "Build the NoGraphicsAPI example (kiln-nga; fetches NoGraphicsAPI, the Vulkan loader, Slang)" OFF)
 option(KILN_WARNINGS_AS_ERRORS    "Treat warnings as errors"                         ${KILN_IS_TOP_LEVEL})
 option(KILN_INSTALL               "Generate install rules"                           ${KILN_IS_TOP_LEVEL})
+set(KILN_SANITIZE "" CACHE STRING "Sanitizers for every target, e.g. address,undefined (clang or gcc)")
+option(KILN_FUZZ                  "Build the libFuzzer targets in fuzz/ (clang)"      OFF)
+
+# Sanitizers apply to every target, third-party code included, so containers and readers are
+# checked across library boundaries. The fuzz targets add libFuzzer's coverage on top.
+if(KILN_SANITIZE OR KILN_FUZZ)
+    if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU" OR CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
+        message(FATAL_ERROR "KILN_SANITIZE and KILN_FUZZ need clang or gcc with the GNU driver")
+    endif()
+    if(KILN_SANITIZE)
+        add_compile_options(-fsanitize=${KILN_SANITIZE} -fno-sanitize-recover=all -fno-omit-frame-pointer)
+        add_link_options(-fsanitize=${KILN_SANITIZE})
+    endif()
+    if(KILN_FUZZ)
+        add_compile_options(-fsanitize=fuzzer-no-link)
+    endif()
+endif()
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Debug CACHE STRING "Build type" FORCE)
@@ -180,6 +197,10 @@ endif()
 
 if(KILN_BUILD_EXAMPLES)
     add_subdirectory(examples)
+endif()
+
+if(KILN_FUZZ)
+    add_subdirectory(fuzz)
 endif()
 
 # ---------------------------------------------------------------------------

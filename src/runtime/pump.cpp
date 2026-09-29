@@ -17,8 +17,9 @@ void push_event(Context* ctx, EventKind kind, AssetKind asset, u64 bits, u32 ver
         ++ctx->cur.eventsDropped;
         if (!ctx->droppedWarned) {
             ctx->droppedWarned = true;
-            diagf(&ctx->diag, make_status(Code::Busy), kDiagEventsDropped, Severity::Warning, {}, "events",
-                  "event buffer full (maxEvents = %u); dropping the oldest events", ctx->maxEvents);
+            (void)diagf(&ctx->diag, make_status(Code::Busy), kDiagEventsDropped, Severity::Warning, {},
+                        "events", "event buffer full (maxEvents = %u); dropping the oldest events",
+                        ctx->maxEvents);
         }
     }
     Event& e  = ctx->events[ctx->eventCount++];
@@ -62,10 +63,10 @@ void fail_reload(Context* ctx, Slot& s, u32 code, Status st) noexcept {
     free_meta_set(ctx->alloc, s.next);
     s.cooked.release();
     s.cookedValid = false;
-    diagf(&ctx->diag, st, kDiagReloadFailed, Severity::Error, path_of(s),
-          s.kind == AssetKind::Mesh ? "mesh" : "texture", "reload failed, keeping version %u: %s (%s)%s%s",
-          s.version, failure_text(code), code_name(st.code), s.capture.set ? ": " : "",
-          s.capture.set ? s.capture.msg : "");
+    (void)diagf(&ctx->diag, st, kDiagReloadFailed, Severity::Error, path_of(s),
+                s.kind == AssetKind::Mesh ? "mesh" : "texture",
+                "reload failed, keeping version %u: %s (%s)%s%s", s.version, failure_text(code),
+                code_name(st.code), s.capture.set ? ": " : "", s.capture.set ? s.capture.msg : "");
     ++ctx->cur.completed;
     settle(ctx, s);
 }
@@ -93,9 +94,9 @@ void fail_slot(Context* ctx, Slot& s, u32 code, Status st) noexcept {
     s.state     = State::Failed;
     s.phase     = Phase::Done;
 
-    diagf(&ctx->diag, st, code, Severity::Error, path_of(s), s.kind == AssetKind::Mesh ? "mesh" : "texture",
-          "%s (%s)%s%s", failure_text(code), code_name(st.code), s.capture.set ? ": " : "",
-          s.capture.set ? s.capture.msg : "");
+    (void)diagf(&ctx->diag, st, code, Severity::Error, path_of(s),
+                s.kind == AssetKind::Mesh ? "mesh" : "texture", "%s (%s)%s%s", failure_text(code),
+                code_name(st.code), s.capture.set ? ": " : "", s.capture.set ? s.capture.msg : "");
 
     push_event(ctx, EventKind::Failed, s.kind, handle_bits(s), s.version, st);
     ++ctx->cur.completed;
@@ -106,8 +107,8 @@ void fail_slot(Context* ctx, Slot& s, u32 code, Status st) noexcept {
 
 void reload_slot(Context* ctx, Slot& s) noexcept {
     if (s.source == SourceKind::Memory) {
-        diagf(&ctx->diag, make_status(Code::Unsupported), kDiagReloadMemorySource, Severity::Warning,
-              path_of(s), "reload", "registered in memory: there is no file to reload from");
+        (void)diagf(&ctx->diag, make_status(Code::Unsupported), kDiagReloadMemorySource, Severity::Warning,
+                    path_of(s), "reload", "registered in memory: there is no file to reload from");
         return;
     }
     if (s.phase != Phase::Done) { // queued, loading or awaiting the GPU: runs once it settles
@@ -148,9 +149,9 @@ void poll_placeholders(Context* ctx) noexcept {
             p.failed = true;
             ctx->adapter.destroy(ctx->adapter.user, p.obj);
             p.obj = {};
-            diagf(&ctx->diag, make_status(Code::Unknown), kDiagPlaceholderFailed, Severity::Error, {},
-                  "placeholder", "the adapter failed the upload of placeholder %llu",
-                  static_cast<unsigned long long>(p.id));
+            (void)diagf(&ctx->diag, make_status(Code::Unknown), kDiagPlaceholderFailed, Severity::Error, {},
+                        "placeholder", "the adapter failed the upload of placeholder %llu",
+                        static_cast<unsigned long long>(p.id));
             continue;
         }
         p.ready = true;

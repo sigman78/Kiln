@@ -179,6 +179,7 @@ void free_tables(Context* ctx) noexcept {
 void teardown(Context* ctx) noexcept {
     Adapter const& a = ctx->adapter;
     // 1. Let in-flight jobs finish (they only touch their slot and the completion ring).
+    // Polled, not atomic::wait: a job's notify after its decrement could reach a freed context.
     while (ctx->jobsInFlight.load(std::memory_order_acquire) != 0)
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     // 2. Discard pending completions; their upload objects go back to the adapter.

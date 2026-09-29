@@ -578,6 +578,11 @@ KILN_TEST(Mesh, CorruptionsDetected) {
         patch_header(b, [](FileHeader& h) { h.gpuDataSize += 16; });
         expect_open_fails(b, Code::Corrupt, kDiagHeaderSizes, "gpuDataSize");
     }
+    { // found by fuzz_mesh_read: the table end wrapped past 2^64 and passed the bounds check
+        Vec<u8> b = good.clone();
+        patch_header(b, [](FileHeader& h) { h.sectionTableOffset = ~u64(0) - 79; });
+        expect_open_fails(b, Code::Corrupt, kDiagSectionTable, "section table offset wraps");
+    }
     {
         Vec<u8> b = good.clone();
         patch_record<MeshPart>(b, kSecParts, 2, [](MeshPart& p) { p.parent = 2; });

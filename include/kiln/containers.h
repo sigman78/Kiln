@@ -45,6 +45,7 @@ template <class T> inline void default_construct_n(T* p, usize n) noexcept {
 template <class T, usize N> class FixedArray {
 public:
     static_assert(N > 0);
+    static_assert(NothrowStorable<T>, "FixedArray<T> needs T whose copy, move and destruction never throw");
 
     constexpr FixedArray() noexcept = default;
     ~FixedArray() noexcept { clear(); }
@@ -172,6 +173,7 @@ private:
 /// Growable array over an Allocator.
 template <class T> class Vec {
 public:
+    static_assert(NothrowStorable<T>, "Vec<T> needs T whose copy, move and destruction never throw");
     Vec() noexcept = default;
     explicit Vec(Allocator const* alloc, Tag tag = Tag::Core) noexcept : alloc_(alloc), tag_(tag) {}
     ~Vec() noexcept { release(); }
@@ -265,40 +267,52 @@ public:
             detail::default_construct_n(data_ + size_, n - size_);
         size_ = n;
     }
+    /// `fill` may be an element of this Vec.
     void resize(usize n, T const& fill) {
-        if (n > cap_) grow_to(n);
-        if (n < size_)
+        auto const fill_from = [&](T* d) noexcept {
+            for (usize i = size_; i < n; ++i)
+                ::new (static_cast<void*>(d + i)) T(fill);
+        };
+        if (n > cap_)
+            grow_with(n, fill_from);
+        else if (n < size_)
             detail::destroy_n(data_ + n, size_ - n);
         else
-            for (usize i = size_; i < n; ++i)
-                ::new (static_cast<void*>(data_ + i)) T(fill);
+            fill_from(data_);
         size_ = n;
     }
     /// Grow size by `n` uninitialized elements and return a span of them.
     /// The caller writes them. Use only for trivial T.
     [[nodiscard]] Span<T> append_uninit(usize n) {
         usize old = size_;
-        if (size_ + n > cap_) grow_to(size_ + n);
+        if (n > cap_ - size_) grow_to(grown(n));
         size_ += n;
         return {data_ + old, n};
     }
 
-    T& push_back(T const& v) {
-        if (size_ == cap_) grow();
-        return *::new (static_cast<void*>(data_ + size_++)) T(v);
-    }
-    T& push_back(T&& v) {
-        if (size_ == cap_) grow();
-        return *::new (static_cast<void*>(data_ + size_++)) T(std::move(v));
-    }
+    // The arguments of push_back, emplace_back and append may refer into this Vec: when it grows,
+    // the new elements are built before the old buffer is freed.
+    T& push_back(T const& v) { return emplace_back(v); }
+    T& push_back(T&& v) { return emplace_back(std::move(v)); }
     template <class... Args> T& emplace_back(Args&&... args) {
-        if (size_ == cap_) grow();
-        return *::new (static_cast<void*>(data_ + size_++)) T(std::forward<Args>(args)...);
+        auto const make = [&](T* d) noexcept {
+            ::new (static_cast<void*>(d + size_)) T(std::forward<Args>(args)...);
+        };
+        if (size_ == cap_)
+            grow_with(grown(1), make);
+        else
+            make(data_);
+        return data_[size_++];
     }
     void append(Span<T const> items) {
-        if (size_ + items.size > cap_) grow_to(size_ + items.size);
-        for (usize i = 0; i < items.size; ++i)
-            ::new (static_cast<void*>(data_ + size_ + i)) T(items[i]);
+        auto const copy = [&](T* d) noexcept {
+            for (usize i = 0; i < items.size; ++i)
+                ::new (static_cast<void*>(d + size_ + i)) T(items[i]);
+        };
+        if (items.size > cap_ - size_)
+            grow_with(grown(items.size), copy);
+        else
+            copy(data_);
         size_ += items.size;
     }
     void pop_back() noexcept {
@@ -334,12 +348,25 @@ public:
     }
 
 private:
-    void grow() { grow_to(cap_ < 4 ? 4 : cap_ * 2); }
-    void grow_to(usize newCap) {
-        KILN_ASSERT(newCap > cap_);
+    /// size_ + n, panicking on overflow.
+    [[nodiscard]] usize grown(usize n) const noexcept {
+        usize total = 0;
+        KILN_VERIFY(checked_add(size_, n, total) && "Vec: size overflows");
+        return total;
+    }
+    void grow_to(usize minCap) {
+        grow_with(minCap, [](T*) noexcept {});
+    }
+    /// Moves to a buffer of at least `minCap`. `build(newData)` constructs the new elements first,
+    /// while the old buffer, which its arguments may point into, is still alive.
+    template <class F> void grow_with(usize minCap, F&& build) {
+        KILN_ASSERT(minCap > cap_);
         if (!alloc_) alloc_ = default_allocator();
-        if (newCap < cap_ * 2 && cap_ >= 4) newCap = cap_ * 2; // amortize when called via reserve loops
+        usize newCap  = minCap < 4 ? 4 : minCap;
+        usize doubled = 0; // amortize: at least double, unless that overflows
+        if (checked_mul(cap_, usize(2), doubled) && newCap < doubled) newCap = doubled;
         T* nd = alloc_array<T>(alloc_, newCap, tag_);
+        build(nd);
         detail::relocate_n(nd, data_, size_);
         if (data_) free_array(alloc_, data_, cap_, tag_);
         data_ = nd;
@@ -358,6 +385,8 @@ private:
 /// move-constructible. Insertion and erasure invalidate pointers into the map.
 template <class K, class V, class Hash = DefaultHash> class HashMap {
 public:
+    static_assert(NothrowStorable<K> && NothrowStorable<V>,
+                  "HashMap<K, V> needs K and V whose copy, move and destruction never throw");
     struct Entry {
         K key;
         V value;
@@ -430,9 +459,23 @@ public:
         return *r.value;
     }
 
-    /// Insert if absent, constructing V from `args`. Never overwrites.
+    /// Insert if absent, constructing V from `args`. Never overwrites. `key` and `args` may refer into
+    /// this map.
     template <class... Args> InsertResult try_emplace(K const& key, Args&&... args) {
-        if ((size_ + 1) * 8 > cap_ * 7) rehash(cap_for(size_ + 1)); // load factor 7/8
+        if ((size_ + 1) * 8 > cap_ * 7) { // load factor 7/8
+            if (V* found = find(key)) return {found, false};
+            // Copies taken before the entries move.
+            K k(key);
+            V v(std::forward<Args>(args)...);
+            rehash(cap_for(size_ + 1));
+            return place(k, std::move(v));
+        }
+        return place(key, std::forward<Args>(args)...);
+    }
+
+private:
+    /// Probes for `key`; constructs the entry if absent. The table has room.
+    template <class... Args> InsertResult place(K const& key, Args&&... args) {
         u64 h   = hash_key(key);
         usize m = cap_ - 1;
         usize i = usize(h) & m;
@@ -449,6 +492,7 @@ public:
         }
     }
 
+public:
     /// Remove `key`. Returns true if it existed.
     bool erase(K const& key) noexcept {
         usize i = find_index(key);
@@ -527,8 +571,12 @@ private:
             cap *= 2;
         return cap;
     }
-    [[nodiscard]] static constexpr usize alloc_bytes(usize cap) noexcept {
-        return align_up(cap * sizeof(u64), alignof(Entry)) + cap * sizeof(Entry);
+    [[nodiscard]] static usize alloc_bytes(usize cap) noexcept {
+        usize hashes = 0, entries = 0, total = 0;
+        KILN_VERIFY(checked_mul(cap, sizeof(u64), hashes) && checked_mul(cap, sizeof(Entry), entries) &&
+                    checked_add(align_up(hashes, alignof(Entry)), entries, total) &&
+                    "HashMap: size overflows");
+        return total;
     }
 
     /// Slot pointer for `key`, or nullptr. Kept separate from find_index so the

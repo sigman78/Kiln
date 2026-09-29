@@ -2,7 +2,6 @@
 // See docs/design/threading-and-io.md.
 #include "runtime_internal.h"
 
-#include <chrono>
 #include <cstdarg>
 
 namespace kiln::rt {
@@ -47,11 +46,15 @@ public:
                 if (used.compare_exchange_weak(cur, cur + n, std::memory_order_acq_rel)) return;
                 continue; // cur reloaded
             }
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            used.wait(cur, std::memory_order_relaxed); // until a holder releases
             cur = used.load(std::memory_order_relaxed);
         }
     }
-    ~IoBytes() noexcept { ctx_->ioBytesInFlight.fetch_sub(n_, std::memory_order_acq_rel); }
+    // Holders are jobs, which the context outlives, so notifying after the release is safe.
+    ~IoBytes() noexcept {
+        ctx_->ioBytesInFlight.fetch_sub(n_, std::memory_order_acq_rel);
+        ctx_->ioBytesInFlight.notify_all();
+    }
     IoBytes(IoBytes const&)            = delete;
     IoBytes& operator=(IoBytes const&) = delete;
 
@@ -60,13 +63,19 @@ private:
     u64 n_;
 };
 
-/// A store file or a memory span (registered bytes / cook output).
+/// A store file or a memory span (registered bytes / cook output). Closes its file when it goes out
+/// of scope.
 struct Source {
     IoBackend const* io = nullptr;
     IoFile file;
     Span<u8 const> mem;
     bool memory = false;
     u64 size    = 0;
+
+    Source() noexcept                = default;
+    Source(Source const&)            = delete;
+    Source& operator=(Source const&) = delete;
+    ~Source() noexcept { close(); }
 
     [[nodiscard]] Status read(u64 off, u64 n, void* dst) const noexcept {
         if (off > size || n > size - off) return make_status(Code::IoEof);
@@ -482,19 +491,25 @@ u64 texture_level_layout(TextureDesc const& t, CopyConstraints const& c, u64* of
                          u64* pitches) noexcept {
     FormatInfo const* fi = format_info(t.format);
     if (!fi) return 0;
-    u64 const pitchAlign  = max<u64>(c.optimalRowPitchAlign, 1);
-    u64 const offsetAlign = max<u64>(c.optimalOffsetAlign, 1);
-    u64 cur               = 0;
+    constexpr u64 kMaxAlign = u64(1) << 32;
+    u64 const pitchAlign    = std::bit_ceil(clamp<u64>(c.optimalRowPitchAlign, 1, kMaxAlign));
+    u64 const offsetAlign   = std::bit_ceil(clamp<u64>(c.optimalOffsetAlign, 1, kMaxAlign));
+    auto const extent       = [](u32 v, u32 level) noexcept { return level < 32 ? max(v >> level, 1u) : 1u; };
+    u64 cur                 = 0;
     for (u32 i = 0; i < t.levels; ++i) {
-        u32 const w     = max(t.width >> i, 1u);
-        u32 const h     = max(t.height >> i, 1u);
-        u32 const z     = max(t.depth >> i, 1u);
-        u64 const pitch = align_up(format_row_bytes(t.format, w), pitchAlign);
-        u64 const rows  = (u64(h) + fi->blockHeight - 1) / fi->blockHeight * z * t.layers;
-        cur             = align_up(cur, offsetAlign);
+        u32 const w = extent(t.width, i);
+        u32 const h = extent(t.height, i);
+        u32 const z = extent(t.depth, i);
+        u64 pitch = 0, rows = 0, bytes = 0;
+        if (!checked_add(format_row_bytes(t.format, w), pitchAlign - 1, pitch) ||
+            !checked_mul((u64(h) + fi->blockHeight - 1) / fi->blockHeight, u64(z), rows) ||
+            !checked_mul(rows, u64(max(t.layers, 1u)), rows) || !checked_add(cur, offsetAlign - 1, cur))
+            return 0;
+        pitch &= ~(pitchAlign - 1);
+        cur &= ~(offsetAlign - 1);
         if (offsets) offsets[i] = cur;
         if (pitches) pitches[i] = pitch;
-        cur += pitch * rows;
+        if (!checked_mul(pitch, rows, bytes) || !checked_add(cur, bytes, cur)) return 0;
     }
     return cur;
 }

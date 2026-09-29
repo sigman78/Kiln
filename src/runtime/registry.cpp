@@ -189,8 +189,8 @@ void free_slot(Context* ctx, Slot& s) noexcept {
 Slot* request_slot(Context* ctx, AssetKind kind, StrView path, RequestOptions const& opt, Buffer* memory,
                    bool rejectExisting) noexcept {
     if (char const* why = check_asset_name(path)) {
-        diagf(&ctx->diag, make_status(Code::InvalidArgument), kDiagBadAssetName, Severity::Error, path,
-              "request", "invalid asset name: %s", why);
+        (void)diagf(&ctx->diag, make_status(Code::InvalidArgument), kDiagBadAssetName, Severity::Error, path,
+                    "request", "invalid asset name: %s", why);
         return nullptr;
     }
     StrView const np           = path;
@@ -203,8 +203,8 @@ Slot* request_slot(Context* ctx, AssetKind kind, StrView path, RequestOptions co
             KILN_PANIC("asset id collision: '%.*s' and '%.*s' hash to %016llx", int(s.pathLen), s.path,
                        KILN_SV(np), static_cast<unsigned long long>(id));
         if (rejectExisting) {
-            diagf(&ctx->diag, make_status(Code::AlreadyExists), kDiagDuplicateRegister, Severity::Error, np,
-                  "register", "path is already registered or requested");
+            (void)diagf(&ctx->diag, make_status(Code::AlreadyExists), kDiagDuplicateRegister, Severity::Error,
+                        np, "register", "path is already registered or requested");
             return nullptr;
         }
         ++s.refcount;
@@ -214,13 +214,13 @@ Slot* request_slot(Context* ctx, AssetKind kind, StrView path, RequestOptions co
     }
 
     if (id <= kLastPlaceholderId) { // practically never; reserved ids (handles-and-states.md)
-        diagf(&ctx->diag, make_status(Code::InvalidArgument), kDiagAssetLoadFailed, Severity::Error, np,
-              "request", "asset path hashes into the reserved placeholder id range");
+        (void)diagf(&ctx->diag, make_status(Code::InvalidArgument), kDiagAssetLoadFailed, Severity::Error, np,
+                    "request", "asset path hashes into the reserved placeholder id range");
         return nullptr;
     }
     if (ctx->freeSlotCount == 0) {
-        diagf(&ctx->diag, make_status(Code::Busy), kDiagRegistryFull, Severity::Error, np, "request",
-              "registry full (maxAssets = %u)", ctx->maxAssets);
+        (void)diagf(&ctx->diag, make_status(Code::Busy), kDiagRegistryFull, Severity::Error, np, "request",
+                    "registry full (maxAssets = %u)", ctx->maxAssets);
         return nullptr;
     }
 
@@ -521,8 +521,8 @@ TextureInfo texture_info(Context* ctx, TextureHandle h) noexcept {
 Group group(Context* ctx) noexcept {
     if (!ctx) return {};
     if (ctx->freeGroupCount == 0) {
-        diagf(&ctx->diag, make_status(Code::Busy), kDiagRegistryFull, Severity::Error, {}, "group",
-              "group table full (maxGroups = %u)", ctx->maxGroups);
+        (void)diagf(&ctx->diag, make_status(Code::Busy), kDiagRegistryFull, Severity::Error, {}, "group",
+                    "group table full (maxGroups = %u)", ctx->maxGroups);
         return {};
     }
     u32 const i  = ctx->freeGroups[--ctx->freeGroupCount];

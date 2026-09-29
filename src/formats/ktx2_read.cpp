@@ -19,17 +19,9 @@ namespace {
 
 constexpr u64 kU64Max = ~u64(0);
 
-/// a * b, or false on overflow.
-bool mul_ok(u64 a, u64 b, u64& out) noexcept {
-    if (a != 0 && b > kU64Max / a) return false;
-    out = a * b;
-    return true;
-}
-bool add_ok(u64 a, u64 b, u64& out) noexcept {
-    if (b > kU64Max - a) return false;
-    out = a + b;
-    return true;
-}
+/// checked_mul / checked_add (core.h) over u64, so u32 operands convert.
+bool mul_ok(u64 a, u64 b, u64& out) noexcept { return checked_mul(a, b, out); }
+bool add_ok(u64 a, u64 b, u64& out) noexcept { return checked_add(a, b, out); }
 
 /// Bytes of one w x h x d image in `info`, whole blocks, overflow-checked.
 bool image_bytes(FormatInfo const& info, u32 w, u32 h, u32 d, u64& out) noexcept {

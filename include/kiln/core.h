@@ -169,6 +169,24 @@ template <std::unsigned_integral T> [[nodiscard]] constexpr bool is_aligned(T v,
 template <std::unsigned_integral T> [[nodiscard]] constexpr bool is_pow2(T v) noexcept {
     return v != 0 && (v & (v - 1)) == 0;
 }
+/// Types kiln stores in its own containers and Result: their construction and destruction never
+/// throw, so those types need no rollback when a constructor fails.
+template <class T>
+concept NothrowStorable = std::is_nothrow_move_constructible_v<T> && std::is_nothrow_destructible_v<T> &&
+                          (!std::is_copy_constructible_v<T> || std::is_nothrow_copy_constructible_v<T>);
+
+/// `a + b` into `out`; false, with `out` unchanged, on overflow.
+template <std::unsigned_integral T> [[nodiscard]] constexpr bool checked_add(T a, T b, T& out) noexcept {
+    if (b > T(~T(0)) - a) return false;
+    out = T(a + b);
+    return true;
+}
+/// `a * b` into `out`; false, with `out` unchanged, on overflow.
+template <std::unsigned_integral T> [[nodiscard]] constexpr bool checked_mul(T a, T b, T& out) noexcept {
+    if (a != 0 && b > T(~T(0)) / a) return false;
+    out = T(a * b);
+    return true;
+}
 
 // ---------------------------------------------------------------------------
 // Panic / assert

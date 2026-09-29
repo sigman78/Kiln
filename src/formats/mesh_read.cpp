@@ -395,8 +395,9 @@ Result<MeshView> MeshView::open(Span<u8 const> bytes, OpenOptions const& opt, Di
 
     // Section table.
     u64 tableBytes = u64(h.sectionCount) * sizeof(SectionEntry);
+    u64 tableEnd   = 0;
     if (h.sectionCount == 0 || h.sectionTableOffset < sizeof(FileHeader) || (h.sectionTableOffset % 8) != 0 ||
-        h.sectionTableOffset + tableBytes > h.gpuDataOffset)
+        !checked_add(h.sectionTableOffset, tableBytes, tableEnd) || tableEnd > h.gpuDataOffset)
         KILN_MESH_FAIL(ctx, Corrupt, kDiagSectionTable, "section table [%llu, +%llu) invalid",
                        static_cast<unsigned long long>(h.sectionTableOffset),
                        static_cast<unsigned long long>(tableBytes));

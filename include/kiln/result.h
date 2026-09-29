@@ -32,7 +32,7 @@ enum class Code : u16 {
 [[nodiscard]] KILN_API char const* code_name(Code c) noexcept;
 
 /// A compact status: error code plus a 16-bit code-specific detail (e.g. errno).
-struct Status {
+struct [[nodiscard]] Status {
     Code code  = Code::Ok;
     u16 detail = 0;
 
@@ -51,9 +51,10 @@ inline constexpr Status kOk{};
 
 /// Value-or-Status. Construct from a T (success) or a Status/Code (failure).
 /// Accessing the value of a failed Result is a programming error (asserts).
-template <class T> class Result {
+template <class T> class [[nodiscard]] Result {
 public:
     static_assert(!std::is_reference_v<T>, "Result<T&> is not supported; use Result<T*>");
+    static_assert(NothrowStorable<T>, "Result<T> needs T whose copy, move and destruction never throw");
 
     constexpr Result(Status s) noexcept : status_(s) { // NOLINT(google-explicit-constructor)
         KILN_ASSERT(s.failed() && "Result constructed from Ok status without a value");

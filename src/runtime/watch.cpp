@@ -100,8 +100,8 @@ void poll_main(Context* ctx) noexcept {
 }
 
 void unavailable(Context* ctx, char const* why) noexcept {
-    diagf(&ctx->diag, make_status(Code::Unsupported), kDiagHotReloadUnavailable, Severity::Warning, {},
-          "hot reload", "store poller not started: %s", why);
+    (void)diagf(&ctx->diag, make_status(Code::Unsupported), kDiagHotReloadUnavailable, Severity::Warning, {},
+                "hot reload", "store poller not started: %s", why);
 }
 
 } // namespace
@@ -212,8 +212,8 @@ struct Watch {};
 
 void watch_start(Context* ctx, HotReloadDesc const& desc) noexcept {
     if (desc.watchStore)
-        diagf(&ctx->diag, make_status(Code::Unsupported), kDiagHotReloadUnavailable, Severity::Warning, {},
-              "hot reload", "store poller not started: built without KILN_HOT_RELOAD");
+        (void)diagf(&ctx->diag, make_status(Code::Unsupported), kDiagHotReloadUnavailable, Severity::Warning,
+                    {}, "hot reload", "store poller not started: built without KILN_HOT_RELOAD");
 }
 void watch_stop(Context*) noexcept {}
 void watch_free(Context*) noexcept {}

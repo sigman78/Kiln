@@ -61,4 +61,5 @@ compiler is too old, update it.
 
 `include/kiln/` public headers · `src/core|io|formats|cook|runtime/` · `tests/` (own runner,
 `tests/kiln_test.h`) · `tools/` (`kiln-cook`, `kiln-info`, shared parser `tools/cli.h`) ·
-`examples/` (`headless`, `viewer`) · `docs/design/` design notes · `.githooks/` pre-commit hook.
+`examples/` (`headless`, `viewer`) · `fuzz/` libFuzzer targets (`KILN_FUZZ`) · `docs/design/` design notes ·
+`.githooks/` pre-commit hook.

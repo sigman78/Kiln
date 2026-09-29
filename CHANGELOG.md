@@ -8,6 +8,12 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
 ## [Unreleased]
 
 ### Added
+- Hardening: `checked_add` / `checked_mul` and the `NothrowStorable` concept (`core.h`);
+  `alloc_array`, `Vec` and `HashMap` panic on size overflow instead of allocating short, and
+  `alloc()` panics on an alignment that is not a power of two. CMake `KILN_SANITIZE` (e.g.
+  `address,undefined`, clang or gcc) and `KILN_FUZZ` (libFuzzer targets in `fuzz/` for the `.mesh`
+  and KTX2 readers and the `.hdr` decoder); CI runs the tests under ASan and UBSan, and each fuzz
+  target for 60 s.
 - `placeholder_object(ctx, kind, shape)`: the placeholder `GpuObject` of a texture kind and shape,
   for hosts that must bind something where a material has no texture. `kiln-sokol` and
   `kiln-vk-basic` use it (the latter no longer needs `descriptorBindingPartiallyBound`).
@@ -207,6 +213,15 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
 - Project display name is Kiln; GitHub repository renamed to sigman78/Kiln (namespace, CMake package and targets stay lowercase `kiln`).
 
 ### Fixed
+- `.mesh` reader: a section table offset near 2^64 wrapped the bounds check, and `open()` read
+  outside the buffer (found by `fuzz_mesh_read`).
+- `Vec::push_back` / `emplace_back` / `append` / `resize(n, fill)` and `HashMap::try_emplace` read
+  a freed buffer when the argument referred into the container and the call made it grow.
+- The `.hdr` decoder allocated the whole image before checking the file could hold it: a
+  30-byte header could ask for 3 GB.
+- The store writer ignored `fclose` errors, so a failed close could still publish the file.
+- MikkTSpace (vendored): a shift by 32 in its quicksort seed (undefined behavior, found by
+  UBSan); the output is unchanged. Recorded as a local change in `third_party/README.md`.
 - Example Vulkan adapter: a small upload no longer waits for a larger one that began earlier. The
   timeline value is given at `commit_upload` instead of `begin_upload`, so submission follows
   commit order; the upload token is now the object handle (index and generation). A small sky
@@ -221,6 +236,12 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
   relative path, as the `UriResolver` already received for buffers.
 
 ### Changed
+- **Breaking (core):** `Status` and `Result<T>` are `[[nodiscard]]` types, so every ignored one
+  warns (write `(void)` where discarding is intended, as for `diagf`). `Result`, `Vec`,
+  `FixedArray` and `HashMap` require `NothrowStorable` element types: copy, move and destruction
+  never throw. `texture_level_layout()` documents and handles invalid input (non-power-of-two
+  alignment, more than 32 levels, sizes past u64). Migration: add `(void)` to deliberate
+  discards; give stored types `noexcept` special members.
 - **Breaking (runtime, adapter):** `Adapter::is_upload_complete` is now
   `UploadStatus (*upload_status)(user, token)`, returning `Pending`, `Complete` or `Failed`. An adapter
   can now fail an upload after `commit_upload` (a full pool, out of GPU memory): a first load fails

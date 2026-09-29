@@ -154,12 +154,13 @@ Status store_write(StrView dir, StrView name, Span<u8 const> bytes, DiagSink con
     usize const written  = bytes.size ? std::fwrite(bytes.data, 1, bytes.size, f) : usize(0);
     int const writeErrno = written == bytes.size ? 0 : errno;
     int const flushErrno = (writeErrno == 0 && std::fflush(f) != 0) ? errno : 0;
-    std::fclose(f);
-    if (writeErrno != 0 || flushErrno != 0) {
-        int const e = writeErrno != 0 ? writeErrno : flushErrno;
+    // A failed close may be a delayed write error: the file must not reach the store.
+    int const closeErrno = std::fclose(f) != 0 ? errno : 0;
+    if (writeErrno != 0 || flushErrno != 0 || closeErrno != 0) {
+        int const e = writeErrno != 0 ? writeErrno : flushErrno != 0 ? flushErrno : closeErrno;
         std::remove(tmp);
         return diagf(diag, make_status(Code::IoError, u16(e & 0xFFFF)), 0, Severity::Error, name, "fwrite",
-                     "short write to temp file %s: wrote %zu of %zu bytes (errno %d)", tmp, written,
+                     "could not write temp file %s: wrote %zu of %zu bytes (errno %d)", tmp, written,
                      bytes.size, e);
     }
 

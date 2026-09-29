@@ -1656,6 +1656,35 @@ KILN_TEST(Runtime, TextureLevelLayout) {
     KILN_CHECK_EQ(pitches[2], u64(256));
     KILN_CHECK_EQ(texture_level_layout(cube, cc, nullptr, nullptr), u64(21504));
 
+    // Invalid input: unknown format, alignments that are 0 or not powers of two, levels past 31,
+    // sizes past u64.
+    TextureDesc bad = cube;
+    bad.format      = Format(12345);
+    KILN_CHECK_EQ(texture_level_layout(bad, cc, nullptr, nullptr), u64(0));
+    TextureDesc const small{.format     = Format::R8G8B8A8_UNORM,
+                            .width      = 3,
+                            .height     = 1,
+                            .depth      = 1,
+                            .layers     = 1,
+                            .levels     = 40,
+                            .shape      = TextureShape::Tex2D,
+                            .firstLevel = 0};
+    u64 manyOffsets[40], manyPitches[40];
+    CopyConstraints const odd{.optimalRowPitchAlign = 5, .optimalOffsetAlign = 0, .bufferOffsetAlign = 1};
+    KILN_CHECK_EQ(texture_level_layout(small, odd, manyOffsets, manyPitches), u64(16 + 39 * 8));
+    KILN_CHECK_EQ(manyPitches[0], u64(16)); // 12 bytes padded to 8-byte rows
+    KILN_CHECK_EQ(manyPitches[39], u64(8));
+    KILN_CHECK_EQ(manyOffsets[39], u64(16 + 38 * 8));
+    TextureDesc const huge{.format     = Format::R32G32B32A32_SFLOAT,
+                           .width      = ~0u,
+                           .height     = ~0u,
+                           .depth      = 1,
+                           .layers     = ~0u,
+                           .levels     = 1,
+                           .shape      = TextureShape::Array,
+                           .firstLevel = 0};
+    KILN_CHECK_EQ(texture_level_layout(huge, cc, nullptr, nullptr), u64(0));
+
     Rt rt;
     if (!rt.init(NullAdapterDesc{.rowPitchAlign = 64, .offsetAlign = 128})) return;
     TextureHandle const t = request_texture(rt.ctx, "ktx2/normal");

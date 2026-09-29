@@ -134,6 +134,9 @@ struct Adapter {
 /// copy constraints: levels ascending, each starting at optimalOffsetAlign, rows padded to
 /// optimalRowPitchAlign, the layers (cube faces) of a level one after another. `offsets` and
 /// `pitches` receive `t.levels` entries each; either may be null. Returns the upload size.
+/// Invalid input: an alignment of 0 counts as 1, one that is not a power of two is rounded up to
+/// one; levels past 31 are 1x1. Returns 0 for an unknown format or a size that overflows u64
+/// (`offsets` / `pitches` may then hold some entries).
 [[nodiscard]] KILN_API u64 texture_level_layout(TextureDesc const& t, CopyConstraints const& c, u64* offsets,
                                                 u64* pitches) noexcept;
 

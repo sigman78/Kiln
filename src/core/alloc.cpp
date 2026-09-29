@@ -102,6 +102,7 @@ AllocStats default_alloc_stats(Tag tag) noexcept {
 
 void* alloc(Allocator const* a, usize size, usize align, Tag tag) noexcept {
     KILN_ASSERT(a && a->alloc);
+    KILN_VERIFY(is_pow2(align) && "alloc: alignment must be a power of two");
     void* p = a->alloc(a->user, size, align, tag);
     if (KILN_UNLIKELY(!p && size != 0)) {
         KILN_PANIC("out of memory: %llu bytes (align %llu, tag %s)", static_cast<unsigned long long>(size),

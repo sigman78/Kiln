@@ -120,6 +120,14 @@ Result<Image> decode_hdr(Span<u8 const> bytes, Allocator const* alloc, DiagSink 
     if (w > kMaxDimension || h > kMaxDimension)
         return fail(diag, asset, Code::Unsupported, kDiagImageTooLarge, "extent %llux%llu exceeds 16384", w,
                     h);
+    // The smallest scanline: flat is 4 bytes per texel; run-length (8 <= w < 32768) is 4 bytes, then per
+    // channel one 2-byte run per 127 texels. A header that claims more texels than the file can hold
+    // fails here, before the image is allocated.
+    u64 const flatBytes = u64(w) * 4;
+    u64 const rleBytes  = 4 + 4 * 2 * ((u64(w) + 126) / 127);
+    u64 const minLine   = w >= 8 && w < 32768 ? min(flatBytes, rleBytes) : flatBytes;
+    if (u64(bytes.size - pos) < minLine * h)
+        return fail(diag, asset, Code::ParseError, kDiagImageDecodeFailed, "truncated pixel data");
 
     Allocator const* const a = alloc ? alloc : default_allocator();
     Image img;

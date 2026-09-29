@@ -48,6 +48,15 @@ add_library(kiln_third_party_cook STATIC wuffs/wuffs_impl.c)
 if(KILN_MESH)
     target_sources(kiln_third_party_cook PRIVATE cgltf/cgltf.c mikktspace/mikktspace.c)
 endif()
+# UBSan exemptions for this vendored C only; kiln's own code keeps every check:
+# - function: wuffs calls its decoders through generic function pointers (its C "vtables").
+# - alignment: cgltf reads index data in place, so a glTF whose accessors break the spec's
+#   alignment rule loads misaligned (harmless on x86 and ARM64; the corpus has such files).
+if(KILN_SANITIZE MATCHES "undefined" AND CMAKE_C_COMPILER_ID MATCHES "Clang")
+    target_compile_options(kiln_third_party_cook PRIVATE -fno-sanitize=function,alignment)
+elseif(KILN_SANITIZE MATCHES "undefined")
+    target_compile_options(kiln_third_party_cook PRIVATE -fno-sanitize=alignment)
+endif()
 
 # Third-party code is compiled quietly, never with kiln's own warning set
 # (cmake/kiln_warnings.cmake, kiln_apply_warnings/kiln_apply_defaults are

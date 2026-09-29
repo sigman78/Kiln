@@ -2,6 +2,7 @@
 
 #include "kiln/containers.h"
 
+#include <cstring>
 #include <utility>
 
 using namespace kiln;
@@ -63,6 +64,23 @@ struct MoveOnly {
     [[nodiscard]] int value() const noexcept { return ptr ? *ptr : -1; }
 };
 int MoveOnly::count = 0;
+
+// Overwrites memory on free, so a read through a dangling reference sees garbage, not the old value.
+void* poison_alloc(void*, usize size, usize align, Tag tag) {
+    return default_allocator()->alloc(default_allocator()->user, size, align, tag);
+}
+void poison_free(void*, void* p, usize size, usize align, Tag tag) {
+    std::memset(p, 0xDD, size);
+    default_allocator()->free(default_allocator()->user, p, size, align, tag);
+}
+Allocator const kPoison{&poison_alloc, &poison_free, nullptr};
+
+struct Throwing {
+    Throwing() = default;
+    Throwing(Throwing const&) {} // not noexcept
+};
+static_assert(!NothrowStorable<Throwing>);
+static_assert(NothrowStorable<Live> && NothrowStorable<MoveOnly>);
 
 // Key type whose hash_of() is found via ADL.
 namespace user_ns {
@@ -527,4 +545,60 @@ KILN_TEST(Containers, HashMapBackwardShiftDeletionStress) {
     }
     KILN_CHECK(ok);
     KILN_CHECK_EQ(m.size(), usize(0));
+}
+
+// Arguments that refer into the container stay valid while it grows.
+KILN_TEST(Containers, VecSelfAliasingGrowth) {
+    {
+        Vec<Live> v(&kPoison, Tag::Test);
+        for (int i = 0; i < 4; ++i)
+            v.emplace_back(10 + i);
+        KILN_REQUIRE_EQ(v.capacity(), usize(4));
+        v.push_back(v[0]); // grows: v[0] lives in the old buffer
+        KILN_CHECK_EQ(v[4].v, 10);
+        while (v.size() < v.capacity())
+            v.emplace_back(0);
+        v.emplace_back(v[1]);
+        KILN_CHECK_EQ(v.back().v, 11);
+        usize const n = v.size();
+        v.resize(v.capacity() + 1, v[2]);
+        KILN_CHECK_EQ(v[n].v, 12);
+        KILN_CHECK_EQ(v.back().v, 12);
+        usize const before = v.size();
+        v.append(v.span());
+        KILN_CHECK_EQ(v.size(), before * 2);
+        KILN_CHECK_EQ(v[before].v, 10);
+        KILN_CHECK_EQ(v.back().v, 12);
+    }
+    KILN_CHECK_EQ(Live::count, 0);
+}
+
+KILN_TEST(Containers, HashMapSelfAliasingRehash) {
+    {
+        HashMap<u64, Live> m(&kPoison, Tag::Test);
+        m.insert(1, Live(100));
+        u64 k = 2;
+        while ((m.size() + 1) * 8 <= m.capacity() * 7) { // fill up to the rehash point
+            m.insert(k, Live(int(k)));
+            ++k;
+        }
+        Live const* first = m.find(1);
+        KILN_REQUIRE(first != nullptr);
+        auto const r = m.try_emplace(k, *first); // rehashes: *first moves
+        KILN_CHECK(r.inserted);
+        KILN_CHECK_EQ(r.value->v, 100);
+        KILN_CHECK_EQ(m.find(1)->v, 100);
+    }
+    KILN_CHECK_EQ(Live::count, 0);
+}
+
+KILN_TEST(Containers, CheckedArithmetic) {
+    u64 out = 7;
+    KILN_CHECK(checked_add(u64(1), u64(2), out) && out == 3);
+    KILN_CHECK(!checked_add(~u64(0), u64(1), out) && out == 3);
+    KILN_CHECK(checked_mul(u64(1) << 31, u64(1) << 32, out) && out == u64(1) << 63);
+    KILN_CHECK(!checked_mul(u64(1) << 32, u64(1) << 32, out) && out == u64(1) << 63);
+    KILN_CHECK(checked_mul(u64(0), ~u64(0), out) && out == 0);
+    u8 small = 0;
+    KILN_CHECK(!checked_mul(u8(16), u8(16), small));
 }

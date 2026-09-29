@@ -76,9 +76,11 @@ template <class T> void delete_object(Allocator const* a, T* obj, Tag tag) noexc
     free(a, obj, sizeof(T), alignof(T), tag);
 }
 
-/// Allocate an uninitialized array of `count` T. Panics on OOM.
+/// Allocate an uninitialized array of `count` T. Panics on OOM and when the size overflows.
 template <class T> [[nodiscard]] T* alloc_array(Allocator const* a, usize count, Tag tag) noexcept {
-    return static_cast<T*>(alloc(a, count * sizeof(T), alignof(T), tag));
+    usize bytes = 0;
+    KILN_VERIFY(checked_mul(count, sizeof(T), bytes) && "alloc_array: count * sizeof(T) overflows");
+    return static_cast<T*>(alloc(a, bytes, alignof(T), tag));
 }
 template <class T> void free_array(Allocator const* a, T* p, usize count, Tag tag) noexcept {
     free(a, p, count * sizeof(T), alignof(T), tag);
