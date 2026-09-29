@@ -129,8 +129,42 @@ Status cook_on_miss(Context* ctx, Slot& s, Source& src, char const* missed, u32 
     return kOk;
 }
 
+/// Catalog layout: the provider checks the asset and names its artifact, or cooks it into
+/// `s.cooked`.
+Status prepare_source(Context* ctx, Slot& s, Source& src) noexcept {
+    Vec<u8> out(ctx->alloc, Tag::Payload);
+    Hash128 key;
+    DiagSink sink{&capture_fn, &s.capture};
+    Status const st = s.provider.prepare(s.provider.user, s.kind, path_of(s), ctx->alloc, &out, &key, &sink);
+    if (st.failed()) {
+        if (st.code == Code::NotFound) {
+            note(s.capture, "the cook provider found no source");
+            s.jobDiag = kDiagStoreMiss;
+        } else {
+            note(s.capture, "cook provider failed");
+            s.jobDiag = kDiagCookOnMissFailed;
+        }
+        return s.jobStatus = st;
+    }
+    s.jobKey      = key;
+    s.jobKeyValid = !key.is_zero();
+    if (out.empty()) {
+        if (s.jobKeyValid) return kOk;
+        note(s.capture, "the cook provider gave neither bytes nor a build key");
+        s.jobDiag          = kDiagCookOnMissFailed;
+        return s.jobStatus = make_status(Code::Internal);
+    }
+    s.cooked      = std::move(out);
+    s.cookedValid = true;
+    src.memory    = true;
+    src.mem       = s.cooked.span();
+    src.size      = src.mem.size;
+    return kOk;
+}
+
 /// Resolve the slot's source: the store file (Named layout) or the artifact the catalog named at
-/// dispatch (Catalog layout). A miss in the meta stage goes to the cook provider.
+/// dispatch or the provider named (Catalog layout). A miss in the meta stage goes to the cook
+/// provider.
 Status open_source(Context* ctx, Slot& s, Source& src, bool allowCook) noexcept {
     if (s.cookedValid || s.source == SourceKind::Memory) {
         src.memory = true;
@@ -139,6 +173,11 @@ Status open_source(Context* ctx, Slot& s, Source& src, bool allowCook) noexcept 
         return kOk;
     }
     bool const catalog = ctx->layout == StoreLayout::Catalog;
+    if (catalog && allowCook && s.provider.prepare) {
+        KILN_TRY(prepare_source(ctx, s, src));
+        if (src.memory) return kOk;
+        allowCook = false; // the provider named this artifact: a missing file is a miss
+    }
     char missed[1100];
     if (catalog && !s.jobKeyValid) {
         if (ctx->catalogPresent)

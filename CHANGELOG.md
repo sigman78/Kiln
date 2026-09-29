@@ -71,6 +71,14 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
   K5001, or K5019 when the profile has no catalog. The store poller (`HotReloadDesc::watchStore`)
   watches the catalog file and reloads the assets whose entry names another artifact.
   `store_layout()` and `store_profile()` give the context's choice.
+- **The cook provider on catalog stores** (step 5): `CookProvider::prepare`, called before every
+  load of a file asset in the Catalog layout (hit or miss), names the asset's artifact or returns
+  freshly cooked bytes. `install_provider` in that layout checks the context's profile (K3008),
+  takes the catalog lock in Disk mode (K3009) and installs `prepare`. Each source is checked once
+  per session: every recorded input keeps its size and modification time, nothing is hashed; a
+  changed host setting (`ProviderDesc::policyVersion` for the policy) only re-checks the keys from
+  the recorded hashes; a changed input cooks again. The source poller watches the checked sources,
+  including a `.gltf`'s buffers, and rewrites the catalog once per round.
 
 ## [0.5.0] - 2026-09-29
 

@@ -345,6 +345,13 @@ struct CookProvider {
     /// destroy() calls it for the provider still installed, after the last load has finished,
     /// so the provider can free itself. Null: nothing to free.
     void (*release)(void* user) = nullptr;
+    /// Catalog layout: called on a worker before every load of a file asset, hit or miss, instead
+    /// of `cook`. The provider brings the asset's entry up to date (it cooks again when an input
+    /// changed) and puts its artifact's build key in `*key`; when it cooked, also the bytes in
+    /// `out`, which the load then uses. A zero key with bytes: they have no artifact (memory mode).
+    /// NotFound: no source for the name. Null: the catalog is used as it is and `cook` fills misses.
+    Status (*prepare)(void* user, AssetKind kind, StrView assetPath, Allocator const* alloc, Vec<u8>* out,
+                      Hash128* key, DiagSink const* diag) = nullptr;
 };
 /// Replaces the installed provider. The old one is not released: a host that wraps it keeps it.
 KILN_API void set_cook_provider(Context* ctx, CookProvider const& provider) noexcept;

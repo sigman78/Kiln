@@ -67,6 +67,19 @@ struct UnitDesc {
 /// The build inputs of `unit`, for build_key(). `out` must hold unit.inputs.size() entries.
 void unit_build_inputs(CookUnit const& unit, BuildInput* out) noexcept;
 
+/// What the host sets for every asset: cooker version, target, default settings, name rules, the
+/// session and `policyVersion`. Another digest means the recorded keys must be checked again.
+[[nodiscard]] u64 host_digest(UnitDesc const& d, u32 policyVersion) noexcept;
+
+/// True if the settings of `d` give every output of the recorded unit `rec` the key it has
+/// (copy_input_record()): the settings are resolved again over the recorded inputs, reading only
+/// the sidecar. False when an output has no key or the sidecar cannot be read.
+[[nodiscard]] bool recorded_keys_match(UnitDesc const& d, CookUnit const& rec) noexcept;
+
+/// True if every recorded input still has its size and modification time (an absent sidecar is
+/// still absent).
+[[nodiscard]] bool recorded_inputs_unchanged(CookUnit const& rec) noexcept;
+
 /// Size and modification time of a file, through the compat backend's stat when it has one.
 [[nodiscard]] Status stat_file(StrView path, IoStat* out) noexcept;
 

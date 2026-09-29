@@ -237,6 +237,17 @@ inline constexpr u32 kXxh32P5 = 374761393u;
     return xxh32(static_cast<u8 const*>(p), len, seed);
 }
 
+/// A 128-bit hash in XXH3's canonical byte order: the hex of the bytes is what `xxhsum -H2` prints.
+/// xxh3_128() is in kiln/catalog.h (kiln_runtime).
+struct Hash128 {
+    u8 bytes[16] = {};
+
+    [[nodiscard]] friend bool operator==(Hash128 const& a, Hash128 const& b) noexcept {
+        return std::memcmp(a.bytes, b.bytes, sizeof a.bytes) == 0;
+    }
+    [[nodiscard]] bool is_zero() const noexcept { return *this == Hash128{}; }
+};
+
 /// Streaming XXH64 for hashing several buffers (settings structs, file chunks).
 class KILN_API Xxh64State {
 public:
