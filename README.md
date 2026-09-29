@@ -98,7 +98,8 @@ All programs print their options with `--help`.
 - `kiln-cook <input>... -o <store>` cooks files or directories into a store: artifacts named by
   their build key and `catalogs/<target>.kcat` (docs/design/store-catalog.md). It cooks only the
   sources whose inputs changed; `--verify` compares their content instead of size and time, and
-  `--layout named` writes `<store>/<name>.mesh|.ktx2` instead. `--check` validates
+  `--layout named` writes `<store>/<name>.mesh|.ktx2` instead. `--watch` keeps cooking what
+  changes; an app that watches the store (no cook provider) reloads it. `--check` validates
   only, `--target compat|desktop|uncompressed` picks the target profile (the block formats its
   GPUs sample), `--quality` the BC encoder effort,
   `--zstd <level>` the texture supercompression (0 = off), `--threads <n>` sets the pool size and
