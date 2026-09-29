@@ -13,27 +13,11 @@ struct GLFWwindow;
 namespace kiln::glx {
 
 inline constexpr f32 kFovY       = 50.0f * ex::kPi / 180.0f;
-inline constexpr u32 kMaxRoots   = 8;
 inline constexpr u32 kMaxLayouts = 16;
 inline constexpr u32 kMaxParts   = 256;
 
-struct GlOptions {
-    char const* store = "cooked";
-    Root roots[kMaxRoots];
-    u32 rootCount     = 0;
-    char const* model = nullptr;
-    char const* sky   = nullptr;
-    char const* dump  = nullptr;
-    double exposure   = 0;
-    u32 width         = 1280;
-    u32 height        = 720;
-    u32 timeoutS      = 60;
-    bool offscreen    = false;
-    bool watch        = false;
-};
-
-/// Parses the command line both examples share. Returns -1 to run, else the exit code.
-[[nodiscard]] int parse_options(char const* program, int argc, char** argv, GlOptions* o) noexcept;
+using GlOptions = ex::Options;
+using ex::parse_options;
 
 /// A window with a GL 4.6 core context, current and loaded; hidden with --offscreen. Null on failure
 /// (after glfwTerminate).

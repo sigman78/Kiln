@@ -18,6 +18,25 @@ void install_stdout_log() noexcept;
 /// A diagnostic sink that prints to stdout in the same format.
 [[nodiscard]] DiagSink stdout_diag() noexcept;
 
+/// The command line every integration example takes.
+struct Options {
+    static constexpr u32 kMaxRoots = 8;
+    char const* store              = "cooked";
+    Root roots[kMaxRoots];
+    u32 rootCount     = 0;
+    char const* model = nullptr;
+    char const* sky   = nullptr;
+    char const* dump  = nullptr;
+    double exposure   = 0;
+    u32 width         = 1280;
+    u32 height        = 720;
+    u32 timeoutS      = 60;
+    bool offscreen    = false; ///< stop when the scene settles (hidden window where the API allows)
+    bool watch        = false;
+};
+/// Parses it. Returns -1 to run, else the exit code (0 after --help, 2 on a usage error).
+[[nodiscard]] int parse_options(char const* program, int argc, char** argv, Options* o) noexcept;
+
 [[nodiscard]] char const* state_name(State s) noexcept;
 [[nodiscard]] char const* event_name(EventKind k) noexcept;
 /// True when the state is final for this load: Ready or Failed.

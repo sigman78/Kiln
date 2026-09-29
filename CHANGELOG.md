@@ -8,6 +8,12 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
 ## [Unreleased]
 
 ### Added
+- `kiln-sokol` (`examples/sokol`, CMake option `KILN_EXAMPLE_SOKOL`, ON in the presets): the scene
+  through sokol_gfx with sokol_app owning the main loop (D3D11 on Windows, GL on Linux, Metal on
+  macOS). Its adapter writes uploads into per-upload CPU memory and makes the images and buffers in
+  `flush`. New example-only dependencies: the sokol headers and the sokol-shdc binary, both at
+  pinned commits (the binary checked by SHA-256). The command line of the integration examples
+  moved to `examples/common` (`ex::Options`, `ex::parse_options`).
 - `kiln-gl-bindless` (`examples/gl/main_bindless.cpp`, CMake option `KILN_EXAMPLE_GL_BINDLESS`, ON in
   the presets): `kiln-gl` with `ARB_bindless_texture`. The GL adapter gains a bindless mode
   (`GlAdapterDesc::bindless`): `acquire` gives each texture a slot in a persistently mapped table

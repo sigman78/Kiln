@@ -17,7 +17,8 @@
                 "KILN_BUILD_EXAMPLES": "ON",
                 "KILN_BUILD_VIEWER": "ON",
                 "KILN_EXAMPLE_GL": "ON",
-                "KILN_EXAMPLE_GL_BINDLESS": "ON"
+                "KILN_EXAMPLE_GL_BINDLESS": "ON",
+                "KILN_EXAMPLE_SOKOL": "ON"
             }
         },
         {

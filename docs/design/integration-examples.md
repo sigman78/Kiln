@@ -1,7 +1,7 @@
 # Integration examples
 
-**Status:** Decided (owner, 2026-09-28): as proposed, all open points as proposed. Step 1 (`gl`)
-and step 2 (`gl-bindless`) are implemented, and so is `Adapter::flush` (owner, 2026-09-28).
+**Status:** Decided (owner, 2026-09-28): as proposed, all open points as proposed. Steps 1 to 3
+(`gl`, `gl-bindless`, `sokol`) are implemented, and so is `Adapter::flush`.
 **Decides:** Which small renderers show newcomers how to plug kiln in, what each one maps kiln's
 adapter onto, how their third-party code is fetched, and how the work feeds the API review.
 
@@ -47,11 +47,11 @@ measures.
 
 | Adapter part | `vk-basic` | `gl` | `gl-bindless` | `sokol` | `nga` |
 |---|---|---|---|---|---|
-| `acquire` | null | null | handle of the placeholder, made resident | `sg_alloc_image` | a heap index bound to the placeholder |
-| `begin_upload` memory | staging ring | persistently mapped PBO | same as `gl` | CPU memory | CPU-visible GPU heap (`gpu_heap`, ReBAR) |
+| `acquire` | null | null | a slot in the handle table, showing the placeholder | null | a heap index bound to the placeholder |
+| `begin_upload` memory | staging ring | persistently mapped PBO | same as `gl` | CPU memory per upload | CPU-visible GPU heap (`gpu_heap`, ReBAR) |
 | `commit_upload` | submits a copy | queues | queues | queues | records and submits a copy (textures); nothing (meshes) |
-| GPU work | transfer queue | `flush`: `glTextureSubImage*`, then a fence | same as `gl` | `flush`: `sg_init_image` / `sg_init_buffer` | copy queue, timeline semaphore |
-| `GpuObject` | `VkImage` / `VkBuffer` | the adapter's own table index | 64-bit handle in `native` | sokol id in `native` | GPU address in `native`, heap index in `slot` |
+| GPU work | transfer queue | `flush`: `glTextureSubImage*`, then a fence | same as `gl` | `flush`: `sg_make_image` + view / `sg_make_buffer`; complete at once | copy queue, timeline semaphore |
+| `GpuObject` | `VkImage` / `VkBuffer` | the adapter's own table index | table index in `native`, handle slot in `slot` | the adapter's own table index | GPU address in `native`, heap index in `slot` |
 | After `publish` | rebuild that material's set | nothing; bound per draw | write the new handle | nothing; bound per draw | nothing |
 | `destroy_deferred` | by frames in flight | immediate | make non-resident, then delete | immediate | by timeline value |
 
@@ -78,29 +78,8 @@ Proposal:
 The `gl` example was built first to confirm the shape before the API changed. It first called its
 own flush from the host loop; now kiln calls `Adapter::flush`.
 
-What `gl` showed (step 1):
-
-- The host-side `gl_adapter_flush()` before `pump()` was the only line a GL host needed beyond a
-  Vulkan host, and forgetting it stalled every upload silently. `Adapter::flush` removed it.
-- Uploads complete one to two frames after they are committed: the flush issues the copies and a
-  fence; `is_upload_complete` polls the fence on the pump thread.
-- `wait()` was unusable for GL (it required `kSelfSubmitting`); it now accepts `flush`.
-
-What `gl-bindless` showed (step 2):
-
-- `acquire` runs on the requesting thread, where GL cannot be called. It works because the handle
-  table is persistently mapped memory and the placeholders are already resident: with `flush`,
-  `create()` waits for them. Before `flush`, a slot could have held a null handle.
-- `publish` gives an `AssetId`, so the adapter keeps an id-to-slot map under a mutex, exactly as the
-  Vulkan adapter does. kiln already knows the acquired object of every asset (friction log).
-- A resident handle may not be made non-resident while earlier frames can sample it, so bindless GL
-  needs deferred destruction after all; the adapter fences a batch of retired slots and textures in
-  `flush`, which runs once per frame.
-- The materials store slot numbers once, when the textures are requested; the only per-frame
-  `gpu()` call left is the mesh buffer.
-- GL quirk, not a kiln matter: on NVIDIA the global `GL_TEXTURE_CUBE_MAP_SEAMLESS` does not apply
-  to bindless handles. With the per-sampler switch set, `kiln-gl-bindless` renders the same pixels
-  as `kiln-gl`.
+What each example showed is recorded in `../api-friction.md` ("Integration notes"), with the
+friction rows.
 
 ## Dependencies
 
@@ -110,9 +89,9 @@ has its own CMake option, OFF by default. Each dependency gets its entry in `dep
 
 | Example | Fetched | License | Notes |
 |---|---|---|---|
-| all | GLFW (already fetched for the viewer) | zlib | window and input; not used by `sokol` if it uses sokol_app |
+| all | GLFW (already fetched for the viewer) | zlib | window and input (`sokol` uses sokol_app instead) |
 | `gl`, `gl-bindless` | none | — | an example-owned loader of about 60 functions over `glfwGetProcAddress`, no glad |
-| `sokol` | sokol headers; `sokol-shdc` binary (sokol-tools-bin) | zlib; MIT | the shader compiler is a downloaded binary |
+| `sokol` | sokol headers (commit `2e75443d`); `sokol-shdc` (sokol-tools-bin `11d0cf67`) | zlib; MIT | the shader compiler is a downloaded binary, checked by SHA-256 |
 | `vk-basic` | Vulkan-Headers, volk (already fetched) | Apache-2.0, MIT | committed SPIR-V, as the viewer does |
 | `nga` | NoGraphicsAPI; a Slang compiler release | MIT; Apache-2.0 with LLVM exception | x86-64 with AVX2; its windowed examples exist on Windows and macOS only |
 
@@ -130,7 +109,7 @@ adds what nobody predicted.
 
 1. *(done)* `examples/common/` and `gl`, with the host-side flush; then decide `Adapter::flush`.
 2. *(done)* `gl-bindless`.
-3. `sokol`.
+3. *(done)* `sokol`.
 4. `vk-basic`.
 5. `nga` (built on CI, run by the owner on a supported GPU).
 6. API review of the friction log; changes go to `CHANGELOG.md` with migration notes.

@@ -4,8 +4,6 @@
 #include <kiln/containers.h>
 #include <kiln/log.h>
 
-#include "cli.h"
-
 #include <GLFW/glfw3.h>
 
 #include <cmath>
@@ -72,23 +70,6 @@ vec3 shade(vec3 base, vec3 n, vec3 v, float rough, float metal, float ao, vec3 a
 
 namespace {
 
-bool add_root(void* user, char const* arg) {
-    auto* o = static_cast<GlOptions*>(user);
-    if (o->rootCount == kMaxRoots) return false;
-    char const* const eq = std::strchr(arg, '=');
-    bool const named     = eq && !check_root_name(StrView(arg, usize(eq - arg)));
-    o->roots[o->rootCount++] =
-        named ? Root{StrView(arg, usize(eq - arg)), StrView(eq + 1)} : Root{{}, StrView(arg)};
-    return true;
-}
-
-bool set_model(void* user, char const* arg) {
-    auto* o = static_cast<GlOptions*>(user);
-    if (o->model) return false; // one model
-    o->model = arg;
-    return true;
-}
-
 GLuint compile(GLenum stage, char const* const* parts, GLsizei count) {
     GLuint const s = glCreateShader(stage);
     glShaderSource(s, count, parts, nullptr);
@@ -139,56 +120,6 @@ AttribFormat attrib_format(Format f) {
 }
 
 } // namespace
-
-int parse_options(char const* program, int argc, char** argv, GlOptions* o) noexcept {
-    cli::Option const opts[] = {
-        {.name = "--store", .arg = "<dir>", .help = "cooked store root (default: cooked)", .str = &o->store},
-        {.name = "--source",
-         .arg  = "<dir>",
-         .help = "the default root; enables cook-on-miss (needs kiln_cook)",
-         .each = &add_root,
-         .user = o},
-        {.name = "--root",
-         .arg  = "[<name>=]<dir>",
-         .help = "a source root; <name>=<dir> names <name>:<path> (repeatable)",
-         .each = &add_root,
-         .user = o},
-        {.name = "--sky", .arg = "<name>", .help = "a cube texture behind the model", .str = &o->sky},
-        {.name = "--exposure",
-         .arg  = "<ev>",
-         .help = "scale colors by 2^<ev> (default: 0)",
-         .real = &o->exposure},
-        {.name = "--width", .arg = "<px>", .help = "default: 1280", .number = &o->width, .max = 16384},
-        {.name = "--height", .arg = "<px>", .help = "default: 720", .number = &o->height, .max = 16384},
-        {.name = "--watch", .help = "hot reload store files (and sources with --source)", .flag = &o->watch},
-        {.name = "--offscreen", .help = "hidden window; stop when the scene settles", .flag = &o->offscreen},
-        {.name = "--dump",
-         .arg  = "<file.png>",
-         .help = "offscreen: write the settled frame",
-         .str  = &o->dump},
-        {.name   = "--timeout",
-         .arg    = "<s>",
-         .help   = "offscreen: give up after <s> seconds (default: 60)",
-         .number = &o->timeoutS},
-    };
-    cli::Spec const spec{
-        .program  = program,
-        .synopsis = "[options] <model>",
-        .options  = {opts, countof(opts)},
-        .footer =
-            "<model> is an asset name, e.g. WaterBottle.glb. Left-drag orbits, wheel zooms, Esc quits.\n"
-            "Exit codes: 0 ok, 1 an asset Failed or --timeout expired, 2 usage or setup error.",
-        .positional = &set_model,
-        .user       = o,
-    };
-    cli::Result const args = cli::parse(spec, argc, argv);
-    if (args.help) return 0;
-    if (!args.ok || !o->model || o->width == 0 || o->height == 0 || (o->dump && !o->offscreen)) {
-        cli::usage(spec, stderr);
-        return 2;
-    }
-    return -1;
-}
 
 GLFWwindow* open_window(GlOptions const& o, char const* title) noexcept {
     glfwSetErrorCallback(&glfw_error);

@@ -32,6 +32,7 @@ option(KILN_BUILD_EXAMPLES        "Build examples (null adapter, ...)"          
 option(KILN_BUILD_VIEWER          "Build the Vulkan example viewer (headers fetched; no SDK)" OFF)
 option(KILN_EXAMPLE_GL            "Build the OpenGL 4.6 integration example (kiln-gl)"  OFF)
 option(KILN_EXAMPLE_GL_BINDLESS   "Build the bindless OpenGL example (kiln-gl-bindless)" OFF)
+option(KILN_EXAMPLE_SOKOL         "Build the sokol_gfx example (kiln-sokol; fetches sokol and sokol-shdc)" OFF)
 option(KILN_WARNINGS_AS_ERRORS    "Treat warnings as errors"                         ${KILN_IS_TOP_LEVEL})
 option(KILN_INSTALL               "Generate install rules"                           ${KILN_IS_TOP_LEVEL})
 

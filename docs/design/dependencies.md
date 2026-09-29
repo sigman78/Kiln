@@ -22,6 +22,8 @@ links it.
 | Tests | **own** runner `tests/kiln_test.h` | n/a | tests | in-tree |
 | Viewer GPU API | raw **Vulkan 1.4** (Vulkan-Headers) + **volk** | Apache-2.0 / MIT; MIT | example viewer only | FetchContent, commit hash (no SDK) |
 | Example windows | **GLFW** 3.5.1 | zlib | windowed examples only (`examples/common`) | FetchContent, commit hash; X11 only on Linux |
+| sokol example | **sokol** headers (sokol_gfx, sokol_app, sokol_glue, sokol_log) | zlib | `kiln-sokol` only | FetchContent, commit hash |
+| sokol shaders | **sokol-shdc** prebuilt binary (sokol-tools-bin) | MIT | `kiln-sokol` build only | downloaded per host at a commit, checked by SHA-256 |
 
 `kiln_runtime` has **zero** third-party dependencies in v0.5. Everything third-party is cook-only
 (through the helper target `kiln_third_party_cook`) or example-only. The `.mesh` blob decode loop
@@ -83,6 +85,15 @@ Decided at M4 (open-questions A8, `viewer.md`): raw Vulkan, because a thin layer
 code the example exists to show; volk loads entry points without linking the loader; headers come
 from Vulkan-Headers through FetchContent, so no machine needs the SDK; GLFW (not SDL3) for the
 window, never initialized in offscreen mode; SPIR-V committed next to the GLSL.
+
+### sokol example: sokol + sokol-shdc
+
+Decided with the integration examples (`integration-examples.md`, owner 2026-09-28): the example
+shows sokol as sokol users write it, so sokol_app owns the loop and shaders go through sokol-shdc.
+The headers are fetched; the implementation is one C file compiled without kiln's warnings.
+sokol-shdc is a native tool with no source build in CMake, so the prebuilt binary for the host is
+downloaded from sokol-tools-bin at a pinned commit and checked by hash (`examples/sokol/CMakeLists.txt`).
+The two are pinned together: the generated shader code must match the sokol_gfx it compiles against.
 
 ## Rules
 

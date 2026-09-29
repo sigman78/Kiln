@@ -1,12 +1,14 @@
 // examples/common/example_app.cpp — logging, orbit camera and PNG dumps for the integration examples.
 #include "example_app.h"
 
+#include "cli.h"
 #include "png_writer.h"
 
 #include <GLFW/glfw3.h>
 
 #include <chrono>
 #include <cstdio>
+#include <cstring>
 
 namespace kiln::ex {
 namespace {
@@ -18,11 +20,30 @@ Clock::time_point const g_start = Clock::now();
 void log_fn(void*, LogLevel level, StrView category, StrView message) {
     std::printf("%9.1f ms  %-5s %-9.*s %.*s\n", ms_since_start(), log_level_name(level), KILN_SV(category),
                 KILN_SV(message));
+    std::fflush(stdout); // a crash or an abort must not eat the last lines
 }
 
 void diag_fn(void*, Diagnostic const& d) {
     std::printf("%9.1f ms  %-5s K%04u     %.*s%s%.*s: %.*s\n", ms_since_start(), severity_name(d.severity),
                 d.code, KILN_SV(d.asset), d.where.size ? " @" : "", KILN_SV(d.where), KILN_SV(d.message));
+    std::fflush(stdout);
+}
+
+bool add_root(void* user, char const* arg) {
+    auto* o = static_cast<Options*>(user);
+    if (o->rootCount == Options::kMaxRoots) return false;
+    char const* const eq = std::strchr(arg, '=');
+    bool const named     = eq && !check_root_name(StrView(arg, usize(eq - arg)));
+    o->roots[o->rootCount++] =
+        named ? Root{StrView(arg, usize(eq - arg)), StrView(eq + 1)} : Root{{}, StrView(arg)};
+    return true;
+}
+
+bool set_model(void* user, char const* arg) {
+    auto* o = static_cast<Options*>(user);
+    if (o->model) return false; // one model
+    o->model = arg;
+    return true;
 }
 
 OrbitCamera* camera_of(GLFWwindow* w) { return static_cast<OrbitCamera*>(glfwGetWindowUserPointer(w)); }
@@ -61,6 +82,56 @@ double ms_since_start() noexcept {
 void install_stdout_log() noexcept { set_log_sink(LogSink{&log_fn, nullptr}); }
 
 DiagSink stdout_diag() noexcept { return DiagSink{&diag_fn, nullptr}; }
+
+int parse_options(char const* program, int argc, char** argv, Options* o) noexcept {
+    cli::Option const opts[] = {
+        {.name = "--store", .arg = "<dir>", .help = "cooked store root (default: cooked)", .str = &o->store},
+        {.name = "--source",
+         .arg  = "<dir>",
+         .help = "the default root; enables cook-on-miss (needs kiln_cook)",
+         .each = &add_root,
+         .user = o},
+        {.name = "--root",
+         .arg  = "[<name>=]<dir>",
+         .help = "a source root; <name>=<dir> names <name>:<path> (repeatable)",
+         .each = &add_root,
+         .user = o},
+        {.name = "--sky", .arg = "<name>", .help = "a cube texture behind the model", .str = &o->sky},
+        {.name = "--exposure",
+         .arg  = "<ev>",
+         .help = "scale colors by 2^<ev> (default: 0)",
+         .real = &o->exposure},
+        {.name = "--width", .arg = "<px>", .help = "default: 1280", .number = &o->width, .max = 16384},
+        {.name = "--height", .arg = "<px>", .help = "default: 720", .number = &o->height, .max = 16384},
+        {.name = "--watch", .help = "hot reload store files (and sources with --source)", .flag = &o->watch},
+        {.name = "--offscreen", .help = "hidden window; stop when the scene settles", .flag = &o->offscreen},
+        {.name = "--dump",
+         .arg  = "<file.png>",
+         .help = "offscreen: write the settled frame",
+         .str  = &o->dump},
+        {.name   = "--timeout",
+         .arg    = "<s>",
+         .help   = "offscreen: give up after <s> seconds (default: 60)",
+         .number = &o->timeoutS},
+    };
+    cli::Spec const spec{
+        .program  = program,
+        .synopsis = "[options] <model>",
+        .options  = {opts, countof(opts)},
+        .footer =
+            "<model> is an asset name, e.g. WaterBottle.glb. Left-drag orbits, wheel zooms, Esc quits.\n"
+            "Exit codes: 0 ok, 1 an asset Failed or --timeout expired, 2 usage or setup error.",
+        .positional = &set_model,
+        .user       = o,
+    };
+    cli::Result const args = cli::parse(spec, argc, argv);
+    if (args.help) return 0;
+    if (!args.ok || !o->model || o->width == 0 || o->height == 0 || (o->dump && !o->offscreen)) {
+        cli::usage(spec, stderr);
+        return 2;
+    }
+    return -1;
+}
 
 char const* state_name(State s) noexcept {
     switch (s) {

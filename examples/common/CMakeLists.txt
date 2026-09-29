@@ -22,4 +22,4 @@ kiln_apply_defaults(kiln_example_common)
 target_include_directories(kiln_example_common PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
                                                PRIVATE ${CMAKE_SOURCE_DIR}/tests)
 target_compile_definitions(kiln_example_common PUBLIC GLFW_INCLUDE_NONE)
-target_link_libraries(kiln_example_common PUBLIC kiln_runtime glfw)
+target_link_libraries(kiln_example_common PUBLIC kiln_runtime glfw PRIVATE kiln_cli)
