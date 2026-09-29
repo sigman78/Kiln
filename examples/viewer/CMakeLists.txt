@@ -16,18 +16,8 @@ FetchContent_Declare(volk
     GIT_REPOSITORY https://github.com/zeux/volk.git
     GIT_TAG 7f46f79751d7e3b3a6df20e38d3e3986585bcdf4
     SYSTEM)
-# GLFW 3.5.1: window, input and the Vulkan surface. X11 only on Linux (fewer build deps).
-set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
-set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
-set(GLFW_BUILD_WAYLAND OFF CACHE BOOL "" FORCE)
-set(GLFW_LIBRARY_TYPE STATIC CACHE STRING "" FORCE)
-FetchContent_Declare(glfw
-    GIT_REPOSITORY https://github.com/glfw/glfw.git
-    GIT_TAG 70a9bb3881fe80fd483236e2b203cb451c6ecf40
-    SYSTEM)
-FetchContent_MakeAvailable(VulkanHeaders volk glfw)
+# GLFW comes from examples/common.
+FetchContent_MakeAvailable(VulkanHeaders volk)
 
 # ---------------------------------------------------------------------------
 # Shaders: the committed .spv are embedded as uint32_t arrays. `viewer-shaders`

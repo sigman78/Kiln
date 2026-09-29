@@ -8,6 +8,12 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
 ## [Unreleased]
 
 ### Added
+- `kiln-gl` (`examples/gl`, CMake option `KILN_EXAMPLE_GL`, ON in the presets): the first
+  integration example (`docs/design/integration-examples.md`). One model and a cube sky through
+  OpenGL 4.6 core with textures bound per draw; its adapter writes uploads into a persistently mapped
+  staging ring on kiln's workers and does the GL work in a host-side flush on the GL thread. Own GL
+  loader, no new dependency. `examples/common` holds what the windowed examples share (logging,
+  orbit camera, PNG dumps) and now fetches GLFW for all of them.
 - `VertexProfile::Float` (`profile = "float"` in a sidecar, `kiln-cook --profile float`): every
   vertex attribute as a plain float vector (position, normal `R32G32B32_SFLOAT`, tangent
   `R32G32B32A32_SFLOAT`, UVs `R32G32_SFLOAT`; color stays `R8G8B8A8_UNORM`), 48 B/vertex for the

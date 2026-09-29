@@ -21,7 +21,7 @@ links it.
 | File watching | **own** polling watcher (M5) | n/a | runtime (dev builds, `KILN_HOT_RELOAD`) | in-tree |
 | Tests | **own** runner `tests/kiln_test.h` | n/a | tests | in-tree |
 | Viewer GPU API | raw **Vulkan 1.4** (Vulkan-Headers) + **volk** | Apache-2.0 / MIT; MIT | example viewer only | FetchContent, commit hash (no SDK) |
-| Viewer window | **GLFW** 3.5.1 | zlib | example viewer only | FetchContent, commit hash; X11 only on Linux |
+| Example windows | **GLFW** 3.5.1 | zlib | windowed examples only (`examples/common`) | FetchContent, commit hash; X11 only on Linux |
 
 `kiln_runtime` has **zero** third-party dependencies in v0.5. Everything third-party is cook-only
 (through the helper target `kiln_third_party_cook`) or example-only. The `.mesh` blob decode loop

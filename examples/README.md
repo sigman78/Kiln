@@ -20,6 +20,7 @@ The second run is fast: the models are cached and the store is already cooked.
 |---|---|---|
 | `kiln-headless` | nothing | Loads assets through the null adapter and logs every request, event and diagnostic. `--slow` and `--latency` simulate slow IO and cooking. `--watch` keeps pumping until `--timeout` and logs hot reloads. |
 | `kiln-viewer` | Vulkan 1.4 driver | Draws cooked meshes through the example Vulkan adapter (`viewer/vk_adapter.cpp`). `--watch` turns on hot reload. |
+| `kiln-gl` | OpenGL 4.6 driver | One model and a cube sky through the example GL adapter (`gl/gl_adapter.cpp`): textures bound per draw, uploads flushed by the host on the GL thread. The integration example for GL users (`docs/design/integration-examples.md`). |
 | `kiln-vk-smoke` | Vulkan 1.4 driver | Checks that uploads complete in commit order, then loads assets through the adapter with no window and prints what the adapter did. |
 
 Every program prints its options with `--help`. Binaries land in `build/<preset>/examples/<name>/`.
@@ -70,6 +71,21 @@ are cooked with it. `--root <name>=<dir>` adds a named root, whose assets are na
 `--root <dir>` without a name is the same as `--source <dir>`. Roots have separate namespaces, and
 a glTF file's references must stay inside its own root.
 
+## GL recipes
+
+```sh
+# WaterBottle with its four texture kinds and the HDR test sky; meshes cook as plain floats
+kiln-gl --source examples/assets/khronos --root sky=examples/assets/skies --sky sky:hdr_cube.hdr \
+    --store build/gl-store WaterBottle.glb
+
+# no window: wait until everything is Ready, then write the frame
+kiln-gl --offscreen --dump gl.png --source examples/assets/khronos --root sky=examples/assets/skies \
+    --sky sky:hdr_cube.hdr --store build/gl-store WaterBottle.glb
+```
+
+`kiln-gl` reads only float vertex data: its provider cooks meshes with `VertexProfile::Float`, and a
+store mesh in the quantized profile is rejected with a message.
+
 ## Headless recipes
 
 `kiln-headless` pumps until every asset is Ready or Failed (or `--timeout`), resting 1 ms after a
@@ -98,6 +114,9 @@ every asset still reached Ready.
 ## Where things are
 
 - `headless/main.cpp`: the runtime API walkthrough, numbered step by step.
+- `gl/main.cpp`: the GL integration example, numbered step by step; `gl/gl_adapter.cpp`: its adapter;
+  `gl/gl_api.cpp`: a GL loader of about 70 functions over GLFW. `common/`: window, camera and logging
+  shared by the windowed examples.
 - `viewer/vk_adapter.cpp`: the example adapter. `viewer/main.cpp` and `viewer/viewer_render.cpp`: the
   viewer. `viewer/shaders/`: GLSL plus the committed SPIR-V.
 - `assets/README.md`: the demo models, their licenses and the pinned commit.

@@ -36,6 +36,13 @@ if(KILN_BUILD_TESTS)
     endif()
 endif()
 
+# The windowed examples share GLFW and examples/common (docs/design/integration-examples.md).
+if(KILN_BUILD_VIEWER OR KILN_EXAMPLE_GL)
+    add_subdirectory(common)
+endif()
 if(KILN_BUILD_VIEWER)
     add_subdirectory(viewer)
+endif()
+if(KILN_EXAMPLE_GL)
+    add_subdirectory(gl)
 endif()

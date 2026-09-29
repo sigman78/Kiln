@@ -15,7 +15,8 @@
                 "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
                 "KILN_BUILD_TESTS": "ON",
                 "KILN_BUILD_EXAMPLES": "ON",
-                "KILN_BUILD_VIEWER": "ON"
+                "KILN_BUILD_VIEWER": "ON",
+                "KILN_EXAMPLE_GL": "ON"
             }
         },
         {

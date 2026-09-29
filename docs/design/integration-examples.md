@@ -1,7 +1,7 @@
 # Integration examples
 
-**Status:** Proposed (2026-09-28). The owner asked for the examples, the separate bindless GL
-example and the float vertex baseline; the rest awaits sign-off.
+**Status:** Decided (owner, 2026-09-28): as proposed, all open points as proposed. Step 1 (`gl`)
+is implemented; `Adapter::flush` awaits the decision below.
 **Decides:** Which small renderers show newcomers how to plug kiln in, what each one maps kiln's
 adapter onto, how their third-party code is fetched, and how the work feeds the API review.
 
@@ -78,6 +78,15 @@ Proposal:
 The `gl` example is built first to confirm the shape before the API changes. Until then it calls
 its own flush from the host loop.
 
+What `gl` showed (step 1):
+
+- The host-side `gl_adapter_flush()` before `pump()` is the only line a GL host needs beyond a
+  Vulkan host. Forgetting it stalls every upload silently: a strong reason to move it into kiln.
+- Uploads complete one to two frames after they are committed: the flush issues the copies and a
+  fence; `is_upload_complete` polls the fence on the pump thread. Calling `flush` at the start of
+  `pump()` keeps that.
+- `wait()` stays unusable for GL until `flush` exists (it requires `kSelfSubmitting`).
+
 ## Dependencies
 
 All are fetched with `FetchContent` at a pinned commit or release; nothing is vendored. Each example
@@ -104,7 +113,7 @@ adds what nobody predicted.
 
 ## Rollout
 
-1. `examples/common/` and `gl`, with the host-side flush; then decide `Adapter::flush`.
+1. *(done)* `examples/common/` and `gl`, with the host-side flush; then decide `Adapter::flush`.
 2. `gl-bindless`.
 3. `sokol`.
 4. `vk-basic`.
