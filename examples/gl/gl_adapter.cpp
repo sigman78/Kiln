@@ -260,13 +260,17 @@ Status begin_upload(void* user, UploadDesc const& desc, UploadTarget* out) {
     if (desc.size > a->ringSize) {
         KILN_ERROR("gl", "upload of %llu bytes exceeds the %llu-byte staging ring", ull(desc.size),
                    ull(a->ringSize));
-        return make_status(Code::OutOfMemory);
+        return make_status(Code::Unsupported); // can never fit: not Busy
     }
     if (desc.kind == UploadKind::TextureLevels &&
         (!desc.texture || desc.texture->levels > kMaxLevels || desc.texture->depth > 1))
         return make_status(Code::Unsupported);
     std::lock_guard<std::mutex> const lock(a->mutex);
-    if (a->freeUploads.empty() || a->freeObjects.empty()) return make_status(Code::Busy);
+    if (a->freeObjects.empty()) { // held by live assets: waiting would not free one
+        KILN_ERROR("gl", "all %u objects are in use", u32(a->objects.size()));
+        return make_status(Code::OutOfMemory);
+    }
+    if (a->freeUploads.empty()) return make_status(Code::Busy);
     u64 offset = 0;
     if (!ring_alloc(a, max<u64>(desc.size, 1), &offset)) return make_status(Code::Busy);
 

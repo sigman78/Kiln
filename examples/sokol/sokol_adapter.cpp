@@ -186,7 +186,11 @@ Status begin_upload(void* user, UploadDesc const& desc, UploadTarget* out) {
     u32 ui = 0, oi = 0;
     {
         std::lock_guard<std::mutex> const lock(a->mutex);
-        if (a->freeUploads.empty() || a->freeObjects.empty()) return make_status(Code::Busy);
+        if (a->freeObjects.empty()) { // held by live assets: waiting would not free one
+            KILN_ERROR("sokol", "all %u objects are in use", u32(a->objects.size()));
+            return make_status(Code::OutOfMemory);
+        }
+        if (a->freeUploads.empty()) return make_status(Code::Busy);
         ui = a->freeUploads.back();
         a->freeUploads.pop_back();
         oi = a->freeObjects.back();

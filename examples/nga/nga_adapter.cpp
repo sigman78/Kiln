@@ -325,8 +325,19 @@ Status begin_upload(void* user, UploadDesc const& desc, UploadTarget* out) {
                       gpu_format(desc.texture->format) == gpu::Format::undefined))
         return make_status(Code::Unsupported);
     u64 const size = max<u64>(desc.size, 1);
+    u64 const room = isTexture ? a->staging.range.size : a->desc.meshBytes;
+    if (size > room) { // can never fit: not Busy
+        KILN_ERROR("nga", "upload of %llu bytes exceeds the %llu-byte %s",
+                   static_cast<unsigned long long>(size), static_cast<unsigned long long>(room),
+                   isTexture ? "staging ring" : "mesh heap");
+        return make_status(Code::Unsupported);
+    }
     std::lock_guard<std::mutex> const lock(a->mutex);
-    if (a->freeUploads.empty() || a->freeObjects.empty()) return make_status(Code::Busy);
+    if (a->freeObjects.empty()) { // held by live assets: waiting would not free one
+        KILN_ERROR("nga", "all %u objects are in use", u32(a->objects.size()));
+        return make_status(Code::OutOfMemory);
+    }
+    if (a->freeUploads.empty()) return make_status(Code::Busy);
     u64 offset = 0;
     if (isTexture ? !ring_alloc(a, size, &offset) : !a->meshRanges.alloc(size, kUploadAlign, &offset))
         return make_status(Code::Busy);

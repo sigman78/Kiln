@@ -87,8 +87,9 @@ struct GpuObject {
 enum class UploadStatus : u8 {
     Pending = 0, ///< still in flight; kiln polls again on a later pump
     Complete,    ///< kiln uses the object from now on
-    /// The adapter could not make the object. kiln fails the asset (K5004), or keeps the current
-    /// version of a reload (K5010), and passes the object to destroy.
+    /// The adapter could not make the object, and no GPU work on the upload remains (finished or
+    /// cancelled). kiln fails the asset (K5004), or keeps the current version of a reload (K5010),
+    /// and passes the object to destroy.
     Failed,
 };
 
@@ -107,18 +108,24 @@ struct Adapter {
     /// shaders read (with vertex pulling, only the shaders decide).
     bool (*supports_format)(void* user, Format f, FormatUsage usage) = nullptr;
     void (*copy_constraints)(void* user, CopyConstraints* out)       = nullptr;
-    /// May return Code::Busy (back-pressure); kiln retries on a later pump.
+    /// Code::Busy means "not now, a retry can succeed" (staging space or upload records in use by
+    /// uploads in flight); kiln retries on a later pump, without limit. An upload that can never
+    /// fit (larger than the whole staging ring or heap) returns Unsupported, a full object table
+    /// OutOfMemory: both fail the asset (K5004).
     Status (*begin_upload)(void* user, UploadDesc const& desc, UploadTarget* out) = nullptr;
     void (*commit_upload)(void* user, u64 token)                                  = nullptr;
-    /// Polled on the pump thread until not Pending. Once Complete, kiln uses the object (or destroys
-    /// it if the asset was dropped meanwhile).
+    /// Polled on the pump thread until not Pending; kiln never asks about the token again, so the
+    /// adapter may recycle it with that answer. Once Complete, kiln uses the object (or destroys it
+    /// if the asset was dropped meanwhile).
     UploadStatus (*upload_status)(void* user, u64 token) = nullptr;
-    /// Bindless adapters: slot `slot` (kiln numbers them, [0, bindlessSlots)) shows `obj` from now
-    /// on: the placeholder of the texture's kind and shape at the request, the texture once Ready,
-    /// the new one after a reload, the Failed checker with devPlaceholders.
+    /// Bindless adapters: slot `slot` (kiln numbers them, [0, bindlessSlots)) shows `obj`: the
+    /// placeholder of the texture's kind and shape at the request, the texture once Ready, the new
+    /// one after a reload, the Failed checker with devPlaceholders. Frames the host records after
+    /// this pump must see `obj`; frames in flight may keep the previous object, which kiln destroys
+    /// only after they complete (PumpOptions).
     void (*bind)(void* user, u32 slot, GpuObject obj, TextureShape shape) = nullptr;
     /// No frame the host reported (PumpOptions::frame / completedFrame) can use `obj` any more:
-    /// free it now. Its upload has completed.
+    /// free it now. Its upload reported Complete or Failed; a failed one may be partly made.
     void (*destroy)(void* user, GpuObject obj) = nullptr;
     /// Optional. Called at the start of every pump() (so in every wait() loop too) and while
     /// create() waits for the placeholders, on that thread. An adapter whose GPU work must run

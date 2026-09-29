@@ -236,6 +236,13 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
   relative path, as the `UriResolver` already received for buffers.
 
 ### Changed
+- Adapter contract, documentation only (`adapter.h`, `adapter.md`): `Busy` means a retry can
+  succeed, and an upload that can never fit returns `Unsupported`, a full object table
+  `OutOfMemory`; kiln never polls a token after its first terminal status; `Failed` means no GPU
+  work on the upload remains, and `destroy` takes partly made objects; `bind` reaches the frames
+  recorded after the pump. The example adapters follow it: `kiln-nga` no longer returns `Busy` for
+  an upload larger than its staging ring or mesh heap (the asset stayed Pending forever), and GL,
+  sokol and NoGraphicsAPI fail a full object table instead of waiting on it.
 - CI: every push builds the library, the tools, `kiln-headless` and the tests on the platform
   matrix, plus the shipping contract. The GPU examples, `kiln-nga`, the texture-only build,
   sanitizers and the compile-time report moved to `.github/workflows/extended.yml`, run by hand
