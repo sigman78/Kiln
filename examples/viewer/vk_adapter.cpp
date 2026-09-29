@@ -211,8 +211,7 @@ struct VkAdapter {
     VkSampler sampler               = VK_NULL_HANDLE;
 
     std::atomic<u64> watermark{0};
-    u32 busyReturned  = 0;
-    u64 bytesUploaded = 0;
+    ex::AdapterStats stats; ///< the counters; the rest is read from the tables
 };
 
 namespace {
@@ -640,7 +639,7 @@ Status vk_begin_upload(void* user, UploadDesc const& desc, UploadTarget* out) no
 
     u64 start = 0;
     if (!ring_find(a, n, align, &start)) {
-        ++a->busyReturned;
+        ++a->stats.busyStaging;
         return make_status(Code::Busy);
     }
     if (a->freeObjects.empty()) {
@@ -703,7 +702,7 @@ void vk_commit_upload(void* user, u64 token) noexcept {
     o.value                                        = ++a->lastValue;
     a->byValue[usize(o.value % a->byValue.size())] = index;
     a->ring.items[o.ringItem].value                = o.value;
-    a->bytesUploaded += o.size;
+    a->stats.bytesCommitted += o.size;
     if (!a->submitOnPoll) submit_ready(a);
 }
 
@@ -961,19 +960,20 @@ TextureView adapter_texture(VkAdapter* a, GpuObject obj) noexcept {
     return TextureView{.view = o->view, .shape = o->texture.shape};
 }
 
-AdapterStats adapter_stats(VkAdapter* a) noexcept {
+ex::AdapterStats adapter_stats(VkAdapter* a) noexcept {
     if (!a) return {};
     std::lock_guard<std::mutex> lock(a->mutex);
     u64 const completed = timeline_value(a);
     ring_reclaim(a, completed);
     cmds_reclaim(a, completed);
-    return AdapterStats{
-        .uploadsInFlight = u32(a->lastValue > completed ? a->lastValue - completed : 0),
-        .busyReturned    = a->busyReturned,
-        .bytesUploaded   = a->bytesUploaded,
-        .liveObjects     = a->liveObjects,
-        .stagingUsed     = ring_used(a),
-    };
+    ex::AdapterStats s = a->stats;
+    for (Object const& o : a->objects) // an upload is pending until its value completes
+        s.uploadsPending += o.state == ObjectState::Begun || o.state == ObjectState::Recorded ||
+                            (o.state == ObjectState::Submitted && o.value > completed);
+    s.liveObjects = a->liveObjects;
+    s.stagingUsed = ring_used(a);
+    s.stagingSize = a->ringSize;
+    return s;
 }
 
 } // namespace kiln::vkx

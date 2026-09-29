@@ -4,6 +4,9 @@
 #pragma once
 
 #include <kiln/adapter.h>
+#include <kiln/alloc.h>
+
+#include "adapter_stats.h"
 
 #include "sokol_gfx.h"
 
@@ -12,8 +15,9 @@ namespace kiln::sk {
 struct SokolAdapter;
 
 struct SokolAdapterDesc {
-    u32 maxObjects = 1024; ///< images and buffers alive at once
-    u32 maxUploads = 256;  ///< uploads between begin_upload and completion
+    Allocator const* alloc = nullptr; ///< tables and upload memory; nullptr = default allocator
+    u32 maxObjects         = 1024;    ///< images and buffers alive at once
+    u32 maxUploads         = 256;     ///< uploads between begin_upload and completion
 };
 
 /// After sg_setup(), whose buffer, image and view pools must each hold maxObjects more than the
@@ -21,6 +25,9 @@ struct SokolAdapterDesc {
 [[nodiscard]] Result<SokolAdapter*> sokol_adapter_create(SokolAdapterDesc const& desc, Adapter* out) noexcept;
 /// After destroy(ctx), before sg_shutdown().
 void sokol_adapter_destroy(SokolAdapter* a) noexcept;
+/// The counters shared by every example adapter; any thread. Staging is the CPU memory uploads
+/// hold until flush (stagingSize 0: no fixed ring).
+[[nodiscard]] ex::AdapterStats sokol_adapter_stats(SokolAdapter* a) noexcept;
 
 /// The texture view behind a GpuObject that gpu_object() returned; invalid until flush made it.
 [[nodiscard]] sg_view sokol_texture(SokolAdapter const* a, GpuObject obj) noexcept;

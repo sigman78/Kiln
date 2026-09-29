@@ -6,6 +6,7 @@
 #include <kiln/adapter.h>
 #include <kiln/alloc.h>
 
+#include "adapter_stats.h"
 #include "vk_device.h"
 
 namespace kiln::vkx {
@@ -61,13 +62,8 @@ struct TextureView {
 };
 [[nodiscard]] TextureView adapter_texture(VkAdapter* a, GpuObject obj) noexcept;
 
-struct AdapterStats {
-    u32 uploadsInFlight = 0;
-    u32 busyReturned    = 0; ///< begin_upload calls that returned Busy (staging full)
-    u64 bytesUploaded   = 0;
-    u32 liveObjects     = 0;
-    u64 stagingUsed     = 0; ///< bytes of the ring currently reserved
-};
-[[nodiscard]] AdapterStats adapter_stats(VkAdapter* a) noexcept;
+/// The counters shared by every example adapter; any thread. A submitted copy never fails, and the
+/// only Busy is a full staging ring (a full object table is OutOfMemory).
+[[nodiscard]] ex::AdapterStats adapter_stats(VkAdapter* a) noexcept;
 
 } // namespace kiln::vkx

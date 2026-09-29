@@ -432,6 +432,7 @@ void frame(void* user) {
 
 void cleanup(void* user) {
     App& app = *static_cast<App*>(user);
+    ex::log_adapter_stats("sokol", sokol_adapter_stats(app.sa));
     // 7. kiln first (it hands every object back through Adapter::destroy), then sokol.
 #if KILN_SOKOL_HAS_COOK
     if (app.provider) cook::uninstall_provider(app.ctx);

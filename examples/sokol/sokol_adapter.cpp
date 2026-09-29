@@ -64,7 +64,9 @@ sg_pixel_format pixel_format(Format f) noexcept {
 } // namespace
 
 struct SokolAdapter {
+    Allocator const* alloc = nullptr;
     std::mutex mutex;
+    ex::AdapterStats stats; ///< the counters, stagingUsed included (guarded by mutex)
     Vec<Object> objects;
     Vec<u32> freeObjects;
     ex::UploadPool<Upload> uploads;
@@ -74,9 +76,13 @@ struct SokolAdapter {
 namespace {
 
 /// Frees the bytes kiln wrote; sokol has copied them, or never will.
-void free_bytes(Upload& u) noexcept {
-    kiln::free(default_allocator(), u.bytes, usize(max<u64>(u.size, 1)), 16, Tag::Payload);
+void free_bytes(SokolAdapter* a, Upload& u) noexcept {
+    if (!u.bytes) return;
+    usize const n = usize(max<u64>(u.size, 1));
+    kiln::free(a->alloc, u.bytes, n, 16, Tag::Payload);
     u.bytes = nullptr;
+    std::lock_guard<std::mutex> const lock(a->mutex);
+    a->stats.stagingUsed -= n;
 }
 
 void release_object(SokolAdapter* a, u32 index) noexcept {
@@ -177,7 +183,11 @@ Status begin_upload(void* user, UploadDesc const& desc, UploadTarget* out) {
             return make_status(Code::OutOfMemory);
         }
         ui = a->uploads.acquire();
-        if (ui == kInvalid) return make_status(Code::Busy);
+        if (ui == kInvalid) {
+            ++a->stats.busyUploads;
+            return make_status(Code::Busy);
+        }
+        a->stats.stagingUsed += max<u64>(desc.size, 1);
         oi = a->freeObjects.back();
         a->freeObjects.pop_back();
         a->objects[oi].used = true;
@@ -187,8 +197,7 @@ Status begin_upload(void* user, UploadDesc const& desc, UploadTarget* out) {
     u.kind    = desc.kind;
     u.tex     = desc.texture ? *desc.texture : TextureDesc{};
     u.size    = desc.size;
-    u.bytes =
-        static_cast<u8*>(kiln::alloc(default_allocator(), usize(max<u64>(desc.size, 1)), 16, Tag::Payload));
+    u.bytes   = static_cast<u8*>(kiln::alloc(a->alloc, usize(max<u64>(desc.size, 1)), 16, Tag::Payload));
 
     out->dst           = u.bytes;
     out->rowPitchAlign = 1;
@@ -206,6 +215,7 @@ void commit_upload(void* user, u64 token) {
         i = a->uploads.index_of(token);
         if (i == kInvalid) return;
         a->uploads.advance(i, ex::UploadState::Committed);
+        a->stats.bytesCommitted += a->uploads[i].size;
     }
     a->commits.push(i);
 }
@@ -237,7 +247,11 @@ void flush(void* user) {
     for (u32 i : a->commits.take()) {
         Upload& u     = a->uploads[i];
         bool const ok = make_object(a, u);
-        free_bytes(u);
+        free_bytes(a, u);
+        if (!ok) {
+            std::lock_guard<std::mutex> const lock(a->mutex);
+            ++a->stats.uploadsFailed;
+        }
         // A failure reaches kiln through upload_status: it fails the asset (K5004).
         a->uploads.advance(i, ok ? ex::UploadState::Complete : ex::UploadState::Failed);
     }
@@ -268,12 +282,17 @@ Result<SokolAdapter*> sokol_adapter_create(SokolAdapterDesc const& desc, Adapter
                    gd.buffer_pool_size, gd.image_pool_size, gd.view_pool_size, desc.maxObjects);
         return make_status(Code::InvalidArgument);
     }
-    auto* a = new_object<SokolAdapter>(default_allocator(), Tag::Payload);
+    Allocator const* const al = desc.alloc ? desc.alloc : default_allocator();
+    auto* a                   = new_object<SokolAdapter>(al, Tag::Payload);
+    a->alloc                  = al;
+    a->objects.init(al, Tag::Payload);
+    a->freeObjects.init(al, Tag::Payload);
     a->objects.resize(desc.maxObjects);
-    a->uploads = ex::UploadPool<Upload>(default_allocator(), desc.maxUploads);
+    a->freeObjects.reserve(desc.maxObjects);
+    a->uploads = ex::UploadPool<Upload>(al, desc.maxUploads);
     for (u32 i = desc.maxObjects; i-- > 0;)
         a->freeObjects.push_back(i);
-    a->commits = ex::CommitQueue(default_allocator(), desc.maxUploads);
+    a->commits = ex::CommitQueue(al, desc.maxUploads);
     *out       = Adapter{
               .supports_format  = &supports_format,
               .copy_constraints = &copy_constraints,
@@ -293,10 +312,18 @@ Result<SokolAdapter*> sokol_adapter_create(SokolAdapterDesc const& desc, Adapter
 void sokol_adapter_destroy(SokolAdapter* a) noexcept {
     if (!a) return;
     for (u32 i = 0; i < a->uploads.capacity(); ++i)
-        free_bytes(a->uploads[i]); // uploads never flushed still hold theirs
+        free_bytes(a, a->uploads[i]); // uploads never flushed still hold theirs
     for (u32 i = 0; i < a->objects.size(); ++i)
         if (a->objects[i].used) release_object(a, i);
-    delete_object(default_allocator(), a, Tag::Payload);
+    delete_object(a->alloc, a, Tag::Payload);
+}
+
+ex::AdapterStats sokol_adapter_stats(SokolAdapter* a) noexcept {
+    std::lock_guard<std::mutex> const lock(a->mutex);
+    ex::AdapterStats s = a->stats;
+    s.liveObjects      = u32(a->objects.size() - a->freeObjects.size());
+    s.uploadsPending   = a->uploads.in_use();
+    return s;
 }
 
 sg_view sokol_texture(SokolAdapter const* a, GpuObject obj) noexcept {

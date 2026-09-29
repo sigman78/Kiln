@@ -274,6 +274,8 @@ int main(int argc, char** argv) {
             break;
     }
 
+    ex::log_adapter_stats("gl", gl_adapter_stats(*gla));
+
     // 6. Teardown: kiln first (it hands every GPU object back through Adapter::destroy), then GL.
 #if KILN_GL_HAS_COOK
     if (provider) cook::uninstall_provider(ctx);

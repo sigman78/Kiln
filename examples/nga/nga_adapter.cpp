@@ -31,6 +31,11 @@ struct RangeAllocator {
     };
     Vec<Range> free; ///< sorted by offset, never adjacent
 
+    void init(Allocator const* alloc, u64 size) {
+        free.init(alloc, Tag::Payload);
+        free.push_back(Range{0, size});
+    }
+
     void insert_at(usize i, Range r) {
         free.push_back(r);
         for (usize j = free.size() - 1; j > i; --j)
@@ -38,7 +43,6 @@ struct RangeAllocator {
         free[i] = r;
     }
 
-    void init(u64 size) { free.push_back(Range{0, size}); }
     bool alloc(u64 size, u64 align, u64* offset) {
         for (usize i = 0; i < free.size(); ++i) {
             Range& r        = free[i];
@@ -119,7 +123,9 @@ gpu::Format gpu_format(Format f) noexcept {
 } // namespace
 
 struct NgaAdapter {
+    Allocator const* alloc = nullptr;
     NgaAdapterDesc desc{};
+    ex::AdapterStats stats; ///< the counters; the rest is read from the tables (guarded by mutex)
     gpu::Device* device = nullptr;
     std::mutex mutex;
 
@@ -282,15 +288,20 @@ Status begin_upload(void* user, UploadDesc const& desc, UploadTarget* out) {
         KILN_ERROR("nga", "all %u objects are in use", u32(a->objects.size()));
         return make_status(Code::OutOfMemory);
     }
-    if (a->uploads.full()) return make_status(Code::Busy);
+    if (a->uploads.full()) {
+        ++a->stats.busyUploads;
+        return make_status(Code::Busy);
+    }
     u64 offset = 0;
     ex::StagingRing::Reservation r;
     if (isTexture) {
         r      = a->ring.reserve(size, kUploadAlign);
         offset = r.offset;
     }
-    if (isTexture ? !r.ok() : !a->meshRanges.alloc(size, kUploadAlign, &offset))
+    if (isTexture ? !r.ok() : !a->meshRanges.alloc(size, kUploadAlign, &offset)) {
+        ++(isTexture ? a->stats.busyStaging : a->stats.busyHeap);
         return make_status(Code::Busy);
+    }
 
     u32 const ui = a->uploads.acquire();
     u32 const oi = a->freeObjects.back();
@@ -325,6 +336,7 @@ void commit_upload(void* user, u64 token) {
         i = a->uploads.index_of(token);
         if (i == kInvalid) return;
         a->uploads.advance(i, ex::UploadState::Committed);
+        a->stats.bytesCommitted += a->uploads[i].size;
     }
     a->commits.push(i);
 }
@@ -384,10 +396,14 @@ void flush(void* user) {
         Record const r = record_texture(a, cmd, u);
         if (r == Record::Retry) { // heap or descriptors full: try again next flush
             a->commits.push(i);
+            std::lock_guard<std::mutex> const lock(a->mutex);
+            ++a->stats.busyHeap;
             continue;
         }
         if (r == Record::Failed) { // no GPU work: done at once
             a->uploads.advance(i, ex::UploadState::Failed);
+            std::lock_guard<std::mutex> const lock(a->mutex);
+            ++a->stats.uploadsFailed;
             continue;
         }
         u.value = value;
@@ -411,11 +427,14 @@ void flush(void* user) {
 } // namespace
 
 Result<NgaAdapter*> nga_adapter_create(NgaAdapterDesc const& desc, Adapter* out) noexcept {
-    if (!out || !desc.device || desc.maxSlots == 0 || desc.maxDescriptors == 0)
+    if (!out || !desc.device || desc.maxSlots == 0 || desc.maxDescriptors == 0 || desc.maxObjects == 0 ||
+        desc.maxUploads == 0)
         return make_status(Code::InvalidArgument);
-    auto* a        = new_object<NgaAdapter>(default_allocator(), Tag::Payload);
-    a->desc        = desc;
-    a->device      = desc.device;
+    Allocator const* const al = desc.alloc ? desc.alloc : default_allocator();
+    auto* a                   = new_object<NgaAdapter>(al, Tag::Payload);
+    a->alloc                  = al;
+    a->desc                   = desc;
+    a->device                 = desc.device;
     a->staging     = gpu::create_gpu_heap(a->device, desc.stagingBytes, gpu::MemoryType::cpu_visible);
     a->meshHeap    = gpu::create_gpu_heap(a->device, desc.meshBytes, gpu::MemoryType::cpu_visible);
     a->textureHeap = gpu::create_texture_heap(a->device, desc.textureBytes);
@@ -437,19 +456,25 @@ Result<NgaAdapter*> nga_adapter_create(NgaAdapterDesc const& desc, Adapter* out)
                                    .address_v = gpu::AddressMode::clamp_to_edge,
                                    .address_w = gpu::AddressMode::clamp_to_edge});
 
-    u32 constexpr kMaxObjects = 8192, kMaxUploads = 256;
-    a->meshRanges.init(desc.meshBytes);
-    a->textureRanges.init(desc.textureBytes);
-    a->objects.resize(kMaxObjects);
-    a->uploads = ex::UploadPool<Upload>(default_allocator(), kMaxUploads);
-    a->ring    = ex::StagingRing(default_allocator(), a->staging.range.size, kMaxUploads);
-    for (u32 i = kMaxObjects; i-- > 0;)
+    a->meshRanges.init(al, desc.meshBytes);
+    a->textureRanges.init(al, desc.textureBytes);
+    a->objects.init(al, Tag::Payload);
+    a->freeObjects.init(al, Tag::Payload);
+    a->freeDescriptors.init(al, Tag::Payload);
+    a->slotDescriptor.init(al, Tag::Payload);
+    a->inFlight.init(al, Tag::Payload);
+    a->objects.resize(desc.maxObjects);
+    a->freeObjects.reserve(desc.maxObjects);
+    a->freeDescriptors.reserve(desc.maxDescriptors);
+    a->uploads = ex::UploadPool<Upload>(al, desc.maxUploads);
+    a->ring    = ex::StagingRing(al, a->staging.range.size, desc.maxUploads);
+    for (u32 i = desc.maxObjects; i-- > 0;)
         a->freeObjects.push_back(i);
     for (u32 i = desc.maxDescriptors; i-- > 0;)
         a->freeDescriptors.push_back(i);
     a->slotDescriptor.resize(desc.maxSlots, kInvalid);
-    a->commits = ex::CommitQueue(default_allocator(), kMaxUploads);
-    a->inFlight.reserve(kMaxUploads);
+    a->commits = ex::CommitQueue(al, desc.maxUploads);
+    a->inFlight.reserve(desc.maxUploads);
 
     *out = Adapter{
         .supports_format  = &supports_format,
@@ -481,7 +506,17 @@ void nga_adapter_destroy(NgaAdapter* a) noexcept {
     if (a->textureHeap.owner) gpu::destroy_texture_heap(a->textureHeap);
     if (a->meshHeap.owner) gpu::destroy_gpu_heap(a->meshHeap);
     if (a->staging.owner) gpu::destroy_gpu_heap(a->staging);
-    delete_object(default_allocator(), a, Tag::Payload);
+    delete_object(a->alloc, a, Tag::Payload);
+}
+
+ex::AdapterStats nga_adapter_stats(NgaAdapter* a) noexcept {
+    std::lock_guard<std::mutex> const lock(a->mutex);
+    ex::AdapterStats s = a->stats;
+    s.liveObjects      = u32(a->objects.size() - a->freeObjects.size());
+    s.uploadsPending   = a->uploads.in_use();
+    s.stagingUsed      = a->ring.used();
+    s.stagingSize      = a->ring.size();
+    return s;
 }
 
 gpu::TextureDescriptorHeap* nga_texture_heap(NgaAdapter* a) noexcept { return a->descriptors; }

@@ -511,6 +511,8 @@ int main(int argc, char** argv) {
     }
     if (state(s.ctx, s.model) == State::Failed && exitCode == 0) exitCode = 1;
 
+    ex::log_adapter_stats("vk-basic", vkx::adapter_stats(s.va));
+
     // 7. Teardown: kiln first (it hands every object back through Adapter::destroy), then Vulkan.
 #if KILN_VK_BASIC_HAS_COOK
     if (provider) cook::uninstall_provider(s.ctx);

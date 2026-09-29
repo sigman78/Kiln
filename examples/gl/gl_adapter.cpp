@@ -79,7 +79,9 @@ TexFormat tex_format(Format f) noexcept {
 } // namespace
 
 struct GlAdapter {
+    Allocator const* alloc = nullptr;
     std::mutex mutex;
+    ex::AdapterStats stats; ///< the counters; the rest is read from the tables (guarded by mutex)
     GLuint staging = 0;
     u8* mapped     = nullptr;
     ex::StagingRing ring; ///< reservations in `staging`, released when their fence signals
@@ -213,9 +215,15 @@ Status begin_upload(void* user, UploadDesc const& desc, UploadTarget* out) {
         KILN_ERROR("gl", "all %u objects are in use", u32(a->objects.size()));
         return make_status(Code::OutOfMemory);
     }
-    if (a->uploads.full()) return make_status(Code::Busy);
+    if (a->uploads.full()) {
+        ++a->stats.busyUploads;
+        return make_status(Code::Busy);
+    }
     ex::StagingRing::Reservation const r = a->ring.reserve(desc.size, kUploadAlign);
-    if (!r.ok()) return make_status(Code::Busy);
+    if (!r.ok()) {
+        ++a->stats.busyStaging;
+        return make_status(Code::Busy);
+    }
 
     u32 const ui = a->uploads.acquire();
     u32 const oi = a->freeObjects.back();
@@ -246,6 +254,7 @@ void commit_upload(void* user, u64 token) {
         i = a->uploads.index_of(token);
         if (i == kInvalid) return;
         a->uploads.advance(i, ex::UploadState::Committed);
+        a->stats.bytesCommitted += a->uploads[i].size;
     }
     a->commits.push(i);
 }
@@ -326,6 +335,7 @@ void flush(void* user) {
         a->uploads.advance(i, ex::UploadState::Failed); // nothing read the staging range
         std::lock_guard<std::mutex> const lock(a->mutex);
         a->ring.release(a->uploads[i].span);
+        ++a->stats.uploadsFailed;
     }
     glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
     // One fence per upload, after all of this flush's copies: each is deleted when its upload retires.
@@ -353,22 +363,29 @@ GlVertexFormat gl_vertex_format(Format f) noexcept {
 Result<GlAdapter*> gl_adapter_create(GlAdapterDesc const& desc, Adapter* out) noexcept {
     if (!out || desc.stagingBytes == 0 || desc.maxObjects == 0 || desc.maxUploads == 0)
         return make_status(Code::InvalidArgument);
-    auto* a = new_object<GlAdapter>(default_allocator(), Tag::Payload);
-    a->ring = ex::StagingRing(default_allocator(), desc.stagingBytes, desc.maxUploads);
+    Allocator const* const al = desc.alloc ? desc.alloc : default_allocator();
+    auto* a                   = new_object<GlAdapter>(al, Tag::Payload);
+    a->alloc                  = al;
+    a->ring                   = ex::StagingRing(al, desc.stagingBytes, desc.maxUploads);
     glCreateBuffers(1, &a->staging);
     GLbitfield const flags = GL_MAP_WRITE_BIT | GL_MAP_PERSISTENT_BIT | GL_MAP_COHERENT_BIT;
     glNamedBufferStorage(a->staging, GLsizeiptr(a->ring.size()), nullptr, flags);
     a->mapped = static_cast<u8*>(glMapNamedBufferRange(a->staging, 0, GLsizeiptr(a->ring.size()), flags));
     if (!a->mapped) {
         glDeleteBuffers(1, &a->staging);
-        delete_object(default_allocator(), a, Tag::Payload);
+        delete_object(al, a, Tag::Payload);
         return make_status(Code::OutOfMemory);
     }
+    a->objects.init(al, Tag::Payload);
+    a->freeObjects.init(al, Tag::Payload);
+    a->inFlight.init(al, Tag::Payload);
+    a->handles.init(al, Tag::Payload);
     a->objects.resize(desc.maxObjects);
-    a->uploads = ex::UploadPool<Upload>(default_allocator(), desc.maxUploads);
+    a->freeObjects.reserve(desc.maxObjects);
+    a->uploads = ex::UploadPool<Upload>(al, desc.maxUploads);
     for (u32 i = desc.maxObjects; i-- > 0;)
         a->freeObjects.push_back(i);
-    a->commits = ex::CommitQueue(default_allocator(), desc.maxUploads);
+    a->commits = ex::CommitQueue(al, desc.maxUploads);
     a->inFlight.reserve(desc.maxUploads);
     if (desc.bindless) {
         a->bindless = true;
@@ -424,7 +441,17 @@ void gl_adapter_destroy(GlAdapter* a) noexcept {
     }
     glUnmapNamedBuffer(a->staging);
     glDeleteBuffers(1, &a->staging);
-    delete_object(default_allocator(), a, Tag::Payload);
+    delete_object(a->alloc, a, Tag::Payload);
+}
+
+ex::AdapterStats gl_adapter_stats(GlAdapter* a) noexcept {
+    std::lock_guard<std::mutex> const lock(a->mutex);
+    ex::AdapterStats s = a->stats;
+    s.liveObjects      = u32(a->objects.size() - a->freeObjects.size());
+    s.uploadsPending   = a->uploads.in_use();
+    s.stagingUsed      = a->ring.used();
+    s.stagingSize      = a->ring.size();
+    return s;
 }
 
 GlTexture gl_texture(GlAdapter const* a, GpuObject obj) noexcept {

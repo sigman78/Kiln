@@ -144,12 +144,9 @@ bool add_item(void* user, char const* arg) {
     return true;
 }
 
-void print_stats(char const* when, vkx::AdapterStats const& s) {
-    KILN_INFO("smoke",
-              "adapter %s: %u uploads in flight, %u busy, %llu bytes uploaded, %u live objects, "
-              "%llu staging bytes reserved",
-              when, s.uploadsInFlight, s.busyReturned, ull(s.bytesUploaded), s.liveObjects,
-              ull(s.stagingUsed));
+void print_stats(char const* when, ex::AdapterStats const& s) {
+    KILN_INFO("smoke", "%s:", when);
+    ex::log_adapter_stats("smoke", s);
 }
 
 } // namespace

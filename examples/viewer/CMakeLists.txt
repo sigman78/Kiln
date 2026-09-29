@@ -69,7 +69,7 @@ add_library(kiln_example_vk STATIC
     ${KILN_VIEWER_SHADER_HEADERS})
 kiln_apply_defaults(kiln_example_vk)
 target_include_directories(kiln_example_vk PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
-target_link_libraries(kiln_example_vk PUBLIC kiln_runtime volk)
+target_link_libraries(kiln_example_vk PUBLIC kiln_runtime kiln_example_adapter_support volk)
 
 if(NOT KILN_BUILD_VIEWER)
     return() # only the library, for kiln-vk-basic

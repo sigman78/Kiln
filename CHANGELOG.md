@@ -8,6 +8,13 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
 ## [Unreleased]
 
 ### Added
+- Every example adapter takes an `Allocator` in its desc and reports the shared
+  `ex::AdapterStats` (`gl_adapter_stats`, `sokol_adapter_stats`, `nga_adapter_stats`,
+  `vkx::adapter_stats`): live objects, pending and failed uploads, bytes committed, staging use and
+  size, and why `begin_upload` said `Busy` (staging ring, GPU heap, upload records). Every example
+  logs them at exit (`ex::log_adapter_stats`). `NgaAdapterDesc` gains `maxObjects` / `maxUploads`
+  (were constants). Migration: `vkx::AdapterStats` is gone; `busyReturned` is now `busyStaging`,
+  `bytesUploaded` `bytesCommitted`, `uploadsInFlight` `uploadsPending`.
 - `examples/adapter_support` (`kiln_example_adapter_support`): CPU-only helpers the example
   adapters share, starting with `ex::StagingRing`, a FIFO allocator for upload staging memory
   whose ranges may be released in any order, and `ex::UploadPool<T>`, upload records with one

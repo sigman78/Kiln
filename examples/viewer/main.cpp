@@ -940,18 +940,13 @@ int main(int argc, char** argv) {
     u32 texturesReady = 0;
     for (TextureItem const& t : scene.textures)
         texturesReady += state(app.ctx, t.handle) == State::Ready ? 1u : 0u;
-    vkx::AdapterStats const as = vkx::adapter_stats(app.vka);
     KILN_INFO("viewer", "%u frames, CPU (pump + record + submit) avg %.2f ms, worst %.2f ms (frame %u)",
               frames, frames ? totalMs / frames : 0.0, worstMs, worstFrame);
     KILN_INFO("viewer",
               "pump: %llu uploads committed, %llu bytes started (counts Busy retries again), %u busy "
               "retries; textures ready %u/%u",
               ull(uploads), ull(uploadBytes), busyRetries, texturesReady, u32(scene.textures.size()));
-    KILN_INFO("viewer",
-              "adapter: %u uploads in flight, %u busy, %llu bytes uploaded, %u live objects, %llu staging "
-              "bytes reserved",
-              as.uploadsInFlight, as.busyReturned, ull(as.bytesUploaded), as.liveObjects,
-              ull(as.stagingUsed));
+    ex::log_adapter_stats("viewer", vkx::adapter_stats(app.vka));
 
     for (TextureItem const& t : scene.textures)
         release(app.ctx, t.handle);

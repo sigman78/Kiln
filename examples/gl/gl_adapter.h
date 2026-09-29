@@ -5,15 +5,19 @@
 #pragma once
 
 #include <kiln/adapter.h>
+#include <kiln/alloc.h>
+
+#include "adapter_stats.h"
 
 namespace kiln::glx {
 
 struct GlAdapter;
 
 struct GlAdapterDesc {
-    u64 stagingBytes = 96u << 20; ///< persistently mapped upload ring; a larger upload fails
-    u32 maxObjects   = 4096;      ///< textures and buffers alive at once
-    u32 maxUploads   = 256;       ///< uploads between begin_upload and completion
+    Allocator const* alloc = nullptr;   ///< the adapter's tables; nullptr = default allocator
+    u64 stagingBytes       = 96u << 20; ///< persistently mapped upload ring; a larger upload fails
+    u32 maxObjects         = 4096;      ///< textures and buffers alive at once
+    u32 maxUploads         = 256;       ///< uploads between begin_upload and completion
     /// bind() records each texture's resident handle for kiln's slot; gl_handle_table() gives a
     /// frame its copy of the table. Needs ARB_bindless_texture, and a host that reports frames
     /// (PumpOptions).
@@ -27,6 +31,8 @@ struct GlAdapterDesc {
 [[nodiscard]] Result<GlAdapter*> gl_adapter_create(GlAdapterDesc const& desc, Adapter* out) noexcept;
 /// After destroy(ctx), on the GL thread.
 void gl_adapter_destroy(GlAdapter* a) noexcept;
+/// The counters shared by every example adapter; any thread.
+[[nodiscard]] ex::AdapterStats gl_adapter_stats(GlAdapter* a) noexcept;
 
 struct GlTexture {
     unsigned name   = 0; ///< 0 = not created yet

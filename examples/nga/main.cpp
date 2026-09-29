@@ -568,6 +568,8 @@ int main(int argc, char** argv) {
     gpu::wait_idle(device);
     if (exitCode == 0 && state(ctx, s.model) == State::Failed) exitCode = 1;
 
+    ex::log_adapter_stats("nga", nga_adapter_stats(s.na));
+
     // 7. Teardown (the GPU is idle): kiln first (Adapter::destroy for every object), then the adapter,
     //    then the host's.
 #if KILN_NGA_HAS_COOK

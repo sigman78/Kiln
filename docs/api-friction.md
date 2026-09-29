@@ -211,5 +211,8 @@ rediscover them). The design and the mapping tables are in `design/integration-e
   with its own lock: push from any thread, `take()` swaps two reserved buffers, so the GPU work
   runs outside the lock and nothing allocates. `kiln-nga` pushes an index again to retry it.
   Replaces the `committed` / `flushing` vector pairs in GL, sokol and NGA.
-- Still a candidate: an `Allocator` plus stats in every adapter desc. Promote any of them
+- Fourth: every example adapter takes an `Allocator` and reports `ex::AdapterStats`, logged at exit.
+  The four integration examples now report the same scene the same way (21 live objects, 89.9 MB
+  committed); only `kiln-vk-basic` returns `Busy` (57 times), because its staging ring is 64 MB
+  against GL's 96 MB. `kiln-nga`'s capacities moved from constants into its desc. Promote any of them
   into the library only after they prove themselves here.

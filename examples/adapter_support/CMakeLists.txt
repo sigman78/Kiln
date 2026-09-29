@@ -2,7 +2,7 @@
 # Candidates for a supported library component once their interfaces prove themselves.
 
 add_library(kiln_example_adapter_support STATIC staging_ring.h staging_ring.cpp upload_pool.h commit_queue.h
-                                                   commit_queue.cpp)
+                                                   commit_queue.cpp adapter_stats.h adapter_stats.cpp)
 kiln_apply_defaults(kiln_example_adapter_support)
 target_include_directories(kiln_example_adapter_support PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(kiln_example_adapter_support PUBLIC kiln_core)

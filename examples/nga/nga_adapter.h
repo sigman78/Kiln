@@ -4,6 +4,9 @@
 #pragma once
 
 #include <kiln/adapter.h>
+#include <kiln/alloc.h>
+
+#include "adapter_stats.h"
 
 #include <NoGraphicsAPI/NoGraphicsAPI.hpp>
 
@@ -12,12 +15,15 @@ namespace kiln::nga {
 struct NgaAdapter;
 
 struct NgaAdapterDesc {
-    gpu::Device* device = nullptr;    ///< required; outlives the adapter
-    u64 stagingBytes    = 64u << 20;  ///< CPU-visible ring for texture uploads
-    u64 meshBytes       = 64u << 20;  ///< CPU-visible heap the mesh payloads live in
-    u64 textureBytes    = 512u << 20; ///< GPU-only texture heap
-    u32 maxSlots        = 4096;       ///< Adapter::bindlessSlots
-    u32 maxDescriptors  = 4096;       ///< texture descriptor heap capacity
+    gpu::Device* device    = nullptr;    ///< required; outlives the adapter
+    Allocator const* alloc = nullptr;    ///< the adapter's tables; nullptr = default allocator
+    u64 stagingBytes       = 64u << 20;  ///< CPU-visible ring for texture uploads
+    u64 meshBytes          = 64u << 20;  ///< CPU-visible heap the mesh payloads live in
+    u64 textureBytes       = 512u << 20; ///< GPU-only texture heap
+    u32 maxSlots           = 4096;       ///< Adapter::bindlessSlots
+    u32 maxDescriptors     = 4096;       ///< texture descriptor heap capacity
+    u32 maxObjects         = 8192;       ///< textures and meshes alive at once
+    u32 maxUploads         = 256;        ///< uploads between begin_upload and completion
 };
 
 /// Fills `out`: bindless slots through bind(), the GPU work in Adapter::flush (so pump() and create()
@@ -26,6 +32,9 @@ struct NgaAdapterDesc {
 [[nodiscard]] Result<NgaAdapter*> nga_adapter_create(NgaAdapterDesc const& desc, Adapter* out) noexcept;
 /// After destroy(ctx). Waits for the adapter's own submissions.
 void nga_adapter_destroy(NgaAdapter* a) noexcept;
+/// The counters shared by every example adapter; any thread. busyHeap counts both a full mesh heap
+/// at begin_upload and a full texture heap or descriptor heap at flush (retried at the next one).
+[[nodiscard]] ex::AdapterStats nga_adapter_stats(NgaAdapter* a) noexcept;
 
 /// Set these before drawing: textures by descriptor index, samplers 0 (repeat) and 1 (clamp).
 [[nodiscard]] gpu::TextureDescriptorHeap* nga_texture_heap(NgaAdapter* a) noexcept;

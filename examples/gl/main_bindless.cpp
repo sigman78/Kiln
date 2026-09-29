@@ -306,6 +306,8 @@ int main(int argc, char** argv) {
             break;
     }
 
+    ex::log_adapter_stats("gl", gl_adapter_stats(*gla));
+
     // 6. Teardown: the GPU idle, kiln, then GL.
     glFinish();
     frames.release();
