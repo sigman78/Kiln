@@ -6,6 +6,7 @@
 #include "ktx2_corpus.h" // corpus::read_file
 
 #include "kiln/assets.h"
+#include "kiln/catalog.h"
 #include "kiln/null_adapter.h"
 #include "kiln/placeholders.h"
 
@@ -1903,4 +1904,91 @@ KILN_TEST(Runtime, CreateChecksStoreProfile) {
     if (allowed.ok()) destroy(*allowed);
     null_adapter_destroy(*na);
     std::remove(path);
+}
+
+// A catalog store read by the runtime alone (the shipping case): the catalog is built by hand here,
+// since the reader-only suite has no cook code.
+KILN_TEST(Runtime, CatalogStoreWithoutCook) {
+    char dir[1024], sub[1100], path[1200];
+    format(dir, sizeof dir, "%s/runtime_catalog_store", test::sample_dir());
+    KILN_REQUIRE(ensure_dir(dir));
+    Vec<u8> mesh(default_allocator(), Tag::Test);
+    KILN_REQUIRE(read_golden("mesh/Box", ".mesh", mesh));
+    StrView const name = "Box.glb";
+    Hash128 const key  = xxh3_128(Span<u8 const>(reinterpret_cast<u8 const*>(name.data), name.size));
+
+    (void)artifact_file_path(StrView(dir), AssetKind::Mesh, key, path, sizeof path);
+    format(sub, sizeof sub, "%s/artifacts", dir);
+    KILN_REQUIRE(ensure_dir(sub));
+    *std::strrchr(path, '/') = '\0';
+    KILN_REQUIRE(ensure_dir(path));
+    (void)artifact_file_path(StrView(dir), AssetKind::Mesh, key, path, sizeof path);
+    std::FILE* f = std::fopen(path, "wb");
+    KILN_REQUIRE(f != nullptr);
+    std::fwrite(mesh.data(), 1, mesh.size(), f);
+    std::fclose(f);
+
+    // Format 0.1 with one entry: header, entry, index, strings ("compat" then the name), padding.
+    StrView const profile = "compat";
+    u64 const strings     = kCatalogHeaderBytes + kCatalogEntryBytes + kCatalogIndexBytes;
+    u64 const stringBytes = profile.size + name.size;
+    u64 const total       = (strings + stringBytes + 7) & ~u64(7);
+    Vec<u8> cat(default_allocator(), Tag::Test);
+    cat.resize(usize(total), u8(0));
+    u8* b = cat.data();
+    write_unaligned<u32>(b, kCatalogMagic);
+    write_unaligned<u16>(b + 4, kCatalogMajor);
+    write_unaligned<u16>(b + 6, kCatalogMinor);
+    write_unaligned<u32>(b + 8, kCatalogHeaderBytes);
+    write_unaligned<u64>(b + 16, total);
+    write_unaligned<u64>(b + 24, u64(1));
+    write_unaligned<u64>(b + 32, u64(kCatalogHeaderBytes));
+    write_unaligned<u64>(b + 40, u64(kCatalogHeaderBytes + kCatalogEntryBytes));
+    write_unaligned<u64>(b + 48, strings);
+    write_unaligned<u64>(b + 56, stringBytes);
+    write_unaligned<u32>(b + 84, u32(profile.size));
+    u8* e = b + kCatalogHeaderBytes;
+    write_unaligned<u32>(e, u32(profile.size));
+    write_unaligned<u32>(e + 4, u32(name.size));
+    write_unaligned<u16>(e + 8, u16(1));
+    std::memcpy(e + 16, key.bytes, 16);
+    Hash128 const sum = xxh3_128(mesh.span());
+    std::memcpy(e + 32, sum.bytes, 16);
+    write_unaligned<u64>(e + 48, u64(mesh.size()));
+    write_unaligned<u64>(e + kCatalogEntryBytes, hash_name(name));
+    std::memcpy(b + strings, profile.data, profile.size);
+    std::memcpy(b + strings + profile.size, name.data, name.size);
+    Hash128 const check = xxh3_128(cat.span()); // the checksum field is still zero
+    std::memcpy(b + kCatalogChecksumOffset, check.bytes, 16);
+
+    format(sub, sizeof sub, "%s/catalogs", dir);
+    KILN_REQUIRE(ensure_dir(sub));
+    (void)catalog_file_path(StrView(dir), profile, path, sizeof path);
+    f = std::fopen(path, "wb");
+    KILN_REQUIRE(f != nullptr);
+    std::fwrite(cat.data(), 1, cat.size(), f);
+    std::fclose(f);
+
+    Adapter adapter{};
+    Result<NullAdapter*> na = null_adapter_create({}, &adapter);
+    KILN_REQUIRE(na.ok());
+    DiagLog log;
+    ContextDesc cd{};
+    cd.adapter         = &adapter;
+    cd.storeDir        = StrView(dir);
+    cd.storeLayout     = StoreLayout::Catalog;
+    cd.diag            = log.sink();
+    Result<Context*> c = create(cd);
+    KILN_REQUIRE(c.ok());
+    MeshHandle const box   = request_mesh(*c, name);
+    MeshHandle const other = request_mesh(*c, "Other.glb");
+    for (int i = 0; i < 2000 && (state(*c, box) != State::Ready || state(*c, other) != State::Failed); ++i) {
+        (void)pump(*c, {});
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    KILN_CHECK(state(*c, box) == State::Ready);
+    KILN_CHECK(state(*c, other) == State::Failed);
+    KILN_CHECK(log.has(kDiagStoreMiss));
+    destroy(*c);
+    null_adapter_destroy(*na);
 }
