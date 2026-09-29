@@ -32,3 +32,9 @@ examples/assets/*.glb
 examples/assets/*.gltf
 examples/assets/*.bin
 examples/assets/*.png
+
+# libFuzzer writes new inputs (extension-less hash names) into its first corpus directory;
+# every real golden file has an extension.
+tests/golden/**/*
+!tests/golden/**/
+!tests/golden/**/*.*
