@@ -49,7 +49,7 @@ Formats the v0.5 cooker writes:
 
 - All three values are **opaque to kiln**. kiln stores, copies and returns them.
 - `native == 0` and `slot == kInvalid` is **null** (`is_null()`); `kind` does not matter.
-- kiln sets `slot` itself for a texture of a bindless adapter (`gpu()`); the adapter's own `slot`
+- kiln sets `slot` itself for a texture of a bindless adapter (`gpu_object()`); the adapter's own `slot`
   in `UploadTarget::object` is ignored there.
 - The object may name something that does not exist yet. `begin_upload` runs on a worker thread,
   where a GL or sokol adapter cannot create its texture; it returns an index into its own table in
@@ -125,16 +125,16 @@ Materials still store the slot once.
 
 ### Two binding models
 
-The renderer picks one; `gpu(ctx, handle)` (an allocation-free table lookup) serves both.
+The renderer picks one; `gpu_object(ctx, handle)` (an allocation-free table lookup) serves both.
 
 | | Per-frame lookup | Stable bindless slot (recommended for Vulkan 1.4) |
 |---|---|---|
 | `bind`, `bindlessSlots` | null, 0 | writes kiln's slot: the kind placeholder at the request, the real image later |
-| Material stores | nothing; looks up `gpu(ctx, h)` each frame | the slot index, once, at request time |
-| Arrival, hot reload | next `gpu()` returns the new object | nothing to do: the slot already shows it |
+| Material stores | nothing; looks up `gpu_object(ctx, h)` each frame | the slot index, once, at request time |
+| Arrival, hot reload | next `gpu_object()` returns the new object | nothing to do: the slot already shows it |
 | Fits | sokol / bgfx-style binding, any renderer | descriptor-indexing renderers |
 
-`gpu(ctx, h)` returns:
+`gpu_object(ctx, h)` returns:
 
 | Asset state | Texture | Mesh |
 |---|---|---|
@@ -158,7 +158,7 @@ until the release. A request when all `bindlessSlots` are in use fails with K500
   placeholder, so the slot shows the magenta checker.
 - kiln passes placeholder objects to `destroy` only at `destroy()`.
 - Readiness: with `kSelfSubmitting`, `create()` spins until all placeholders are complete (panics
-  after 10 s). Without it, `gpu()` returns null for textures until the first `pump()` that sees
+  after 10 s). Without it, `gpu_object()` returns null for textures until the first `pump()` that sees
   them complete.
 
 ### Upload layouts

@@ -429,7 +429,7 @@ Result<GlAdapter*> gl_adapter_create(GlAdapterDesc const& desc, Adapter* out) no
         .begin_upload       = &begin_upload,
         .commit_upload      = &commit_upload,
         .is_upload_complete = &is_upload_complete,
-        .bind               = desc.bindless ? &bind : nullptr, // bound: the host asks gpu() per draw
+        .bind               = desc.bindless ? &bind : nullptr, // bound: the host asks gpu_object() per draw
         .destroy            = &destroy,
         .flush              = &flush, // the GL work, on the pump thread
         .caps               = kCubeTextures | kArrayTextures | kMeshes,

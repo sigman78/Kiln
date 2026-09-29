@@ -8,6 +8,12 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
 ## [Unreleased]
 
 ### Added
+- `placeholder_object(ctx, kind, shape)`: the placeholder `GpuObject` of a texture kind and shape,
+  for hosts that must bind something where a material has no texture. `kiln-sokol` and
+  `kiln-vk-basic` use it (the latter no longer needs `descriptorBindingPartiallyBound`).
+- `texture_asset_name(meshName, view, binding, out, cap)`: the texture asset name a `.mesh`
+  texture binding refers to (embedded name as stored, external URI resolved in the mesh's root).
+  Replaces the helper every example wrote.
 - The integration examples (`kiln-gl`, `kiln-gl-bindless`, `kiln-sokol`, `kiln-vk-basic`, `kiln-nga`)
   take no arguments: they show the reference scene (WaterBottle under the HDR test sky) from
   `examples/assets`, cook into the build tree's `example-store` and hot reload. The only option is
@@ -215,6 +221,9 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
   relative path, as the `UriResolver` already received for buffers.
 
 ### Changed
+- **Breaking (runtime):** `gpu(ctx, handle)` is now `gpu_object(ctx, handle)`: `gpu` collided with
+  the `gpu` namespace of NoGraphicsAPI (and is a likely name elsewhere). `TextureInfo::gpu` keeps its
+  name. Migration: rename the calls.
 - **Breaking (runtime, adapter):** kiln learns the host's frames, releases GPU objects after them
   and numbers bindless slots itself (`docs/design/adapter-frames-slots.md`).
   - `PumpOptions` gains `frame` (the frame the host records after this pump) and `completedFrame`

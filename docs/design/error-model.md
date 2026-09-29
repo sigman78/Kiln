@@ -108,7 +108,7 @@ Rule: a blocking API never hangs on misuse. It panics at entry, before blocking.
 When loading an asset fails for a recoverable reason:
 
 1. The asset moves to `Failed` (`handles-and-states.md`).
-2. Textures: `gpu()` serves the Failed placeholder (magenta checker when `devPlaceholders` is on,
+2. Textures: `gpu_object()` serves the Failed placeholder (magenta checker when `devPlaceholders` is on,
    else the kind placeholder). Meshes: `is_ready()` stays false and `mesh_view()` is null.
 3. **Exactly one** `Severity::Error` diagnostic (K5xxx) is emitted, plus a `Failed` event, in
    `pump()`. It carries the first diagnostic the worker produced (reader, provider or cooker) as

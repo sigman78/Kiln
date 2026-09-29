@@ -30,7 +30,7 @@ struct GlTexture {
     unsigned name   = 0; ///< 0 = not created yet
     unsigned target = 0; ///< GL_TEXTURE_2D, GL_TEXTURE_CUBE_MAP or GL_TEXTURE_2D_ARRAY
 };
-/// The GL texture behind a GpuObject that gpu() returned.
+/// The GL texture behind a GpuObject that gpu_object() returned.
 [[nodiscard]] GlTexture gl_texture(GlAdapter const* a, GpuObject obj) noexcept;
 /// Bindless: the buffer of u64 handles, indexed by GpuObject::slot; bind it as a storage buffer.
 [[nodiscard]] unsigned gl_handle_table(GlAdapter const* a) noexcept;

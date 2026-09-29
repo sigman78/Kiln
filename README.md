@@ -73,7 +73,7 @@ kiln::GroupStatus st  = kiln::wait(ctx, boot, {.timeoutMs = 5000}); // self-subm
 
 kiln::pump(ctx, {.uploadBytes = 8u << 20});                          // once per frame
 if (kiln::has_meta(ctx, ship)) { kiln::mesh::MeshView const* v = kiln::mesh_view(ctx, ship); }
-if (kiln::is_ready(ctx, ship)) { kiln::GpuObject g = kiln::gpu(ctx, ship); /* draw */ }
+if (kiln::is_ready(ctx, ship)) { kiln::GpuObject g = kiln::gpu_object(ctx, ship); /* draw */ }
 for (kiln::Event const& e : kiln::events(ctx)) { /* MetaReady, Ready, Changed, Failed */ }
 
 kiln::release(ctx, ship);

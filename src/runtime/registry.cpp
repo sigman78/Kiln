@@ -473,12 +473,12 @@ AssetId id_of(Context* ctx, TextureHandle h) noexcept {
     return s ? s->id : 0;
 }
 
-GpuObject gpu(Context* ctx, MeshHandle h) noexcept {
+GpuObject gpu_object(Context* ctx, MeshHandle h) noexcept {
     Slot const* s = resolve(ctx, h.bits(), AssetKind::Mesh);
     return (s && s->state == State::Ready) ? s->realObj : GpuObject{};
 }
 
-GpuObject gpu(Context* ctx, TextureHandle h) noexcept {
+GpuObject gpu_object(Context* ctx, TextureHandle h) noexcept {
     if (!ctx) return {};
     Slot const* s = resolve(ctx, h.bits(), AssetKind::Texture);
     GpuObject obj = s && s->state == State::Ready ? s->realObj : placeholder_obj(texture_placeholder(ctx, s));
@@ -496,7 +496,7 @@ TextureInfo texture_info(Context* ctx, TextureHandle h) noexcept {
     TextureInfo info;
     if (!ctx) return info;
     Slot const* s = resolve(ctx, h.bits(), AssetKind::Texture);
-    info.gpu      = gpu(ctx, h);
+    info.gpu      = gpu_object(ctx, h);
     if (MetaSet const* m = s ? shown_meta(*s) : nullptr) {
         info.desc            = m->texDesc;
         info.levelOffsets    = {m->layout, m->layoutLevels};
@@ -558,6 +558,11 @@ void boost_group(Context* ctx, Group g) noexcept {
     }
 }
 } // namespace rt
+
+GpuObject placeholder_object(Context* ctx, TextureKind kind, TextureShape shape) noexcept {
+    if (!ctx || kind >= TextureKind::Count || shape >= TextureShape::Count) return {};
+    return placeholder_obj(ctx->ph[placeholder_index(kind, shape)]);
+}
 
 TextureKind texture_kind_for_slot(mesh::TextureSlot slot) noexcept {
     switch (slot) {

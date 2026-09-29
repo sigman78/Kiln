@@ -272,7 +272,7 @@ Result<SokolAdapter*> sokol_adapter_create(SokolAdapterDesc const& desc, Adapter
         .begin_upload       = &begin_upload,
         .commit_upload      = &commit_upload,
         .is_upload_complete = &is_upload_complete,
-        .bind               = nullptr, // bindings are rebuilt per draw from gpu()
+        .bind               = nullptr, // bindings are rebuilt per draw from gpu_object()
         .destroy            = &destroy,
         .flush              = &flush,
         .caps               = kCubeTextures | kArrayTextures | kMeshes,

@@ -26,14 +26,14 @@ enum class State : u8 {
     Unloaded = 0, ///< no request outstanding (also: null / stale handle)
     Pending,      ///< requested; nothing usable yet (textures serve their placeholder)
     MetaReady,    ///< metadata readable (mesh_view / texture_info); GPU payload in flight
-    Ready,        ///< payload published; gpu() returns the real object
+    Ready,        ///< payload published; gpu_object() returns the real object
     Failed,       ///< recoverable error; placeholder served; one diagnostic emitted
     Partial,      ///< reserved (progressive loads, v0.8)
 };
 
 enum class Priority : u8 { Normal = 0, High };
 enum class AssetKind : u8 { Mesh = 0, Texture };
-/// After Ready, Changed or Failed, gpu() may return another object than before the event (the real
+/// After Ready, Changed or Failed, gpu_object() may return another object than before the event (the real
 /// one, the reloaded one, the Failed placeholder); after MetaReady it returns the same one.
 enum class EventKind : u8 { MetaReady = 0, Ready, Changed, Failed };
 
@@ -110,7 +110,7 @@ struct ContextDesc {
 
 /// Create a context. Fails with InvalidArgument (K5013) if a root name is invalid or used
 /// twice. Placeholders are uploaded through the adapter here; with a self-submitting
-/// adapter or one with Adapter::flush, create() waits for them, otherwise gpu() returns a
+/// adapter or one with Adapter::flush, create() waits for them, otherwise gpu_object() returns a
 /// null object until the first pump() sees them complete.
 [[nodiscard]] KILN_API Result<Context*> create(ContextDesc const& desc) noexcept;
 /// Releases every asset (Adapter::destroy for each GpuObject, at once: the host has waited for
@@ -163,6 +163,13 @@ struct AssetNameParts {
 /// owner's directory, in the owner's root. Returns the length written to `out`, or 0 if the
 /// URI is absolute, leaves the root, gives an invalid name or does not fit `cap`.
 [[nodiscard]] KILN_API usize resolve_asset_name(StrView owner, StrView uri, char* out, usize cap) noexcept;
+/// The texture asset name that binding `b` of mesh `meshName` refers to: an embedded image's name
+/// as stored, or an external URI resolved with resolve_asset_name(). Written to `out`
+/// (null-terminated) and returned; empty if the name leaves the root, is invalid or does not fit
+/// `cap` (kMaxAssetNameLen + 1 always fits).
+[[nodiscard]] KILN_API StrView texture_asset_name(StrView meshName, mesh::MeshView const& v,
+                                                  mesh::TextureBinding const& b, char* out,
+                                                  usize cap) noexcept;
 
 /// The cooked file of `name` in the Named layout: `<storeDir>/<name>.mesh|.ktx2`, with the
 /// prefix `m:` of a named root written as the top-level directory `@m/`. Returns what `format()`
@@ -189,8 +196,14 @@ struct AssetNameParts {
 /// object once Ready, the new one after a hot reload. Meshes have no placeholder:
 /// a null object until Ready. With a bindless adapter, a texture's `slot` is kiln's slot
 /// number from the request on; it does not change while the asset lives.
-[[nodiscard]] KILN_API GpuObject gpu(Context* ctx, MeshHandle h) noexcept;
-[[nodiscard]] KILN_API GpuObject gpu(Context* ctx, TextureHandle h) noexcept;
+[[nodiscard]] KILN_API GpuObject gpu_object(Context* ctx, MeshHandle h) noexcept;
+[[nodiscard]] KILN_API GpuObject gpu_object(Context* ctx, TextureHandle h) noexcept;
+/// The placeholder of `kind` and `shape`, the object gpu_object() serves for such a texture before
+/// it is Ready. For a host that must bind something where a material has no texture. Null if the
+/// adapter lacks the shape (AdapterCaps) or the placeholder's upload has not completed yet. It
+/// carries no bindless slot and lives until destroy().
+[[nodiscard]] KILN_API GpuObject placeholder_object(Context* ctx, TextureKind kind,
+                                                    TextureShape shape = TextureShape::Tex2D) noexcept;
 
 /// Metadata view; nullptr unless has_meta(). Valid until the asset is released or
 /// reloaded (a Changed event) and never across destroy().

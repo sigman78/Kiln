@@ -268,17 +268,24 @@ KILN_TEST(Runtime, CreateDestroyPlaceholders) {
         TextureHandle t = request_texture(rt.ctx, "tex/missing", ro);
         KILN_REQUIRE(!t.is_null());
         KILN_CHECK_EQ(state(rt.ctx, t), State::Pending);
-        GpuObject const g = gpu(rt.ctx, t);
+        GpuObject const g = gpu_object(rt.ctx, t);
         KILN_CHECK_EQ(g.native, u64(u32(TextureKind::Normal) + 1));
         TextureInfo const ti = texture_info(rt.ctx, t);
         KILN_CHECK(ti.isPlaceholder);
         KILN_CHECK_EQ(ti.desc.width, 1u);
         KILN_CHECK_EQ(ti.desc.format, Format::R8G8B8A8_UNORM);
         KILN_CHECK_EQ(null_adapter_payload(rt.na, g).size, usize(4));
+        // placeholder_object() gives the same object without a handle, per kind and shape.
+        KILN_CHECK_EQ(placeholder_object(rt.ctx, TextureKind::Normal).native, g.native);
+        KILN_CHECK(placeholder_object(rt.ctx, TextureKind::Emissive, TextureShape::Cube).native !=
+                   placeholder_object(rt.ctx, TextureKind::Emissive).native);
+        KILN_CHECK(!placeholder_object(rt.ctx, TextureKind::Orm, TextureShape::Array).is_null());
+        KILN_CHECK(placeholder_object(rt.ctx, TextureKind::Count).is_null());
+        KILN_CHECK(placeholder_object(nullptr, TextureKind::BaseColor).is_null());
         // Stale handle: failed placeholder in dev mode, BaseColor otherwise.
-        GpuObject const stale = gpu(rt.ctx, TextureHandle{0, 77});
+        GpuObject const stale = gpu_object(rt.ctx, TextureHandle{0, 77});
         KILN_CHECK_EQ(stale.native, dev ? u64(5) : u64(1));
-        KILN_CHECK(gpu(rt.ctx, MeshHandle{0, 77}).is_null());
+        KILN_CHECK(gpu_object(rt.ctx, MeshHandle{0, 77}).is_null());
         KILN_CHECK_EQ(state(rt.ctx, MeshHandle{}), State::Unloaded);
         release(rt.ctx, t);
         KILN_CHECK_EQ(state(rt.ctx, t), State::Unloaded);
@@ -338,7 +345,7 @@ KILN_TEST(Runtime, LoadMesh) {
     KILN_REQUIRE(!m.is_null());
     KILN_CHECK_EQ(state(rt.ctx, m), State::Pending);
     KILN_CHECK(mesh_view(rt.ctx, m) == nullptr);
-    KILN_CHECK(gpu(rt.ctx, m).is_null());
+    KILN_CHECK(gpu_object(rt.ctx, m).is_null());
     KILN_CHECK_EQ(id_of(rt.ctx, m), "mesh/cube_basic"_h);
 
     bool sawMetaView = false;
@@ -358,7 +365,7 @@ KILN_TEST(Runtime, LoadMesh) {
     KILN_CHECK(v->parts().size() > 0);
     KILN_CHECK_EQ(version(rt.ctx, m), 1u);
 
-    GpuObject const obj = gpu(rt.ctx, m);
+    GpuObject const obj = gpu_object(rt.ctx, m);
     KILN_CHECK(!obj.is_null());
     Vec<u8> file(default_allocator(), Tag::Test), decoded(default_allocator(), Tag::Test);
     if (decoded_golden_mesh("mesh/cube_basic", file, decoded)) {
@@ -538,7 +545,7 @@ KILN_TEST(Runtime, MissingAssetFails) {
         KILN_REQUIRE(f >= 0);
         KILN_CHECK_EQ(rt.events[usize(f)].status.code, Code::NotFound);
         KILN_CHECK(!has_meta(rt.ctx, t));
-        GpuObject const g = gpu(rt.ctx, t);
+        GpuObject const g = gpu_object(rt.ctx, t);
         KILN_CHECK_EQ(g.native, dev ? u64(5) : u64(1)); // failed checker vs BaseColor placeholder
         TextureInfo const ti = texture_info(rt.ctx, t);
         KILN_CHECK(ti.isPlaceholder);
@@ -575,7 +582,7 @@ KILN_TEST(Runtime, CorruptStoreFileFails) {
         [&] { return state(rt.ctx, m) == State::Failed && state(rt.ctx, t) == State::Failed; }));
     KILN_CHECK(rt.diags.has(kDiagAssetLoadFailed));
     KILN_CHECK(!rt.diags.has(kDiagStoreMiss));
-    KILN_CHECK(gpu(rt.ctx, m).is_null());
+    KILN_CHECK(gpu_object(rt.ctx, m).is_null());
     release(rt.ctx, m);
     release(rt.ctx, t);
 }
@@ -698,7 +705,7 @@ KILN_TEST(Runtime, CookProviderOnMiss) {
     KILN_CHECK(rt.diags.has(kDiagStoreMiss));
     Vec<u8> file(default_allocator(), Tag::Test), decoded(default_allocator(), Tag::Test);
     if (decoded_golden_mesh("mesh/cube_basic", file, decoded)) {
-        Span<u8 const> got = null_adapter_payload(rt.na, gpu(rt.ctx, m));
+        Span<u8 const> got = null_adapter_payload(rt.na, gpu_object(rt.ctx, m));
         KILN_CHECK(got.size == decoded.size() && bytes_equal(got.data, decoded.data(), got.size));
     }
     // A store hit never calls the provider.
@@ -727,7 +734,7 @@ KILN_TEST(Runtime, RegisterInMemory) {
     KILN_CHECK(rt.find_event(EventKind::MetaReady, m.bits()) >= 0);
     Vec<u8> file(default_allocator(), Tag::Test), decoded(default_allocator(), Tag::Test);
     if (decoded_golden_mesh("mesh/multi_material", file, decoded)) {
-        Span<u8 const> got = null_adapter_payload(rt.na, gpu(rt.ctx, m));
+        Span<u8 const> got = null_adapter_payload(rt.na, gpu_object(rt.ctx, m));
         KILN_CHECK(got.size == decoded.size() && bytes_equal(got.data, decoded.data(), got.size));
     }
     TextureInfo const ti = texture_info(rt.ctx, t);
@@ -811,24 +818,24 @@ KILN_TEST(Runtime, BindlessSlots) {
     RequestOptions ro;
     ro.textureKind          = TextureKind::Normal;
     TextureHandle t         = request_texture(rt.ctx, "ktx2/normal", ro);
-    GpuObject const pending = gpu(rt.ctx, t);
+    GpuObject const pending = gpu_object(rt.ctx, t);
     u32 const slot          = pending.slot;
     KILN_REQUIRE(slot != kInvalid);
     // The slot shows the Normal placeholder from the request on.
     KILN_CHECK_EQ(null_adapter_slot(rt.na, slot).native, u64(u32(TextureKind::Normal) + 1));
     KILN_CHECK_EQ(pending.native, u64(u32(TextureKind::Normal) + 1));
     KILN_REQUIRE(rt.pump_until([&] { return is_ready(rt.ctx, t); }));
-    GpuObject const real = gpu(rt.ctx, t);
+    GpuObject const real = gpu_object(rt.ctx, t);
     KILN_CHECK_EQ(real.slot, slot);
     KILN_CHECK_EQ(null_adapter_slot(rt.na, slot).native, real.native);
 
     TextureHandle t2 = request_texture(rt.ctx, "ktx2/color_srgb");
-    KILN_CHECK(gpu(rt.ctx, t2).slot != slot);
+    KILN_CHECK(gpu_object(rt.ctx, t2).slot != slot);
     release(rt.ctx, t2);
     // No frames reported: the number comes back at once and the next request reuses it.
     release(rt.ctx, t);
     TextureHandle t3 = request_texture(rt.ctx, "ktx2/normal");
-    KILN_CHECK_EQ(gpu(rt.ctx, t3).slot, slot);
+    KILN_CHECK_EQ(gpu_object(rt.ctx, t3).slot, slot);
     release(rt.ctx, t3);
 }
 
@@ -842,15 +849,15 @@ KILN_TEST(Runtime, FramesDelayRelease) {
     rt.pump_once(po);
     TextureHandle t = request_texture(rt.ctx, "ktx2/normal");
     KILN_REQUIRE(rt.pump_until([&] { return is_ready(rt.ctx, t); }, po));
-    u32 const slot           = gpu(rt.ctx, t).slot;
-    GpuObject const obj      = gpu(rt.ctx, t);
+    u32 const slot           = gpu_object(rt.ctx, t).slot;
+    GpuObject const obj      = gpu_object(rt.ctx, t);
     u32 const destroysBefore = null_adapter_stats(rt.na).destroys;
     po.frame                 = 5;
     po.completedFrame        = 3;
     rt.pump_once(po);
     release(rt.ctx, t); // dropped after frame 5 was announced
     TextureHandle t2 = request_texture(rt.ctx, "ktx2/color_srgb");
-    KILN_CHECK(gpu(rt.ctx, t2).slot != slot); // the number waits too
+    KILN_CHECK(gpu_object(rt.ctx, t2).slot != slot); // the number waits too
     po.frame          = 6;
     po.completedFrame = 4;
     rt.pump_once(po);
@@ -862,7 +869,7 @@ KILN_TEST(Runtime, FramesDelayRelease) {
     KILN_CHECK_EQ(null_adapter_stats(rt.na).destroys, destroysBefore + 1);
     KILN_CHECK(null_adapter_payload(rt.na, obj).empty());
     TextureHandle t3 = request_texture(rt.ctx, "ktx2/normal");
-    KILN_CHECK_EQ(gpu(rt.ctx, t3).slot, slot);
+    KILN_CHECK_EQ(gpu_object(rt.ctx, t3).slot, slot);
     release(rt.ctx, t2);
     release(rt.ctx, t3);
 }
@@ -895,8 +902,8 @@ KILN_TEST(Runtime, BindlessSlotsExhausted) {
     if (!rt.init(nd)) return;
     TextureHandle a = request_texture(rt.ctx, "ktx2/normal");
     TextureHandle b = request_texture(rt.ctx, "ktx2/color_srgb");
-    KILN_CHECK_EQ(gpu(rt.ctx, a).slot, 0u);
-    KILN_CHECK_EQ(gpu(rt.ctx, b).slot, kInvalid);
+    KILN_CHECK_EQ(gpu_object(rt.ctx, a).slot, 0u);
+    KILN_CHECK_EQ(gpu_object(rt.ctx, b).slot, kInvalid);
     KILN_REQUIRE(rt.pump_until([&] { return state(rt.ctx, b) == State::Failed && is_ready(rt.ctx, a); }));
     KILN_CHECK(rt.diags.has(kDiagAdapterRejected));
     release(rt.ctx, a);
@@ -925,10 +932,10 @@ KILN_TEST(Runtime, SteadyStateNoAllocation) {
         PumpStats const ps = pump(rt.ctx);
         sink += ps.completed + events(rt.ctx).size;
         for (MeshHandle m : meshes) {
-            sink += u64(state(rt.ctx, m)) + gpu(rt.ctx, m).native + (mesh_view(rt.ctx, m) ? 1 : 0);
+            sink += u64(state(rt.ctx, m)) + gpu_object(rt.ctx, m).native + (mesh_view(rt.ctx, m) ? 1 : 0);
             sink += find_mesh(rt.ctx, id_of(rt.ctx, m)).bits();
         }
-        sink += texture_info(rt.ctx, t).levelOffsets.size + gpu(rt.ctx, t).native;
+        sink += texture_info(rt.ctx, t).levelOffsets.size + gpu_object(rt.ctx, t).native;
         sink += progress(rt.ctx, Group{}).pending + stats(rt.ctx).ready;
     }
     AllocStats const reg1 = default_alloc_stats(Tag::Registry);
@@ -1051,7 +1058,7 @@ KILN_TEST(Runtime, ReloadSwapsVersion) {
     mesh::MeshView const* v1 = mesh_view(rt.ctx, m);
     KILN_REQUIRE(v1 != nullptr);
     KILN_CHECK(counts_of(*v1) == boxCounts);
-    GpuObject const oldObj = gpu(rt.ctx, m);
+    GpuObject const oldObj = gpu_object(rt.ctx, m);
 
     NullAdapterStats const st0 = null_adapter_stats(rt.na);
     usize const ev0            = rt.events.size();
@@ -1065,7 +1072,7 @@ KILN_TEST(Runtime, ReloadSwapsVersion) {
         if (!changed) { // the old version is served until the swap
             mesh::MeshView const* v = mesh_view(rt.ctx, m);
             oldViewUntilSwap        = oldViewUntilSwap && v && counts_of(*v) == boxCounts &&
-                               version(rt.ctx, m) == 1 && gpu(rt.ctx, m).native == oldObj.native;
+                               version(rt.ctx, m) == 1 && gpu_object(rt.ctx, m).native == oldObj.native;
         }
         return changed;
     }));
@@ -1080,7 +1087,7 @@ KILN_TEST(Runtime, ReloadSwapsVersion) {
     KILN_REQUIRE(v2 != nullptr);
     KILN_CHECK(counts_of(*v2) == multiCounts);
 
-    GpuObject const newObj = gpu(rt.ctx, m);
+    GpuObject const newObj = gpu_object(rt.ctx, m);
     KILN_CHECK(newObj.native != oldObj.native);
     Vec<u8> file(default_allocator(), Tag::Test), decoded(default_allocator(), Tag::Test);
     if (decoded_golden_mesh("mesh/MultiUVTest", file, decoded)) {
@@ -1111,7 +1118,7 @@ KILN_TEST(Runtime, ReloadFailureKeepsOld) {
     MeshHandle m = request_mesh(rt.ctx, "mesh/thing", ro);
     KILN_REQUIRE(rt.pump_until([&] { return is_ready(rt.ctx, m); }));
     mesh::MeshView const* v1   = mesh_view(rt.ctx, m);
-    GpuObject const obj        = gpu(rt.ctx, m);
+    GpuObject const obj        = gpu_object(rt.ctx, m);
     GroupStatus const gs0      = progress(rt.ctx, g);
     NullAdapterStats const st0 = null_adapter_stats(rt.na);
     usize const ev0            = rt.events.size();
@@ -1130,7 +1137,7 @@ KILN_TEST(Runtime, ReloadFailureKeepsOld) {
     KILN_CHECK_EQ(version(rt.ctx, m), 1u);
     KILN_CHECK(mesh_view(rt.ctx, m) == v1);
     KILN_CHECK(counts_of(*v1) == boxCounts); // still readable: the old view stays valid
-    KILN_CHECK_EQ(gpu(rt.ctx, m).native, obj.native);
+    KILN_CHECK_EQ(gpu_object(rt.ctx, m).native, obj.native);
     KILN_CHECK_EQ(count_code(rt.diags, kDiagReloadFailed), 1u);
     KILN_CHECK_EQ(rt.diags.count, 1u);
     KILN_CHECK_EQ(rt.events.size(), ev0);
@@ -1216,11 +1223,11 @@ KILN_TEST(Runtime, ReloadTexture) {
     cd.storeDir = store.dir;
     if (!rt.init({}, cd)) return;
     TextureHandle t       = request_texture(rt.ctx, "ktx2/thing");
-    GpuObject const first = gpu(rt.ctx, t);
+    GpuObject const first = gpu_object(rt.ctx, t);
     KILN_REQUIRE(first.slot != kInvalid);
     KILN_REQUIRE(rt.pump_until([&] { return is_ready(rt.ctx, t); }));
     TextureInfo const ti1 = texture_info(rt.ctx, t);
-    GpuObject const obj1  = gpu(rt.ctx, t);
+    GpuObject const obj1  = gpu_object(rt.ctx, t);
     KILN_CHECK_EQ(null_adapter_slot(rt.na, first.slot).native, obj1.native);
 
     usize const ev0 = rt.events.size();
@@ -1243,7 +1250,7 @@ KILN_TEST(Runtime, ReloadTexture) {
     KILN_CHECK(ti2.desc.format != ti1.desc.format || ti2.desc.width != ti1.desc.width ||
                ti2.desc.height != ti1.desc.height);
     KILN_CHECK_EQ(ti2.levelOffsets.size, usize(ti2.desc.levels));
-    GpuObject const obj2 = gpu(rt.ctx, t);
+    GpuObject const obj2 = gpu_object(rt.ctx, t);
     KILN_CHECK(obj2.native != obj1.native);
     KILN_CHECK_EQ(ti2.gpu.native, obj2.native);
     KILN_CHECK_EQ(null_adapter_slot(rt.na, first.slot).native, obj2.native);
@@ -1532,6 +1539,8 @@ KILN_TEST(Runtime, AdapterWithoutShapeCaps) {
     KILN_REQUIRE(c.ok());
     rt.ctx = *c;
     KILN_CHECK_EQ(null_adapter_stats(rt.na).beginUploads, KILN_DEBUG ? 5u : 4u);
+    KILN_CHECK(placeholder_object(rt.ctx, TextureKind::BaseColor, TextureShape::Cube).is_null());
+    KILN_CHECK(!placeholder_object(rt.ctx, TextureKind::BaseColor).is_null());
     TextureHandle const cube = request_shape(rt, "tex/cube", TextureShape::Cube);
     KILN_REQUIRE(rt.pump_until([&] { return state(rt.ctx, cube) == State::Failed; }));
     KILN_CHECK(rt.diags.has(kDiagAdapterRejected));

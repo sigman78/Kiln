@@ -265,13 +265,6 @@ void draw_geometry(Geometry& g, mesh::MeshView const& v, GLuint buffer,
     }
 }
 
-StrView texture_name(StrView meshName, mesh::MeshView const& v, mesh::TextureBinding const& b,
-                     char (&buf)[256]) noexcept {
-    StrView const path = v.str(b.pathStr);
-    if (!(b.flags & mesh::kTextureExternal)) return path;
-    return StrView(buf, resolve_asset_name(meshName, path, buf, sizeof buf));
-}
-
 bool begin_frame(GLFWwindow* w, ex::OrbitCamera const& camera, Target& t, Frame* f) noexcept {
     int fw = 0, fh = 0;
     glfwGetFramebufferSize(w, &fw, &fh);

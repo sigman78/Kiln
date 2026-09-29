@@ -72,13 +72,6 @@ struct Scene {
     bool unsupported = false;
 };
 
-StrView texture_name(StrView meshName, mesh::MeshView const& v, mesh::TextureBinding const& b,
-                     char (&buf)[256]) {
-    StrView const path = v.str(b.pathStr);
-    if (!(b.flags & mesh::kTextureExternal)) return path;
-    return StrView(buf, resolve_asset_name(meshName, path, buf, sizeof buf));
-}
-
 TextureHandle texture_for(Scene& s, StrView name, mesh::TextureSlot slot) {
     AssetId const id = asset_id(name);
     for (u32 i = 0; i < s.textureCount; ++i)
@@ -103,9 +96,9 @@ void prepare(Scene& s, mesh::MeshView const& v) {
             u32 const i                   = slot_index(mesh::TextureSlot(b.slot));
             if (i == kInvalid) continue;
             char buf[256];
-            TextureHandle const h =
-                texture_for(s, texture_name(s.modelName, v, b, buf), mesh::TextureSlot(b.slot));
-            s.materialSlots[m][i] = kiln::gpu(s.ctx, h).slot;
+            TextureHandle const h = texture_for(s, texture_asset_name(s.modelName, v, b, buf, sizeof buf),
+                                                mesh::TextureSlot(b.slot));
+            s.materialSlots[m][i] = gpu_object(s.ctx, h).slot;
         }
     }
     mesh::Bounds const& b = v.model().bounds;
@@ -184,7 +177,7 @@ u32 descriptor_of(NgaAdapter* na, u32 slot) {
 void draw_model(Scene& s, gpu::CommandBuffer* cmd, Bump& frame, Mat4 const& viewProj, Vec3 eye,
                 f32 exposure) {
     mesh::MeshView const* v = mesh_view(s.ctx, s.model);
-    NgaMesh const payload   = nga_mesh(s.na, kiln::gpu(s.ctx, s.model)); // zero until Ready
+    NgaMesh const payload   = nga_mesh(s.na, gpu_object(s.ctx, s.model)); // zero until Ready
     if (!v || !payload.gpu) return;
     u32 const partCount = min<u32>(v->parts().size(), kMaxParts);
     for (u32 p = 0; p < partCount; ++p) {
@@ -406,7 +399,7 @@ int main(int argc, char** argv) {
     s.model     = request_mesh(ctx, s.modelName);
     if (o.sky) {
         s.sky     = request_texture(ctx, StrView(o.sky), {.textureShape = TextureShape::Cube});
-        s.skySlot = kiln::gpu(ctx, s.sky).slot;
+        s.skySlot = gpu_object(ctx, s.sky).slot;
     }
 
     // 5. What the host owns: pipelines, per-frame root memory, render targets, frame sync.

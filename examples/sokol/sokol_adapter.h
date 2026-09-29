@@ -21,7 +21,7 @@ struct SokolAdapterDesc {
 /// After destroy(ctx), before sg_shutdown().
 void sokol_adapter_destroy(SokolAdapter* a) noexcept;
 
-/// The texture view behind a GpuObject that gpu() returned; invalid until flush made it.
+/// The texture view behind a GpuObject that gpu_object() returned; invalid until flush made it.
 [[nodiscard]] sg_view sokol_texture(SokolAdapter const* a, GpuObject obj) noexcept;
 /// The buffer behind a mesh's GpuObject: vertices and indices, payload at offset 0.
 [[nodiscard]] sg_buffer sokol_buffer(SokolAdapter const* a, GpuObject obj) noexcept;

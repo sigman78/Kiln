@@ -4,6 +4,8 @@
 
 #include "kiln/log.h"
 
+#include <cstring>
+
 namespace kiln {
 
 namespace {
@@ -123,6 +125,16 @@ usize resolve_asset_name(StrView owner, StrView uri, char* out, usize cap) noexc
         if (n >= cap - 1) return 0;
     }
     return check_asset_name(StrView(out, n)) ? 0 : n;
+}
+
+StrView texture_asset_name(StrView meshName, mesh::MeshView const& v, mesh::TextureBinding const& b,
+                           char* out, usize cap) noexcept {
+    StrView const path = v.str(b.pathStr);
+    if (b.flags & mesh::kTextureExternal) return StrView(out, resolve_asset_name(meshName, path, out, cap));
+    if (path.size >= cap || check_asset_name(path)) return {};
+    std::memcpy(out, path.data, path.size);
+    out[path.size] = '\0';
+    return StrView(out, path.size);
 }
 
 usize store_file_path(StrView storeDir, AssetKind kind, StrView name, char* out, usize cap) noexcept {

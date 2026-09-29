@@ -35,7 +35,11 @@ constexpr u32 kMaxMaterials = 64;
 constexpr u32 kMaxParts     = 256;
 constexpr u32 kBindings     = 6; // set 1: base color, normal, metal-rough, occlusion, emissive, sky
 constexpr u32 kSkyBinding   = 5;
-constexpr u32 kFif          = vkx::kFramesInFlight;
+/// The placeholder kind that stands in for each binding's missing texture (black for the sky).
+constexpr TextureKind kBindingKinds[kBindings] = {TextureKind::BaseColor, TextureKind::Normal,
+                                                  TextureKind::Orm,       TextureKind::Orm,
+                                                  TextureKind::Emissive,  TextureKind::Emissive};
+constexpr u32 kFif                             = vkx::kFramesInFlight;
 
 struct TextureItem {
     AssetId id = 0;
@@ -98,13 +102,6 @@ void reset_sky_material(Scene& s) {
     alloc_sets(s, sky.sets);
 }
 
-StrView texture_name(StrView meshName, mesh::MeshView const& v, mesh::TextureBinding const& b,
-                     char (&buf)[256]) {
-    StrView const path = v.str(b.pathStr);
-    if (!(b.flags & mesh::kTextureExternal)) return path;
-    return StrView(buf, resolve_asset_name(meshName, path, buf, sizeof buf));
-}
-
 u32 texture_item(Scene& s, StrView name, TextureKind kind) {
     AssetId const id = asset_id(name);
     for (u32 i = 0; i < s.textureCount; ++i)
@@ -146,7 +143,7 @@ void build_materials(Scene& s, mesh::MeshView const& v) {
             u32 const binding             = binding_of(mesh::TextureSlot(b.slot));
             if (binding == kInvalid) continue;
             char buf[256];
-            mat.textures[binding] = texture_item(s, texture_name(s.modelName, v, b, buf),
+            mat.textures[binding] = texture_item(s, texture_asset_name(s.modelName, v, b, buf, sizeof buf),
                                                  texture_kind_for_slot(mesh::TextureSlot(b.slot)));
         }
     }
@@ -171,7 +168,7 @@ void build_materials(Scene& s, mesh::MeshView const& v) {
 
 /// The one place kiln's state changes reach the descriptor sets: a texture whose GPU object
 /// changed (Ready: placeholder -> real; Changed: a reload; Failed: the checker) invalidates every
-/// material that samples it. MetaReady changes nothing: gpu() still returns the placeholder.
+/// material that samples it. MetaReady changes nothing: gpu_object() still returns the placeholder.
 void on_texture_event(Scene& s, Event const& e) {
     if (e.kind == EventKind::MetaReady) return;
     for (u32 i = 0; i < s.textureCount; ++i) {
@@ -212,12 +209,15 @@ void update_sets(Scene& s, u32 slot) {
         VkWriteDescriptorSet writes[kBindings]{};
         u32 count = 0, mask = 0;
         for (u32 b = 0; b < kBindings; ++b) {
-            if (mat.textures[b] == kInvalid) continue;
-            // Pending: the placeholder of the texture's kind; Ready: the real image.
-            vkx::TextureView const tv =
-                vkx::adapter_texture(s.va, gpu(s.ctx, s.textures[mat.textures[b]].handle));
+            // Pending: the placeholder of the texture's kind; Ready: the real image. Every binding is
+            // written: one the material lacks gets kiln's placeholder and a clear mask bit.
             TextureShape const want = b == kSkyBinding ? TextureShape::Cube : TextureShape::Tex2D;
-            if (!tv.view || tv.shape != want) continue;
+            vkx::TextureView tv;
+            if (mat.textures[b] != kInvalid)
+                tv = vkx::adapter_texture(s.va, gpu_object(s.ctx, s.textures[mat.textures[b]].handle));
+            bool const real = tv.view && tv.shape == want;
+            if (!real) tv = vkx::adapter_texture(s.va, placeholder_object(s.ctx, kBindingKinds[b], want));
+            if (!tv.view) continue;
             images[count]                 = {b == kSkyBinding ? s.skySampler : s.sampler, tv.view,
                              VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
             writes[count].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -227,7 +227,7 @@ void update_sets(Scene& s, u32 slot) {
             writes[count].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
             writes[count].pImageInfo      = &images[count];
             ++count;
-            mask |= 1u << b;
+            if (real) mask |= 1u << b;
         }
         if (count) vkUpdateDescriptorSets(s.device, count, writes, 0, nullptr);
         mat.written[slot] = mat.stamp;
@@ -238,7 +238,7 @@ void update_sets(Scene& s, u32 slot) {
 
 void draw_model(Scene& s, VkCommandBuffer cmd, u32 slot) {
     mesh::MeshView const* v        = mesh_view(s.ctx, s.model);
-    vkx::MeshPayload const payload = vkx::adapter_mesh(s.va, gpu(s.ctx, s.model)); // null until Ready
+    vkx::MeshPayload const payload = vkx::adapter_mesh(s.va, gpu_object(s.ctx, s.model)); // null until Ready
     if (!v || !payload.buffer || s.unsupported) return;
     VkPipelineLayout const layout = vkx::renderer_pipeline_layout(s.ren);
     VkBuffer const zero           = vkx::renderer_zero_buffer(s.ren);
@@ -300,21 +300,14 @@ void framebuffer_size(void* user, u32* width, u32* height) {
 /// The host's Vulkan objects: the material set layout, a pool, two samplers.
 void create_host_objects(Scene& s) {
     VkDescriptorSetLayoutBinding bindings[kBindings]{};
-    VkDescriptorBindingFlags flags[kBindings]{};
     for (u32 b = 0; b < kBindings; ++b) {
         bindings[b].binding         = b;
         bindings[b].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         bindings[b].descriptorCount = 1;
         bindings[b].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
-        flags[b] = VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT; // a material without, e.g., an emissive map
     }
-    VkDescriptorSetLayoutBindingFlagsCreateInfo fi{};
-    fi.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO;
-    fi.bindingCount  = kBindings;
-    fi.pBindingFlags = flags;
     VkDescriptorSetLayoutCreateInfo lci{};
     lci.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    lci.pNext        = &fi;
     lci.bindingCount = kBindings;
     lci.pBindings    = bindings;
     VKX_CHECK(vkCreateDescriptorSetLayout(s.device, &lci, nullptr, &s.setLayout));
@@ -370,7 +363,7 @@ int main(int argc, char** argv) {
     VkSurfaceKHR surface = VK_NULL_HANDLE;
     if (window && glfwCreateWindowSurface(device.instance, window, nullptr, &surface) != VK_SUCCESS) return 2;
 
-    // 2. The adapter without bindless: gpu() gives objects, adapter_texture() their views.
+    // 2. The adapter without bindless: gpu_object() gives objects, adapter_texture() their views.
     Adapter adapter{};
     Result<vkx::VkAdapter*> va = vkx::adapter_create({.device = &device, .bindless = false}, &adapter);
     if (va.failed()) return 2;

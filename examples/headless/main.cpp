@@ -195,7 +195,7 @@ void print_meta(Context* ctx, Item const& it) {
         }
     } else {
         TextureInfo const info = texture_info(ctx, it.texture);
-        KILN_INFO("app", "  texture: %s %ux%u, %u level(s)%s; gpu() serves the %s",
+        KILN_INFO("app", "  texture: %s %ux%u, %u level(s)%s; gpu_object() serves the %s",
                   format_name(info.desc.format), info.desc.width, info.desc.height, info.desc.levels,
                   info.desc.isCube ? ", cube" : "", info.isPlaceholder ? "placeholder" : "real texture");
     }
@@ -215,7 +215,8 @@ void print_event(Context* ctx, Item* items, u32 count, Event const& e) {
     switch (e.kind) {
     case EventKind::MetaReady: print_meta(ctx, *it); break;
     case EventKind::Ready: {
-        GpuObject const g = it->kind == AssetKind::Mesh ? gpu(ctx, it->mesh) : gpu(ctx, it->texture);
+        GpuObject const g =
+            it->kind == AssetKind::Mesh ? gpu_object(ctx, it->mesh) : gpu_object(ctx, it->texture);
         if (g.slot == kInvalid)
             KILN_INFO("app", "  gpu object native %llu", ull(g.native));
         else

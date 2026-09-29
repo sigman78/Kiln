@@ -4,6 +4,7 @@
 #include "kiln_test.h"
 #include "ktx2_corpus.h" // read_file, parse_u32
 
+#include "kiln/assets.h"
 #include "kiln/containers.h"
 #include "kiln/cook/cook.h"
 #include "kiln/io.h"
@@ -533,6 +534,10 @@ KILN_TEST(MeshCook, CorpusManifest) {
                 seen =
                     (v.textures()[j].flags & mesh::kTextureExternal) && v.textures()[j].pathStr == b.pathStr;
             images += !seen;
+            if (!(b.flags & mesh::kTextureExternal)) { // an embedded image's name is used as stored
+                char name[kMaxAssetNameLen + 1];
+                KILN_CHECK_EQ(texture_asset_name(StrView(rel), v, b, name, sizeof name), v.str(b.pathStr));
+            }
         }
         KILN_CHECK_MSG(images == e.textures, "%s: textures %u, manifest %u", rel, images, e.textures);
         KILN_CHECK_MSG(v.mounts().size() == e.mounts, "%s: mounts %u, manifest %u", rel, v.mounts().size(),
@@ -797,6 +802,12 @@ KILN_TEST(MeshCook, CorpusExternalUri) {
     KILN_CHECK_EQ(v.str(b.pathStr), StrView("external_uri_albedo.png"));
     KILN_CHECK_EQ(b.flags, u16(mesh::kTextureExternal | mesh::kTextureSrgb));
     KILN_CHECK_EQ(b.textureId, u64(0));
+    char name[kMaxAssetNameLen + 1];
+    KILN_CHECK_EQ(texture_asset_name("models/external_uri.gltf", v, b, name, sizeof name),
+                  StrView("models/external_uri_albedo.png"));
+    KILN_CHECK_EQ(texture_asset_name("pool:external_uri.gltf", v, b, name, sizeof name),
+                  StrView("pool:external_uri_albedo.png"));
+    KILN_CHECK(texture_asset_name("external_uri.gltf", v, b, name, 8).empty()); // does not fit
 
     CorpusCook none;
     if (!cook_corpus("generated/external_uri.gltf", none, false)) return;

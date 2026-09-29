@@ -56,11 +56,6 @@ void release_geometry(Geometry& g) noexcept;
 void draw_geometry(Geometry& g, mesh::MeshView const& v, GLuint buffer,
                    void (*material)(void* user, u32 index), void* user) noexcept;
 
-/// The texture asset a binding names: an embedded image carries its name; an external URI is a
-/// file next to the mesh (resolve_asset_name).
-[[nodiscard]] StrView texture_name(StrView meshName, mesh::MeshView const& v, mesh::TextureBinding const& b,
-                                   char (&buf)[256]) noexcept;
-
 struct Frame {
     ex::View view;
     ex::Mat4 viewProj;

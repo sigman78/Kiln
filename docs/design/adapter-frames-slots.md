@@ -44,7 +44,7 @@ frames passed. No adapter retires anything by itself any more.
   from now on. kiln calls it at the request (the placeholder of the texture's kind and shape), when
   the texture is Ready, after each reload, and with the Failed checker (`devPlaceholders`). It runs
   on the pump thread (requests are pump-thread calls).
-- `gpu()` returns the object with `slot` set to kiln's number, from the request on. A request with
+- `gpu_object()` returns the object with `slot` set to kiln's number, from the request on. A request with
   every slot in use fails with K5004.
 - If the placeholder's upload has not completed at the request (an adapter with neither
   `kSelfSubmitting` nor `flush`), kiln binds the slot as soon as it completes.

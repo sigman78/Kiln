@@ -166,7 +166,7 @@ struct Placeholder {
     GpuObject obj;
     u64 token    = 0;
     bool pending = false; ///< committed, not yet complete (non-self-submitting adapter)
-    bool ready   = false; ///< gpu() may return obj
+    bool ready   = false; ///< gpu_object() may return obj
     AssetId id   = 0;
     ktx2::TextureDesc desc;
     u64 offset = 0; ///< level 0 offset (always 0)

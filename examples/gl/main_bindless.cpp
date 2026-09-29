@@ -159,9 +159,9 @@ void request_textures(Scene& s, mesh::MeshView const& v) {
             u32 const index               = draw_index(mesh::TextureSlot(b.slot));
             if (index == kInvalid) continue;
             char buf[256];
-            TextureHandle const h =
-                texture_for(s, texture_name(s.modelName, v, b, buf), mesh::TextureSlot(b.slot));
-            s.materialSlots[m][index] = gpu(s.ctx, h).slot;
+            TextureHandle const h     = texture_for(s, texture_asset_name(s.modelName, v, b, buf, sizeof buf),
+                                                    mesh::TextureSlot(b.slot));
+            s.materialSlots[m][index] = gpu_object(s.ctx, h).slot;
         }
     }
 }
@@ -241,7 +241,7 @@ int main(int argc, char** argv) {
     s.modelName = StrView(o.model);
     if (o.sky) {
         s.sky     = request_texture(ctx, StrView(o.sky), RequestOptions{.textureShape = TextureShape::Cube});
-        s.skySlot = gpu(ctx, s.sky).slot;
+        s.skySlot = gpu_object(ctx, s.sky).slot;
     }
     s.model = request_mesh(ctx, s.modelName);
 
@@ -280,7 +280,7 @@ int main(int argc, char** argv) {
         glEnable(GL_DEPTH_TEST);
         glDepthFunc(GL_LEQUAL);
         mesh::MeshView const* v = mesh_view(ctx, s.model);
-        GLuint const buffer     = gl_buffer(*gla, gpu(ctx, s.model)); // meshes have no slot: 0 until Ready
+        GLuint const buffer = gl_buffer(*gla, gpu_object(ctx, s.model)); // meshes have no slot: 0 until Ready
         if (v && buffer) {
             glUseProgram(meshProgram);
             glUniformMatrix4fv(1, 1, GL_FALSE, f.viewProj.m);

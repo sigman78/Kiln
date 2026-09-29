@@ -26,7 +26,7 @@ v0.5 relation: glb to its embedded textures.
   nothing is watched). Default off; `pollMs` 250.
 - `request_reload(ctx, handle)` is the public entry the poller also uses: hosts with their own
   watcher or an editor "reload" button call it directly. It works without `KILN_HOT_RELOAD`.
-- **Reload keeps the old payload servable.** A `Ready` asset stays `Ready`; `is_ready`, `gpu()`,
+- **Reload keeps the old payload servable.** A `Ready` asset stays `Ready`; `is_ready`, `gpu_object()`,
   `mesh_view()` and `texture_info()` keep answering with the current version until the swap. The
   meta stage writes into a second metadata set in the slot (`next`), the upload stage into a new
   target object, and the swap in `pump()` moves `next` to `cur`, increments the content version,

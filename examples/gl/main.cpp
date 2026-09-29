@@ -92,12 +92,12 @@ TextureHandle find_item(Scene const& s, AssetId id) {
 }
 
 /// Requests every texture the model's materials name. Each streams in on its own; until then
-/// gpu() returns the placeholder of its kind.
+/// gpu_object() returns the placeholder of its kind.
 void request_textures(Scene& s, mesh::MeshView const& v) {
     for (u32 i = 0; i < v.textures().size(); ++i) {
         mesh::TextureBinding const& b = v.textures()[i];
         char buf[256];
-        StrView const name = texture_name(s.modelName, v, b, buf);
+        StrView const name = texture_asset_name(s.modelName, v, b, buf, sizeof buf);
         AssetId const id   = asset_id(name);
         if (id == 0 || find_item(s, id) || s.textureCount == kMaxTextures) continue;
         RequestOptions const opt{.textureKind = texture_kind_for_slot(mesh::TextureSlot(b.slot))};
@@ -119,7 +119,7 @@ void handle_event(Scene& s, Event const& e) {
 }
 
 /// Binds the material's textures to their units (the placeholder while one loads, the real one
-/// once Ready: whatever gpu() returns now) and tells the shader which units hold one.
+/// once Ready: whatever gpu_object() returns now) and tells the shader which units hold one.
 void bind_material(void* user, u32 material) {
     Scene const& s          = *static_cast<Scene const*>(user);
     mesh::MeshView const& v = *mesh_view(s.ctx, s.model);
@@ -138,8 +138,9 @@ void bind_material(void* user, u32 material) {
             default: continue;
             }
             char buf[256];
-            TextureHandle const h = find_item(s, asset_id(texture_name(s.modelName, v, b, buf)));
-            GlTexture const tex   = gl_texture(s.gla, gpu(s.ctx, h));
+            TextureHandle const h =
+                find_item(s, asset_id(texture_asset_name(s.modelName, v, b, buf, sizeof buf)));
+            GlTexture const tex = gl_texture(s.gla, gpu_object(s.ctx, h));
             if (!tex.name) continue;
             glBindTextureUnit(unit, tex.name);
             mask |= 1u << unit;
@@ -233,10 +234,10 @@ int main(int argc, char** argv) {
         for (Event const& e : events(ctx))
             handle_event(s, e);
 
-        // 5b. Draw: the sky, then the model; every texture is whatever gpu() returns now.
+        // 5b. Draw: the sky, then the model; every texture is whatever gpu_object() returns now.
         Frame f;
         if (!begin_frame(window, camera, target, &f)) continue;
-        GlTexture const sky = s.sky ? gl_texture(s.gla, gpu(ctx, s.sky)) : GlTexture{};
+        GlTexture const sky = s.sky ? gl_texture(s.gla, gpu_object(ctx, s.sky)) : GlTexture{};
         s.skyBit            = sky.target == GL_TEXTURE_CUBE_MAP ? 1u << kUnitSky : 0u;
         if (s.skyBit) {
             glBindTextureUnit(kUnitSky, sky.name);
@@ -254,7 +255,7 @@ int main(int argc, char** argv) {
         glEnable(GL_DEPTH_TEST);
         glDepthFunc(GL_LEQUAL);
         mesh::MeshView const* v = mesh_view(ctx, s.model);
-        GLuint const buffer     = gl_buffer(s.gla, gpu(ctx, s.model)); // 0 until Ready
+        GLuint const buffer     = gl_buffer(s.gla, gpu_object(ctx, s.model)); // 0 until Ready
         if (v && buffer) {
             glUseProgram(meshProgram);
             glUniformMatrix4fv(1, 1, GL_FALSE, f.viewProj.m);

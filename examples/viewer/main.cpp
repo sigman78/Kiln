@@ -174,16 +174,6 @@ struct Scene {
     u32 frame     = 0; ///< the frame being prepared, for the event log
 };
 
-/// The texture asset name a binding refers to; this mapping is the viewer's policy, not kiln's.
-/// An embedded image carries its name. An external URI names a file in the mesh's root
-/// (resolve_asset_name). Empty if it leaves the root.
-StrView texture_name(StrView meshPath, mesh::MeshView const& v, mesh::TextureBinding const& b,
-                     char (&buf)[256]) {
-    StrView const path = v.str(b.pathStr);
-    if (!(b.flags & mesh::kTextureExternal)) return path;
-    return StrView(buf, resolve_asset_name(meshPath, path, buf, sizeof buf));
-}
-
 /// Requests every BaseColor texture the mesh's materials name, once per texture. They are
 /// not waited on: they stream in under the per-frame budget while frames render.
 void request_textures(Scene& s, MeshItem const& m) {
@@ -194,7 +184,7 @@ void request_textures(Scene& s, MeshItem const& m) {
         auto const slot               = mesh::TextureSlot(b.slot);
         if (slot != mesh::TextureSlot::BaseColor) continue;
         char buf[256];
-        StrView const path = texture_name(m.path, *v, b, buf);
+        StrView const path = texture_asset_name(m.path, *v, b, buf, sizeof buf);
         if (path.empty()) {
             KILN_WARN("viewer", "%.*s: texture '%.*s' leaves the store root; skipped", KILN_SV(m.path),
                       KILN_SV(v->str(b.pathStr)));
@@ -249,7 +239,7 @@ void handle_event(Scene& s, Event const& e) {
         for (TextureItem& t : s.textures) {
             if (t.handle.bits() != e.handle) continue;
             State const now   = state(s.ctx, t.handle);
-            GpuObject const g = gpu(s.ctx, t.handle);
+            GpuObject const g = gpu_object(s.ctx, t.handle);
             KILN_INFO("viewer", "frame %u: event %-9s texture %s  (%s -> %s, v%u, slot %d)", s.frame,
                       event_name(e.kind), t.path, state_name(t.last), state_name(now), e.version,
                       g.slot == kInvalid ? -1 : int(g.slot));
@@ -318,9 +308,9 @@ void material_bindings(Scene& s, StrView meshPath, mesh::MeshView const& v, u32 
         mesh::TextureBinding const& b = v.textures()[ti];
         if (mesh::TextureSlot(b.slot) != mesh::TextureSlot::BaseColor) continue;
         char buf[256];
-        StrView const name = texture_name(meshPath, v, b, buf);
+        StrView const name = texture_asset_name(meshPath, v, b, buf, sizeof buf);
         if (u32 const* idx = name.empty() ? nullptr : s.textureIndex.find(hash_name(name))) {
-            GpuObject const g = gpu(s.ctx, s.textures[*idx].handle);
+            GpuObject const g = gpu_object(s.ctx, s.textures[*idx].handle);
             if (g.slot != kInvalid) {
                 push.baseColorSlot = g.slot;
                 push.flags |= vkx::kDrawBaseColor;
@@ -339,7 +329,7 @@ void draw_scene(Scene& s, VkCommandBuffer cmd) {
         MeshItem const& m = s.meshes[mi];
         if (!is_ready(s.ctx, m.handle)) continue;
         mesh::MeshView const* v        = mesh_view(s.ctx, m.handle);
-        vkx::MeshPayload const payload = vkx::adapter_mesh(s.vka, gpu(s.ctx, m.handle));
+        vkx::MeshPayload const payload = vkx::adapter_mesh(s.vka, gpu_object(s.ctx, m.handle));
         if (!v || !payload.buffer) continue;
         u32 const partCount = v->parts().size();
         if (s.world.size() < partCount) s.world.resize(partCount);
@@ -905,7 +895,7 @@ int main(int argc, char** argv) {
                        vkx::renderer_uniforms(app.ren), &sky);
         if (skyItem != kInvalid) {
             // The slot serves the cube placeholder until the real cube arrives.
-            sky.cubeSlot = gpu(app.ctx, scene.textures[skyItem].handle).slot;
+            sky.cubeSlot = gpu_object(app.ctx, scene.textures[skyItem].handle).slot;
             if (sky.cubeSlot != kInvalid) vkx::renderer_draw_sky(app.ren, cmd, sky);
         }
         draw_scene(scene, cmd);

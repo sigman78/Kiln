@@ -65,7 +65,7 @@ applies to **both meshes and textures** (owner decision, open-questions A10).
 | `Failed` | recoverable error; one diagnostic emitted | nullptr | placeholder |
 | `Partial` | reserved for progressive loads (v0.8) | never produced | |
 
-`gpu()` per state is in `adapter.md`. `Failed` holds no metadata.
+`gpu_object()` per state is in `adapter.md`. `Failed` holds no metadata.
 
 ### Queries
 
@@ -158,6 +158,10 @@ so a partially loaded scene still looks plausibly lit.
   `TextureSlot` to a kind (`MetalRough` and `Occlusion` map to `Orm`). Other usages use
   `BaseColor`. If a texture is requested with two kinds, the first request wins.
 - Created through the adapter at `create()` with reserved ids (`adapter.md`). Never unloaded.
+- `placeholder_object(ctx, kind, shape)` returns one without a handle, for a host that must bind
+  something where a material has no texture (sokol validates every declared slot; a Vulkan
+  descriptor set without `descriptorBindingPartiallyBound` needs every binding written). It carries
+  no bindless slot.
 - **Host-overridable per kind** via `ContextDesc.placeholders` (a span of `PlaceholderDesc`: kind,
   RGBA8 format, extent, pixels), for every shape. Kinds without an entry use the built-in one.
 - **Failed placeholder:** `ContextDesc.devPlaceholders` (default `KILN_DEBUG != 0`). When true, a
@@ -205,7 +209,7 @@ is a debug-only `KILN_ASSERT` (R5i).
 | `state()` | `Unloaded` |
 | `has_meta()` / `is_ready()` | false |
 | `mesh_view()` | nullptr |
-| `texture_info()` / `gpu()` | the placeholder a stale handle serves (`adapter.md`); mesh `gpu()` is null |
+| `texture_info()` / `gpu_object()` | the placeholder a stale handle serves (`adapter.md`); mesh `gpu_object()` is null |
 | `release()` | no-op; `KILN_ASSERT` in debug builds for a non-null stale handle (likely a double release) |
 | `progress()` / `wait()` on a stale group | all-zero `GroupStatus` |
 
@@ -247,7 +251,7 @@ rejected for the reasons above.
 - Confirm hot reload keeps the old payload `Ready`, and that reload failure does not change state.
 - Confirm immediate unload at refcount 0 for v0.5.
 - Confirm the placeholder table and the `devPlaceholders` default (`KILN_DEBUG != 0`).
-- Confirm placeholder readiness: `create()` spins when `kSelfSubmitting`; otherwise `gpu()` is null
+- Confirm placeholder readiness: `create()` spins when `kSelfSubmitting`; otherwise `gpu_object()` is null
   until the first completing `pump()`.
 - Confirm `RequestOptions.textureKind` and "first request's kind wins".
 - Confirm reserved ids 1..15 for placeholders.

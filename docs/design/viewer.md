@@ -48,7 +48,7 @@ The library never sees a Vulkan header.
 | Threads | `begin_upload` and `commit_upload` run on kiln workers: one mutex guards the ring, the transfer command pool and the object tables. `is_upload_complete` reads the timeline counter without the lock. `bind` and `destroy` run on the pump thread, which is the render thread. |
 | Completion | Each `commit_upload` records one command buffer (copies plus the layout transition to `SHADER_READ_ONLY_OPTIMAL`, or a buffer barrier for meshes) and submits it on the transfer queue with `vkQueueSubmit2`, signaling the timeline semaphore with the upload's value. The token is that value, issued at `begin_upload`; timeline values must be signaled in order, so a commit that overtakes an earlier one is held until that one arrives (kiln always commits what it began). `is_upload_complete(token)` is `counter >= token`. When the transfer queue is the graphics queue, submission happens inside `is_upload_complete` on the pump thread, so no two threads use one queue. |
 | Frame ordering | `is_upload_complete` raises `adapter_upload_watermark()` when it returns true; each frame submit waits on the timeline semaphore at that value, so a slot bound this pump is safe to sample this frame. |
-| Objects | `GpuObject::native` is a 1-based index into the adapter's object table (image + view + memory, or buffer + memory). kiln sets `slot` (its own slot number) on what `gpu()` returns. Meshes have no slot. |
+| Objects | `GpuObject::native` is a 1-based index into the adapter's object table (image + view + memory, or buffer + memory). kiln sets `slot` (its own slot number) on what `gpu_object()` returns. Meshes have no slot. |
 | Placeholders | Nothing special: kiln binds a new slot to the placeholder object of the texture's kind and shape. |
 | Destroy | `destroy` frees at once. The viewer reports its frames (`renderer_wait_frame` returns the frame about to be recorded and the last one whose fence it waited), so kiln calls `destroy` only after the frames that used the object. |
 | Memory | One `vkAllocateMemory` per object. Enough for an example; a real renderer sub-allocates. |
@@ -68,7 +68,7 @@ The library never sees a Vulkan header.
   attributes are real and whether the normal is octahedral.
 - **Draw.** Per part and LOD 0: push constants carry the model matrix (part translation and
   rotation, parent chain resolved), `posScale` / `posBias`, the base-color bindless slot from
-  `gpu(ctx, textureHandle)`, and flags. `vkCmdDrawIndexed` per submesh with the spec's index offset
+  `gpu_object(ctx, textureHandle)`, and flags. `vkCmdDrawIndexed` per submesh with the spec's index offset
   formula. A frame uniform buffer holds the view-projection matrix.
 - **Streaming.** The meshes named on the command line form a boot group, waited on with `wait()`
   before the first frame. Their textures are requested afterwards and stream in under a per-pump

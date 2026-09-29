@@ -60,8 +60,10 @@ struct App {
     bool unsupported                      = false;
     sg_pipeline skyPipeline{};
     sg_sampler sampler{}, skySampler{};
-    sg_image white{}, blackCube{}; ///< bound where a material has no texture: sokol wants every slot bound
-    sg_view whiteView{}, blackCubeView{};
+    /// kiln's placeholders, bound where a material has no texture (sokol wants every slot bound) and
+    /// as the sky without one.
+    sg_view fallback[kMaterialViews] = {};
+    sg_view fallbackCube{};
     Mat4 place;
     Mat4 world[kMaxParts];
 
@@ -71,13 +73,6 @@ struct App {
 };
 
 // --- Scene ---------------------------------------------------------------------------------------
-
-StrView texture_name(StrView meshName, mesh::MeshView const& v, mesh::TextureBinding const& b,
-                     char (&buf)[256]) {
-    StrView const path = v.str(b.pathStr);
-    if (!(b.flags & mesh::kTextureExternal)) return path;
-    return StrView(buf, resolve_asset_name(meshName, path, buf, sizeof buf));
-}
 
 TextureHandle find_item(App const& app, AssetId id) {
     for (u32 i = 0; i < app.textureCount; ++i)
@@ -89,7 +84,7 @@ void request_textures(App& app, mesh::MeshView const& v) {
     for (u32 i = 0; i < v.textures().size(); ++i) {
         mesh::TextureBinding const& b = v.textures()[i];
         char buf[256];
-        StrView const name = texture_name(StrView(app.o.model), v, b, buf);
+        StrView const name = texture_asset_name(StrView(app.o.model), v, b, buf, sizeof buf);
         AssetId const id   = asset_id(name);
         if (id == 0 || find_item(app, id) || app.textureCount == kMaxTextures) continue;
         RequestOptions const opt{.textureKind = texture_kind_for_slot(mesh::TextureSlot(b.slot))};
@@ -169,12 +164,12 @@ bool scene_settled(App const& app) {
 
 // --- Drawing -------------------------------------------------------------------------------------
 
-/// The material's textures (whatever gpu() returns now) in its view slots, and which ones are real.
+/// The material's textures (whatever gpu_object() returns now) in its view slots, and which ones are real.
 void bind_material(App const& app, mesh::MeshView const& v, u32 material, sg_bindings& b,
                    mesh_fs_params_t& fs) {
     f32 has[kMaterialViews] = {};
     for (int i = 0; i < kMaterialViews; ++i)
-        b.views[i] = app.whiteView;
+        b.views[i] = app.fallback[i];
     if (material < v.materials().size()) {
         mesh::MaterialSlot const& m = v.materials()[material];
         for (u32 t = 0; t < m.textureCount && m.textureFirst + t < v.textures().size(); ++t) {
@@ -189,8 +184,9 @@ void bind_material(App const& app, mesh::MeshView const& v, u32 material, sg_bin
             default: continue;
             }
             char buf[256];
-            TextureHandle const h = find_item(app, asset_id(texture_name(StrView(app.o.model), v, tb, buf)));
-            sg_view const tex     = sokol_texture(app.sa, gpu(app.ctx, h));
+            TextureHandle const h =
+                find_item(app, asset_id(texture_asset_name(StrView(app.o.model), v, tb, buf, sizeof buf)));
+            sg_view const tex = sokol_texture(app.sa, gpu_object(app.ctx, h));
             if (!tex.id) continue;
             b.views[view] = tex;
             has[view]     = 1.0f;
@@ -211,7 +207,7 @@ void draw_scene(App& app, sg_pass const& pass, f32 aspect) {
         ex::perspective_gl(kFovY, aspect, view.nearZ, view.farZ) * view.view; // see scene.glsl
     f32 const exposure = app.camera.exposure;
 
-    sg_view const sky = app.sky ? sokol_texture(app.sa, gpu(app.ctx, app.sky)) : sg_view{};
+    sg_view const sky = app.sky ? sokol_texture(app.sa, gpu_object(app.ctx, app.sky)) : sg_view{};
     if (sky.id) {
         Vec3 const f    = ex::normalize(Vec3{} - view.eye);
         Vec3 const side = ex::normalize(ex::cross(f, Vec3{0, 1, 0}));
@@ -234,7 +230,7 @@ void draw_scene(App& app, sg_pass const& pass, f32 aspect) {
     }
 
     mesh::MeshView const* v = mesh_view(app.ctx, app.model);
-    sg_buffer const buffer  = sokol_buffer(app.sa, gpu(app.ctx, app.model)); // invalid until Ready
+    sg_buffer const buffer  = sokol_buffer(app.sa, gpu_object(app.ctx, app.model)); // invalid until Ready
     if (v && buffer.id && !app.unsupported) {
         mesh_fs_params_t fs{
             .eye   = {view.eye.x, view.eye.y, view.eye.z, exposure},
@@ -268,7 +264,7 @@ void draw_scene(App& app, sg_pass const& pass, f32 aspect) {
                 }
                 b.index_buffer          = buffer;
                 b.index_buffer_offset   = int(lod.indexOffset);
-                b.views[VIEW_sky_tex]   = sky.id ? sky : app.blackCubeView;
+                b.views[VIEW_sky_tex]   = sky.id ? sky : app.fallbackCube;
                 b.samplers[SMP_smp]     = app.sampler;
                 b.samplers[SMP_sky_smp] = app.skySampler;
                 bind_material(app, *v, sm.material, b, fs);
@@ -367,7 +363,7 @@ void init(void* user) {
         app.sky =
             request_texture(app.ctx, StrView(app.o.sky), RequestOptions{.textureShape = TextureShape::Cube});
 
-    // 4. What the host owns: shaders, the sky pipeline, samplers, fallback textures.
+    // 4. What the host owns: shaders, the sky pipeline, samplers. create() waited for the placeholders.
     app.meshShader = sg_make_shader(mesh_shader_desc(sg_query_backend()));
     app.skyShader  = sg_make_shader(sky_shader_desc(sg_query_backend()));
     sg_pipeline_desc sp{};
@@ -379,25 +375,16 @@ void init(void* user) {
     sd.min_filter = sd.mag_filter = sd.mipmap_filter = SG_FILTER_LINEAR;
     sd.max_anisotropy                                = 8;
     app.sampler                                      = sg_make_sampler(&sd);
-    sd.wrap_u = sd.wrap_v = sd.wrap_w = SG_WRAP_CLAMP_TO_EDGE;
-    sd.max_anisotropy                 = 1;
-    app.skySampler                    = sg_make_sampler(&sd);
-    u32 const white = 0xFFFFFFFFu, black[6] = {};
-    sg_image_desc wd{};
-    wd.width = wd.height  = 1;
-    wd.pixel_format       = SG_PIXELFORMAT_RGBA8;
-    wd.data.mip_levels[0] = sg_range{&white, sizeof white};
-    app.white             = sg_make_image(&wd);
-    wd.type               = SG_IMAGETYPE_CUBE;
-    wd.num_slices         = 6;
-    wd.data.mip_levels[0] = sg_range{black, sizeof black};
-    app.blackCube         = sg_make_image(&wd);
-    sg_view_desc vd{};
-    vd.texture.image  = app.white;
-    app.whiteView     = sg_make_view(&vd);
-    vd.texture.image  = app.blackCube;
-    app.blackCubeView = sg_make_view(&vd);
-    app.startMs       = ex::ms_since_start();
+    sd.wrap_u = sd.wrap_v = sd.wrap_w       = SG_WRAP_CLAMP_TO_EDGE;
+    sd.max_anisotropy                       = 1;
+    app.skySampler                          = sg_make_sampler(&sd);
+    TextureKind const kinds[kMaterialViews] = {TextureKind::BaseColor, TextureKind::Normal, TextureKind::Orm,
+                                               TextureKind::Orm, TextureKind::Emissive}; // VIEW_* order
+    for (int i = 0; i < kMaterialViews; ++i)
+        app.fallback[i] = sokol_texture(app.sa, placeholder_object(app.ctx, kinds[i]));
+    app.fallbackCube =
+        sokol_texture(app.sa, placeholder_object(app.ctx, TextureKind::Emissive, TextureShape::Cube));
+    app.startMs = ex::ms_since_start();
 }
 
 void frame(void* user) {

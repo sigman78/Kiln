@@ -242,7 +242,7 @@ int main(int argc, char** argv) {
         Item const& it     = o.items[i];
         bool const isMesh  = it.kind == AssetKind::Mesh;
         State const s      = isMesh ? state(ctx, it.mesh) : state(ctx, it.texture);
-        GpuObject const g2 = isMesh ? gpu(ctx, it.mesh) : gpu(ctx, it.texture);
+        GpuObject const g2 = isMesh ? gpu_object(ctx, it.mesh) : gpu_object(ctx, it.texture);
         if (s != State::Ready) ++notReady;
         if (isMesh) {
             vkx::MeshPayload const mp = vkx::adapter_mesh(vka, g2);

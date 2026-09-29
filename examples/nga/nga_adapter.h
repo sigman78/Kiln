@@ -40,7 +40,7 @@ struct NgaMesh {
     u64 gpu  = 0; ///< GPU address of the payload; stream and index offsets are relative to it
     u64 size = 0;
 };
-/// The mesh payload behind a GpuObject that gpu() returned (zero until Ready).
+/// The mesh payload behind a GpuObject that gpu_object() returned (zero until Ready).
 [[nodiscard]] NgaMesh nga_mesh(NgaAdapter* a, GpuObject obj) noexcept;
 
 } // namespace kiln::nga

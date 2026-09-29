@@ -80,8 +80,9 @@ K1019, K1020, K5013-K5016 (`diagnostics.md`).
   K5014 on a mismatch; an unknown root is K5015. On Windows, a name that differs in case from
   the file on disk is K5016 (I2); elsewhere the file system already fails it.
 - **References (B2).** The mesh cook fails with K1020 when a buffer or image URI is absolute or
-  leaves the source's root. `resolve_asset_name()` gives hosts the same resolution; the viewer
-  uses it for external texture bindings.
+  leaves the source's root. `resolve_asset_name()` gives hosts the same resolution, and
+  `texture_asset_name()` applies it to a `.mesh` texture binding (an embedded image's name as stored,
+  an external URI resolved); every example uses it.
 
 Choices made during implementation, *Proposed* until the owner signs off:
 

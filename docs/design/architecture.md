@@ -103,7 +103,7 @@ sequenceDiagram
         Host->>Ctx: pump()
         Ctx->>Adapter: is_upload_complete(token)
     end
-    Ctx-->>Host: event Ready (gpu(handle) is the real object)
+    Ctx-->>Host: event Ready (gpu_object(handle) is the real object)
 ```
 
 A failure at any stage ends in one `Failed` event with one K5xxx diagnostic, emitted by `pump()`.
@@ -140,7 +140,7 @@ sequenceDiagram
     end
     RP->>Host: changed slot index (mutex list)
     Host->>Host: pump() calls request_reload(handle)
-    Note over Host: the asset stays Ready, gpu() still returns the old object
+    Note over Host: the asset stays Ready, gpu_object() still returns the old object
 
     Host->>Worker: meta stage into the next metadata set
     Worker->>Store: read the new metadata
