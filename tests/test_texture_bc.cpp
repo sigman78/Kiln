@@ -470,3 +470,51 @@ KILN_TEST(TextureBc, Hdr) {
     double const rmse = std::sqrt(sq / (kW * kH * 3));
     KILN_CHECK_MSG(rmse < 0.02, "BC6H log2 RMSE %.4f", rmse);
 }
+
+// A target that cannot sample a format gets the next one of its fallback chain
+// (bcn-encoding.md, "Fallbacks"); an explicit encoding that falls back warns.
+KILN_TEST(TextureBc, ExcludedFormatsFallBack) {
+    Vec<u8> const rgba = smooth_rgba(16, 16);
+    Vec<u8> const png  = encode_png(16, 16, 6, rgba.span());
+    Vec<u8> gray(default_allocator(), Tag::Test);
+    gray.resize(16 * 16);
+    for (usize i = 0; i < gray.size(); ++i)
+        gray[i] = rgba[i * 4];
+    Vec<u8> const maskPng = encode_png(16, 16, 0, gray.span());
+    u8 rgbe[8 * 8 * 4];
+    kiln::test::hdr::pattern(rgbe, 64, 5);
+    Vec<u8> const hdrFile = kiln::test::hdr::encode_flat(8, 8, Span<u8 const>(rgbe, sizeof rgbe));
+
+    auto const cooked = [](Span<u8 const> file, TextureCookSettings const& s, u64 excluded,
+                           DiagLog* log = nullptr) {
+        TargetProfile t         = kBc;
+        t.excludedBlockFormats  = excluded;
+        Result<CookedTexture> r = cook_bc(file, s, log, t);
+        return r.ok() ? r->desc.format : Format::Undefined;
+    };
+    u64 const bc7 = block_format_bit(Format::BC7_SRGB) | block_format_bit(Format::BC7_UNORM);
+    u64 const bc3 = block_format_bit(Format::BC3_SRGB) | block_format_bit(Format::BC3_UNORM);
+    TextureCookSettings const color{.usage = TextureUsage::Color};
+    TextureCookSettings const mask{.usage = TextureUsage::Mask};
+    TextureCookSettings const normal{.usage = TextureUsage::Normal};
+
+    KILN_CHECK_EQ(cooked(png.span(), color, bc7), Format::BC3_SRGB);
+    KILN_CHECK_EQ(cooked(png.span(), color, bc7 | bc3), Format::R8G8B8A8_SRGB); // uncompressed at worst
+    KILN_CHECK_EQ(cooked(maskPng.span(), mask, block_format_bit(Format::BC4_UNORM)), Format::BC5_UNORM);
+    KILN_CHECK_EQ(cooked(maskPng.span(), mask,
+                         block_format_bit(Format::BC4_UNORM) | block_format_bit(Format::BC5_UNORM)),
+                  Format::BC7_UNORM);
+    KILN_CHECK_EQ(cooked(png.span(), normal, block_format_bit(Format::BC5_UNORM)), Format::BC7_UNORM);
+    KILN_CHECK_EQ(cooked(hdrFile.span(), {.usage = TextureUsage::Hdr}, block_format_bit(Format::BC6H_UFLOAT)),
+                  Format::R16G16B16A16_SFLOAT);
+    // Formats the cooker does not pick for this usage change nothing.
+    KILN_CHECK_EQ(cooked(png.span(), color, block_format_bit(Format::ASTC_4x4_SRGB)), Format::BC7_SRGB);
+
+    DiagLog autoLog, explicitLog;
+    KILN_CHECK_EQ(cooked(png.span(), color, bc7, &autoLog), Format::BC3_SRGB);
+    KILN_CHECK(autoLog.has(kDiagSettingsClampedByTarget, Severity::Info));
+    KILN_CHECK_EQ(cooked(png.span(), {.usage = TextureUsage::Color, .encoding = TextureEncoding::BC1},
+                         block_format_bit(Format::BC1_RGB_SRGB), &explicitLog),
+                  Format::BC7_SRGB);
+    KILN_CHECK(explicitLog.has(kDiagSettingsClampedByTarget, Severity::Warning));
+}

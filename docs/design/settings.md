@@ -68,8 +68,10 @@ Reserved: indexWidthPolicy, unit/axis override, name prefixes to strip.
 ### Target and session
 
 - `TargetProfile { name = "desktop"; blockFamily = BC; maxTextureSize = 16384; maxVertexProfile =
-  Float; }`. `blockFamily` (`None`, `BC`) names the block formats the target's GPUs sample
-  (`bcn-encoding.md`); `kiln-cook --block none` cooks uncompressed.
+  Float; excludedBlockFormats = 0; }`. `blockFamily` (`None`, `BC`) names the block formats the
+  target's GPUs sample (`bcn-encoding.md`); `kiln-cook --block none` cooks uncompressed.
+  `excludedBlockFormats` names single block formats the target cannot sample; the cooker falls
+  back from them (`bcn-encoding.md`, "Fallbacks"; `kiln-cook --exclude-format <format>`).
 - `StoreMode { Disk, Memory, None }`: store, cache-less, validate only.
 - `CookSession { storeMode = Disk; fastPreview = false; }`. `fastPreview` turns off `optimize` and
   `genTangents` for meshes and sets texture `quality` to `Fast` when something is encoded. It changes resolved values, so it

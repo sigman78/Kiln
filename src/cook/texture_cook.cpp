@@ -109,6 +109,30 @@ Format block_format(TextureEncoding e, BlockFamily family, TextureUsage usage, u
     return Format::Undefined;
 }
 
+/// The next format to try when a target cannot sample `f` (bcn-encoding.md, "Fallbacks");
+/// Undefined: stay uncompressed.
+Format fallback_format(Format f) noexcept {
+    switch (f) {
+    case Format::BC1_RGB_UNORM:
+    case Format::BC3_UNORM:
+    case Format::BC5_UNORM: return Format::BC7_UNORM;
+    case Format::BC1_RGB_SRGB:
+    case Format::BC3_SRGB: return Format::BC7_SRGB;
+    case Format::BC4_UNORM: return Format::BC5_UNORM;
+    case Format::BC7_UNORM: return Format::BC3_UNORM;
+    case Format::BC7_SRGB: return Format::BC3_SRGB;
+    default: return Format::Undefined;
+    }
+}
+
+/// The first format of `f`'s fallback chain the target samples. BC3 and BC7 fall back to each
+/// other, so the chain is cut after a few steps.
+Format sampled_format(Format f, u64 excluded) noexcept {
+    for (u32 step = 0; step < 4 && f != Format::Undefined && (excluded & block_format_bit(f)); ++step)
+        f = fallback_format(f);
+    return (excluded & block_format_bit(f)) ? Format::Undefined : f;
+}
+
 /// The 8-bit image a block format encodes from: 1 channel for BC4, 2 for a BC5 mask, else RGBA
 /// (a BC5 normal keeps the normal plan and encodes its R and G).
 Plan block_plan(Image const& img, TextureUsage usage, bool srgb, Format bc, DiagSink const* diag,
@@ -216,6 +240,15 @@ Result<CookedTexture> cook_decoded(TextureSource const& src, TextureCookSettings
     // The f32 plan of an HDR texture takes BC6H only; the 8-bit plans take every other block format.
     Format bc = block_format(settings.encoding, target.blockFamily, usage, decoded.channels, srgb);
     if (hdr != (bc == Format::BC6H_UFLOAT)) bc = Format::Undefined;
+    if (Format const wanted = bc; wanted != Format::Undefined) {
+        bc = sampled_format(wanted, target.excludedBlockFormats);
+        if (bc != wanted) {
+            bool const asked = settings.encoding != TextureEncoding::Auto;
+            (void)diagf(diag, kOk, kDiagSettingsClampedByTarget, asked ? Severity::Warning : Severity::Info,
+                        asset, "encoding", "target %.*s cannot sample %s; cooking %s", KILN_SV(target.name),
+                        format_name(wanted), bc != Format::Undefined ? format_name(bc) : "uncompressed");
+        }
+    }
     Plan plan;
     if (hdr) {
         plan.format   = bc != Format::Undefined ? bc : Format::R16G16B16A16_SFLOAT;

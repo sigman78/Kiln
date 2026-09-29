@@ -344,6 +344,9 @@ void init(void* user) {
         return;
     }
     app.sa = *sa;
+    // The block formats this API cannot sample: the cook falls back from them.
+    u64 const excluded = unsampled_block_formats(app.adapter);
+    ex::use_target_store(&app.o, excluded);
     ContextDesc cd{};
     cd.diag                  = ex::stdout_diag();
     cd.adapter               = &app.adapter;
@@ -360,9 +363,10 @@ void init(void* user) {
 #if KILN_SOKOL_HAS_COOK
     if (app.o.rootCount) {
         cook::ProviderDesc pd{};
-        pd.meshDefaults.profile = cook::VertexProfile::Float;
-        pd.watchSources         = app.o.watch;
-        app.provider            = cook::install_provider(app.ctx, pd).ok();
+        pd.meshDefaults.profile        = cook::VertexProfile::Float;
+        pd.target.excludedBlockFormats = excluded;
+        pd.watchSources                = app.o.watch;
+        app.provider                   = cook::install_provider(app.ctx, pd).ok();
     }
 #endif
 

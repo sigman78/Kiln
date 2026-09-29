@@ -154,6 +154,11 @@ struct Adapter {
 [[nodiscard]] KILN_API u64 texture_level_layout(TextureDesc const& t, CopyConstraints const& c, u64* offsets,
                                                 u64* pitches) noexcept;
 
+/// The block-compressed formats `a` cannot sample (`supports_format` with SampledImage), as a
+/// block_format_bit() set. A cook target takes it as `TargetProfile::excludedBlockFormats`, so the
+/// cooker writes only formats this adapter samples.
+[[nodiscard]] KILN_API u64 unsampled_block_formats(Adapter const& a) noexcept;
+
 /// True if every required entry point is set, `bind` comes with `bindlessSlots`, and the reserved
 /// tail is null.
 [[nodiscard]] constexpr bool adapter_is_valid(Adapter const& a) noexcept {

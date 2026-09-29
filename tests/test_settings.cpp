@@ -514,3 +514,13 @@ KILN_TEST(Settings, TargetHashIdenticalProfilesEqual) {
     TargetProfile b{};
     KILN_CHECK_EQ(hash_target(a), hash_target(b));
 }
+
+KILN_TEST(Settings, TargetHashCoversExcludedFormats) {
+    TargetProfile a{};
+    TargetProfile b{};
+    b.excludedBlockFormats = block_format_bit(Format::BC4_UNORM);
+    KILN_CHECK(hash_target(a) != hash_target(b));
+    TargetProfile c = b;
+    c.excludedBlockFormats |= block_format_bit(Format::BC1_RGB_UNORM);
+    KILN_CHECK(hash_target(b) != hash_target(c));
+}

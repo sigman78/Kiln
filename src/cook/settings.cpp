@@ -308,6 +308,10 @@ u64 hash_target(TargetProfile const& t) noexcept {
     // maxArrayLayers only rejects inputs and never changes an output, so it is not hashed.
     // blockFamily is hashed only when set, so the keys of targets predating it stay valid.
     if (t.blockFamily != BlockFamily::None) h.update_value(u8(t.blockFamily));
+    if (t.excludedBlockFormats != 0) {
+        h.update_value(u16(0x7E00)); // tag: keeps it apart from the fields above
+        h.update_value(t.excludedBlockFormats);
+    }
     return h.digest();
 }
 

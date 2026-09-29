@@ -453,6 +453,25 @@ bool add_input(void* user, char const* arg) {
 
 /// `--root [<name>=]<dir>`. A prefix before `=` that is a valid root name names the root;
 /// otherwise the whole argument is the directory of the default root.
+/// --exclude-format <name>: a block format by its kiln name, any case (BC4_UNORM, bc4_unorm).
+bool add_excluded_format(void* user, char const* arg) {
+    auto* o = static_cast<Options*>(user);
+    for (u32 v = u32(Format::BC1_RGB_UNORM); v <= u32(Format::ASTC_12x12_SRGB); ++v) {
+        FormatInfo const* info = format_info(Format(v));
+        if (!info) continue;
+        char const* n = info->name;
+        usize i       = 0;
+        while (n[i] && arg[i] && (n[i] | 0x20) == (arg[i] | 0x20))
+            ++i;
+        if (n[i] == 0 && arg[i] == 0) {
+            o->target.excludedBlockFormats |= block_format_bit(Format(v));
+            return true;
+        }
+    }
+    std::fprintf(stderr, "kiln-cook: --exclude-format: '%s' is not a block-compressed format\n", arg);
+    return false;
+}
+
 bool add_root(void* user, char const* arg) {
     auto* o              = static_cast<Options*>(user);
     char const* const eq = std::strchr(arg, '=');
@@ -530,6 +549,11 @@ int kiln::cook::cook_cli_main(int argc, char** argv, CookPolicy const& policy) n
          .help    = "block encoder effort (default normal)",
          .str     = &o.quality,
          .choices = kQualities},
+        {.name = "--exclude-format",
+         .arg  = "<format>",
+         .help =
+             "repeatable; a block format the target cannot sample, e.g. BC4_UNORM (the cooker falls back)", .each = &add_excluded_format,
+         .user = &o},
         {.name   = "--zstd",
          .arg    = "<level>",
          .help   = "Zstd level of texture files, 1..19 (default 3); 0 stores them plain",

@@ -516,6 +516,15 @@ void run_job(void* arg) noexcept {
 
 namespace kiln {
 
+u64 unsampled_block_formats(Adapter const& a) noexcept {
+    if (!a.supports_format) return 0;
+    u64 excluded = 0;
+    for (u32 v = u32(Format::BC1_RGB_UNORM); v <= u32(Format::ASTC_12x12_SRGB); ++v)
+        if (format_info(Format(v)) && !a.supports_format(a.user, Format(v), FormatUsage::SampledImage))
+            excluded |= block_format_bit(Format(v));
+    return excluded;
+}
+
 u64 texture_level_layout(TextureDesc const& t, CopyConstraints const& c, u64* offsets,
                          u64* pitches) noexcept {
     FormatInfo const* fi = format_info(t.format);

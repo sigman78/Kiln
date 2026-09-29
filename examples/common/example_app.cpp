@@ -122,6 +122,13 @@ int parse_options(char const* program, int argc, char** argv, Options* o) noexce
     return -1;
 }
 
+void use_target_store(Options* o, u64 excludedBlockFormats) noexcept {
+    static char store[1100];
+    if (excludedBlockFormats == 0) return;
+    format(store, sizeof store, "%s-%016llx", kStore, static_cast<unsigned long long>(excludedBlockFormats));
+    o->store = store;
+}
+
 char const* state_name(State s) noexcept {
     switch (s) {
     case State::Unloaded: return "Unloaded";

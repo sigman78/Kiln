@@ -111,6 +111,15 @@ enum class FormatUsage : u8 {
     SampledImage,
 };
 
+/// A set of block-compressed formats, one bit per format from BC1_RGB_UNORM (131) to
+/// ASTC_12x12_SRGB (184): bit (value - 131). The bit of any other format is 0.
+[[nodiscard]] constexpr u64 block_format_bit(Format f) noexcept {
+    u32 const v = u32(f);
+    return v >= u32(Format::BC1_RGB_UNORM) && v <= u32(Format::ASTC_12x12_SRGB)
+               ? u64(1) << (v - u32(Format::BC1_RGB_UNORM))
+               : 0;
+}
+
 struct FormatInfo {
     Format format;
     char const* name;  ///< e.g. "R8G8B8A8_SRGB"

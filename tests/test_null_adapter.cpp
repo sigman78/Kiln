@@ -346,3 +346,23 @@ KILN_TEST(Placeholders, AssetIdsMatchReservedRange) {
 }
 
 } // namespace
+
+namespace {
+bool no_bc4(void*, Format f, FormatUsage) { return f != Format::BC4_UNORM && f != Format::BC1_RGB_SRGB; }
+} // namespace
+
+KILN_TEST(NullAdapter, UnsampledBlockFormats) {
+    KILN_CHECK_EQ(block_format_bit(Format::BC1_RGB_UNORM), u64(1));
+    KILN_CHECK_EQ(block_format_bit(Format::ASTC_12x12_SRGB), u64(1) << 53);
+    KILN_CHECK_EQ(block_format_bit(Format::R8G8B8A8_UNORM), u64(0));
+    KILN_CHECK_EQ(block_format_bit(Format(185)), u64(0));
+
+    Adapter a{};
+    Result<NullAdapter*> na = null_adapter_create({}, &a);
+    KILN_REQUIRE(na.ok());
+    KILN_CHECK_EQ(unsampled_block_formats(a), u64(0)); // the null adapter samples everything
+    a.supports_format = &no_bc4;
+    KILN_CHECK_EQ(unsampled_block_formats(a),
+                  block_format_bit(Format::BC4_UNORM) | block_format_bit(Format::BC1_RGB_SRGB));
+    null_adapter_destroy(*na);
+}

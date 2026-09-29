@@ -169,6 +169,29 @@ The runtime is unchanged. The example adapters (step 5, done 2026-09-29):
 A host that loads a BC texture on an adapter without BC support gets K5004 at metadata time, as
 for any unsupported format.
 
+#### Fallbacks
+
+Some APIs sample only part of the BC family (the table above). `TargetProfile::excludedBlockFormats`
+names the block formats a target cannot sample, one bit per format (`block_format_bit()`), and
+`unsampled_block_formats(adapter)` reads that set from an adapter's `supports_format`. The cooker then
+takes the next format of a fixed chain, and stays uncompressed at worst:
+
+| Wanted | Falls back to |
+|---|---|
+| BC1, BC3 | BC7 (same sRGB-ness) |
+| BC4 (1-channel mask) | BC5, then BC7 |
+| BC5 (normal, 2-channel mask) | BC7 |
+| BC7 | BC3 |
+| BC6H | RGBA16F (uncompressed) |
+
+- An explicit `encoding` that falls back is a K3003 warning; an `Auto` one is K3003 info.
+- The set is part of `hash_target` when it is not empty, so today's keys stay the same.
+- Per-API presets were the other option; a set read from the adapter needs no table kept in sync
+  with each API, and it follows runtime facts such as GL's S3TC extension.
+- The integration examples cook with their adapter's set. A store file is used as long as it exists
+  (open-questions R9), so an example whose set is not empty gets its own store,
+  `example-store-<set in hex>`.
+
 ### 6. Zstd supercompression (done 2026-09-29), then RDO (deferred)
 
 Each mip level is one Zstd frame (KTX2 scheme 2), on by default, and only where it saves 10% of

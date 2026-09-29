@@ -7,6 +7,18 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
 
 ## [Unreleased]
 
+### Added
+- **Cook: block formats per target.** `TargetProfile::excludedBlockFormats` (a `block_format_bit()`
+  set, `kiln/formats.h`) names block formats a target cannot sample; the cooker falls back along a
+  fixed chain (BC1/BC3 to BC7, BC4 to BC5 to BC7, BC5 to BC7, BC7 to BC3, BC6H to RGBA16F), with a
+  K3003 warning for an explicit `encoding` and K3003 info for `Auto`. `unsampled_block_formats(adapter)`
+  (`kiln/adapter.h`) reads the set from an adapter; `kiln-cook --exclude-format <format>` sets it.
+  The set is hashed only when not empty, so existing keys stay valid. docs/design/bcn-encoding.md,
+  "Fallbacks".
+- Examples: every integration example cooks with its adapter's set, so `kiln-nga` gets no BC1 or
+  BC4 and `kiln-sokol` no BC1. An example whose set is not empty uses `example-store-<set in hex>`,
+  so its first run cooks once.
+
 ## [0.5.0] - 2026-09-29
 
 The first tagged release: a usable async asset loader (milestones M0-M5), with BC and Zstd

@@ -2,6 +2,7 @@
 // Design: docs/design/settings.md.
 #pragma once
 
+#include "kiln/formats.h"
 #include "kiln/hash.h"
 #include "kiln/result.h"
 
@@ -144,6 +145,10 @@ struct TargetProfile {
     u32 maxTextureSize             = 16384;
     VertexProfile maxVertexProfile = VertexProfile::Float; ///< highest profile the target accepts
     u32 maxArrayLayers             = 2048;                 ///< more layers is an error (K2004), not a clamp
+    /// Block formats the target cannot sample, a block_format_bit() set (unsampled_block_formats()
+    /// reads one from an adapter). The cooker then takes the next format of the fallback chain,
+    /// uncompressed at worst (docs/design/bcn-encoding.md, "Fallbacks").
+    u64 excludedBlockFormats = 0;
 };
 
 enum class StoreMode : u8 { Disk = 0, Memory, None }; ///< store / cache-less / validate only
