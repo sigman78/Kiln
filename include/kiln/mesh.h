@@ -129,6 +129,8 @@ struct MeshPart {
 };
 static_assert(sizeof(MeshPart) == 112);
 
+/// kiln's cooker writes U16 or U32, never U8. U8 exists for other writers; a host whose API has no
+/// 8-bit indices (D3D11, Metal, WebGPU, sokol) may reject it.
 enum class IndexType : u8 { U16 = 0, U32 = 1, U8 = 2 };
 
 [[nodiscard]] constexpr u32 index_size(IndexType t) noexcept {

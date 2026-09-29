@@ -94,6 +94,8 @@ struct UploadTarget {
 /// `commit_upload` may run on kiln worker threads, everything else runs on the pump thread
 /// (threading contract and frames: docs/design/adapter.md, docs/design/adapter-frames-slots.md).
 struct Adapter {
+    /// Answers for the whole host: the API's support, and for VertexBuffer also what the host's
+    /// shaders read (with vertex pulling, only the shaders decide).
     bool (*supports_format)(void* user, Format f, FormatUsage usage) = nullptr;
     void (*copy_constraints)(void* user, CopyConstraints* out)       = nullptr;
     /// May return Code::Busy (back-pressure); kiln retries on a later pump.

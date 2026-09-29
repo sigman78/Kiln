@@ -316,7 +316,7 @@ static_assert(sizeof(MeshLod) == 48);
 **Rules:**
 
 - `geometricError` is 0 unless the cooker computed it. Authored `_lodN` LODs have no error metric, so the cooker writes 0 for them and the host chooses switch distances itself. Simplifier-generated LODs (post-v0.5) fill it in.
-- The v0.5 cooker emits U16 or U32 indices only. U8 is valid in the format, and readers support it.
+- kiln's cooker emits U16 or U32 indices only, and will keep doing so (`IndexType` in `mesh.h` says it too). U8 is valid in the format for other writers, and readers support it. Hosts for APIs without 8-bit indices (D3D11, Metal, WebGPU, sokol) may reject U8.
 
 ### 5.6 `SUBM` — submeshes (one draw each)
 

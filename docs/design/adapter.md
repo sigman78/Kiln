@@ -64,7 +64,7 @@ The structs (`CopyConstraints`, `TextureDesc`, `MeshPayloadDesc`, `UploadDesc`, 
 
 | Call | Contract |
 |---|---|
-| `supports_format` | Called on the pump thread when an asset reaches metadata: the texture format with `SampledImage`, every vertex attribute format with `VertexBuffer`. False fails the asset (K5004). Must be cheap and pure. |
+| `supports_format` | Called on the pump thread when an asset reaches metadata: the texture format with `SampledImage`, every vertex attribute format with `VertexBuffer`. False fails the asset (K5004). Must be cheap and pure. The adapter answers for its whole host, not only for the API: see "Vertex formats" below. |
 | `copy_constraints` | Called once in `create()`. kiln rounds each value up to a power of two. |
 | `begin_upload` | Returns destination memory and the `GpuObject` it will hold. The memory may be plain CPU memory that the adapter hands to its API later (sokol copies it at image creation). `Code::Busy` means "not now" (staging full): kiln retries on a later `pump()`. Any other failure moves the asset to `Failed` (K5004). |
 | `commit_upload` | kiln has finished writing `dst`. Always called after a successful `begin_upload`, even when the load then fails. The renderer records and submits the copy (itself if `kSelfSubmitting`, else with its next frame). |
@@ -122,6 +122,42 @@ A slot need not be a descriptor. NoGraphicsAPI forbids rewriting a descriptor wh
 read it, so `kiln-nga`'s adapter keeps a CPU table: `bind` points kiln's slot at the object's own
 descriptor, and the host resolves slot to descriptor index when it writes each frame's root data.
 Materials still store the slot once.
+
+### Vertex formats
+
+With fixed-function vertex fetch, the graphics API decides which vertex formats work and the
+adapter asks it (`vkGetPhysicalDeviceFormatProperties`). With vertex pulling, the host's shaders
+read the payload themselves, so only they decide: the adapter answers with what its host's shaders
+decode (`kiln-nga` accepts the float streams its shaders read). kiln has no separate host filter,
+because the adapter is host code and knows the shaders. The cook side should match: a host whose
+shaders decode nothing cooks with `VertexProfile::Float` (`mesh-format-spec.md` §6), which every
+integration example uses.
+
+Indices are U16 or U32 from kiln's cooker, never U8 (`IndexType`), so APIs without 8-bit indices
+need no check for kiln's own content.
+
+### Adapter types
+
+The integration examples (`integration-examples.md`) settled into three ways to get bytes onto
+the GPU. An adapter picks one per upload kind; `kiln-nga` uses the second for textures and the
+third for meshes.
+
+| | Self-submitting | GPU work in `flush` | Written in place |
+|---|---|---|---|
+| Examples | `vk_adapter.cpp` (`kiln-viewer`, `kiln-vk-basic`) | `kiln-gl`, `kiln-gl-bindless`, `kiln-sokol`, `kiln-nga` textures | `kiln-nga` meshes |
+| `begin_upload` (worker) | carves a staging ring | carves a mapped ring or allocates CPU memory; no API call | returns CPU-visible GPU memory (ReBAR); the object is that memory |
+| `commit_upload` (worker) | records and submits the copy on a transfer queue | queues the upload | nothing to copy |
+| GPU work | on commit | in `flush`, on the pump thread: create the object, copy, fence | none |
+| `is_upload_complete` | timeline value reached | fence signaled (GL, NoGraphicsAPI), or flushed (sokol) | flushed: later submissions see the writes |
+| Caps | `kSelfSubmitting` | `flush` set | either |
+| Host rules | `pump()` on one thread | `create()` and `pump()` on the graphics thread | as its textures |
+
+Two choices are independent of the type:
+
+- **Binding model:** per-frame lookup or bindless slots (next section).
+- **Frames:** a host whose API frees objects that in-flight frames use (Vulkan, NoGraphicsAPI,
+  bindless GL handles) reports frames in `PumpOptions`; GL with bound textures and sokol keep
+  objects alive for issued commands and report nothing (Frames, above).
 
 ### Two binding models
 
