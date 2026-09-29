@@ -52,6 +52,8 @@ struct Options {
     u32 threads             = 0; ///< cooking threads including the main one; 0 = auto, 1 = no pool
     char const* profile     = "default";
     char const* targetName  = "desktop";
+    char const* block       = "none";
+    char const* quality     = "normal";
     MeshCookSettings mesh;
     TextureCookSettings tex;
     TargetProfile target;
@@ -308,9 +310,10 @@ bool emit(Ctx& c, StrView assetPath, AssetKind kind, u64 key, Span<u8 const> byt
 // --verbose per-stage timings (rollout step 1, docs/design/cook-kernels.md). Zero
 // fields are stages the cook did not run (e.g. a KTX2 pass-through has none).
 void print_texture_stats(CookStats const& s) {
-    std::printf("  stats: decode %.1f ms, prepare %.1f ms, mips %.1f ms, write %.1f ms (total %.1f ms)\n",
+    std::printf("  stats: decode %.1f ms, prepare %.1f ms, mips %.1f ms, encode %.1f ms, write %.1f ms "
+                "(total %.1f ms)\n",
                 double(s.decodeUs) / 1000.0, double(s.prepareUs) / 1000.0, double(s.mipsUs) / 1000.0,
-                double(s.writeUs) / 1000.0, double(s.totalUs) / 1000.0);
+                double(s.encodeUs) / 1000.0, double(s.writeUs) / 1000.0, double(s.totalUs) / 1000.0);
 }
 
 void print_mesh_stats(CookStats const& s) {
@@ -482,8 +485,10 @@ bool add_root(void* user, char const* arg) {
     return true;
 }
 
-char const* const kProfiles[] = {"default", "precise", "float", nullptr};
-char const* const kTargets[]  = {"desktop", nullptr};
+char const* const kProfiles[]  = {"default", "precise", "float", nullptr};
+char const* const kTargets[]   = {"desktop", nullptr};
+char const* const kBlocks[]    = {"none", "bc", nullptr};
+char const* const kQualities[] = {"fast", "normal", "high", nullptr};
 
 } // namespace
 
@@ -514,6 +519,16 @@ int kiln::cook::cook_cli_main(int argc, char** argv, CookPolicy const& policy) n
          .help    = "target profile",
          .str     = &o.targetName,
          .choices = kTargets},
+        {.name    = "--block",
+         .arg     = "<family>",
+         .help    = "block compression the target samples (default none)",
+         .str     = &o.block,
+         .choices = kBlocks},
+        {.name    = "--quality",
+         .arg     = "<level>",
+         .help    = "block encoder effort (default normal)",
+         .str     = &o.quality,
+         .choices = kQualities},
         {.name    = "--profile",
          .arg     = "<name>",
          .help    = "vertex profile",
@@ -552,6 +567,10 @@ int kiln::cook::cook_cli_main(int argc, char** argv, CookPolicy const& policy) n
     o.mesh.optimize        = !noOptimize;
     o.mesh.useAuthoredLods = !noLods;
     o.tex.genMips          = !noMips;
+    o.target.blockFamily   = std::strcmp(o.block, "bc") == 0 ? BlockFamily::BC : BlockFamily::None;
+    o.tex.quality          = std::strcmp(o.quality, "fast") == 0   ? EncodeQuality::Fast
+                             : std::strcmp(o.quality, "high") == 0 ? EncodeQuality::High
+                                                                   : EncodeQuality::Normal;
     o.mesh.profile         = std::strcmp(o.profile, "float") == 0     ? VertexProfile::Float
                              : std::strcmp(o.profile, "precise") == 0 ? VertexProfile::Precise
                                                                       : VertexProfile::Default;

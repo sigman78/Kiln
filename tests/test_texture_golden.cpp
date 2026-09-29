@@ -82,9 +82,21 @@ void check_golden_ktx2(char const* name, Span<u8 const> got) {
                    name, got.size, want.size(), diffAt);
 }
 
-Result<CookedTexture> run_cook(Span<u8 const> bytes, TextureCookSettings const& s) {
-    return cook_texture({.bytes = bytes, .assetPath = "test/golden", .sourcePath = "golden.png"}, s,
-                        TargetProfile{});
+Result<CookedTexture> run_cook(Span<u8 const> bytes, TextureCookSettings const& s,
+                               TargetProfile const& target = {}) {
+    return cook_texture({.bytes = bytes, .assetPath = "test/golden", .sourcePath = "golden.png"}, s, target);
+}
+
+/// Smooth content, so the encoders' search paths matter (noise would make every block alike).
+void gradient(u8* rgba, u32 w, u32 h) {
+    for (u32 y = 0; y < h; ++y)
+        for (u32 x = 0; x < w; ++x) {
+            u8* p = rgba + (usize(y) * w + x) * 4;
+            p[0]  = u8(x * 37 + y * 5);
+            p[1]  = u8(y * 29 + 40);
+            p[2]  = u8((x ^ y) * 17);
+            p[3]  = u8(255 - x * 9);
+        }
 }
 
 } // namespace
@@ -129,4 +141,51 @@ KILN_TEST(TextureGolden, Height16_4x4) {
         run_cook(f.span(), {.colorSpace = ColorSpace::Linear, .usage = TextureUsage::Height});
     if (!KILN_CHECK_MSG(r.ok(), "cook failed")) return;
     check_golden_ktx2("height16", r->file.span());
+}
+
+// BC goldens: the encoders must give the same bytes with every compiler and OS in CI.
+KILN_TEST(TextureGolden, Bc7Color12x9) {
+    u8 rgba[12 * 9 * 4];
+    gradient(rgba, 12, 9);
+    Vec<u8> f = png::encode({.width = 12, .height = 9, .colorType = 6, .depth = 8, .pixels = rgba});
+    Result<CookedTexture> r =
+        run_cook(f.span(), {.colorSpace = ColorSpace::Srgb, .usage = TextureUsage::Color},
+                 {.blockFamily = BlockFamily::BC});
+    if (!KILN_CHECK_MSG(r.ok(), "cook failed")) return;
+    KILN_CHECK(r->desc.format == Format::BC7_SRGB);
+    check_golden_ktx2("bc7_color_srgb", r->file.span());
+}
+
+KILN_TEST(TextureGolden, Bc5Normal16x8) {
+    u8 rgba[16 * 8 * 4];
+    gradient(rgba, 16, 8);
+    Vec<u8> f = png::encode({.width = 16, .height = 8, .colorType = 6, .depth = 8, .pixels = rgba});
+    Result<CookedTexture> r =
+        run_cook(f.span(), {.colorSpace = ColorSpace::Linear, .usage = TextureUsage::Normal},
+                 {.blockFamily = BlockFamily::BC});
+    if (!KILN_CHECK_MSG(r.ok(), "cook failed")) return;
+    KILN_CHECK(r->desc.format == Format::BC5_UNORM);
+    check_golden_ktx2("bc5_normal", r->file.span());
+}
+
+// BC1 and BC4 at High quality, the rgbcx paths the defaults do not take.
+KILN_TEST(TextureGolden, Bc1Bc4High8x8) {
+    u8 rgba[8 * 8 * 4];
+    gradient(rgba, 8, 8);
+    Vec<u8> f = png::encode({.width = 8, .height = 8, .colorType = 6, .depth = 8, .pixels = rgba});
+    TargetProfile const bc{.blockFamily = BlockFamily::BC};
+    Result<CookedTexture> r1 = run_cook(f.span(),
+                                        {.colorSpace = ColorSpace::Linear,
+                                         .usage      = TextureUsage::Color,
+                                         .encoding   = TextureEncoding::BC1,
+                                         .quality    = EncodeQuality::High},
+                                        bc);
+    if (!KILN_CHECK_MSG(r1.ok(), "BC1 cook failed")) return;
+    check_golden_ktx2("bc1_high", r1->file.span());
+    Result<CookedTexture> r4 = run_cook(
+        f.span(),
+        {.colorSpace = ColorSpace::Linear, .usage = TextureUsage::Mask, .quality = EncodeQuality::High}, bc);
+    if (!KILN_CHECK_MSG(r4.ok(), "BC4 cook failed")) return;
+    KILN_CHECK(r4->desc.format == Format::BC4_UNORM);
+    check_golden_ktx2("bc4_mask_high", r4->file.span());
 }

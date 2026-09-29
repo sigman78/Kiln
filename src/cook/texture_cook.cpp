@@ -1,5 +1,6 @@
 // src/cook/texture_cook.cpp — texture cooking: PNG/JPEG/WebP -> KTX2 (decode, convert per
-// usage, mips) or KTX2 pass-through.
+// usage, mips, BC encode) or KTX2 pass-through.
+#include "bc_encode.h"
 #include "cook_internal.h"
 
 #include "kiln/cook/image.h"
@@ -80,6 +81,63 @@ struct Plan {
     bool normal = false;
 };
 
+/// The block format of an encoding, or Undefined to stay uncompressed. Auto follows the usage
+/// table of bcn-encoding.md when the target has the BC family.
+Format block_format(TextureEncoding e, BlockFamily family, TextureUsage usage, u32 srcChannels,
+                    bool srgb) noexcept {
+    if (e == TextureEncoding::Auto) {
+        if (family != BlockFamily::BC) return Format::Undefined;
+        switch (usage) {
+        case TextureUsage::Auto:
+        case TextureUsage::Color:
+        case TextureUsage::Ui:
+        case TextureUsage::Orm: e = TextureEncoding::BC7; break;
+        case TextureUsage::Normal: e = TextureEncoding::BC5; break;
+        case TextureUsage::Mask: e = srcChannels == 2 ? TextureEncoding::BC5 : TextureEncoding::BC4; break;
+        case TextureUsage::Hdr:
+        case TextureUsage::Lut:
+        case TextureUsage::Height: return Format::Undefined;
+        }
+    }
+    switch (e) {
+    case TextureEncoding::BC1: return srgb ? Format::BC1_RGB_SRGB : Format::BC1_RGB_UNORM;
+    case TextureEncoding::BC3: return srgb ? Format::BC3_SRGB : Format::BC3_UNORM;
+    case TextureEncoding::BC4: return Format::BC4_UNORM;
+    case TextureEncoding::BC5: return Format::BC5_UNORM;
+    case TextureEncoding::BC7: return srgb ? Format::BC7_SRGB : Format::BC7_UNORM;
+    case TextureEncoding::Auto:
+    case TextureEncoding::Uncompressed:
+    case TextureEncoding::BC6H: return Format::Undefined;
+    }
+    return Format::Undefined;
+}
+
+/// The 8-bit image a block format encodes from: 1 channel for BC4, 2 for a BC5 mask, else RGBA
+/// (a BC5 normal keeps the normal plan and encodes its R and G).
+Plan block_plan(Image const& img, TextureUsage usage, bool srgb, Format bc, DiagSink const* diag,
+                StrView asset) noexcept {
+    Plan p;
+    p.format = bc;
+    p.bits   = 8;
+    p.normal = usage == TextureUsage::Normal;
+    if (bc == Format::BC4_UNORM)
+        p.channels = 1;
+    else if (bc == Format::BC5_UNORM && !p.normal)
+        p.channels = 2;
+    else {
+        p.channels  = 4;
+        p.rgba8     = true;
+        p.mips.srgb = srgb;
+    }
+    if (p.normal && img.channels < 3)
+        note(diag, asset, Severity::Warning, kDiagImageChannelMismatch,
+             "normal map has %llu channel(s); expanded to RGBA", img.channels);
+    else if (!p.rgba8 && img.channels > p.channels)
+        (void)diagf(diag, kOk, kDiagImageChannelMismatch, Severity::Warning, asset, "texture",
+                    "%s keeps the first %u of %u channels", format_name(bc), p.channels, img.channels);
+    return p;
+}
+
 Plan plan_for(Image const& img, TextureUsage usage, ColorSpace cs, DiagSink const* diag,
               StrView asset) noexcept {
     Plan p;
@@ -156,11 +214,18 @@ Result<CookedTexture> cook_decoded(TextureSource const& src, TextureCookSettings
     if (hdr && !floatSource)
         (void)diagf(diag, kOk, kDiagImageNoHdrRange, Severity::Warning, asset, "texture",
                     "usage hdr with a %u-bit source: values stay in 0..1", decoded.bitsPerChannel);
+    // Only Color and Ui have sRGB block formats, as in the uncompressed plans.
+    bool const srgb = cs == ColorSpace::Srgb && (usage == TextureUsage::Color || usage == TextureUsage::Ui);
+    Format const bc =
+        hdr ? Format::Undefined
+            : block_format(settings.encoding, target.blockFamily, usage, decoded.channels, srgb);
     Plan plan;
     if (hdr) {
         plan.format   = Format::R16G16B16A16_SFLOAT;
         plan.channels = 4;
         plan.bits     = 32;
+    } else if (bc != Format::Undefined) {
+        plan = block_plan(decoded, usage, srgb, bc, diag, asset);
     } else {
         plan = plan_for(decoded, usage, cs, diag, asset);
     }
@@ -256,16 +321,21 @@ Result<CookedTexture> cook_decoded(TextureSource const& src, TextureCookSettings
              "non-power-of-two %llux%llu with mips: levels use floor halving", topW, topH);
 
     // A KTX2 level holds every slice of that level, slice 0 first.
+    bool const blocks = bc != Format::Undefined;
     Span<u8 const> levels[ktx2::kMaxLevels];
     Vec<u8> levelBytes[ktx2::kMaxLevels];
+    detail::Stopwatch const swEncode;
     for (u32 i = 0; i < levelCount; ++i) {
-        if (slices == 1 && !hdr) {
+        if (slices == 1 && !hdr && !blocks) {
             levels[i] = chains[0][drop + i].pixels.span();
             continue;
         }
         levelBytes[i].init(alloc, Tag::Cook);
         usize const sliceBytes = chains[0][drop + i].pixels.size();
-        if (!hdr) {
+        if (blocks) {
+            for (Vec<Image> const& chain : chains)
+                bc_encode(chain[drop + i], bc, settings.quality, levelBytes[i], budget);
+        } else if (!hdr) {
             levelBytes[i].reserve(sliceBytes * slices);
             for (Vec<Image> const& chain : chains)
                 levelBytes[i].append(chain[drop + i].pixels.span());
@@ -285,6 +355,7 @@ Result<CookedTexture> cook_decoded(TextureSource const& src, TextureCookSettings
         }
         levels[i] = levelBytes[i].span();
     }
+    u64 const encodeUs = blocks ? swEncode.elapsed_us() : 0;
 
     // Content identity for invalidation (named store layout, open-questions R4).
     char sourceHex[17], cookHex[17];
@@ -327,6 +398,7 @@ Result<CookedTexture> cook_decoded(TextureSource const& src, TextureCookSettings
     out.stats.decodeUs  = decodeUs;
     out.stats.prepareUs = prepareUs;
     out.stats.mipsUs    = mipsUs;
+    out.stats.encodeUs  = encodeUs;
     out.stats.writeUs   = writeUs;
     out.stats.totalUs   = swTotal.elapsed_us();
     return out;

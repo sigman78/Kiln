@@ -14,11 +14,18 @@ namespace kiln::cook {
 enum class ColorSpace : u8 { Auto = 0, Srgb, Linear };
 
 /// What a texture *is*. Drives color space, channel layout, mip filtering and
-/// (later) encoding. Inferred from the glTF material slot when Auto.
+/// encoding. Inferred from the glTF material slot when Auto.
 enum class TextureUsage : u8 { Auto = 0, Color, Normal, Orm, Mask, Hdr, Ui, Lut, Height };
 /// The shape to cook (docs/design/texture-shapes.md). Auto stays Auto after resolution: it
 /// means "from the source", i.e. the shape of a KTX2 source, else Tex2D.
 enum class CookShape : u8 { Auto = 0, Tex2D, Cube, Array };
+
+/// The stored texel format (docs/design/bcn-encoding.md). Auto follows the usage table for the
+/// target's block family (none: uncompressed) and stays Auto after resolution, because a mask's
+/// BC4 or BC5 depends on the source's channel count. BC1 drops alpha. BC6H is reserved (K3001).
+enum class TextureEncoding : u8 { Auto = 0, Uncompressed, BC1, BC3, BC4, BC5, BC6H, BC7 };
+/// Encoder effort. Fast is for previews; High costs several times Normal for a small gain.
+enum class EncodeQuality : u8 { Fast = 0, Normal, High };
 
 struct TextureCookSettings {
     ColorSpace colorSpace  = ColorSpace::Auto;   ///< Auto: sRGB for Color/Ui, else Linear
@@ -30,7 +37,9 @@ struct TextureCookSettings {
     /// Cube and Array cut the source image into a vertical strip of slices, slice 0 at the top.
     CookShape shape = CookShape::Auto;
     u32 slices = 0; ///< Array: layers in the strip; 0 = square slices. Only for Array (cleared otherwise)
-    // reserved: alphaMode, premultiply, dilation, encoding, supercompression, residentMips
+    TextureEncoding encoding = TextureEncoding::Auto;
+    EncodeQuality quality    = EncodeQuality::Normal; ///< resolved to Normal when nothing is encoded
+    // reserved: alphaMode, premultiply, dilation, supercompression, residentMips
 };
 
 /// The glTF material slot a texture was referenced from (for usage inference).
@@ -114,9 +123,13 @@ struct MeshCookSettings {
 // Target and session
 // ---------------------------------------------------------------------------
 
+/// The block-compressed formats a target's GPUs sample. None: textures stay uncompressed.
+enum class BlockFamily : u8 { None = 0, BC };
+
 struct TargetProfile {
-    StrView name                   = "desktop";
-    u32 maxTextureSize             = 16384;
+    StrView name            = "desktop";
+    BlockFamily blockFamily = BlockFamily::None; ///< BC for desktop once every example adapter samples it
+    u32 maxTextureSize      = 16384;
     VertexProfile maxVertexProfile = VertexProfile::Float; ///< highest profile the target accepts
     u32 maxArrayLayers             = 2048;                 ///< more layers is an error (K2004), not a clamp
 };
@@ -134,10 +147,10 @@ struct CookSession {
 
 enum SettingsDiagCode : u32 {
     kDiagSettingsUnsupported =
-        3001, ///< a reserved feature was requested (genLods, compression != None, blobChunkSize)
+        3001, ///< a reserved feature was requested (genLods, compression != None, blobChunkSize, BC6H)
     kDiagSettingsInvalidCombo = 3002,    ///< fields contradict each other or hold invalid values (e.g.
                                          ///< flipGreen with a non-Normal usage: Warning)
-    kDiagSettingsClampedByTarget = 3003, ///< profile or size clamped by the target (Warning)
+    kDiagSettingsClampedByTarget = 3003, ///< profile, size or encoding clamped by the target (Warning)
     kDiagSettingsEnumRange       = 3004, ///< an enum field holds a value outside its range
     kDiagSidecarSyntax           = 3005, ///< a `.kiln` sidecar is outside the TOML subset (ParseError)
     kDiagSidecarKey =
@@ -150,8 +163,11 @@ enum SettingsDiagCode : u32 {
 // ---------------------------------------------------------------------------
 
 /// Resolve texture settings: an Auto usage from `hint`, an Auto color space from the usage,
-/// Normal-only flags cleared for other usages, target caps. Every Auto field is concrete on
-/// return. An enum value out of range returns InvalidArgument (K3004).
+/// Normal-only flags cleared for other usages, target caps. Every Auto field except `shape` and
+/// `encoding` is concrete on return. An enum value out of range returns
+/// InvalidArgument (K3004); an encoding the usage cannot take, InvalidArgument (K3002); BC6H,
+/// Unsupported (K3001). An explicit BC encoding on a target without the BC family becomes
+/// Uncompressed (K3003). `session.fastPreview` sets `quality` to Fast.
 KILN_API Result<TextureCookSettings> resolve_texture(TextureCookSettings const& overrides, SlotHint hint,
                                                      TargetProfile const& target, CookSession const& session,
                                                      DiagSink const* diag = nullptr,
@@ -241,5 +257,8 @@ inline constexpr u32 kTargetSchema          = 1;
 [[nodiscard]] KILN_API char const* vertex_profile_name(VertexProfile p) noexcept;
 [[nodiscard]] KILN_API char const* slot_hint_name(SlotHint h) noexcept;
 [[nodiscard]] KILN_API char const* cook_shape_name(CookShape s) noexcept;
+[[nodiscard]] KILN_API char const* texture_encoding_name(TextureEncoding e) noexcept;
+[[nodiscard]] KILN_API char const* encode_quality_name(EncodeQuality q) noexcept;
+[[nodiscard]] KILN_API char const* block_family_name(BlockFamily f) noexcept;
 
 } // namespace kiln::cook

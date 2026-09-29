@@ -64,10 +64,11 @@ enum GltfDiagCode : u32 {
 
 struct CookStats {
     // Texture: decode_image, prepare_image (convert + flip green + renormalize),
-    // build_mip_chain, ktx2::write.
+    // build_mip_chain, BC encoding, ktx2::write.
     u64 decodeUs  = 0;
     u64 prepareUs = 0;
     u64 mipsUs    = 0;
+    u64 encodeUs  = 0; ///< 0 for uncompressed outputs
 
     // Mesh: accumulated across every (part, LOD).
     // Summed task time: with a job pool the stages run in parallel and can add up to more than totalUs.

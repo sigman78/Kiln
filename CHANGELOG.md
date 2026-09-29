@@ -8,6 +8,22 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
 ## [Unreleased]
 
 ### Added
+- **Cook: BC1/3/4/5/7 textures** (docs/design/bcn-encoding.md, rollout step 3).
+  - New `TextureCookSettings::encoding` (`TextureEncoding`: `Auto`, `Uncompressed`, `BC1`, `BC3`,
+    `BC4`, `BC5`, `BC6H`, `BC7`) and `quality` (`EncodeQuality`: `Fast`, `Normal`, `High`).
+  - New `TargetProfile::blockFamily` (`BlockFamily`: `None`, `BC`).
+  - With `BC`, `Auto` gives BC7 for color, UI and ORM, BC5 for normals, and BC4 or BC5 for 1- or
+    2-channel masks. Height, LUT and HDR stay uncompressed; BC6H is reserved (K3001).
+  - Encoders: `rgbcx` (BC1/3/4/5) and `bc7enc` (BC7) from bc7enc_rdo, vendored in
+    `third_party/bc7enc_rdo/`. Block rows are encoded in parallel on the cook's job pool, with the
+    same bytes on any thread count.
+  - K3002 for an encoding the usage cannot take; K3003 when a target without the BC family turns a
+    BC encoding into `Uncompressed`. `CookSession::fastPreview` sets `Fast`.
+  - Sidecar keys `encoding` and `quality`. `kiln-cook --block none|bc` and `--quality`.
+    `CookStats::encodeUs`.
+  - The built-in `desktop` target keeps `blockFamily = None` until the example adapters upload BC
+    textures (rollout step 5). Existing store keys and goldens are unchanged, because the new fields
+    are hashed only when they differ from their defaults.
 - **Cook:** the KTX2 writer (`kiln::ktx2::write`) accepts BC1-BC7 (UNORM, sRGB, SNORM, BC6H
   UFLOAT/SFLOAT) with mips, cube faces and array layers. Its DFDs match `ktx create` byte for byte;
   the new corpus files `tests/corpus/ktx2/generated/bc*.ktx2` check that in the round-trip test,

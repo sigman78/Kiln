@@ -89,6 +89,21 @@ constexpr EnumName<CookShape> kShapes[] = {
     {"cube",  CookShape::Cube },
     {"array", CookShape::Array},
 };
+constexpr EnumName<TextureEncoding> kEncodings[] = {
+    {"auto",         TextureEncoding::Auto        },
+    {"uncompressed", TextureEncoding::Uncompressed},
+    {"bc1",          TextureEncoding::BC1         },
+    {"bc3",          TextureEncoding::BC3         },
+    {"bc4",          TextureEncoding::BC4         },
+    {"bc5",          TextureEncoding::BC5         },
+    {"bc6h",         TextureEncoding::BC6H        },
+    {"bc7",          TextureEncoding::BC7         },
+};
+constexpr EnumName<EncodeQuality> kQualities[] = {
+    {"fast",   EncodeQuality::Fast  },
+    {"normal", EncodeQuality::Normal},
+    {"high",   EncodeQuality::High  },
+};
 constexpr EnumName<VertexProfile> kProfiles[] = {
     {"default", VertexProfile::Default},
     {"precise", VertexProfile::Precise},
@@ -103,6 +118,8 @@ Status set_field(TomlEntry const& e, TextureCookSettings& s, KeyError const& err
     if (e.key == "maxSize") return set_u32(e, s.maxSize, err);
     if (e.key == "flipGreen") return set_bool(e, s.flipGreen, err);
     if (e.key == "shape") return set_enum(e, kShapes, s.shape, err);
+    if (e.key == "encoding") return set_enum(e, kEncodings, s.encoding, err);
+    if (e.key == "quality") return set_enum(e, kQualities, s.quality, err);
     if (e.key == "slices") return set_u32(e, s.slices, err);
     return err(e, "unknown key for a texture");
 }

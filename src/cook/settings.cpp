@@ -10,13 +10,41 @@
 
 namespace kiln::cook {
 
+namespace {
+
+bool is_block_encoding(TextureEncoding e) noexcept {
+    return e != TextureEncoding::Auto && e != TextureEncoding::Uncompressed;
+}
+
+/// The usages an explicit encoding can store (bcn-encoding.md, "Formats per usage").
+bool encoding_fits(TextureEncoding e, TextureUsage u) noexcept {
+    switch (e) {
+    case TextureEncoding::Auto:
+    case TextureEncoding::Uncompressed: return true;
+    case TextureEncoding::BC1:
+    case TextureEncoding::BC3:
+    case TextureEncoding::BC7:
+        return u == TextureUsage::Color || u == TextureUsage::Ui || u == TextureUsage::Orm ||
+               u == TextureUsage::Normal || u == TextureUsage::Mask;
+    case TextureEncoding::BC4: return u == TextureUsage::Mask || u == TextureUsage::Height;
+    case TextureEncoding::BC5: return u == TextureUsage::Normal || u == TextureUsage::Mask;
+    case TextureEncoding::BC6H: return u == TextureUsage::Hdr;
+    }
+    return false;
+}
+
+} // namespace
+
 Result<TextureCookSettings> resolve_texture(TextureCookSettings const& overrides, SlotHint hint,
                                             TargetProfile const& target, CookSession const& session,
                                             DiagSink const* diag, StrView asset) noexcept {
     if (u8(overrides.usage) > u8(TextureUsage::Height) || u8(overrides.colorSpace) > u8(ColorSpace::Linear) ||
-        u8(overrides.shape) > u8(CookShape::Array)) {
+        u8(overrides.shape) > u8(CookShape::Array) || u8(overrides.encoding) > u8(TextureEncoding::BC7) ||
+        u8(overrides.quality) > u8(EncodeQuality::High) || u8(target.blockFamily) > u8(BlockFamily::BC)) {
         return diagf(diag, make_status(Code::InvalidArgument), kDiagSettingsEnumRange, Severity::Error, asset,
-                     "texture", "usage, colorSpace or shape holds a value outside its enum range");
+                     "texture",
+                     "usage, colorSpace, shape, encoding, quality or the target's blockFamily holds a value "
+                     "outside its enum range");
     }
 
     TextureCookSettings s = overrides;
@@ -49,9 +77,28 @@ Result<TextureCookSettings> resolve_texture(TextureCookSettings const& overrides
         s.slices = 0;
     }
 
-    // fastPreview does not change texture settings yet: mips are cheap, and skipping
-    // them would add resolved-state variance.
-    (void)session;
+    if (s.encoding == TextureEncoding::BC6H)
+        return diagf(diag, make_status(Code::Unsupported), kDiagSettingsUnsupported, Severity::Error, asset,
+                     "encoding", "BC6H is not implemented yet");
+    if (!encoding_fits(s.encoding, s.usage))
+        return diagf(diag, make_status(Code::InvalidArgument), kDiagSettingsInvalidCombo, Severity::Error,
+                     asset, "encoding", "encoding %s cannot store usage %s",
+                     texture_encoding_name(s.encoding), texture_usage_name(s.usage));
+    if ((s.encoding == TextureEncoding::BC4 || s.encoding == TextureEncoding::BC5) &&
+        s.colorSpace == ColorSpace::Srgb)
+        return diagf(diag, make_status(Code::InvalidArgument), kDiagSettingsInvalidCombo, Severity::Error,
+                     asset, "encoding", "encoding %s has no sRGB variant", texture_encoding_name(s.encoding));
+    if (target.blockFamily == BlockFamily::None && is_block_encoding(s.encoding)) {
+        (void)diagf(diag, kOk, kDiagSettingsClampedByTarget, Severity::Warning, asset, "encoding",
+                    "encoding %s is uncompressed on target %.*s (no block family)",
+                    texture_encoding_name(s.encoding), KILN_SV(target.name));
+        s.encoding = TextureEncoding::Uncompressed;
+    }
+    // Only the encoders read quality: without them it stays Normal, so the hash stays canonical.
+    if (s.encoding == TextureEncoding::Uncompressed || target.blockFamily == BlockFamily::None)
+        s.quality = EncodeQuality::Normal;
+    else if (session.fastPreview)
+        s.quality = EncodeQuality::Fast;
 
     return s;
 }
@@ -211,6 +258,10 @@ u64 hash_settings(TextureCookSettings const& s) noexcept {
     h.update_value(u8(s.flipGreen));
     h.update_value(u8(s.shape));
     h.update_value(s.slices);
+    // Hashed only when not the default, with a tag each, so the keys of cooks predating these
+    // fields stay valid.
+    if (s.encoding != TextureEncoding::Auto) h.update_value(u16(0x100u | u8(s.encoding)));
+    if (s.quality != EncodeQuality::Normal) h.update_value(u16(0x200u | u8(s.quality)));
     return h.digest();
 }
 
@@ -241,6 +292,8 @@ u64 hash_target(TargetProfile const& t) noexcept {
     h.update_value(t.maxTextureSize);
     h.update_value(u8(t.maxVertexProfile));
     // maxArrayLayers only rejects inputs and never changes an output, so it is not hashed.
+    // blockFamily is hashed only when set, so the keys of targets predating it stay valid.
+    if (t.blockFamily != BlockFamily::None) h.update_value(u8(t.blockFamily));
     return h.digest();
 }
 
@@ -295,6 +348,37 @@ char const* cook_shape_name(CookShape s) noexcept {
     case CookShape::Tex2D: return "2d";
     case CookShape::Cube: return "cube";
     case CookShape::Array: return "array";
+    }
+    return "?";
+}
+
+char const* texture_encoding_name(TextureEncoding e) noexcept {
+    switch (e) {
+    case TextureEncoding::Auto: return "auto";
+    case TextureEncoding::Uncompressed: return "uncompressed";
+    case TextureEncoding::BC1: return "bc1";
+    case TextureEncoding::BC3: return "bc3";
+    case TextureEncoding::BC4: return "bc4";
+    case TextureEncoding::BC5: return "bc5";
+    case TextureEncoding::BC6H: return "bc6h";
+    case TextureEncoding::BC7: return "bc7";
+    }
+    return "?";
+}
+
+char const* encode_quality_name(EncodeQuality q) noexcept {
+    switch (q) {
+    case EncodeQuality::Fast: return "fast";
+    case EncodeQuality::Normal: return "normal";
+    case EncodeQuality::High: return "high";
+    }
+    return "?";
+}
+
+char const* block_family_name(BlockFamily f) noexcept {
+    switch (f) {
+    case BlockFamily::None: return "none";
+    case BlockFamily::BC: return "bc";
     }
     return "?";
 }

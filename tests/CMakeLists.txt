@@ -55,8 +55,10 @@ if(TARGET kiln_cook)
                                        test_settings.cpp test_sidecar.cpp test_store.cpp
                                        png_writer.h hdr_writer.h image_fixtures.h test_image.cpp
                                        test_texture_cook.cpp test_hdr.cpp test_texture_golden.cpp
-                                       test_provider.cpp test_parallel.cpp)
+                                       test_provider.cpp test_parallel.cpp test_texture_bc.cpp)
     target_link_libraries(kiln_tests PRIVATE kiln_cook)
+    # bc7enc_rdo's decoders check the BC encoders' output (test_texture_bc.cpp).
+    target_link_libraries(kiln_tests PRIVATE kiln_third_party_cook)
     # KILN_MESH=OFF (docs/design/texture-only.md): the mesh cooker tests leave the build, and
     # the mixed test files switch their mesh cases for checks that meshes fail with K1021.
     if(KILN_MESH)
@@ -179,6 +181,12 @@ if(KILN_KTX_TOOL)
             add_test(NAME ktx_validate_cooked_${_case}
                      COMMAND ${KILN_KTX_TOOL} validate samples/cooked_${_case}.ktx2)
             list(APPEND _kiln_validate_tests ktx_validate_cooked_${_case})
+        endforeach()
+        # BC cooks (test_texture_bc.cpp writes samples/cooked_bc_<case>.ktx2)
+        foreach(_case color ui orm normal mask mask_rg npot cube)
+            add_test(NAME ktx_validate_cooked_bc_${_case}
+                     COMMAND ${KILN_KTX_TOOL} validate samples/cooked_bc_${_case}.ktx2)
+            list(APPEND _kiln_validate_tests ktx_validate_cooked_bc_${_case})
         endforeach()
         set_tests_properties(${_kiln_validate_tests} PROPERTIES
             FIXTURES_REQUIRED kiln_samples

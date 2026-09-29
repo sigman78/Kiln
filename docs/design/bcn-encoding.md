@@ -1,8 +1,9 @@
 # Block-compressed textures: BCn now, ASTC and ETC2 later
 
 **Status:** Decided (owner, 2026-09-29): the three measurement axes, `BC` as the desktop default,
-BC7 for UI, byte-exact goldens first, Zstd and RDO last, ASTC with the mobile targets. The encoders
-and the normal-map format follow from the spike's numbers (rollout step 2). Nothing is implemented.
+BC7 for UI, byte-exact goldens first, Zstd and RDO last, ASTC with the mobile targets, and the
+plain C++ encoders `rgbcx` and `bc7enc` (from the spike's measurements). Rollout steps 1–3 are
+implemented: the cooker writes BC1/3/4/5/7. BC6H's encoder is chosen with step 4.
 **Decides:** Which block-compressed formats the cooker writes for each texture usage and target,
 how the encoder libraries are chosen, the settings that control them, how block formats reach the
 adapters, and the order of the work. Zstd supercompression and RDO are a later step of the same
@@ -13,8 +14,8 @@ work; ASTC and ETC2 follow with the mobile targets.
 The cooker learns to write **BC1, BC3, BC4, BC5, BC6H and BC7** into KTX2. Each texture usage has a
 default format for the desktop target (color and ORM → BC7, normal → BC5, one-channel mask → BC4,
 HDR → BC6H). The encoders are picked on the Pareto front of **dependency size** against **encode
-speed and quality**, measured on kiln's own corpus (section 2); the likely outcome is bc7enc_rdo
-for BC1–5 and BC7 plus CMP_Core for BC6H. A target names its **format family** (None, BC, later
+speed and quality**, measured on the demo models' textures (section 2): bc7enc_rdo's `rgbcx` for
+BC1–5 and `bc7enc` for BC7; BC6H's encoder is chosen with step 4. A target names its **format family** (None, BC, later
 ASTC and ETC2), so mobile targets slot in without a settings change (section 7).
 
 The runtime needs no new code for block formats: the reader, the upload layout and `texture_info`
@@ -25,8 +26,9 @@ because they bring the runtime's first third-party dependency.
 ## What exists
 
 - `Format` has BC1–BC7 (values 131–146) with their `FormatInfo` rows: 4×4 blocks, 8 or 16 bytes.
-- The KTX2 **reader** accepts block formats (the corpus has BC files). The KTX2 **writer** rejects
-  them ("not supported by the v0.5 writer") and writes no Data Format Descriptor for them.
+- The KTX2 **reader** accepts block formats. The KTX2 **writer** writes BC1–BC7 with the same Data
+  Format Descriptors as `ktx create` (step 1).
+- The cooker encodes BC1/3/4/5/7 (step 3); the sections below say how.
 - The reader rejects every supercompression scheme.
 - `texture_level_layout()` and the loader compute offsets, row pitches and row counts in blocks, so
   a BC texture already uploads through every adapter path that kiln drives.
@@ -43,7 +45,7 @@ because they bring the runtime's first third-party dependency.
 | Usage | Today | With BCn | Size vs today |
 |---|---|---|---|
 | `Color`, `Ui` with alpha or without | RGBA8 (sRGB) | **BC7** (sRGB) | 1/4 |
-| `Normal` | RGBA8 | **BC5** (X, Y; the shader rebuilds Z); BC7 if the spike says so | 1/4 |
+| `Normal` | RGBA8 | **BC5** (X, Y; the shader rebuilds Z) | 1/4 |
 | `Orm` | RGBA8 | **BC7** (linear) | 1/4 |
 | `Mask`, 1 channel, 8-bit | R8 | **BC4** | 1/2 |
 | `Mask`, 2 channels | RG8 | **BC5** | 1/2 |
@@ -53,9 +55,8 @@ because they bring the runtime's first third-party dependency.
 
 - **Normals, BC5 or BC7:** both cost 1 byte per texel. BC5 codes X and Y as two independent BC4
   channels, so each gets its own endpoints; BC7 shares its bits over three correlated channels, one
-  of which (Z) is redundant. BC5 is the usual choice for that reason, at the cost of one line of
-  shader code. The spike measures the angular error of both on kiln's normal maps and the default
-  follows it; either way the other stays available through `encoding`.
+  of which (Z) is redundant. The spike confirmed it: BC5 had a lower angular error than BC7 at
+  every encoder speed. BC7 stays available through `encoding` for hosts that cannot rebuild Z.
 - BC1 (4 bits per texel) and BC3 stay available through the `encoding` setting, for hosts that want
   size over quality. They are not a default: BC7 is the same size as BC3 and better for every
   usage above.
@@ -88,16 +89,16 @@ Candidates, with the source each would vendor (measured 2026-09-29 from the repo
 Source bytes are only a proxy; the spike records the compiled size, which is what a cook build and
 a tool download carry.
 
-The expected result, to be confirmed by the spike:
-- **BC1/3/4/5:** `rgbcx`. Small, fast, near the best quality for these formats; CMP_Core and
-  DirectXTex would be the alternatives if its table size or quality disappoints.
-- **BC7:** `bc7enc` (CPU) dominates on dependency cost; `bc7e.ispc` and CMP_Core may dominate on
-  quality per second. If the gap is small, `bc7enc` wins; `bc7e.ispc` can come later as an opt-in
-  CMake option with a hash-checked ISPC download (like Slang).
-- **BC6H:** CMP_Core's kernel against DirectXTex's `BC6HBC7.cpp`, the only maintained plain-C++
-  choices. The smaller one that is deterministic and fast enough wins.
-- Whatever is chosen goes into `third_party/` (vendored, pinned) and links into `kiln_cook` only.
-  The shipping build gains nothing.
+Chosen (owner, 2026-09-29), from the spike's measurements:
+- **BC1/3/4/5: `rgbcx`**, with its smaller table (120 KB compiled). It gave the best quality at
+  every speed of the candidates.
+- **BC7: `bc7enc`** (47 KB, plain C++). `bc7e.ispc` gives about 1.5 dB more on color and 2.7 dB on
+  ORM, at half the speed and with the ISPC compiler as a build tool; it stays an option for later,
+  and switching changes every BC7 golden once.
+- **BC6H:** chosen with step 4, between CMP_Core's BC6H kernel (plain C++, slow) and the ISPC
+  Texture Compressor's (ISPC, much faster and better).
+- They are vendored in `third_party/bc7enc_rdo/` and link into `kiln_cook` only. The shipping build
+  gains nothing.
 
 ### 3. Determinism
 
@@ -118,16 +119,26 @@ kiln's goldens are byte-exact on every compiler and OS in CI, so the encoders mu
 - `encoding`: `Auto` (the table above, gated by the target), `Uncompressed`, `BC1`, `BC3`, `BC4`,
   `BC5`, `BC6H`, `BC7`. An explicit encoding that does not fit the usage (BC6H for a mask, BC4 for
   RGB) is K3002; one the target rules out is clamped to the target's choice with K3003.
-- `quality`: `Fast`, `Normal` (default), `High`. It maps to the encoders' levels (for example
-  bc7enc's `uber` level, rgbcx's level). `CookSession::fastPreview` forces `Fast`.
+- `quality`: `Fast`, `Normal` (default), `High`. `CookSession::fastPreview` forces `Fast`. The
+  encoder settings per level:
 
-`TargetProfile` gains `blockFamily`: `None`, `BC` (the built-in `desktop` target), and later `ASTC`
-and `ETC2` (section 7). With `None`, `Auto` means today's uncompressed formats, so a host whose
+  | Format | Fast | Normal | High |
+  |---|---|---|---|
+  | BC1 (`rgbcx` level) | 0 | 10 | 18 |
+  | BC3 | level 0 | level 10 | level 18, `encode_bc3_hq` |
+  | BC4, BC5 | `encode_bc4` / `bc5` | `_hq` | `_hq` |
+  | BC7 (`bc7enc` uber level, linear weights, 64 partitions) | 0 | 2 | 4 |
+
+`TargetProfile` gains `blockFamily`: `None`, `BC`, and later `ASTC` and `ETC2` (section 7). The
+built-in `desktop` target keeps `None` until step 5, when every example adapter uploads BC
+textures; `kiln-cook --block bc` and hosts set `BC` before that. With `None`, `Auto` means today's uncompressed formats, so a host whose
 adapter has no BC support still cooks. `encoding` names families too once ASTC exists (for example
 `ASTC_6x6`); an explicit encoding outside the target's family is clamped with K3003.
 
-Both enter the settings hash, and the encoders' versions enter `kCookerVersion`, so a change
-re-cooks.
+`encoding = Auto` stays `Auto` after resolution: a mask's BC4 or BC5 depends on the source's
+channel count, which only the cook knows. `encoding`, `quality` and `blockFamily` enter the hashes
+only when they differ from their defaults, so uncompressed cooks keep their store keys. An encoder
+update that changes its output bumps `kCookerVersion`, so a change re-cooks.
 
 ### 5. Adapters and hosts
 
@@ -196,23 +207,24 @@ cross-cooking"), and this work leaves room for it:
   cook-on-miss.
 - Every example gains compressed uploads and Z reconstruction; `kiln-headless` and the null adapter
   already accept every format.
-- Goldens for cooked textures change once (a new `kCookerVersion`).
-- Two new cook-side dependencies, entered in `dependencies.md` and `third_party/README.md`.
+- Existing goldens and store keys do not change: BC goldens are new files, and uncompressed cooks
+  hash as before. The `desktop` switch to BC (step 5) re-cooks every texture once.
+- One new cook-side dependency (bc7enc_rdo), entered in `dependencies.md` and
+  `third_party/README.md`; BC6H may add a second.
 
 ## Rollout
 
-1. **KTX2 writer for block formats.** DFD for BC1–BC7 (Khronos Data Format models `BC1A`…`BC7`),
+1. **KTX2 writer for block formats** (done 2026-09-29). DFD for BC1–BC7 (Khronos Data Format models `BC1A`…`BC7`),
    round trip through the reader, `ktx validate` on the output. No encoder yet: tests write
    synthetic blocks.
-2. **Spike: the Pareto measurement.** Build every BCn candidate of section 2 in a throwaway
-   harness (not in `kiln_cook`); encode the texture corpus at each quality level; record compiled
-   size, speed, quality and byte-exactness across MSVC, clang-cl, clang and gcc in this note. The
-   owner picks from that table.
-3. **BC1/3/4/5/7 in the cooker.** `encoding`, `quality`, `TargetProfile::blockFamily`, the
-   usage table, parallel encoding, goldens, `kiln-info` output.
+2. **Spike: the Pareto measurement** (done 2026-09-29). Every BCn candidate of section 2 in a
+   throwaway harness outside the repository; the owner picked from its table (section 2).
+3. **BC1/3/4/5/7 in the cooker** (done 2026-09-29). `encoding`, `quality`,
+   `TargetProfile::blockFamily`, the usage table, parallel encoding, goldens, `kiln-cook --block` and
+   `--quality`.
 4. **BC6H** for `Hdr`.
 5. **Adapters and examples:** `supports_format`, compressed uploads (GL), BC5 normal Z in every
-   example shader, the reference frame re-checked.
+   example shader, the reference frame re-checked; then `desktop` switches to `blockFamily = BC`.
 6. **Zstd supercompression and RDO:** reader, loader, runtime decoder, settings.
 7. **Later, with the mobile targets (v0.9):** astcenc, ASTC block sizes per usage, the `ASTC`
    family in `TargetProfile`; ETC2 only if a target needs it.
@@ -223,7 +235,10 @@ cross-cooking"), and this work leaves room for it:
    the spike's table.
 2. **Default:** `blockFamily = BC` for the built-in `desktop` target.
 3. **Normals:** measured in the spike (BC5 against BC7); BC5 unless the numbers say otherwise.
+   The numbers favored BC5.
 4. **UI textures:** BC7, like color.
 5. **Goldens:** the simple thing first (byte-exact); the PSNR fallback only if an encoder needs it.
 6. **Zstd and RDO:** last, as step 6.
 7. **ASTC:** with the mobile targets (v0.9).
+8. **Encoders:** plain C++, `rgbcx` and `bc7enc` (option A of the spike); BC6H is decided with
+   step 4.

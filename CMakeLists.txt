@@ -157,6 +157,8 @@ if(KILN_BUILD_COOK)
         src/cook/image_decode.cpp
         src/cook/hdr_decode.cpp
         src/cook/texture_cook.cpp
+        src/cook/bc_encode.h
+        src/cook/bc_encode.cpp
         src/cook/cook_internal.h
         include/kiln/cook/provider.h
         src/cook/provider.cpp

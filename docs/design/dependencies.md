@@ -12,11 +12,12 @@ links it.
 | glTF parsing | **cgltf** | MIT | cook only, `KILN_MESH=ON` | vendored in `third_party/cgltf/` |
 | PNG, JPEG, WebP decode | **wuffs** (WebP only with `KILN_WEBP=ON`) | Apache-2.0 | cook only | vendored single release `.c` file in `third_party/wuffs/` |
 | KTX2 read | **own** minimal reader | n/a | runtime | in-tree `src/formats/` |
-| KTX2 write | **own** minimal writer (raw formats only) | n/a | cook only | in-tree `src/formats/` |
+| KTX2 write | **own** minimal writer (raw and BC formats) | n/a | cook only | in-tree `src/formats/` |
 | Mesh optimization | **meshoptimizer** | MIT | cook only, `KILN_MESH=ON` (decoder sources may later join `kiln_runtime`) | FetchContent, commit hash |
 | Tangents | **MikkTSpace** (reference `mikktspace.c/.h`) | zlib | cook only, `KILN_MESH=ON` | vendored in `third_party/mikktspace/` |
 | Zstd | deferred (v0.6) | BSD | runtime decoder-only build, cook encoder | FetchContent, commit hash |
-| BCn / ASTC encoders | deferred (v0.6) | to be chosen | cook only | to be chosen |
+| BC1/3/4/5/7 encoders | **bc7enc_rdo**: `rgbcx`, `bc7enc` (and `bc7decomp` for tests) | MIT or public domain | cook only | vendored in `third_party/bc7enc_rdo/` |
+| BC6H, ASTC encoders | deferred (BC6H: v0.6; ASTC: v0.9) | to be chosen | cook only | to be chosen |
 | Config parsing | deferred (v0.6), leaning TOML | to be chosen | cook only | to be chosen |
 | File watching | **own** polling watcher (M5) | n/a | runtime (dev builds, `KILN_HOT_RELOAD`) | in-tree |
 | Tests | **own** runner `tests/kiln_test.h` | n/a | tests | in-tree |
@@ -62,6 +63,19 @@ ships with codec `None` only, which needs no library.
 - The runtime reader lives in `kiln_runtime` and stays dependency-free.
 - libktx is large, has many build options, and brings Basis and Zstd code not needed yet. Revisit
   libktx (or a Basis transcoder alone) when Basis or Zstd supercompression lands (v0.6+).
+
+### BCn: bc7enc_rdo
+
+- `rgbcx` encodes BC1, BC3, BC4 and BC5; `bc7enc` encodes BC7. Both are plain C++ with no heap
+  allocation and no exceptions; each fills global tables once, before the first encode.
+- Chosen by a measurement of five candidates against compiled size, speed and quality
+  (`bcn-encoding.md`, owner decision 2026-09-29): `rgbcx` gave the best quality at every speed for
+  BC1–5, and `bc7enc` is 47 KB against 300 KB for `bc7e.ispc`, which needs the ISPC compiler.
+- `RGBCX_USE_SMALLER_TABLES=1`: the smaller table, 120 KB compiled instead of 300 KB, with the
+  same output quality.
+- Compiled with FP contraction off (`-ffp-contract=off`; MSVC's default), because cooked textures
+  are compared byte for byte on every compiler (`tests/golden/`).
+- `bc7decomp` is only linked into `kiln_tests`, which decodes BC7 output to check quality.
 
 ### Zstd (deferred, v0.6+)
 

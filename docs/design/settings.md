@@ -13,7 +13,8 @@ produce the same structs.
 ### Texture
 
 `ColorSpace { Auto, Srgb, Linear }`, `TextureUsage { Auto, Color, Normal, Orm, Mask, Hdr, Ui, Lut,
-Height }`, `CookShape { Auto, Tex2D, Cube, Array }`.
+Height }`, `CookShape { Auto, Tex2D, Cube, Array }`, `TextureEncoding { Auto, Uncompressed, BC1, BC3,
+BC4, BC5, BC6H, BC7 }`, `EncodeQuality { Fast, Normal, High }`.
 
 | `TextureCookSettings` field | Default | Meaning |
 |---|---|---|
@@ -25,9 +26,12 @@ Height }`, `CookShape { Auto, Tex2D, Cube, Array }`.
 | `flipGreen` | false | DirectX-style normal maps; `Normal` only |
 | `shape` | `Auto` | `Cube` and `Array` cut the source into a vertical strip of slices (`texture-shapes.md`). `Auto` stays `Auto` after resolution and means "from the source": a KTX2 source's own shape, else `Tex2D` |
 | `slices` | 0 | `Array` only: layers in the strip; 0 = square slices. Cleared with a K3002 warning for other shapes |
+| `encoding` | `Auto` | The stored format (`bcn-encoding.md`). `Auto` stays `Auto` after resolution: the usage table for the target's `blockFamily`, uncompressed without one. `BC1` drops alpha; `BC6H` is reserved (K3001) |
+| `quality` | `Normal` | Encoder effort: `Fast`, `Normal`, `High`. Resolved to `Normal` when nothing is encoded; `fastPreview` sets `Fast` |
 
-Reserved: alphaMode, premultiply, dilation, encoding, supercompression, residentMips.
-Texture settings schema: 2 (`shape`, `slices`).
+Reserved: alphaMode, premultiply, dilation, supercompression, residentMips.
+Texture settings schema: 2 (`shape`, `slices`). `encoding` and `quality` are hashed only when they
+differ from their defaults (see "Hashing rule"), so they did not bump it.
 
 ### Mesh
 
@@ -61,11 +65,13 @@ Reserved: indexWidthPolicy, unit/axis override, name prefixes to strip.
 
 ### Target and session
 
-- `TargetProfile { name = "desktop"; maxTextureSize = 16384; maxVertexProfile = Float; }`. v0.5
-  has one implicit target, `desktop`, with raw formats.
+- `TargetProfile { name = "desktop"; blockFamily = None; maxTextureSize = 16384; maxVertexProfile =
+  Float; }`. `blockFamily` (`None`, `BC`) names the block formats the target's GPUs sample; `desktop`
+  switches to `BC` once every example adapter uploads BC textures (`bcn-encoding.md`, rollout
+  step 5). `kiln-cook --block bc` sets it.
 - `StoreMode { Disk, Memory, None }`: store, cache-less, validate only.
 - `CookSession { storeMode = Disk; fastPreview = false; }`. `fastPreview` turns off `optimize` and
-  `genTangents` for meshes and changes nothing for textures. It changes resolved values, so it
+  `genTangents` for meshes and sets texture `quality` to `Fast` when something is encoded. It changes resolved values, so it
   changes the hash; it is not a hidden side channel.
 
 ### Resolution layers
@@ -168,6 +174,8 @@ name or an out-of-range number is K3006. An integer is accepted where a float is
 | `maxSize` | integer, 0 to 2^32 - 1 |
 | `shape` | `"auto"`, `"2d"`, `"cube"`, `"array"` |
 | `slices` | integer, 0 to 2^32 - 1 |
+| `encoding` | `"auto"`, `"uncompressed"`, `"bc1"`, `"bc3"`, `"bc4"`, `"bc5"`, `"bc6h"`, `"bc7"` |
+| `quality` | `"fast"`, `"normal"`, `"high"` |
 
 | Mesh key | Value |
 |---|---|
@@ -186,6 +194,9 @@ A sidecar is layer 4: its keys beat the host settings, and only the policy beats
 | enum field out of range | K3004 error |
 | `flipGreen` with a usage other than `Normal` | K3002 warning; cleared. `normalRenormalize` is cleared silently |
 | `maxSize` above the target cap | K3003 warning; clamped |
+| `encoding` that the usage cannot take (for example `BC4` for `Color`, any BC for `Lut` or `Hdr`), or `BC4` / `BC5` with `colorSpace = Srgb` | K3002 error |
+| `encoding = BC6H` | K3001 error, unsupported (rollout step 4 of `bcn-encoding.md`) |
+| a BC `encoding` on a target with `blockFamily = None` | K3003 warning; `Uncompressed` |
 | `genLods = true` | K3001 error, unsupported |
 | `compression` other than `None`, or `blobChunkSize != 0` | K3001 error, unsupported |
 | `profile` above the target's `maxVertexProfile` | K3003 warning; clamped |
@@ -207,6 +218,9 @@ changes meaning.
   fails CI.
 - Fields that the resolved settings do not use are hashed as 0 (`zstdLevel` unless the scheme uses
   Zstd), so changing an unused field does not miss the store.
+- A field added after its schema was pinned may be hashed only when it differs from its default,
+  behind a tag that tells it apart from other such fields (texture `encoding` and `quality`, the
+  target's `blockFamily`). Cooks that do not use it keep their keys, and no schema bump is needed.
 
 ### Store key
 

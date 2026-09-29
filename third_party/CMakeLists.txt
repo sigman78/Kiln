@@ -7,6 +7,8 @@
 #   - wuffs (Apache-2.0)  -- PNG/JPEG (+ WebP with KILN_WEBP) decode: vendored single-file release .c,
 #                            modules listed in wuffs/wuffs_modules.h
 #   - meshoptimizer (MIT) -- FetchContent, pinned to a commit hash
+#   - bc7enc_rdo (MIT or public domain) -- BC1/3/4/5 (rgbcx) and BC7 (bc7enc) encoders, and
+#                            decoders for the tests: vendored .cpp/.h
 #
 # All of it is compiled into one static library, kiln_third_party_cook, which
 # kiln_cook links PRIVATE. None of this may reach kiln_runtime, the shipping
@@ -45,6 +47,15 @@ endif()
 # kiln_third_party_cook -- one static lib for the vendored C dependencies.
 # ---------------------------------------------------------------------------
 add_library(kiln_third_party_cook STATIC wuffs/wuffs_impl.c)
+set(_kiln_bc_sources bc7enc_rdo/rgbcx.cpp bc7enc_rdo/bc7enc.cpp bc7enc_rdo/bc7decomp.cpp)
+target_sources(kiln_third_party_cook PRIVATE ${_kiln_bc_sources})
+# The smaller rgbcx table (120 KB instead of 300 KB compiled, same output quality). The macro
+# changes rgbcx.h, so every file that includes it must see it.
+target_compile_definitions(kiln_third_party_cook PUBLIC RGBCX_USE_SMALLER_TABLES=1)
+# Cooked textures are compared byte for byte on every compiler: no FMA contraction in the encoders.
+if(NOT MSVC)
+    set_source_files_properties(${_kiln_bc_sources} PROPERTIES COMPILE_OPTIONS -ffp-contract=off)
+endif()
 if(KILN_MESH)
     target_sources(kiln_third_party_cook PRIVATE cgltf/cgltf.c mikktspace/mikktspace.c)
 endif()
@@ -86,7 +97,8 @@ endif()
 # kiln_runtime (which never links this target at all) or to kiln_cook's own
 # installed/consumer-facing INTERFACE.
 target_include_directories(kiln_third_party_cook INTERFACE
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/wuffs>)
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/wuffs>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/bc7enc_rdo>)
 if(KILN_MESH)
     target_include_directories(kiln_third_party_cook INTERFACE
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/cgltf>
