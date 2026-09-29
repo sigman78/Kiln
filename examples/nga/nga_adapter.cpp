@@ -1,6 +1,6 @@
 // examples/nga/nga_adapter.cpp — kiln adapter over NoGraphicsAPI.
 // Threads: begin_upload / commit_upload (kiln workers) only touch memory under `mutex`. NoGraphicsAPI
-// calls (flush, is_upload_complete, bind, destroy) run on the pump thread, which also submits the
+// calls (flush, upload_status, bind, destroy) run on the pump thread, which also submits the
 // host's frames to queue 0.
 #include "nga_adapter.h"
 
@@ -87,6 +87,7 @@ struct Upload {
     bool used       = false;
     bool flushed    = false;
     bool done       = false;
+    bool failed     = false; ///< the texture can never be made (too large, or creation failed)
     u32 object      = 0;
     UploadKind kind = UploadKind::MeshPayload;
     TextureDesc tex{};
@@ -234,8 +235,12 @@ gpu::CommandPool* next_pool(NgaAdapter* a) noexcept {
     return a->pools[i];
 }
 
-/// Records one texture upload: placement, creation, a copy per level, its descriptor.
-bool record_texture(NgaAdapter* a, gpu::CommandBuffer* cmd, Upload& u) noexcept {
+enum class Record : u8 { Done, Retry, Failed };
+
+/// Records one texture upload: placement, creation, a copy per level, its descriptor. Retry when the
+/// heap or the descriptors are full now; Failed when the texture can never be made. What a failed
+/// upload reserved is freed by destroy().
+Record record_texture(NgaAdapter* a, gpu::CommandBuffer* cmd, Upload& u) noexcept {
     Object& o            = a->objects[u.object];
     TextureDesc const& t = u.tex;
     gpu::TextureDesc d{};
@@ -249,15 +254,26 @@ bool record_texture(NgaAdapter* a, gpu::CommandBuffer* cmd, Upload& u) noexcept 
     d.usage                 = gpu::TextureUsage::sampled | gpu::TextureUsage::transfer_destination;
     gpu::SizeAlign const sa = gpu::get_texture_size_align(a->device, d);
     u64 offset              = 0;
+    if (sa.size > a->desc.textureBytes) {
+        KILN_ERROR("nga", "texture %ux%u needs %llu bytes; the texture heap has %llu", t.width, t.height,
+                   static_cast<unsigned long long>(sa.size),
+                   static_cast<unsigned long long>(a->desc.textureBytes));
+        return Record::Failed;
+    }
     {
         std::lock_guard<std::mutex> const lock(a->mutex);
-        if (a->freeDescriptors.empty() || !a->textureRanges.alloc(sa.size, sa.align, &offset)) return false;
+        if (a->freeDescriptors.empty() || !a->textureRanges.alloc(sa.size, sa.align, &offset))
+            return Record::Retry;
         o.descriptor = a->freeDescriptors.back();
         a->freeDescriptors.pop_back();
     }
     o.heapOffset = offset;
     o.heapSize   = sa.size;
     o.texture    = gpu::create_texture(cmd, d, a->textureHeap, offset);
+    if (!o.texture) {
+        KILN_ERROR("nga", "creating a %ux%u texture failed", t.width, t.height);
+        return Record::Failed;
+    }
     CopyConstraints const cc{
         .optimalRowPitchAlign = 1, .optimalOffsetAlign = kOffsetAlign, .bufferOffsetAlign = kUploadAlign};
     u64 offsets[kMaxLevels];
@@ -270,7 +286,7 @@ bool record_texture(NgaAdapter* a, gpu::CommandBuffer* cmd, Upload& u) noexcept 
     // A fresh descriptor index: no frame can be reading it, so it may be written now.
     gpu::write_texture_descriptor(a->descriptors, o.descriptor, o.texture,
                                   gpu::TextureDescriptorType::sampled);
-    return true;
+    return Record::Done;
 }
 
 bool poll(NgaAdapter* a, u32 index) noexcept {
@@ -330,6 +346,7 @@ Status begin_upload(void* user, UploadDesc const& desc, UploadTarget* out) {
     u.used          = true;
     u.flushed       = false;
     u.done          = false;
+    u.failed        = false;
     u.object        = oi;
     u.kind          = desc.kind;
     u.tex           = isTexture ? *desc.texture : TextureDesc{};
@@ -351,12 +368,13 @@ void commit_upload(void* user, u64 token) {
     if (upload_of(a, token)) a->committed.push_back(u32(token & 0xFFFFFFFFu) - 1);
 }
 
-bool is_upload_complete(void* user, u64 token) {
+UploadStatus upload_status(void* user, u64 token) {
     auto* a   = static_cast<NgaAdapter*>(user);
     Upload* u = upload_of(a, token);
-    if (!u) return true;
+    if (!u) return UploadStatus::Failed; // not an upload of this adapter
     u32 const index = u32(token & 0xFFFFFFFFu) - 1;
-    if (!poll(a, index)) return false;
+    if (!poll(a, index)) return UploadStatus::Pending;
+    bool const failed = u->failed;
     for (u32 i = 0; i < a->inFlight.size(); ++i)
         if (a->inFlight[i] == index) {
             a->inFlight[i] = a->inFlight.back();
@@ -364,7 +382,7 @@ bool is_upload_complete(void* user, u64 token) {
             break;
         }
     free_upload(a, index);
-    return true;
+    return failed ? UploadStatus::Failed : UploadStatus::Complete;
 }
 
 /// Frames recorded earlier hold descriptor indices, not slots, so moving a slot is safe at any time.
@@ -412,9 +430,16 @@ void flush(void* user) {
             continue;
         }
         if (!cmd) cmd = gpu::begin_commands(next_pool(a));
-        if (!record_texture(a, cmd, u)) { // heap or descriptors full: try again next flush
+        Record const r = record_texture(a, cmd, u);
+        if (r == Record::Retry) { // heap or descriptors full: try again next flush
             std::lock_guard<std::mutex> const lock(a->mutex);
             a->committed.push_back(i);
+            continue;
+        }
+        if (r == Record::Failed) { // no GPU work: done at once
+            u.flushed = true;
+            u.done    = true;
+            u.failed  = true;
             continue;
         }
         u.flushed = true;
@@ -482,18 +507,18 @@ Result<NgaAdapter*> nga_adapter_create(NgaAdapterDesc const& desc, Adapter* out)
     a->inFlight.reserve(kMaxUploads);
 
     *out = Adapter{
-        .supports_format    = &supports_format,
-        .copy_constraints   = &copy_constraints,
-        .begin_upload       = &begin_upload,
-        .commit_upload      = &commit_upload,
-        .is_upload_complete = &is_upload_complete,
-        .bind               = &bind,
-        .destroy            = &destroy,
-        .flush              = &flush,
-        .caps               = kCubeTextures | kArrayTextures | kMeshes,
-        .bindlessSlots      = desc.maxSlots,
-        .reserved           = {},
-        .user               = a,
+        .supports_format  = &supports_format,
+        .copy_constraints = &copy_constraints,
+        .begin_upload     = &begin_upload,
+        .commit_upload    = &commit_upload,
+        .upload_status    = &upload_status,
+        .bind             = &bind,
+        .destroy          = &destroy,
+        .flush            = &flush,
+        .caps             = kCubeTextures | kArrayTextures | kMeshes,
+        .bindlessSlots    = desc.maxSlots,
+        .reserved         = {},
+        .user             = a,
     };
     return a;
 }

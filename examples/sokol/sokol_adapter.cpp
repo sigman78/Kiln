@@ -28,6 +28,7 @@ struct Upload {
     u32 gen         = 1;
     bool used       = false;
     bool done       = false;
+    bool failed     = false; ///< make_object() failed
     u32 object      = 0;
     UploadKind kind = UploadKind::MeshPayload;
     TextureDesc tex{};
@@ -195,6 +196,7 @@ Status begin_upload(void* user, UploadDesc const& desc, UploadTarget* out) {
     Upload& u = a->uploads[ui];
     u.used    = true;
     u.done    = false;
+    u.failed  = false;
     u.object  = oi;
     u.kind    = desc.kind;
     u.tex     = desc.texture ? *desc.texture : TextureDesc{};
@@ -216,14 +218,15 @@ void commit_upload(void* user, u64 token) {
     if (upload_of(a, token)) a->committed.push_back(u32(token & 0xFFFFFFFFu) - 1);
 }
 
-/// sokol creates a resource at once and orders its use itself: an upload is complete when flushed.
-bool is_upload_complete(void* user, u64 token) {
+/// sokol creates a resource at once and orders its use itself: an upload is done once flushed.
+UploadStatus upload_status(void* user, u64 token) {
     auto* a   = static_cast<SokolAdapter*>(user);
     Upload* u = upload_of(a, token);
-    if (!u) return true;
-    if (!u->done) return false;
+    if (!u) return UploadStatus::Failed; // not an upload of this adapter
+    if (!u->done) return UploadStatus::Pending;
+    bool const failed = u->failed;
     free_upload(a, u32(token & 0xFFFFFFFFu) - 1);
-    return true;
+    return failed ? UploadStatus::Failed : UploadStatus::Complete;
 }
 
 /// sokol defers the release of a resource that in-flight frames use, so the host reports no frames.
@@ -246,9 +249,7 @@ void flush(void* user) {
     }
     for (u32 i : a->flushing) {
         Upload& u = a->uploads[i];
-        // The adapter contract has no way to fail an upload after commit_upload: a failed object
-        // completes empty, and the host's sokol_texture() / sokol_buffer() give an invalid handle.
-        (void)make_object(a, u);
+        u.failed  = !make_object(a, u); // upload_status reports it; kiln fails the asset (K5004)
         kiln::free(default_allocator(), u.bytes, usize(max<u64>(u.size, 1)), 16, Tag::Payload);
         u.bytes = nullptr;
         u.done  = true;
@@ -290,17 +291,17 @@ Result<SokolAdapter*> sokol_adapter_create(SokolAdapterDesc const& desc, Adapter
     a->committed.reserve(desc.maxUploads);
     a->flushing.reserve(desc.maxUploads);
     *out = Adapter{
-        .supports_format    = &supports_format,
-        .copy_constraints   = &copy_constraints,
-        .begin_upload       = &begin_upload,
-        .commit_upload      = &commit_upload,
-        .is_upload_complete = &is_upload_complete,
-        .bind               = nullptr, // bindings are rebuilt per draw from gpu_object()
-        .destroy            = &destroy,
-        .flush              = &flush,
-        .caps               = kCubeTextures | kArrayTextures | kMeshes,
-        .reserved           = {},
-        .user               = a,
+        .supports_format  = &supports_format,
+        .copy_constraints = &copy_constraints,
+        .begin_upload     = &begin_upload,
+        .commit_upload    = &commit_upload,
+        .upload_status    = &upload_status,
+        .bind             = nullptr, // bindings are rebuilt per draw from gpu_object()
+        .destroy          = &destroy,
+        .flush            = &flush,
+        .caps             = kCubeTextures | kArrayTextures | kMeshes,
+        .reserved         = {},
+        .user             = a,
     };
     return a;
 }

@@ -167,8 +167,7 @@ template <class T> struct Fifo {
 
 } // namespace
 
-// One mutex guards the ring, the command pool, the object table and the descriptor set. is_upload_complete
-// reads the timeline without it.
+// One mutex guards the ring, the command pool, the object table and the descriptor set.
 struct VkAdapter {
     AdapterDesc desc{};
     Allocator const* alloc = nullptr;
@@ -176,7 +175,7 @@ struct VkAdapter {
     VkDevice device        = VK_NULL_HANDLE;
     bool concurrent        = false; ///< the graphics and transfer families differ
     /// The transfer queue is the graphics queue: submit on the pump thread (inside
-    /// is_upload_complete), which is the render thread, so the queue is never used by two threads.
+    /// upload_status), which is the render thread, so the queue is never used by two threads.
     bool submitOnPoll        = false;
     bool transferHasGraphics = false; ///< vertex-input stages are legal in transfer barriers
 
@@ -708,16 +707,17 @@ void vk_commit_upload(void* user, u64 token) noexcept {
     if (!a->submitOnPoll) submit_ready(a);
 }
 
-bool vk_is_upload_complete(void* user, u64 token) noexcept {
+/// A submitted copy cannot fail short of a lost device (VKX_CHECK), so never Failed for a live token.
+UploadStatus vk_upload_status(void* user, u64 token) noexcept {
     VkAdapter* a = self(user);
     std::lock_guard<std::mutex> lock(a->mutex);
     Object const* o = object_of_token(a, token);
-    if (!o) return true; // freed: nothing is left to wait for
+    if (!o) return UploadStatus::Failed; // not an upload of this adapter
     if (o->state == ObjectState::Recorded && a->submitOnPoll) submit_ready(a);
-    if (o->state != ObjectState::Submitted || timeline_value(a) < o->value) return false;
+    if (o->state != ObjectState::Submitted || timeline_value(a) < o->value) return UploadStatus::Pending;
     if (o->value > a->watermark.load(std::memory_order_relaxed))
         a->watermark.store(o->value, std::memory_order_relaxed);
-    return true;
+    return UploadStatus::Complete;
 }
 
 void vk_bind(void* user, u32 slot, GpuObject obj, TextureShape shape) noexcept {
@@ -901,17 +901,17 @@ Result<VkAdapter*> adapter_create(AdapterDesc const& desc, Adapter* out) noexcep
         return st;
     }
 
-    *out                    = Adapter{};
-    out->supports_format    = &vk_supports_format;
-    out->copy_constraints   = &vk_copy_constraints;
-    out->begin_upload       = &vk_begin_upload;
-    out->commit_upload      = &vk_commit_upload;
-    out->is_upload_complete = &vk_is_upload_complete;
-    out->bind               = desc.bindless ? &vk_bind : nullptr;
-    out->destroy            = &vk_destroy;
-    out->caps               = kSelfSubmitting | kCubeTextures | kArrayTextures | kMeshes;
-    out->bindlessSlots      = desc.bindless ? desc.maxSlots : 0;
-    out->user               = a;
+    *out                  = Adapter{};
+    out->supports_format  = &vk_supports_format;
+    out->copy_constraints = &vk_copy_constraints;
+    out->begin_upload     = &vk_begin_upload;
+    out->commit_upload    = &vk_commit_upload;
+    out->upload_status    = &vk_upload_status;
+    out->bind             = desc.bindless ? &vk_bind : nullptr;
+    out->destroy          = &vk_destroy;
+    out->caps             = kSelfSubmitting | kCubeTextures | kArrayTextures | kMeshes;
+    out->bindlessSlots    = desc.bindless ? desc.maxSlots : 0;
+    out->user             = a;
     KILN_ASSERT(adapter_is_valid(*out));
     return a;
 }

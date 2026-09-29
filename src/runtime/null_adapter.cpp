@@ -10,7 +10,7 @@ namespace kiln {
 
 namespace {
 
-enum class EntryState : u8 { Uploading, Complete, Freed };
+enum class EntryState : u8 { Uploading, Complete, Failed, Freed };
 
 /// One uploaded object. `native` in the GpuObject kiln is handed back is this
 /// entry's 1-based index into NullAdapter::table.
@@ -39,6 +39,7 @@ struct NullAdapter {
 
     std::atomic<u32> busyCalls{0}; ///< begin_upload call counter for busyEveryN
     std::atomic<u32> failCalls{0}; ///< begin_upload call counter for failEveryN
+    bool failUploads = false;      ///< null_adapter_fail_uploads()
 };
 
 namespace {
@@ -120,17 +121,25 @@ void null_commit_upload(void* user, u64 token) noexcept {
     if (token == 0 || token > u64(na->table.size())) return;
     ObjectEntry& e = na->table[usize(token - 1)];
     if (e.state != EntryState::Uploading) return;
+    ++na->stats.liveObjects; // a failed object is destroyed like any other
+    if (na->failUploads) {
+        e.state = EntryState::Failed;
+        ++na->stats.uploadsFailed;
+        return;
+    }
     e.state = EntryState::Complete;
     ++na->stats.completes;
-    ++na->stats.liveObjects;
     na->stats.bytesUploaded += e.size;
 }
 
-bool null_is_upload_complete(void* user, u64 token) noexcept {
+UploadStatus null_upload_status(void* user, u64 token) noexcept {
     NullAdapter* na = self(user);
     std::lock_guard<std::mutex> lock(na->mutex);
-    if (token == 0 || token > u64(na->table.size())) return false;
-    return na->table[usize(token - 1)].state == EntryState::Complete;
+    if (token == 0 || token > u64(na->table.size())) return UploadStatus::Pending;
+    EntryState const st = na->table[usize(token - 1)].state;
+    return st == EntryState::Complete ? UploadStatus::Complete
+           : st == EntryState::Failed ? UploadStatus::Failed
+                                      : UploadStatus::Pending;
 }
 
 void null_bind(void* user, u32 slot, GpuObject obj, TextureShape /*shape*/) noexcept {
@@ -148,7 +157,8 @@ void null_destroy(void* user, GpuObject obj) noexcept {
     std::lock_guard<std::mutex> lock(na->mutex);
     KILN_VERIFY(obj.native != 0 && obj.native <= u64(na->table.size()));
     ObjectEntry& e = na->table[usize(obj.native - 1)];
-    KILN_VERIFY(e.state == EntryState::Complete && "destroy of an incomplete or destroyed object");
+    KILN_VERIFY((e.state == EntryState::Complete || e.state == EntryState::Failed) &&
+                "destroy of an incomplete or destroyed object");
     free(na->allocator, e.bytes, e.size ? usize(e.size) : 1, e.align, Tag::Payload);
     e.bytes = nullptr;
     e.size  = 0;
@@ -173,17 +183,17 @@ Result<NullAdapter*> null_adapter_create(NullAdapterDesc const& desc, Adapter* o
     na->slots.init(allocator, Tag::Payload);
     na->slots.resize(na->desc.bindlessSlots);
 
-    *out                    = Adapter{};
-    out->supports_format    = &null_supports_format;
-    out->copy_constraints   = &null_copy_constraints;
-    out->begin_upload       = &null_begin_upload;
-    out->commit_upload      = &null_commit_upload;
-    out->is_upload_complete = &null_is_upload_complete;
-    out->bind               = desc.bindlessSlots ? &null_bind : nullptr;
-    out->destroy            = &null_destroy;
-    out->bindlessSlots      = desc.bindlessSlots;
-    out->caps               = kSelfSubmitting | kCubeTextures | kArrayTextures | kMeshes;
-    out->user               = na;
+    *out                  = Adapter{};
+    out->supports_format  = &null_supports_format;
+    out->copy_constraints = &null_copy_constraints;
+    out->begin_upload     = &null_begin_upload;
+    out->commit_upload    = &null_commit_upload;
+    out->upload_status    = &null_upload_status;
+    out->bind             = desc.bindlessSlots ? &null_bind : nullptr;
+    out->destroy          = &null_destroy;
+    out->bindlessSlots    = desc.bindlessSlots;
+    out->caps             = kSelfSubmitting | kCubeTextures | kArrayTextures | kMeshes;
+    out->user             = na;
 
     KILN_ASSERT(adapter_is_valid(*out));
     return na;
@@ -217,6 +227,12 @@ NullAdapterStats null_adapter_stats(NullAdapter* na) noexcept {
     if (!na) return {};
     std::lock_guard<std::mutex> lock(na->mutex);
     return na->stats;
+}
+
+void null_adapter_fail_uploads(NullAdapter* na, bool fail) noexcept {
+    if (!na) return;
+    std::lock_guard<std::mutex> lock(na->mutex);
+    na->failUploads = fail;
 }
 
 } // namespace kiln

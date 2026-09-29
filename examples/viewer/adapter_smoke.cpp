@@ -55,7 +55,7 @@ using Clock = std::chrono::steady_clock;
 /// Polls `token` for up to `ms`; true once complete.
 bool wait_upload(Adapter const& a, u64 token, u32 ms) {
     Clock::time_point const end = Clock::now() + std::chrono::milliseconds(ms);
-    while (!a.is_upload_complete(a.user, token)) {
+    while (a.upload_status(a.user, token) == UploadStatus::Pending) {
         if (Clock::now() >= end) return false;
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
@@ -94,7 +94,7 @@ bool check_commit_order(Adapter const& a, u64 stagingBytes) {
     a.commit_upload(a.user, smallT.token); // the big one is still "being written"
     bool const smallDone = wait_upload(a, smallT.token, 5000);
     double const ms      = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
-    bool const bigWaited = !a.is_upload_complete(a.user, bigT.token);
+    bool const bigWaited = a.upload_status(a.user, bigT.token) == UploadStatus::Pending;
     a.commit_upload(a.user, bigT.token);
     bool const bigDone = wait_upload(a, bigT.token, 5000);
     a.destroy(a.user, smallT.object);

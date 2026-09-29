@@ -221,6 +221,14 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
   relative path, as the `UriResolver` already received for buffers.
 
 ### Changed
+- **Breaking (runtime, adapter):** `Adapter::is_upload_complete` is now
+  `UploadStatus (*upload_status)(user, token)`, returning `Pending`, `Complete` or `Failed`. An adapter
+  can now fail an upload after `commit_upload` (a full pool, out of GPU memory): a first load fails
+  with K5004 and keeps showing its placeholder, a reload keeps the current version (K5010), a
+  placeholder fails `create()` (K5009). kiln destroys the failed object at once. Null adapter:
+  `null_adapter_fail_uploads()` and `NullAdapterStats::uploadsFailed`. Migration: return
+  `Complete` where `is_upload_complete` returned true and `Pending` where it returned false;
+  return `Failed` where the adapter used to hand kiln an unusable object.
 - **Breaking (runtime):** `gpu(ctx, handle)` is now `gpu_object(ctx, handle)`: `gpu` collided with
   the `gpu` namespace of NoGraphicsAPI (and is a likely name elsewhere). `TextureInfo::gpu` keeps its
   name. Migration: rename the calls.

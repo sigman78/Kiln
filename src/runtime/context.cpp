@@ -146,6 +146,8 @@ Status upload_placeholders(Context* ctx, ContextDesc const& desc) noexcept {
                     "sets kSelfSubmitting or flush");
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
+        for (Placeholder const& p : ctx->ph)
+            if (p.failed) return make_status(Code::Unknown); // K5009 already reported
     }
     return kOk;
 }

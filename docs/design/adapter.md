@@ -68,7 +68,7 @@ The structs (`CopyConstraints`, `TextureDesc`, `MeshPayloadDesc`, `UploadDesc`, 
 | `copy_constraints` | Called once in `create()`. kiln rounds each value up to a power of two. |
 | `begin_upload` | Returns destination memory and the `GpuObject` it will hold. The memory may be plain CPU memory that the adapter hands to its API later (sokol copies it at image creation). `Code::Busy` means "not now" (staging full): kiln retries on a later `pump()`. Any other failure moves the asset to `Failed` (K5004). |
 | `commit_upload` | kiln has finished writing `dst`. Always called after a successful `begin_upload`, even when the load then fails. The renderer records and submits the copy (itself if `kSelfSubmitting`, else with its next frame). |
-| `is_upload_complete` | Polled in `pump()` (and in `create()`'s placeholder spin) until true. When true, the asset becomes `Ready` in the same pump. kiln also polls the uploads it abandoned (an unload or a failure while in flight) until they complete, then destroys their objects. |
+| `upload_status` | Polled in `pump()` (and in `create()`'s placeholder spin) until not `Pending`. `Complete`: the asset becomes `Ready` in the same pump. `Failed` (the adapter could not make the object after `commit_upload`: a full pool, out of GPU memory, a texture larger than its heap): a first load fails with K5004 and shows its placeholder, a reload keeps the current version (K5010), a placeholder fails `create()` (K5009); kiln destroys the object at once, since no frame has used it. kiln also polls the uploads it abandoned (an unload or a failure while in flight) until they are done, then destroys their objects. |
 | `bind` | Bindless adapters only (`bindlessSlots > 0`). Slot `slot` shows `obj` from now on. kiln numbers the slots, `[0, bindlessSlots)`, one per texture asset, and calls `bind` at the request (the placeholder of the texture's kind and shape, or as soon as that placeholder's upload completes), when the texture is `Ready`, after each reload, and with the Failed checker (`devPlaceholders`). Pump thread. |
 | `destroy` | No frame the host reported can use the object any more (see Frames below): free it now. Its upload has completed. |
 | `flush` | Optional. Called at the start of every `pump()` (so in every `wait()` loop) and in `create()`'s placeholder spin, on that thread. An adapter whose API must be called on the graphics context's thread (GL, sokol) does its GPU work here: create the objects, record the copies, insert fences. |
@@ -89,7 +89,7 @@ waits for its GPU to go idle first.
 An adapter sets `kSelfSubmitting` only if both hold:
 
 1. `commit_upload` **submits the copy by itself** (for example on a dedicated transfer queue).
-2. `is_upload_complete` **makes progress without the host recording a frame**.
+2. `upload_status` **makes progress without the host recording a frame**.
 
 `wait()` panics without it or `flush` (K5007), and `create()` spins on the placeholder uploads only
 when one of them is set. An adapter that submits uploads inside the frame's command buffers must
@@ -99,7 +99,7 @@ not set it. Its hosts call `pump()` every frame and show `progress()`.
 
 For APIs whose calls must run on one thread. `begin_upload` and `commit_upload` run on kiln workers,
 so such an adapter only writes memory and queues there; `flush` does the rest on the pump thread,
-and `is_upload_complete` polls the result (a GL fence, for example). The host calls `create()` and
+and `upload_status` polls the result (a GL fence, for example). The host calls `create()` and
 `pump()` on the thread that owns the graphics context, which is where hosts call them anyway.
 With `flush` set, `wait()` works and `create()` waits for the placeholders, as with
 `kSelfSubmitting`. An upload committed during one `pump()` is flushed at the start of the next.
@@ -148,7 +148,8 @@ third for meshes.
 | `begin_upload` (worker) | carves a staging ring | carves a mapped ring or allocates CPU memory; no API call | returns CPU-visible GPU memory (ReBAR); the object is that memory |
 | `commit_upload` (worker) | records and submits the copy on a transfer queue | queues the upload | nothing to copy |
 | GPU work | on commit | in `flush`, on the pump thread: create the object, copy, fence | none |
-| `is_upload_complete` | timeline value reached | fence signaled (GL, NoGraphicsAPI), or flushed (sokol) | flushed: later submissions see the writes |
+| `upload_status` Complete | timeline value reached | fence signaled (GL, NoGraphicsAPI), or flushed (sokol) | flushed: later submissions see the writes |
+| `upload_status` Failed | never (a submitted copy cannot fail) | GL out of memory; sokol rejected the image, view or buffer; NoGraphicsAPI texture larger than its heap | never |
 | Caps | `kSelfSubmitting` | `flush` set | either |
 | Host rules | `pump()` on one thread | `create()` and `pump()` on the graphics thread | as its textures |
 
@@ -237,7 +238,7 @@ Part of `kiln_runtime` (`null_adapter.h`, `src/runtime/null_adapter.cpp`), used 
 | `copy_constraints` | the thread calling `create()` |
 | `supports_format` | the pump thread |
 | `begin_upload`, `commit_upload` | **kiln worker threads** (and the thread calling `create()` for placeholders), so a worker decodes straight into staging memory; must be thread-safe |
-| `is_upload_complete`, `flush` | the pump thread (`pump()`, `wait()`), and the thread calling `create()` |
+| `upload_status`, `flush` | the pump thread (`pump()`, `wait()`), and the thread calling `create()` |
 | `bind`, `destroy` | the pump thread (requests are pump-thread calls), and the threads calling `create()` / `destroy()` |
 
 Alternative, not taken: every call on the pump thread. The decode would go to a kiln-owned buffer

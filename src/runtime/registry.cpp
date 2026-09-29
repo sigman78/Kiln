@@ -370,7 +370,7 @@ void orphan_upload(Context* ctx, Slot& s) noexcept {
 void poll_orphans(Context* ctx) noexcept {
     for (usize i = 0; i < ctx->orphans.size();) {
         Orphan const o = ctx->orphans[i];
-        if (!ctx->adapter.is_upload_complete(ctx->adapter.user, o.token)) {
+        if (ctx->adapter.upload_status(ctx->adapter.user, o.token) == UploadStatus::Pending) {
             ++i;
             continue;
         }

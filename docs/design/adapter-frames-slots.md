@@ -56,8 +56,8 @@ frames passed. No adapter retires anything by itself any more.
 - `acquire`: `bind` with the placeholder object replaces it; the adapter no longer needs to know
   placeholder ids.
 - `publish`: `bind` covers bindless adapters; others never needed it. An adapter that wants to know
-  when an upload is used (the Vulkan watermark) learns it in `is_upload_complete`: kiln stops
-  polling a token at its first true and uses the object from then on (or destroys it, if the asset
+  when an upload is used (the Vulkan watermark) learns it in `upload_status` (`is_upload_complete` then): kiln stops
+  polling a token at its first `Complete` and uses the object from then on (or destroys it, if the asset
   was dropped meanwhile).
 - `destroy_deferred`, `null_adapter_flush_deferred`.
 

@@ -45,7 +45,7 @@ enum class Phase : u8 {
     MetaJob,      ///< meta stage running on a worker
     UploadQueued, ///< MetaReady; waiting for upload budget / Busy retry
     UploadJob,    ///< upload stage running on a worker
-    Awaiting,     ///< committed; polling is_upload_complete
+    Awaiting,     ///< committed; polling upload_status
     Done,         ///< Ready or Failed
 };
 
@@ -167,6 +167,7 @@ struct Placeholder {
     u64 token    = 0;
     bool pending = false; ///< committed, not yet complete (non-self-submitting adapter)
     bool ready   = false; ///< gpu_object() may return obj
+    bool failed  = false; ///< the adapter failed its upload (K5009)
     AssetId id   = 0;
     ktx2::TextureDesc desc;
     u64 offset = 0; ///< level 0 offset (always 0)

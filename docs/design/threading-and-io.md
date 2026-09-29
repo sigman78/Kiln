@@ -165,5 +165,5 @@ An own thread wrapper (more code, no benefit until a platform lacks std threads)
   project later? Proposed: no, keep blocking for v0.5.
 - Confirm the `wait()` sleep (1 ms between pumps) over a condition variable signalled by workers.
   A condition variable would not help: completion also depends on the adapter's
-  `is_upload_complete`, which must be polled.
+  `upload_status`, which must be polled.
 - Confirm one job per blob for the decode loop once codecs land (vs one job per mesh, as now).

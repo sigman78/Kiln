@@ -26,7 +26,7 @@ enum class TextureShape : u8 { Tex2D = 0, Cube, Array, Count };
 [[nodiscard]] KILN_API char const* texture_shape_name(TextureShape s) noexcept;
 
 enum AdapterCaps : u32 {
-    /// commit_upload submits to a queue by itself and is_upload_complete makes progress
+    /// commit_upload submits to a queue by itself and upload_status makes progress
     /// without the host recording a frame. wait() needs this bit or Adapter::flush.
     kSelfSubmitting = 1u << 0,
     /// The adapter accepts TextureShape::Cube / Array. Without the bit, kiln uploads no
@@ -83,6 +83,15 @@ struct GpuObject {
     [[nodiscard]] constexpr bool is_null() const noexcept { return native == 0 && slot == kInvalid; }
 };
 
+/// An upload after commit_upload, as Adapter::upload_status reports it.
+enum class UploadStatus : u8 {
+    Pending = 0, ///< still in flight; kiln polls again on a later pump
+    Complete,    ///< kiln uses the object from now on
+    /// The adapter could not make the object. kiln fails the asset (K5004), or keeps the current
+    /// version of a reload (K5010), and passes the object to destroy.
+    Failed,
+};
+
 struct UploadTarget {
     void* dst         = nullptr; ///< mapped staging / ReBAR / scratch, >= UploadDesc::size bytes
     u64 rowPitchAlign = 1;       ///< row pitch kiln must honor for this upload
@@ -101,9 +110,9 @@ struct Adapter {
     /// May return Code::Busy (back-pressure); kiln retries on a later pump.
     Status (*begin_upload)(void* user, UploadDesc const& desc, UploadTarget* out) = nullptr;
     void (*commit_upload)(void* user, u64 token)                                  = nullptr;
-    /// Polled on the pump thread until true. After true, kiln uses the object (or destroys it if the
-    /// asset was dropped meanwhile).
-    bool (*is_upload_complete)(void* user, u64 token) = nullptr;
+    /// Polled on the pump thread until not Pending. Once Complete, kiln uses the object (or destroys
+    /// it if the asset was dropped meanwhile).
+    UploadStatus (*upload_status)(void* user, u64 token) = nullptr;
     /// Bindless adapters: slot `slot` (kiln numbers them, [0, bindlessSlots)) shows `obj` from now
     /// on: the placeholder of the texture's kind and shape at the request, the texture once Ready,
     /// the new one after a reload, the Failed checker with devPlaceholders.
@@ -131,9 +140,9 @@ struct Adapter {
 /// True if every required entry point is set, `bind` comes with `bindlessSlots`, and the reserved
 /// tail is null.
 [[nodiscard]] constexpr bool adapter_is_valid(Adapter const& a) noexcept {
-    return a.supports_format && a.copy_constraints && a.begin_upload && a.commit_upload &&
-           a.is_upload_complete && a.destroy && (a.bind != nullptr) == (a.bindlessSlots != 0) &&
-           !a.reserved[0] && !a.reserved[1] && !a.reserved[2] && !a.reserved[3] &&
+    return a.supports_format && a.copy_constraints && a.begin_upload && a.commit_upload && a.upload_status &&
+           a.destroy && (a.bind != nullptr) == (a.bindlessSlots != 0) && !a.reserved[0] && !a.reserved[1] &&
+           !a.reserved[2] && !a.reserved[3] &&
            (a.caps & ~u32(kSelfSubmitting | kCubeTextures | kArrayTextures | kMeshes)) == 0;
 }
 

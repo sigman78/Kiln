@@ -99,11 +99,16 @@ sequenceDiagram
     Worker->>Adapter: commit_upload(token)
     Worker-->>Ctx: completion Uploaded
 
-    loop every pump() until the GPU copy finishes
+    loop every pump() while upload_status is Pending
         Host->>Ctx: pump()
-        Ctx->>Adapter: is_upload_complete(token)
+        Ctx->>Adapter: upload_status(token)
     end
-    Ctx-->>Host: event Ready (gpu_object(handle) is the real object)
+    alt Complete
+        Ctx-->>Host: event Ready (gpu_object(handle) is the real object)
+    else Failed (the adapter could not make the object)
+        Ctx->>Adapter: destroy(object)
+        Ctx-->>Host: event Failed (K5004)
+    end
 ```
 
 A failure at any stage ends in one `Failed` event with one K5xxx diagnostic, emitted by `pump()`.
@@ -152,7 +157,7 @@ sequenceDiagram
     Worker-->>Host: completion
 
     alt both stages succeed
-        Host->>Adapter: is_upload_complete(token)
+        Host->>Adapter: upload_status(token)
         Host->>Adapter: bind(slot, new object), bindless textures only
         Note over Host,Adapter: the old object goes to destroy() once the host's frames that used it complete
         Host->>Host: event Changed (Ready, if the asset was Failed)

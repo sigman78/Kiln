@@ -1,6 +1,6 @@
 // examples/gl/gl_adapter.cpp — kiln adapter over OpenGL 4.6 core, bound or bindless.
 // Threads: begin_upload / commit_upload (kiln workers) only touch memory under `mutex`. Everything
-// that calls GL (flush, is_upload_complete, bind, destroy) runs on the GL thread, which is also the
+// that calls GL (flush, upload_status, bind, destroy) runs on the GL thread, which is also the
 // pump thread.
 #include "gl_adapter.h"
 
@@ -39,6 +39,7 @@ struct Upload {
     bool committed  = false;
     bool flushed    = false;
     bool done       = false;
+    bool failed     = false; ///< the GL ran out of memory for the object's storage
     u32 object      = 0;
     UploadKind kind = UploadKind::MeshPayload;
     TextureDesc tex{};
@@ -173,11 +174,26 @@ void release_object(GlAdapter* a, u32 index) noexcept {
 }
 
 /// The GL side of one committed upload: create the object, copy from the staging buffer.
+/// True if the storage just allocated exists: GL reports running out of memory only as an error.
+bool storage_ok(Upload const& u) noexcept {
+    bool ok = true;
+    for (GLenum e = glGetError(); e != GL_NO_ERROR; e = glGetError())
+        ok = ok && e != GL_OUT_OF_MEMORY;
+    if (!ok) KILN_ERROR("gl", "out of GPU memory for a %llu-byte upload", ull(u.size));
+    return ok;
+}
+
+/// The GL side of one committed upload: create the object, copy from the staging buffer. Sets
+/// `u.failed` when the storage cannot be allocated.
 void run_upload(GlAdapter* a, Upload& u) noexcept {
     Object& o = a->objects[u.object];
+    while (glGetError() != GL_NO_ERROR) {
+    } // errors from before are not this upload's
     if (u.kind == UploadKind::MeshPayload) {
         glCreateBuffers(1, &o.name);
         glNamedBufferStorage(o.name, GLsizeiptr(u.size), nullptr, 0);
+        u.failed = !storage_ok(u);
+        if (u.failed) return;
         glCopyNamedBufferSubData(a->staging, o.name, GLintptr(u.offset), 0, GLsizeiptr(u.size));
         return;
     }
@@ -192,6 +208,8 @@ void run_upload(GlAdapter* a, Upload& u) noexcept {
         glTextureStorage3D(o.name, levels, f.internal, w, h, GLsizei(t.layers));
     else
         glTextureStorage2D(o.name, levels, f.internal, w, h); // a cube's storage is 2D per face
+    u.failed = !storage_ok(u);
+    if (u.failed) return;
     u64 offsets[kMaxLevels];
     CopyConstraints const cc{.optimalRowPitchAlign = 1,
                              .optimalOffsetAlign   = kOffsetAlign,
@@ -260,13 +278,13 @@ Status begin_upload(void* user, UploadDesc const& desc, UploadTarget* out) {
 
     Upload& u   = a->uploads[ui];
     u.used      = true;
-    u.committed = u.flushed = u.done = false;
-    u.object                         = oi;
-    u.kind                           = desc.kind;
-    u.tex                            = desc.texture ? *desc.texture : TextureDesc{};
-    u.size                           = desc.size;
-    u.offset                         = offset;
-    u.span                           = push_span(a, offset, offset + max<u64>(desc.size, 1));
+    u.committed = u.flushed = u.done = u.failed = false;
+    u.object                                    = oi;
+    u.kind                                      = desc.kind;
+    u.tex                                       = desc.texture ? *desc.texture : TextureDesc{};
+    u.size                                      = desc.size;
+    u.offset                                    = offset;
+    u.span                                      = push_span(a, offset, offset + max<u64>(desc.size, 1));
 
     out->dst           = a->mapped + offset;
     out->rowPitchAlign = 1;
@@ -285,12 +303,13 @@ void commit_upload(void* user, u64 token) {
     }
 }
 
-bool is_upload_complete(void* user, u64 token) {
+UploadStatus upload_status(void* user, u64 token) {
     auto* a   = static_cast<GlAdapter*>(user);
     Upload* u = upload_of(a, token);
-    if (!u) return true;
+    if (!u) return UploadStatus::Failed; // not an upload of this adapter
     u32 const index = u32(token & 0xFFFFFFFFu) - 1;
-    if (!poll(a, index)) return false;
+    if (!poll(a, index)) return UploadStatus::Pending;
+    bool const failed = u->failed;
     for (u32 i = 0; i < a->inFlight.size(); ++i)
         if (a->inFlight[i] == index) {
             a->inFlight[i] = a->inFlight.back();
@@ -301,7 +320,7 @@ bool is_upload_complete(void* user, u64 token) {
     u->used = false;
     ++u->gen;
     a->freeUploads.push_back(index);
-    return true;
+    return failed ? UploadStatus::Failed : UploadStatus::Complete;
 }
 
 /// GL keeps an object alive for commands already issued; a resident handle has no such guard, which
@@ -438,18 +457,18 @@ Result<GlAdapter*> gl_adapter_create(GlAdapterDesc const& desc, Adapter* out) no
     }
 
     *out = Adapter{
-        .supports_format    = &supports_format,
-        .copy_constraints   = &copy_constraints,
-        .begin_upload       = &begin_upload,
-        .commit_upload      = &commit_upload,
-        .is_upload_complete = &is_upload_complete,
-        .bind               = desc.bindless ? &bind : nullptr, // bound: the host asks gpu_object() per draw
-        .destroy            = &destroy,
-        .flush              = &flush, // the GL work, on the pump thread
-        .caps               = kCubeTextures | kArrayTextures | kMeshes,
-        .bindlessSlots      = desc.bindless ? desc.maxSlots : 0,
-        .reserved           = {},
-        .user               = a,
+        .supports_format  = &supports_format,
+        .copy_constraints = &copy_constraints,
+        .begin_upload     = &begin_upload,
+        .commit_upload    = &commit_upload,
+        .upload_status    = &upload_status,
+        .bind             = desc.bindless ? &bind : nullptr, // bound: the host asks gpu_object() per draw
+        .destroy          = &destroy,
+        .flush            = &flush, // the GL work, on the pump thread
+        .caps             = kCubeTextures | kArrayTextures | kMeshes,
+        .bindlessSlots    = desc.bindless ? desc.maxSlots : 0,
+        .reserved         = {},
+        .user             = a,
     };
     return a;
 }

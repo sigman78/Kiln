@@ -1101,6 +1101,72 @@ KILN_TEST(Runtime, ReloadSwapsVersion) {
     release(rt.ctx, m);
 }
 
+// An upload the adapter fails after commit_upload (UploadStatus::Failed) fails the asset with K5004;
+// its object is destroyed, and a later reload that succeeds recovers it with Ready.
+KILN_TEST(Runtime, UploadFailedFailsAsset) {
+    Rt rt;
+    if (!rt.init()) return;
+    u32 const baseline = null_adapter_stats(rt.na).liveObjects; // the placeholders
+    Group g            = group(rt.ctx);
+    RequestOptions ro;
+    ro.group = g;
+    null_adapter_fail_uploads(rt.na, true);
+    TextureHandle t = request_texture(rt.ctx, "ktx2/normal", ro);
+    KILN_REQUIRE(rt.pump_until([&] { return state(rt.ctx, t) == State::Failed; }));
+    null_adapter_fail_uploads(rt.na, false);
+    KILN_CHECK(rt.diags.has(kDiagAdapterRejected));
+    KILN_CHECK(rt.find_event(EventKind::Failed, t.bits()) >= 0);
+    KILN_CHECK_EQ(progress(rt.ctx, g).failed, 1u);
+    KILN_CHECK_EQ(null_adapter_stats(rt.na).uploadsFailed, 1u);
+    KILN_CHECK_EQ(null_adapter_stats(rt.na).liveObjects, baseline); // the failed object is gone
+    KILN_CHECK(gpu_object(rt.ctx, t).native <= 15u);                // a placeholder, not the failed object
+
+    usize const ev0 = rt.events.size();
+    request_reload(rt.ctx, t);
+    KILN_REQUIRE(rt.pump_until([&] { return is_ready(rt.ctx, t); }));
+    int const ready = rt.find_event(EventKind::Ready, t.bits(), ev0);
+    KILN_REQUIRE(ready >= 0);
+    KILN_CHECK_EQ(rt.events[usize(ready)].version, 2u);
+    KILN_CHECK_EQ(progress(rt.ctx, g).ready, 1u);
+    release(rt.ctx, t);
+    release(rt.ctx, g);
+}
+
+// A reload whose upload the adapter fails keeps the current version (K5010), like any failed reload.
+KILN_TEST(Runtime, UploadFailedReloadKeepsOld) {
+    Rt rt;
+    if (!rt.init()) return;
+    TextureHandle t = request_texture(rt.ctx, "ktx2/normal");
+    KILN_REQUIRE(rt.pump_until([&] { return is_ready(rt.ctx, t); }));
+    GpuObject const obj = gpu_object(rt.ctx, t);
+    u32 const live      = null_adapter_stats(rt.na).liveObjects;
+    usize const ev0     = rt.events.size();
+    null_adapter_fail_uploads(rt.na, true);
+    request_reload(rt.ctx, t);
+    KILN_REQUIRE(rt.pump_until([&] { return rt.diags.has(kDiagReloadFailed); }));
+    null_adapter_fail_uploads(rt.na, false);
+    KILN_CHECK_EQ(state(rt.ctx, t), State::Ready);
+    KILN_CHECK_EQ(version(rt.ctx, t), 1u);
+    KILN_CHECK_EQ(gpu_object(rt.ctx, t).native, obj.native);
+    KILN_CHECK_EQ(rt.events.size(), ev0);
+    KILN_CHECK_EQ(null_adapter_stats(rt.na).liveObjects, live);
+    release(rt.ctx, t);
+}
+
+// A placeholder upload the adapter fails makes create() fail with K5009.
+KILN_TEST(Runtime, UploadFailedPlaceholderFailsCreate) {
+    Rt rt;
+    Result<NullAdapter*> a = null_adapter_create({}, &rt.adapter);
+    KILN_REQUIRE(a.ok());
+    rt.na = *a;
+    null_adapter_fail_uploads(rt.na, true);
+    Result<Context*> c = create(ContextDesc{.diag = rt.diags.sink(), .adapter = &rt.adapter});
+    KILN_CHECK(c.failed());
+    if (c.ok()) destroy(*c);
+    KILN_CHECK(rt.diags.has(kDiagPlaceholderFailed));
+    KILN_CHECK_EQ(null_adapter_stats(rt.na).liveObjects, 0u); // every placeholder object destroyed
+}
+
 KILN_TEST(Runtime, ReloadFailureKeepsOld) {
     ReloadStore store;
     if (!store.init("fail")) return;

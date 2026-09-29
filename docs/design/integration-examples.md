@@ -70,7 +70,7 @@ cannot be used.
 Proposal:
 
 - `void (*flush)(void* user)`, optional. kiln calls it on the pump thread at the start of every
-  `pump()`, before it polls `is_upload_complete`, and in every loop of `wait()`.
+  `pump()`, before it polls `upload_status`, and in every loop of `wait()`.
 - The host must call `pump()` on the thread that owns the graphics context. Hosts already do this.
 - `wait()` works when the adapter sets `kSelfSubmitting` or `flush`.
 - A Vulkan adapter that records uploads into the frame's command buffer can use `flush` the same
