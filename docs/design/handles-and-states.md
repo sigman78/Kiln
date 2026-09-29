@@ -1,7 +1,7 @@
 # Handles, asset ids and states
 
 **Status:** Proposed (awaiting owner sign-off). Implemented in M3 (`include/kiln/assets.h`,
-`src/runtime/`), except hot reload (M5). Implementation details are recorded as R5a-R5l in
+`src/runtime/`); hot reload landed in M5 (`hot-reload.md`). Implementation details are recorded as R5a-R5l in
 `../open-questions.md`.
 **Decides:** Handle identity, asset ids, load states and transitions (including hot reload),
 request refcounting, events, placeholders and load groups.
@@ -100,7 +100,7 @@ counters alone.
 - An asset never skips `MetaReady`: hosts see one event sequence for every asset.
 - A reload loads the new version in the background and emits no `MetaReady`.
 
-**Hot reload (proposed, M5):** the old payload stays `Ready` and servable while the new version
+**Hot reload (M5):** the old payload stays `Ready` and servable while the new version
 cooks and loads, so there is no placeholder flash. When the new upload completes, `pump()` swaps
 metadata and payload together, increments the content version, binds a bindless slot to the new
 object, emits `Changed`, and releases the old payload once the host's frames that used it complete

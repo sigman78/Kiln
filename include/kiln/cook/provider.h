@@ -32,7 +32,8 @@ struct ProviderDesc {
 /// A texture named `<mesh>#<image>` is an embedded image: the provider cooks `<mesh>`, which
 /// writes all of its embedded images. Images a mesh references by URI are not cooked with
 /// it; the host requests them by name. Returns InvalidArgument if the context has no roots.
-/// Call install_provider and uninstall_provider on the pump thread.
+/// Call install_provider and uninstall_provider on the pump thread. destroy(ctx) frees a provider
+/// that is still installed, so uninstall_provider is needed only to remove it earlier.
 KILN_API Status install_provider(Context* ctx, ProviderDesc const& desc) noexcept;
 KILN_API void uninstall_provider(Context* ctx) noexcept;
 

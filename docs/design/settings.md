@@ -177,6 +177,8 @@ name or an out-of-range number is K3006. An integer is accepted where a float is
 | `slices` | integer, 0 to 2^32 - 1 |
 | `encoding` | `"auto"`, `"uncompressed"`, `"bc1"`, `"bc3"`, `"bc4"`, `"bc5"`, `"bc6h"`, `"bc7"` |
 | `quality` | `"fast"`, `"normal"`, `"high"` |
+| `supercompression` | `"none"`, `"zstd"` |
+| `zstdLevel` | integer, 0 to 19 (0 = 3) |
 
 | Mesh key | Value |
 |---|---|

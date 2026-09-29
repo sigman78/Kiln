@@ -17,7 +17,8 @@ flowchart TB
     app["Host application<br/>engine · editor<br/>kiln-viewer · kiln-headless<br/><i>+ kiln_cook in dev builds</i>"]
 
     cook["<b>kiln_cook</b><br/>glTF → .mesh<br/>images → KTX2<br/>settings · sidecars<br/>cook-on-miss provider<br/>source watch"]
-    third["cgltf · MikkTSpace<br/>meshoptimizer · wuffs"]
+    third["cgltf · MikkTSpace · meshoptimizer<br/>wuffs · bc7enc_rdo · ispc_bc6h<br/>zstd encoder"]
+    zstd["zstd decoder"]
 
     store[("Store<br/>name.mesh<br/>name.ktx2")]
 
@@ -35,13 +36,14 @@ flowchart TB
     store ==>|read| runtime
     cook -->|"CookProvider<br/>on store miss"| runtime
     runtime --> core
+    runtime --> zstd
     runtime ==>|"upload · bind · destroy"| adapter
 
     classDef ship fill:#e3f2e6,stroke:#2e7d32,color:#1b3a1f
     classDef dev fill:#fff3e0,stroke:#e08a00,color:#4a2c00
     classDef host fill:#e8eaf6,stroke:#3949ab,color:#1a1f4d
     classDef data fill:#f5f5f5,stroke:#757575,color:#212121
-    class runtime,core ship
+    class runtime,core,zstd ship
     class cook,third,cli dev
     class app,adapter host
     class sources,store data

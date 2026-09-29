@@ -83,6 +83,7 @@ struct Provider {
     Vec<NameRule> nameRules; ///< suffixes point into ruleStrings
     Allocator const* alloc = nullptr;
     JobSystem const* jobs  = nullptr; ///< the context's pool; provider_cook runs on one of its workers
+    Context* ctx           = nullptr; ///< the registry key
 
     // Source records (Disk mode), under recordMutex. They never shrink, so indices are stable.
     std::mutex recordMutex;
@@ -743,6 +744,21 @@ bool source_case_matches(StrView root, StrView path) noexcept {
 #endif
 }
 
+namespace {
+
+/// Frees a provider: from uninstall_provider, or from destroy() when the host forgot it.
+void provider_release(void* user) noexcept {
+    auto* p = static_cast<Provider*>(user);
+    {
+        std::lock_guard<std::mutex> const lock(registry_mutex());
+        if (Provider** found = registry().find(p->ctx); found && *found == p) registry().erase(p->ctx);
+    }
+    stop_poller(p); // joined before anything it reads is freed
+    delete_object(p->alloc, p, Tag::Cook);
+}
+
+} // namespace
+
 Status install_provider(Context* ctx, ProviderDesc const& desc) noexcept {
     Span<Root const> const ctxRoots = roots(ctx);
     if (ctxRoots.empty()) return make_status(Code::InvalidArgument);
@@ -758,6 +774,7 @@ Status install_provider(Context* ctx, ProviderDesc const& desc) noexcept {
     if (!alloc) alloc = default_allocator();
 
     Provider* p = new_object<Provider>(alloc, Tag::Cook, alloc);
+    p->ctx      = ctx;
     p->desc     = effective;
     p->jobs     = jobs(ctx);
     p->session  = CookSession{effective.storeMode, effective.fastPreview};
@@ -834,8 +851,9 @@ Status install_provider(Context* ctx, ProviderDesc const& desc) noexcept {
     }
 
     CookProvider provider{};
-    provider.cook = &provider_cook;
-    provider.user = p;
+    provider.cook    = &provider_cook;
+    provider.user    = p;
+    provider.release = &provider_release;
     set_cook_provider(ctx, provider);
     return kOk;
 }
@@ -844,14 +862,10 @@ void uninstall_provider(Context* ctx) noexcept {
     Provider* p = nullptr;
     {
         std::lock_guard<std::mutex> const lock(registry_mutex());
-        if (Provider** found = registry().find(ctx)) {
-            p = *found;
-            registry().erase(ctx);
-        }
+        if (Provider** found = registry().find(ctx)) p = *found;
     }
-    if (p) stop_poller(p); // joined before anything it reads is freed
     set_cook_provider(ctx, CookProvider{});
-    if (p) delete_object(p->alloc, p, Tag::Cook);
+    if (p) provider_release(p);
 }
 
 } // namespace kiln::cook

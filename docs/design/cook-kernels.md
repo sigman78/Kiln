@@ -106,8 +106,8 @@ default budget of 3 threads captures most of it.
 
 ## Consequences / what this constrains later
 
-- Encoders added in v0.6 (BCn, ASTC, Zstd) enter through the same kernel table and split by
-  blocks or rows.
+- The BC encoders split by block rows through `parallel_for` (`bc_encode.cpp`); Zstd compresses
+  one texture's levels on one thread. ASTC (v0.9) will enter the same way.
 - `CookEnv` is the place for future cook-wide services (progress callback, cancellation).
 
 ## Open points for the owner

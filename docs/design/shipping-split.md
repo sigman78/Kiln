@@ -33,9 +33,9 @@ The split between "ships" and "dev/cook-only" is enforced by **CMake target boun
 preprocessor conditions on a single library. `kiln_runtime` and `kiln_cook` are separate targets,
 and this note fixes that as the permanent shape of the boundary.
 
-**Exception: hot reload** (M5, not implemented). The file watcher and the re-cook hook stay inside
-`kiln_runtime`, behind the `KILN_HOT_RELOAD` CMake option (today it only defines
-`KILN_HOT_RELOAD=1`). Reasons:
+**Exception: hot reload** (M5, `hot-reload.md`). The store poller and the reload path stay inside
+`kiln_runtime`, behind the `KILN_HOT_RELOAD` CMake option (`src/runtime/watch.cpp`); the shipping
+presets turn it off. Reasons:
 
 - Reloading a pre-cooked file that an external `kiln-cook` rewrote is useful **without** the cooker
   linked in. Hot reload tracks its own axis (watch files, yes or no), not the cook/no-cook line.

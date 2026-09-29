@@ -30,9 +30,9 @@ links it.
 | NoGraphicsAPI example | **NoGraphicsAPI** (one source file), **Vulkan-Loader** (built from source) | MIT; Apache-2.0 | `kiln-nga` only | FetchContent, commit hash |
 | NoGraphicsAPI shaders | **Slang** release (slangc) | Apache-2.0 with LLVM exception | `kiln-nga` build only | downloaded per host at a release, checked by SHA-256 |
 
-`kiln_runtime` has **zero** third-party dependencies in v0.5. Everything third-party is cook-only
-(through the helper target `kiln_third_party_cook`) or example-only. The `.mesh` blob decode loop
-ships with codec `None` only, which needs no library.
+`kiln_runtime` has one third-party dependency: zstd's decoder, for Zstd-supercompressed KTX2.
+Everything else third-party is cook-only (through the helper target `kiln_third_party_cook`) or
+example-only. The `.mesh` blob decode loop ships with codec `None` only, which needs no library.
 
 ### glTF: cgltf
 

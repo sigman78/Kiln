@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.25)
 
 project(kiln
-    VERSION 0.0.1
+    VERSION 0.5.0
     DESCRIPTION "Graphics-API-agnostic asset cooking and async loading library"
     LANGUAGES CXX C)
 

@@ -321,7 +321,11 @@ struct CookProvider {
     Status (*cook)(void* user, AssetKind kind, StrView assetPath, Allocator const* alloc, Vec<u8>* out,
                    DiagSink const* diag) = nullptr;
     void* user                           = nullptr;
+    /// destroy() calls it for the provider still installed, after the last load has finished,
+    /// so the provider can free itself. Null: nothing to free.
+    void (*release)(void* user) = nullptr;
 };
+/// Replaces the installed provider. The old one is not released: a host that wraps it keeps it.
 KILN_API void set_cook_provider(Context* ctx, CookProvider const& provider) noexcept;
 /// The installed provider (null fn if none), so a host can wrap it.
 [[nodiscard]] KILN_API CookProvider cook_provider(Context* ctx) noexcept;

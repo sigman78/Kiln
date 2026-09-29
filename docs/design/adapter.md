@@ -16,7 +16,8 @@ The adapter is a **POD struct of function pointers plus `void* user`**, the same
 
 - `enum class Format : u32` in `formats.h`. It is not a full `VkFormat` mirror. It lists the
   uncompressed formats kiln cooks or reads, plus the BC, ETC2/EAC and ASTC LDR block formats, so
-  the KTX2 reader can describe them. No encoder writes block formats yet (v0.6+).
+  the KTX2 reader can describe them. The cooker writes BC1/3/4/5/6H/7 (`bcn-encoding.md`); no
+  ETC2 or ASTC encoder yet.
 - The numeric values **equal** `VkFormat`. KTX2 stores `vkFormat` numerically and the `.mesh` spec
   stores vertex formats as `VkFormat`, so both on-disk formats agree with the enum, and the Vulkan
   adapter is a `static_cast<VkFormat>`.
@@ -26,15 +27,24 @@ The adapter is a **POD struct of function pointers plus `void* user`**, the same
 - Properties come from a constexpr table (`FormatInfo`, `format_info()`, which returns nullptr for
   an unknown format), checked by `static_assert(format_table_ok())`.
 
-Formats the v0.5 cooker writes:
+Formats the v0.5 cooker writes (textures on a target with `blockFamily = BC`, the default, are
+block-compressed; the uncompressed rows apply to `blockFamily = None` and to usages BC does not
+cover):
 
 | Format | VkFormat | Texture (KTX2) | Vertex (`.mesh`) |
 |---|---|---|---|
 | `R8_UNORM` | 9 | 1-channel mask, height, LUT (8-bit) | |
 | `R8G8_UNORM` | 16 | 2-channel mask, height, LUT | |
 | `R8G8B8A8_UNORM` | 37 | linear color, ORM, normal, LUT | Color0 |
-| `R8G8B8A8_SRGB` | 43 | sRGB color (HDR is cooked as color in v0.5) | |
+| `R8G8B8A8_SRGB` | 43 | sRGB color | |
 | `R16_UNORM` | 70 | 1-channel mask, height (16-bit) | |
+| `R16G16B16A16_SFLOAT` | 97 | HDR | |
+| `BC1_RGB_UNORM` / `_SRGB` | 131 / 132 | color, by explicit `encoding = bc1` | |
+| `BC3_UNORM` / `_SRGB` | 137 / 138 | color with alpha, by explicit `encoding = bc3` | |
+| `BC4_UNORM` | 139 | 1-channel mask | |
+| `BC5_UNORM` | 141 | normal (X, Y; Z rebuilt in the shader), 2-channel mask | |
+| `BC6H_UFLOAT` | 143 | HDR | |
+| `BC7_UNORM` / `_SRGB` | 145 / 146 | ORM, linear color / color, UI | |
 | `R16G16_SNORM` | 78 | | octahedral normal |
 | `R16G16_SFLOAT` | 83 | | UV (default profile) |
 | `R16G16B16A16_UNORM` | 91 | | quantized position |
@@ -188,8 +198,8 @@ until the release. A request when all `bindlessSlots` are in use fails with K500
 
 - At `create()`, kiln uploads each texture placeholder (built-in or host-supplied RGBA8, see
   `handles-and-states.md`) through `begin_upload` / `commit_upload`. Kind placeholder ids are
-  `1 + TextureKind` (1..4). The Failed placeholder is id 15 (`kFailedPlaceholderId`,
-  `placeholders.h`) and is uploaded only when `devPlaceholders` is on. `Busy` is retried for up to
+  `1 + TextureKind` (1..4). The Failed placeholder of a shape is `failed_placeholder_id(shape)`
+  (13..15, `placeholders.h`) and is uploaded only when `devPlaceholders` is on. `Busy` is retried for up to
   10 s (R5j).
 - The adapter needs no placeholder ids: `bind` passes the placeholder object like any other.
 - When a bindless texture fails and `devPlaceholders` is on, kiln binds its slot to the Failed

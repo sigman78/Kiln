@@ -11,14 +11,14 @@ kiln reads **Radiance `.hdr`** files with its own small decoder and cooks usage 
 **`R16G16B16A16_SFLOAT`** (RGBA16F). No new dependency. A float KTX2 made by another tool
 already passes through the cook unchanged.
 
-## What exists
+## What existed before this work
 
-- `TextureUsage::Hdr` exists, but `cook_texture` treats it like `Color` (8-bit sRGB).
+- `TextureUsage::Hdr` existed, but `cook_texture` treated it like `Color` (8-bit sRGB).
 - `Format` has the float formats (`R16G16B16A16_SFLOAT`, `R32G32B32A32_SFLOAT`, …). The KTX2
   reader and writer handle them: the corpus round-trips `rgba16f.ktx2`, and `ktx validate`
   accepts the output.
-- The image pipeline (`Image`, `prepare_image`, `build_mip_chain`) handles 8- and 16-bit integer
-  channels only.
+- The image pipeline (`Image`, `prepare_image`, `build_mip_chain`) handled 8- and 16-bit integer
+  channels only (it now handles f32 too).
 
 ## Decision
 

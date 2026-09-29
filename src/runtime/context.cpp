@@ -7,8 +7,6 @@
 
 namespace kiln {
 
-char const* runtime_version() noexcept { return "0.0.1-m3"; }
-
 namespace rt {
 namespace {
 
@@ -368,6 +366,9 @@ void destroy(Context* ctx) noexcept {
     if (!ctx) return;
     watch_stop(ctx); // joins the poller before any table is freed
     teardown(ctx);
+    // After teardown: no load job can still call into the provider.
+    if (ctx->provider.release) ctx->provider.release(ctx->provider.user);
+    ctx->provider = {};
     log_info(ctx, "context destroyed");
     Allocator const* a = ctx->alloc;
     free_tables(ctx);

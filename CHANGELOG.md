@@ -7,6 +7,12 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-29
+
+The first tagged release: a usable async asset loader (milestones M0-M5), with BC and Zstd
+textures from the v0.6 work already in. The API is not stable; every break below has migration
+notes.
+
 ### Added
 - **Runtime: Zstd-supercompressed KTX2** (docs/design/bcn-encoding.md, step 6). The reader accepts
   `supercompressionScheme = 2` (BasisLZ and Zlib stay K4107); `Ktx2View::supercompressed()` and
@@ -270,6 +276,9 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
 - Project display name is Kiln; GitHub repository renamed to sigman78/Kiln (namespace, CMake package and targets stay lowercase `kiln`).
 
 ### Fixed
+- Runtime/cook: `destroy(ctx)` with a cook provider still installed leaked the provider and left
+  its `Context*` in the provider registry. `CookProvider` gains `release`, which `destroy()` calls
+  after the last load; `install_provider` sets it, so `uninstall_provider` is now optional.
 - `.mesh` reader: a section table offset near 2^64 wrapped the bounds check, and `open()` read
   outside the buffer (found by `fuzz_mesh_read`).
 - `Vec::push_back` / `emplace_back` / `append` / `resize(n, fill)` and `HashMap::try_emplace` read

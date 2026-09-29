@@ -102,7 +102,7 @@ struct TestContext {
     }
 
     ~TestContext() noexcept {
-        if (ctx) cook::uninstall_provider(ctx); // the host's job before destroy(); a no-op without one
+        if (ctx) cook::uninstall_provider(ctx); // optional: destroy() releases it too
         if (ctx) destroy(ctx);
         if (na) null_adapter_destroy(na);
     }
@@ -213,6 +213,38 @@ KILN_TEST(Provider, NoMountsIsInvalidArgument) {
     Status st = cook::install_provider(tc.ctx, cook::ProviderDesc{});
     KILN_CHECK(st.failed());
     KILN_CHECK_EQ(st.code, Code::InvalidArgument);
+}
+
+// destroy() frees a provider the host did not uninstall, and drops its registry entry, so a later
+// context (possibly at the same address) starts without it.
+KILN_TEST(Provider, DestroyReleasesAnInstalledProvider) {
+    char storeDir[1024];
+    scratch_dir("provider_store_release", storeDir, sizeof storeDir);
+    Root const roots[] = {
+        {{}, StrView(storeDir)}
+    };
+    {
+        TestContext warm; // the registry's table is allocated once and kept
+        if (!warm.init(StrView(storeDir), Span<Root const>(roots, 1))) return;
+        KILN_REQUIRE(cook::install_provider(warm.ctx, cook::ProviderDesc{}).ok());
+    }
+    u64 const before = default_alloc_stats(Tag::Cook).bytesCurrent;
+    for (int i = 0; i < 2; ++i) {
+        Adapter adapter{};
+        Result<NullAdapter*> na = null_adapter_create({}, &adapter);
+        KILN_REQUIRE(na.ok());
+        ContextDesc desc{};
+        desc.adapter         = &adapter;
+        desc.storeDir        = StrView(storeDir);
+        desc.roots           = Span<Root const>(roots, 1);
+        Result<Context*> ctx = create(desc);
+        KILN_REQUIRE(ctx.ok());
+        KILN_REQUIRE(cook::install_provider(*ctx, cook::ProviderDesc{.watchSources = true}).ok());
+        KILN_CHECK(cook_provider(*ctx).release != nullptr);
+        destroy(*ctx); // no uninstall_provider
+        null_adapter_destroy(*na);
+    }
+    KILN_CHECK_EQ(default_alloc_stats(Tag::Cook).bytesCurrent, before);
 }
 
 #if KILN_MESH

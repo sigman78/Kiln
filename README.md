@@ -3,16 +3,17 @@
 <img src="docs/logo.svg" alt="Kiln logo: a kiln with a glowing opening and three stacked cubes" width="100" height="100" align="right">
 
 Kiln is a graphics-API-agnostic asset cook and load library for C++23. It cooks source assets
-(`.glb`, `.png`, `.jpg`, `.ktx2`) into GPU-ready runtime formats (`.mesh` and KTX2), loads them
-asynchronously straight into memory the renderer provides, and will hot-reload them on source
-change. The library never calls a graphics API: every GPU interaction goes through a small adapter
-struct that the renderer fills in.
+(`.glb`, `.gltf`, `.png`, `.jpg`, `.hdr`, `.ktx2`) into GPU-ready runtime formats (`.mesh`, and
+KTX2 with BC1-BC7 textures and Zstd supercompression), loads them asynchronously straight into
+memory the renderer provides, and hot-reloads them when a source changes. The library never calls
+a graphics API: every GPU interaction goes through a small adapter struct that the renderer fills
+in.
 
-**Status:** pre-alpha, M4 done (example Vulkan adapter and viewer), M5 hot reload next. API unstable;
-breaks are listed in `CHANGELOG.md`.
+**Status:** v0.5 (milestones M0-M5, plus BC and Zstd textures). The API is not stable yet; breaks
+are listed in `CHANGELOG.md` with migration notes. Next: see the roadmap in `docs/HANDOFF.md`.
 
 ```
-source (glb, png, jpg, ktx2) --> cook (kiln_cook, in-process or kiln-cook CLI) --> store (<store>/<asset>.mesh|.ktx2)
+source (glb, png, jpg, hdr, ktx2) --> cook (kiln_cook, in-process or kiln-cook CLI) --> store (<store>/<asset>.mesh|.ktx2)
                                                                                      |
 renderer (Vulkan, sokol, bgfx, ...) <-- adapter <-- kiln_runtime: async load, pump() per frame, placeholders
 ```
@@ -35,8 +36,8 @@ read-only `*-shipping` presets (Release, cook, tools and hot reload off; see
 | Target | Contents | Ships |
 |---|---|---|
 | `kiln_core` | vocabulary types, allocators, containers, hashing, logging, `Result` | yes |
-| `kiln_runtime` | `.mesh` and KTX2 readers, IO backend and thread pool, the async runtime, null adapter | yes |
-| `kiln_cook` | glTF, PNG and JPEG import (WebP optional), image kernels, cooker, settings, store writer | no |
+| `kiln_runtime` | `.mesh` and KTX2 readers (with zstd's decoder), IO backend and thread pool, the async runtime, null adapter | yes |
+| `kiln_cook` | glTF, PNG, JPEG and Radiance HDR import (WebP optional), image kernels, BC encoders, Zstd, cooker, settings, store writer | no |
 
 | Option | Default | Meaning |
 |---|---|---|
@@ -45,6 +46,8 @@ read-only `*-shipping` presets (Release, cook, tools and hot reload off; see
 | `KILN_BUILD_TESTS` | ON when top-level | own runner, golden files, tool smoke tests |
 | `KILN_BUILD_EXAMPLES` | OFF (presets: ON) | `kiln-headless` |
 | `KILN_BUILD_VIEWER` | OFF (presets: ON) | `kiln-viewer`, `kiln-vk-smoke`; fetches Vulkan-Headers, volk and GLFW, no SDK needed |
+| `KILN_EXAMPLE_GL`, `KILN_EXAMPLE_GL_BINDLESS`, `KILN_EXAMPLE_SOKOL`, `KILN_EXAMPLE_VK_BASIC` | OFF (presets: ON) | the integration examples `kiln-gl`, `kiln-gl-bindless`, `kiln-sokol`, `kiln-vk-basic` |
+| `KILN_EXAMPLE_NGA` | OFF | `kiln-nga` (NoGraphicsAPI; fetches its sources, the Vulkan loader and Slang) |
 | `KILN_HOT_RELOAD` | ON | hot-reload support in `kiln_runtime` (M5) |
 | `KILN_WEBP` | OFF | WebP texture sources in `kiln_cook` (`.webp`, `EXT_texture_webp`) |
 | `KILN_MESH` | ON | mesh cooking in `kiln_cook`; OFF is a texture-only cook without cgltf, MikkTSpace and meshoptimizer (`docs/design/texture-only.md`) |
@@ -93,8 +96,9 @@ have the contracts.
 All programs print their options with `--help`.
 
 - `kiln-cook <input>... -o <store>` cooks files or directories into a store. `--check` validates
-  only, `--threads <n>` sets the pool size and the per-cook thread budget, `--verbose` prints per-stage
-  timings.
+  only, `--block none|bc` picks the target's texture formats, `--quality` the BC encoder effort,
+  `--zstd <level>` the texture supercompression (0 = off), `--threads <n>` sets the pool size and
+  the per-cook thread budget, `--verbose` prints per-stage timings.
 - `kiln-info <file>` dumps a `.mesh` or `.ktx2`; `--check` decodes and verifies. Read-only, ships
   with the runtime side.
 - `kiln-headless` (`examples/headless`) drives the runtime with the null adapter and logs every event;
@@ -104,6 +108,10 @@ All programs print their options with `--help`.
   frames show placeholders. `--offscreen --frames N --dump out.png` renders without a window.
   `--watch` hot-reloads changed store files and, with `--source`, re-cooks changed sources.
   `kiln-vk-smoke` exercises the adapter alone. Both need a Vulkan 1.4 driver to run.
+
+- `kiln-gl`, `kiln-gl-bindless`, `kiln-sokol`, `kiln-vk-basic` and `kiln-nga` are small
+  integration examples, one per graphics API: each draws the same reference scene (WaterBottle under
+  an HDR test sky) through its own adapter, cooking on first run.
 
 ```sh
 cmake --build --preset win-msvc-debug --target viewer-demo   # fetches six CC0 Khronos models, cooks, opens the viewer
