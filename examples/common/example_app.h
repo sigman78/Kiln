@@ -38,10 +38,6 @@ struct Options {
 /// Returns -1 to run, else the exit code: 0 after --help, 2 on a usage error or when the demo model
 /// has not been downloaded yet (the message says how).
 [[nodiscard]] int parse_options(char const* program, int argc, char** argv, Options* o) noexcept;
-/// An adapter that cannot sample every block format gets a store of its own, named by that set: its
-/// cooked formats differ, and a store file is used as long as it exists (open-questions R9). Call
-/// before create() with unsampled_block_formats(adapter).
-void use_target_store(Options* o, u64 excludedBlockFormats) noexcept;
 
 [[nodiscard]] char const* state_name(State s) noexcept;
 [[nodiscard]] char const* event_name(EventKind k) noexcept;

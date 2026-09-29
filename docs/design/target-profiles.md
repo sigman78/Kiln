@@ -1,6 +1,6 @@
 # Target profiles
 
-**Status:** Decided (owner, 2026-09-29), not implemented. The owner asked for named profiles with
+**Status:** Decided (owner, 2026-09-29) and implemented (all four rollout steps). The owner asked for named profiles with
 a most compatible default, and for a strict rule: a client never re-cooks or overwrites a store
 cooked for another profile. Open points: a store without a descriptor is a mismatch; the runtime
 check fails `create()`, with an escape hatch; the full-BC profile stays `desktop`.
@@ -25,9 +25,9 @@ cook-time fallback chain.
   explicit `encoding` outside the profile is an error. This replaces the fallback chain.
 - The examples use the default profile and share one `example-store` again.
 
-## What exists
+## What existed before
 
-Unreleased work since v0.5.0, which this note replaces:
+Unreleased work after v0.5.0, which this note replaced:
 
 - `TargetProfile::excludedBlockFormats`: the formats a target cannot sample.
   `unsampled_block_formats(adapter)` reads such a set from an adapter.
@@ -167,9 +167,9 @@ struct TargetProfile {
 
 ## Alternatives considered
 
-- **A store per adapter format set** (what exists now, `example-store-<hex>`): correct, but every
+- **A store per adapter format set** (what existed, `example-store-<hex>`): correct, but every
   example gets its own store, and the names mean nothing to a person.
-- **A fallback chain at cook time** (exists now): the cooker writes another format than the one
+- **A fallback chain at cook time** (existed): the cooker writes another format than the one
   asked for, and the store's contents then depend on who cooked first. A profile's table gives the
   same results without the surprise.
 - **Re-cooking a mismatched store in place:** it mixes files of two profiles, which is the R9
@@ -179,6 +179,18 @@ struct TargetProfile {
   project does not already have, so they stay, in `desktop` only.
 - **Transcoding at load** (Basis): a different codec and a runtime transcoder; see
   `zstd-supercompression.md`, "Alternatives considered".
+
+## Implementation
+
+- `include/kiln/cook/settings.h`: `TargetProfile::blockFormats`, `kCompatBlockFormats`,
+  `kDesktopBlockFormats`, `kCompatTarget` / `kDesktopTarget` / `kUncompressedTarget`,
+  `target_profile()`, K3008. The usage table is `block_format()` in `src/cook/texture_cook.cpp`.
+- `include/kiln/cook/cook.h`: `bind_store_profile()` (`src/cook/store.cpp`), called by
+  `install_provider` (disk mode) and `kiln-cook`.
+- `include/kiln/assets.h`: `StoreProfile`, `kStoreProfileFile`, `parse_store_profile()`,
+  `read_store_profile()` (`src/runtime/store_profile.cpp`), `ContextDesc::allowUnsampledFormats`,
+  K5018, `diag_sink()`. The check is `check_store_profile()` in `src/runtime/context.cpp`.
+- `kiln-cook --target compat|desktop|uncompressed` (default `compat`).
 
 ## Rollout
 

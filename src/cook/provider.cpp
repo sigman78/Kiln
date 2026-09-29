@@ -827,6 +827,15 @@ Status install_provider(Context* ctx, ProviderDesc const& desc) noexcept {
         return rm.status();
     }
 
+    // A store holds files of one profile (docs/design/target-profiles.md).
+    if (effective.storeMode == StoreMode::Disk) {
+        Status const bound = bind_store_profile(p->storeDir, effective.target, diag_sink(ctx));
+        if (bound.failed()) {
+            delete_object(alloc, p, Tag::Cook);
+            return bound;
+        }
+    }
+
     if (effective.storeMode == StoreMode::Disk) {
         p->records.reserve(kMaxSources);
         p->emitted.reserve(kMaxSources);

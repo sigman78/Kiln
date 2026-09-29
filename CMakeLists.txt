@@ -108,6 +108,7 @@ add_library(kiln_runtime STATIC
     include/kiln/assets.h
     src/runtime/runtime_internal.h
     src/runtime/context.cpp
+    src/runtime/store_profile.cpp
     src/runtime/registry.cpp
     src/runtime/names.cpp
     src/runtime/loader.cpp

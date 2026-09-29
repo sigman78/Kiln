@@ -96,7 +96,8 @@ have the contracts.
 All programs print their options with `--help`.
 
 - `kiln-cook <input>... -o <store>` cooks files or directories into a store. `--check` validates
-  only, `--block none|bc` picks the target's texture formats, `--quality` the BC encoder effort,
+  only, `--target compat|desktop|uncompressed` picks the target profile (the block formats its
+  GPUs sample; a store holds one profile), `--quality` the BC encoder effort,
   `--zstd <level>` the texture supercompression (0 = off), `--threads <n>` sets the pool size and
   the per-cook thread budget, `--verbose` prints per-stage timings.
 - `kiln-info <file>` dumps a `.mesh` or `.ktx2`; `--check` decodes and verifies. Read-only, ships

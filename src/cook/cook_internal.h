@@ -122,4 +122,9 @@ Status import_gltf(MeshSource const& src, MeshCookSettings const& settings, Aren
     return src.sourcePath.empty() ? src.assetPath : src.sourcePath;
 }
 
+/// The block format of an explicit encoding (Undefined for Auto and Uncompressed).
+[[nodiscard]] Format encoding_format(TextureEncoding e, bool srgb) noexcept;
+/// True when the block formats of this texture are the sRGB variants: sRGB Color and UI only.
+[[nodiscard]] bool srgb_blocks(ColorSpace cs, TextureUsage usage) noexcept;
+
 } // namespace kiln::cook::detail

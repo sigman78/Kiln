@@ -196,10 +196,8 @@ Vec<u8> test_png(u8 const (&rgba)[4 * 4 * 4]) {
 }
 
 // Uncompressed, so a re-cooked PNG's texels compare directly with its pixels.
-cook::ProviderDesc const kWatchDesc{.storeMode    = cook::StoreMode::Disk,
-                                    .target       = {.blockFamily = cook::BlockFamily::None},
-                                    .watchSources = true,
-                                    .pollMs       = 20};
+cook::ProviderDesc const kWatchDesc{
+    .storeMode = cook::StoreMode::Disk, .target = {.blockFormats = 0}, .watchSources = true, .pollMs = 20};
 
 } // namespace
 
@@ -997,4 +995,28 @@ KILN_TEST(Provider, HdrSourceCooksToBc6h) {
     KILN_REQUIRE_EQ(pump_until_settled(tc.ctx, sky), State::Ready);
     TextureInfo const ti = texture_info(tc.ctx, sky);
     KILN_CHECK(ti.desc.isCube && ti.desc.format == Format::BC6H_UFLOAT);
+}
+
+// A disk store holds files of one profile: a provider with another profile writes nothing.
+KILN_TEST(Provider, RefusesAStoreOfAnotherProfile) {
+    char storeDir[1024];
+    scratch_dir("provider_store_profile", storeDir, sizeof storeDir);
+    Root const roots[] = {
+        {{}, StrView(storeDir)}
+    };
+    {
+        TestContext tc;
+        if (!tc.init(StrView(storeDir), Span<Root const>(roots, 1))) return;
+        KILN_REQUIRE(cook::install_provider(tc.ctx, cook::ProviderDesc{}).ok()); // writes compat
+    }
+    DiagCapture cap;
+    TestContext tc;
+    if (!tc.init(StrView(storeDir), Span<Root const>(roots, 1), cap.sink())) return;
+    Status const st = cook::install_provider(tc.ctx, cook::ProviderDesc{.target = cook::kDesktopTarget});
+    KILN_CHECK_EQ(st.code, Code::InvalidArgument);
+    KILN_CHECK_EQ(cap.firstCode, u32(cook::kDiagStoreProfileMismatch));
+    KILN_CHECK(cook_provider(tc.ctx).cook == nullptr);
+    StoreProfile p;
+    KILN_REQUIRE(read_store_profile(nullptr, StrView(storeDir), &p).ok());
+    KILN_CHECK(StrView(p.name) == "compat");
 }

@@ -84,6 +84,21 @@ struct Root {
     StrView dir  = {}; ///< the directory that holds its sources
 };
 
+/// The target profile a store was cooked for, as `<store>/kiln-store.txt` records it
+/// (docs/design/target-profiles.md). The cook writes the file; create() checks it.
+struct StoreProfile {
+    char name[64]    = {}; ///< NUL-terminated
+    u64 hash         = 0;  ///< hash_target of the profile
+    u64 blockFormats = 0;  ///< block_format_bit() set of the formats the profile may write
+};
+inline constexpr char kStoreProfileFile[] = "kiln-store.txt";
+
+/// Parses the text of a `kiln-store.txt`. ParseError when it is not one.
+KILN_API Status parse_store_profile(Span<u8 const> text, StoreProfile* out) noexcept;
+/// Reads `<storeDir>/kiln-store.txt` through `io` (nullptr: the compat backend). NotFound when
+/// the store has none; ParseError when it is malformed.
+KILN_API Status read_store_profile(IoBackend const* io, StrView storeDir, StoreProfile* out) noexcept;
+
 struct ContextDesc {
     Allocator const* alloc = nullptr; ///< nullptr = default allocator
     LogSink log            = {};      ///< fn null = process-wide sink (log.h)
@@ -92,10 +107,13 @@ struct ContextDesc {
     IoBackend const* io    = nullptr; ///< nullptr = compat backend
     Adapter const* adapter = nullptr; ///< required
 
-    StrView storeDir                         = {}; ///< cooked store root (read-only for the runtime)
-    Span<Root const> roots                   = {}; ///< where the cook provider looks for sources (dev)
-    StoreLayout storeLayout                  = StoreLayout::Named;
-    bool devPlaceholders                     = KILN_DEBUG != 0; ///< Failed textures show the magenta checker
+    StrView storeDir        = {}; ///< cooked store root (read-only for the runtime)
+    Span<Root const> roots  = {}; ///< where the cook provider looks for sources (dev)
+    StoreLayout storeLayout = StoreLayout::Named;
+    bool devPlaceholders    = KILN_DEBUG != 0; ///< Failed textures show the magenta checker
+    /// A store whose profile has formats the adapter cannot sample makes create() fail (K5018).
+    /// True makes that a warning; each such asset then fails on its own. For tools and debugging.
+    bool allowUnsampledFormats               = false;
     Span<PlaceholderDesc const> placeholders = {}; ///< overrides per kind; missing kinds use built-ins
 
     HotReloadDesc hotReload = {};
@@ -346,6 +364,8 @@ struct ContextStats {
 /// The roots from ContextDesc (owned copies).
 [[nodiscard]] KILN_API Span<Root const> roots(Context* ctx) noexcept;
 [[nodiscard]] KILN_API Allocator const* allocator(Context* ctx) noexcept;
+/// The diagnostic sink from ContextDesc, so a cook provider reports where the host listens.
+[[nodiscard]] KILN_API DiagSink const* diag_sink(Context* ctx) noexcept;
 /// The job system the context runs its IO and cook jobs on: the host's JobSystem
 /// from ContextDesc, or the built-in pool. Valid until destroy(ctx).
 [[nodiscard]] KILN_API JobSystem const* jobs(Context* ctx) noexcept;
@@ -371,6 +391,8 @@ enum RuntimeDiagCode : u32 {
     kDiagReloadMemorySource   = 5012, ///< reload requested for a memory-registered asset (Warning)
     kDiagBadAssetName         = 5013, ///< a request, registration or root breaks the name rules
     kDiagTextureShapeMismatch = 5017, ///< the cooked texture's shape is not the requested one
+    kDiagStoreProfileUnsampled =
+        5018, ///< the store's profile has formats the adapter cannot sample, or its kiln-store.txt is bad
 };
 
 } // namespace kiln

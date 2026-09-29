@@ -1,13 +1,32 @@
 #include "kiln_test.h"
 
+#include "kiln/assets.h" // StoreProfile
 #include "kiln/cook/cook.h"
 
 #include <cstdio>
+#include <cstring>
+#include <filesystem>
+#include <system_error>
 
 using namespace kiln;
 using namespace kiln::cook;
 
 namespace {
+
+/// An empty `<sample_dir()>/<suffix>`.
+void scratch_dir(char const* suffix, char* out, usize cap) {
+    format(out, cap, "%s/%s", kiln::test::sample_dir(), suffix);
+    std::error_code ec;
+    std::filesystem::remove_all(out, ec);
+}
+
+struct DiagCapture {
+    u32 code = 0;
+    static void fn(void* user, Diagnostic const& d) noexcept {
+        static_cast<DiagCapture*>(user)->code = d.code;
+    }
+    DiagSink sink() noexcept { return DiagSink{&fn, this}; }
+};
 
 bool file_exists(char const* path) {
     std::FILE* f = std::fopen(path, "rb");
@@ -250,4 +269,59 @@ KILN_TEST(Store, OverwriteReplacesExistingFile) {
     KILN_REQUIRE(read_whole_file(path, onDisk));
     KILN_REQUIRE_EQ(onDisk.size(), sizeof third);
     KILN_CHECK(std::memcmp(onDisk.data(), third, sizeof third) == 0);
+}
+
+// ---------------------------------------------------------------------------
+// Store profiles (docs/design/target-profiles.md)
+// ---------------------------------------------------------------------------
+
+KILN_TEST(Store, ParseStoreProfile) {
+    auto const parse = [](char const* text, StoreProfile* out) {
+        return parse_store_profile(Span<u8 const>(reinterpret_cast<u8 const*>(text), std::strlen(text)), out)
+            .code;
+    };
+    StoreProfile p;
+    KILN_REQUIRE_EQ(parse("kiln-store 1\r\nprofile compat\nhash 00ff00ff00ff00ff\nformats 137 145\n", &p),
+                    Code::Ok);
+    KILN_CHECK(StrView(p.name) == "compat");
+    KILN_CHECK_EQ(p.hash, u64(0x00ff00ff00ff00ffull));
+    KILN_CHECK_EQ(p.blockFormats, block_format_bit(Format::BC3_UNORM) | block_format_bit(Format::BC7_UNORM));
+    KILN_CHECK_EQ(parse("kiln-store 1\nprofile u\nhash 1\nformats\n", &p), Code::Ok); // uncompressed
+    KILN_CHECK_EQ(p.blockFormats, u64(0));
+    KILN_CHECK_EQ(parse("kiln-store 2\nprofile x\nhash 1\nformats\n", &p), Code::ParseError); // version
+    KILN_CHECK_EQ(parse("kiln-store 1\nprofile x\nformats\n", &p), Code::ParseError);         // no hash
+    KILN_CHECK_EQ(parse("kiln-store 1\nprofile x\nhash 1\nformats 37\n", &p),
+                  Code::ParseError); // not a block format
+    KILN_CHECK_EQ(parse("", &p), Code::ParseError);
+}
+
+KILN_TEST(Store, BindStoreProfile) {
+    char dir[1024];
+    scratch_dir("store_profile", dir, sizeof dir);
+    // A fresh store gets the descriptor; the same profile binds again.
+    KILN_REQUIRE(bind_store_profile(StrView(dir), kCompatTarget).ok());
+    StoreProfile p;
+    KILN_REQUIRE(read_store_profile(nullptr, StrView(dir), &p).ok());
+    KILN_CHECK(StrView(p.name) == "compat");
+    KILN_CHECK_EQ(p.hash, hash_target(kCompatTarget));
+    KILN_CHECK_EQ(p.blockFormats, kCompatBlockFormats);
+    KILN_CHECK(bind_store_profile(StrView(dir), kCompatTarget).ok());
+    // Another profile writes nothing.
+    DiagCapture cap;
+    DiagSink sink = cap.sink();
+    KILN_CHECK_EQ(bind_store_profile(StrView(dir), kDesktopTarget, &sink).code, Code::InvalidArgument);
+    KILN_CHECK_EQ(cap.code, u32(kDiagStoreProfileMismatch));
+    KILN_REQUIRE(read_store_profile(nullptr, StrView(dir), &p).ok());
+    KILN_CHECK(StrView(p.name) == "compat");
+
+    // A store with cooked files and no descriptor was cooked before profiles.
+    char legacy[1024];
+    scratch_dir("store_profile_legacy", legacy, sizeof legacy);
+    u8 const bytes[4] = {1, 2, 3, 4};
+    KILN_REQUIRE(store_write(StrView(legacy), "old.ktx2", Span<u8 const>(bytes, 4)).ok());
+    DiagCapture cap2;
+    DiagSink sink2 = cap2.sink();
+    KILN_CHECK_EQ(bind_store_profile(StrView(legacy), kCompatTarget, &sink2).code, Code::InvalidArgument);
+    KILN_CHECK_EQ(cap2.code, u32(kDiagStoreProfileMismatch));
+    KILN_CHECK_EQ(read_store_profile(nullptr, StrView(legacy), &p).code, Code::NotFound);
 }

@@ -192,7 +192,7 @@ namespace {
 Result<CookedTexture> cook_hdr(Span<u8 const> bytes, TextureCookSettings s, DiagLast* d = nullptr) {
     DiagSink sink = d ? d->sink() : DiagSink{};
     return cook_texture({.bytes = bytes, .assetPath = "test/hdr.hdr", .sourcePath = "hdr.hdr"}, s,
-                        TargetProfile{.blockFamily = BlockFamily::None}, {.diag = &sink});
+                        TargetProfile{.blockFormats = 0}, {.diag = &sink});
 }
 
 void write_sample(char const* name, Span<u8 const> bytes) {

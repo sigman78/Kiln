@@ -78,59 +78,35 @@ struct Plan {
     bool normal = false;
 };
 
-/// The block format of an encoding, or Undefined to stay uncompressed. Auto follows the usage
-/// table of bcn-encoding.md when the target has the BC family.
-Format block_format(TextureEncoding e, BlockFamily family, TextureUsage usage, u32 srcChannels,
-                    bool srgb) noexcept {
-    if (e == TextureEncoding::Auto) {
-        if (family != BlockFamily::BC) return Format::Undefined;
-        switch (usage) {
-        case TextureUsage::Auto:
-        case TextureUsage::Color:
-        case TextureUsage::Ui:
-        case TextureUsage::Orm: e = TextureEncoding::BC7; break;
-        case TextureUsage::Normal: e = TextureEncoding::BC5; break;
-        case TextureUsage::Mask: e = srcChannels == 2 ? TextureEncoding::BC5 : TextureEncoding::BC4; break;
-        case TextureUsage::Hdr: e = TextureEncoding::BC6H; break;
-        case TextureUsage::Lut:
-        case TextureUsage::Height: return Format::Undefined;
-        }
+/// The block format of a texture, or Undefined to stay uncompressed. An explicit encoding is
+/// its own format (resolve_texture checked that the profile has it); Auto takes the first format
+/// of the usage's preference list that the profile has (docs/design/target-profiles.md).
+Format block_format(TextureEncoding e, u64 profile, TextureUsage usage, u32 srcChannels, bool srgb) noexcept {
+    if (e != TextureEncoding::Auto) {
+        Format const f = detail::encoding_format(e, srgb);
+        return (profile & block_format_bit(f)) ? f : Format::Undefined;
     }
-    switch (e) {
-    case TextureEncoding::BC1: return srgb ? Format::BC1_RGB_SRGB : Format::BC1_RGB_UNORM;
-    case TextureEncoding::BC3: return srgb ? Format::BC3_SRGB : Format::BC3_UNORM;
-    case TextureEncoding::BC4: return Format::BC4_UNORM;
-    case TextureEncoding::BC5: return Format::BC5_UNORM;
-    case TextureEncoding::BC6H: return Format::BC6H_UFLOAT;
-    case TextureEncoding::BC7: return srgb ? Format::BC7_SRGB : Format::BC7_UNORM;
-    case TextureEncoding::Auto:
-    case TextureEncoding::Uncompressed: return Format::Undefined;
+    Format prefs[2] = {Format::Undefined, Format::Undefined};
+    switch (usage) {
+    case TextureUsage::Auto:
+    case TextureUsage::Color:
+    case TextureUsage::Ui:
+    case TextureUsage::Orm: prefs[0] = srgb ? Format::BC7_SRGB : Format::BC7_UNORM; break;
+    case TextureUsage::Normal:
+        prefs[0] = Format::BC5_UNORM;
+        prefs[1] = Format::BC7_UNORM;
+        break;
+    case TextureUsage::Mask:
+        prefs[0] = srcChannels == 2 ? Format::BC5_UNORM : Format::BC4_UNORM;
+        prefs[1] = Format::BC5_UNORM;
+        break;
+    case TextureUsage::Hdr: prefs[0] = Format::BC6H_UFLOAT; break;
+    case TextureUsage::Lut:
+    case TextureUsage::Height: break;
     }
+    for (Format f : prefs)
+        if (f != Format::Undefined && (profile & block_format_bit(f))) return f;
     return Format::Undefined;
-}
-
-/// The next format to try when a target cannot sample `f` (bcn-encoding.md, "Fallbacks");
-/// Undefined: stay uncompressed.
-Format fallback_format(Format f) noexcept {
-    switch (f) {
-    case Format::BC1_RGB_UNORM:
-    case Format::BC3_UNORM:
-    case Format::BC5_UNORM: return Format::BC7_UNORM;
-    case Format::BC1_RGB_SRGB:
-    case Format::BC3_SRGB: return Format::BC7_SRGB;
-    case Format::BC4_UNORM: return Format::BC5_UNORM;
-    case Format::BC7_UNORM: return Format::BC3_UNORM;
-    case Format::BC7_SRGB: return Format::BC3_SRGB;
-    default: return Format::Undefined;
-    }
-}
-
-/// The first format of `f`'s fallback chain the target samples. BC3 and BC7 fall back to each
-/// other, so the chain is cut after a few steps.
-Format sampled_format(Format f, u64 excluded) noexcept {
-    for (u32 step = 0; step < 4 && f != Format::Undefined && (excluded & block_format_bit(f)); ++step)
-        f = fallback_format(f);
-    return (excluded & block_format_bit(f)) ? Format::Undefined : f;
 }
 
 /// The 8-bit image a block format encodes from: 1 channel for BC4, 2 for a BC5 mask, else RGBA
@@ -238,17 +214,14 @@ Result<CookedTexture> cook_decoded(TextureSource const& src, TextureCookSettings
     // Only Color and Ui have sRGB block formats, as in the uncompressed plans.
     bool const srgb = cs == ColorSpace::Srgb && (usage == TextureUsage::Color || usage == TextureUsage::Ui);
     // The f32 plan of an HDR texture takes BC6H only; the 8-bit plans take every other block format.
-    Format bc = block_format(settings.encoding, target.blockFamily, usage, decoded.channels, srgb);
+    bool const explicitBlock =
+        settings.encoding != TextureEncoding::Auto && settings.encoding != TextureEncoding::Uncompressed;
+    Format bc = block_format(settings.encoding, target.blockFormats, usage, decoded.channels, srgb);
+    if (explicitBlock && bc == Format::Undefined) // settings that skipped resolve_texture
+        return diagf(diag, make_status(Code::InvalidArgument), kDiagSettingsInvalidCombo, Severity::Error,
+                     asset, "encoding", "encoding %s: profile %.*s does not have it",
+                     texture_encoding_name(settings.encoding), KILN_SV(target.name));
     if (hdr != (bc == Format::BC6H_UFLOAT)) bc = Format::Undefined;
-    if (Format const wanted = bc; wanted != Format::Undefined) {
-        bc = sampled_format(wanted, target.excludedBlockFormats);
-        if (bc != wanted) {
-            bool const asked = settings.encoding != TextureEncoding::Auto;
-            (void)diagf(diag, kOk, kDiagSettingsClampedByTarget, asked ? Severity::Warning : Severity::Info,
-                        asset, "encoding", "target %.*s cannot sample %s; cooking %s", KILN_SV(target.name),
-                        format_name(wanted), bc != Format::Undefined ? format_name(bc) : "uncompressed");
-        }
-    }
     Plan plan;
     if (hdr) {
         plan.format   = bc != Format::Undefined ? bc : Format::R16G16B16A16_SFLOAT;

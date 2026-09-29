@@ -8,6 +8,15 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
 ## [Unreleased]
 
 ### Changed
+- **Breaking (cook): target profiles replace `blockFamily`.** `TargetProfile::blockFamily` and the
+  `BlockFamily` enum are gone (`blockFormats` replaces them); the default target is `compat`, not
+  `desktop`, so one-channel masks are BC5 instead of BC4 by default. `kiln-cook --block` is gone
+  (`--target uncompressed` replaces `--block none`). An explicit `encoding` the profile does not
+  have is a K3002 error (it was clamped with K3003). `kTargetSchema` is 2, so every store key and
+  `cookHash` changed once.
+  - Migration: `blockFamily = None` becomes `blockFormats = 0` or `kUncompressedTarget`;
+    `blockFamily = BC` becomes `kDesktopTarget` (or keep the default, `compat`). Delete existing
+    stores once: a store with cooked files and no `kiln-store.txt` is refused (K3008).
 - **Breaking (format, cook): `.mesh` 0.5, materials carry their PBR factors.** `MaterialSlot` grows
   from 32 to 80 bytes: `baseColorFactor[4]`, `emissiveFactor[3]` (`KHR_materials_emissive_strength`
   folded in), `metallicFactor`, `roughnessFactor`, `normalScale`, `occlusionStrength` (glTF's
@@ -18,16 +27,21 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
     `MaterialSlot` get the factors from the same record.
 
 ### Added
-- **Cook: block formats per target.** `TargetProfile::excludedBlockFormats` (a `block_format_bit()`
-  set, `kiln/formats.h`) names block formats a target cannot sample; the cooker falls back along a
-  fixed chain (BC1/BC3 to BC7, BC4 to BC5 to BC7, BC5 to BC7, BC7 to BC3, BC6H to RGBA16F), with a
-  K3003 warning for an explicit `encoding` and K3003 info for `Auto`. `unsampled_block_formats(adapter)`
-  (`kiln/adapter.h`) reads the set from an adapter; `kiln-cook --exclude-format <format>` sets it.
-  The set is hashed only when not empty, so existing keys stay valid. docs/design/bcn-encoding.md,
-  "Fallbacks".
-- Examples: every integration example cooks with its adapter's set, so `kiln-nga` gets no BC1 or
-  BC4 and `kiln-sokol` no BC1. An example whose set is not empty uses `example-store-<set in hex>`,
-  so its first run cooks once.
+- **Target profiles** (docs/design/target-profiles.md). A profile is the set of block formats a
+  target samples: `TargetProfile::blockFormats` (a `block_format_bit()` set), with the built-in
+  `kCompatTarget` (the default: BC3, BC5, BC6H, BC7, which every example backend samples),
+  `kDesktopTarget` (adds BC4 and BC1) and `kUncompressedTarget`; `target_profile(name)`;
+  `kiln-cook --target compat|desktop|uncompressed`. The usage table picks the first format a usage
+  prefers from the profile (a 1-channel mask: BC4, else BC5).
+- **Store profiles.** A store records its profile in `<store>/kiln-store.txt` (`StoreProfile`,
+  `read_store_profile`, `parse_store_profile`). `bind_store_profile()` writes it into an empty store;
+  `install_provider` (disk mode) and `kiln-cook` refuse a store of another profile, or one with
+  cooked files and no profile, with K3008 and write nothing. `create()` checks the store's profile
+  against the adapter and fails with K5018 when the adapter cannot sample one of its formats
+  (`ContextDesc::allowUnsampledFormats` makes it a warning). `diag_sink(ctx)` returns the context's
+  diagnostic sink. `unsampled_block_formats(adapter)` (`kiln/adapter.h`) reads the set an adapter
+  cannot sample.
+- Examples: every integration example cooks with the default profile into one `example-store`.
 
 ## [0.5.0] - 2026-09-29
 

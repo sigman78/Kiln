@@ -136,20 +136,33 @@ struct MeshCookSettings {
 // Target and session
 // ---------------------------------------------------------------------------
 
-/// The block-compressed formats a target's GPUs sample. None: textures stay uncompressed.
-enum class BlockFamily : u8 { None = 0, BC };
+/// The block formats of the built-in profiles (docs/design/target-profiles.md). `compat` is what
+/// every example backend samples (Vulkan, D3D, GL, sokol, NoGraphicsAPI); `desktop` adds BC4 and BC1.
+inline constexpr u64 kCompatBlockFormats =
+    block_format_bit(Format::BC3_UNORM) | block_format_bit(Format::BC3_SRGB) |
+    block_format_bit(Format::BC5_UNORM) | block_format_bit(Format::BC6H_UFLOAT) |
+    block_format_bit(Format::BC7_UNORM) | block_format_bit(Format::BC7_SRGB);
+inline constexpr u64 kDesktopBlockFormats = kCompatBlockFormats | block_format_bit(Format::BC1_RGB_UNORM) |
+                                            block_format_bit(Format::BC1_RGB_SRGB) |
+                                            block_format_bit(Format::BC4_UNORM);
 
+/// What a target samples and accepts (docs/design/target-profiles.md). A store holds files of one
+/// profile only.
 struct TargetProfile {
-    StrView name                   = "desktop";
-    BlockFamily blockFamily        = BlockFamily::BC;
+    StrView name = "compat";
+    /// The block formats the target samples, a block_format_bit() set. The usage table picks the
+    /// first one a usage prefers; none: uncompressed. An explicit encoding outside it is an error.
+    u64 blockFormats               = kCompatBlockFormats;
     u32 maxTextureSize             = 16384;
     VertexProfile maxVertexProfile = VertexProfile::Float; ///< highest profile the target accepts
     u32 maxArrayLayers             = 2048;                 ///< more layers is an error (K2004), not a clamp
-    /// Block formats the target cannot sample, a block_format_bit() set (unsampled_block_formats()
-    /// reads one from an adapter). The cooker then takes the next format of the fallback chain,
-    /// uncompressed at worst (docs/design/bcn-encoding.md, "Fallbacks").
-    u64 excludedBlockFormats = 0;
 };
+
+inline constexpr TargetProfile kCompatTarget{};
+inline constexpr TargetProfile kDesktopTarget{.name = "desktop", .blockFormats = kDesktopBlockFormats};
+inline constexpr TargetProfile kUncompressedTarget{.name = "uncompressed", .blockFormats = 0};
+/// The built-in profile called `name` (compat, desktop, uncompressed), or nullptr.
+[[nodiscard]] KILN_API TargetProfile const* target_profile(StrView name) noexcept;
 
 enum class StoreMode : u8 { Disk = 0, Memory, None }; ///< store / cache-less / validate only
 
@@ -173,6 +186,8 @@ enum SettingsDiagCode : u32 {
     kDiagSidecarKey =
         3006, ///< a sidecar key is unknown, or its value has the wrong type or range (InvalidArgument)
     kDiagPolicyRefused = 3007, ///< the CookPolicy refused the asset (its status)
+    kDiagStoreProfileMismatch =
+        3008, ///< the store was cooked for another profile, or has cooked files but no kiln-store.txt
 };
 
 // ---------------------------------------------------------------------------
@@ -182,10 +197,9 @@ enum SettingsDiagCode : u32 {
 /// Resolve texture settings: an Auto usage from `hint`, an Auto color space from the usage,
 /// Normal-only flags cleared for other usages, target caps. Every Auto field except `shape` and
 /// `encoding` is concrete on return. An enum value out of range returns
-/// InvalidArgument (K3004); an encoding the usage cannot take, InvalidArgument (K3002). An
-/// explicit BC encoding on a target without the BC family becomes
-/// Uncompressed (K3003). `session.fastPreview` sets `quality` to Fast and a Zstd level to
-/// kPreviewZstdLevel. A zstdLevel above kMaxZstdLevel returns InvalidArgument (K3002).
+/// InvalidArgument (K3004); an encoding the usage cannot take, or a block format the target's
+/// profile does not have, InvalidArgument (K3002). `session.fastPreview` sets `quality` to Fast and a Zstd
+/// level to kPreviewZstdLevel. A zstdLevel above kMaxZstdLevel returns InvalidArgument (K3002).
 KILN_API Result<TextureCookSettings> resolve_texture(TextureCookSettings const& overrides, SlotHint hint,
                                                      TargetProfile const& target, CookSession const& session,
                                                      DiagSink const* diag = nullptr,
@@ -263,7 +277,7 @@ KILN_API Result<MeshCookSettings> resolve_mesh_layers(MeshCookSettings const& ba
 
 inline constexpr u32 kTextureSettingsSchema = 2; ///< bump when a field is added or changes meaning
 inline constexpr u32 kMeshSettingsSchema    = 1;
-inline constexpr u32 kTargetSchema          = 1;
+inline constexpr u32 kTargetSchema          = 2; ///< 2: blockFormats replaced blockFamily
 
 [[nodiscard]] KILN_API u64 hash_settings(TextureCookSettings const& s) noexcept;
 [[nodiscard]] KILN_API u64 hash_settings(MeshCookSettings const& s) noexcept;
@@ -278,6 +292,5 @@ inline constexpr u32 kTargetSchema          = 1;
 [[nodiscard]] KILN_API char const* texture_encoding_name(TextureEncoding e) noexcept;
 [[nodiscard]] KILN_API char const* encode_quality_name(EncodeQuality q) noexcept;
 [[nodiscard]] KILN_API char const* supercompression_name(Supercompression s) noexcept;
-[[nodiscard]] KILN_API char const* block_family_name(BlockFamily f) noexcept;
 
 } // namespace kiln::cook

@@ -67,11 +67,12 @@ Reserved: indexWidthPolicy, unit/axis override, name prefixes to strip.
 
 ### Target and session
 
-- `TargetProfile { name = "desktop"; blockFamily = BC; maxTextureSize = 16384; maxVertexProfile =
-  Float; excludedBlockFormats = 0; }`. `blockFamily` (`None`, `BC`) names the block formats the
-  target's GPUs sample (`bcn-encoding.md`); `kiln-cook --block none` cooks uncompressed.
-  `excludedBlockFormats` names single block formats the target cannot sample; the cooker falls
-  back from them (`bcn-encoding.md`, "Fallbacks"; `kiln-cook --exclude-format <format>`).
+- `TargetProfile { name = "compat"; blockFormats = kCompatBlockFormats; maxTextureSize = 16384;
+  maxVertexProfile = Float; maxArrayLayers = 2048; }`: a **profile** (`target-profiles.md`).
+  `blockFormats` is the set of block formats the target samples; the built-in profiles are
+  `kCompatTarget` (the default), `kDesktopTarget` and `kUncompressedTarget`, found by name with
+  `target_profile()` and selected with `kiln-cook --target`. A store holds files of one profile
+  (`kiln-store.txt`).
 - `StoreMode { Disk, Memory, None }`: store, cache-less, validate only.
 - `CookSession { storeMode = Disk; fastPreview = false; }`. `fastPreview` turns off `optimize` and
   `genTangents` for meshes and sets texture `quality` to `Fast` when something is encoded. It changes resolved values, so it
@@ -200,7 +201,7 @@ A sidecar is layer 4: its keys beat the host settings, and only the policy beats
 | `flipGreen` with a usage other than `Normal` | K3002 warning; cleared. `normalRenormalize` is cleared silently |
 | `maxSize` above the target cap | K3003 warning; clamped |
 | `encoding` that the usage cannot take (for example `BC4` for `Color`, `BC6H` for anything but `Hdr`, any BC for `Lut`), or `BC4` / `BC5` / `BC6H` with `colorSpace = Srgb` | K3002 error |
-| a BC `encoding` on a target with `blockFamily = None` | K3003 warning; `Uncompressed` |
+| a BC `encoding` whose format the target's profile does not have | K3002 error |
 | `genLods = true` | K3001 error, unsupported |
 | `compression` other than `None`, or `blobChunkSize != 0` | K3001 error, unsupported |
 | `profile` above the target's `maxVertexProfile` | K3003 warning; clamped |
@@ -223,8 +224,9 @@ changes meaning.
 - Fields that the resolved settings do not use are hashed as 0 (`zstdLevel` unless the scheme uses
   Zstd), so changing an unused field does not miss the store.
 - A field added after its schema was pinned may be hashed only when it differs from its default,
-  behind a tag that tells it apart from other such fields (texture `encoding` and `quality`, the
-  target's `blockFamily`). Cooks that do not use it keep their keys, and no schema bump is needed.
+  behind a tag that tells it apart from other such fields (texture `encoding` and `quality`).
+  Cooks that do not use it keep their keys, and no schema bump is needed. The target schema is 2:
+  profiles replaced `blockFamily` and hash their `blockFormats`.
   `supercompression` and `zstdLevel` follow the same idea with the old behavior as the reference:
   they are hashed only when `supercompression` is not `None`. Its default is `Zstd`, so the default
   key changed once, and a cook with `None` keeps the key of the files cooked before Zstd.

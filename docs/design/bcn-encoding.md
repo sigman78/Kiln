@@ -125,7 +125,7 @@ kiln's goldens are byte-exact on every compiler and OS in CI, so the encoders mu
 `TextureCookSettings` gains:
 - `encoding`: `Auto` (the table above, gated by the target), `Uncompressed`, `BC1`, `BC3`, `BC4`,
   `BC5`, `BC6H`, `BC7`. An explicit encoding that does not fit the usage (BC6H for a mask, BC4 for
-  RGB) is K3002; one the target rules out is clamped to the target's choice with K3003.
+  RGB) is K3002, and so is one the target's profile does not have (`target-profiles.md`).
 - `quality`: `Fast`, `Normal` (default), `High`. `CookSession::fastPreview` forces `Fast`. The
   encoder settings per level:
 
@@ -137,15 +137,16 @@ kiln's goldens are byte-exact on every compiler and OS in CI, so the encoders mu
   | BC7 (`bc7enc` uber level, linear weights, 64 partitions) | 0 | 2 | 4 |
   | BC6H (the ISPC Texture Compressor's profiles) | `veryfast` | `fast` | `basic` |
 
-`TargetProfile` gains `blockFamily`: `None`, `BC` (the default, and so the built-in `desktop`
-target), and later `ASTC` and `ETC2` (section 7). With `None`, `Auto` means uncompressed formats, so
-a host whose adapter has no BC support still cooks (`kiln-cook --block none`). `encoding` names families too once ASTC exists (for example
-`ASTC_6x6`); an explicit encoding outside the target's family is clamped with K3003.
+The target decides which block formats exist: a **profile** (`target-profiles.md`) is the set of
+block formats it samples, and the usage table picks the first format a usage prefers from that set.
+The default profile, `compat`, has BC3, BC5, BC6H and BC7 (every example backend samples them), so
+its one-channel masks are BC5; `desktop` adds BC4 and BC1; `uncompressed` has none. (Before
+profiles, `TargetProfile::blockFamily` was `None` or `BC`, with `BC` the default.)
 
 `encoding = Auto` stays `Auto` after resolution: a mask's BC4 or BC5 depends on the source's
-channel count, which only the cook knows. `encoding`, `quality` and `blockFamily` enter the hashes
-only when they differ from their defaults, so uncompressed cooks keep their store keys. An encoder
-update that changes its output bumps `kCookerVersion`, so a change re-cooks.
+channel count, which only the cook knows. `encoding` and `quality` enter the settings hash only
+when they differ from their defaults; the profile's formats are in `hash_target`. An encoder update
+that changes its output bumps `kCookerVersion`, so a change re-cooks.
 
 ### 5. Adapters and hosts
 
@@ -169,28 +170,10 @@ The runtime is unchanged. The example adapters (step 5, done 2026-09-29):
 A host that loads a BC texture on an adapter without BC support gets K5004 at metadata time, as
 for any unsupported format.
 
-#### Fallbacks
-
-Some APIs sample only part of the BC family (the table above). `TargetProfile::excludedBlockFormats`
-names the block formats a target cannot sample, one bit per format (`block_format_bit()`), and
-`unsampled_block_formats(adapter)` reads that set from an adapter's `supports_format`. The cooker then
-takes the next format of a fixed chain, and stays uncompressed at worst:
-
-| Wanted | Falls back to |
-|---|---|
-| BC1, BC3 | BC7 (same sRGB-ness) |
-| BC4 (1-channel mask) | BC5, then BC7 |
-| BC5 (normal, 2-channel mask) | BC7 |
-| BC7 | BC3 |
-| BC6H | RGBA16F (uncompressed) |
-
-- An explicit `encoding` that falls back is a K3003 warning; an `Auto` one is K3003 info.
-- The set is part of `hash_target` when it is not empty, so today's keys stay the same.
-- Per-API presets were the other option; a set read from the adapter needs no table kept in sync
-  with each API, and it follows runtime facts such as GL's S3TC extension.
-- The integration examples cook with their adapter's set. A store file is used as long as it exists
-  (open-questions R9), so an example whose set is not empty gets its own store,
-  `example-store-<set in hex>`.
+Some APIs sample only part of the BC family (the table above). The default profile, `compat`, is
+the set they all sample, so every example cooks the same files into one store; a host that wants
+BC4 masks selects `desktop` (`target-profiles.md`). An explicit encoding outside the profile is an
+error, never a substitution; and `create()` checks the store's profile against the adapter once.
 
 ### 6. Zstd supercompression (done 2026-09-29), then RDO (deferred)
 

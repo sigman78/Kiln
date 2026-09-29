@@ -1825,3 +1825,49 @@ KILN_TEST(Runtime, AdapterFlush) {
     release(rt.ctx, m);
     release(rt.ctx, g);
 }
+
+namespace {
+bool no_bc5(void*, Format f, FormatUsage) { return f != Format::BC5_UNORM; }
+} // namespace
+
+// create() checks the store's profile against the adapter once (docs/design/target-profiles.md).
+KILN_TEST(Runtime, CreateChecksStoreProfile) {
+    char dir[1024];
+    format(dir, sizeof dir, "%s/runtime_store_profile", test::sample_dir());
+#if defined(KILN_OS_WINDOWS)
+    (void)_mkdir(dir);
+#else
+    (void)mkdir(dir, 0755);
+#endif
+    char path[1100];
+    format(path, sizeof path, "%s/%s", dir, kStoreProfileFile);
+    std::FILE* f = std::fopen(path, "wb");
+    KILN_REQUIRE(f != nullptr);
+    std::fputs("kiln-store 1\nprofile compat\nhash 0123456789abcdef\nformats 137 138 141 143 145 146\n", f);
+    std::fclose(f);
+
+    Adapter adapter{};
+    Result<NullAdapter*> na = null_adapter_create({}, &adapter);
+    KILN_REQUIRE(na.ok());
+    DiagLog log;
+    ContextDesc cd{};
+    cd.adapter          = &adapter;
+    cd.storeDir         = StrView(dir);
+    cd.diag             = log.sink();
+    Result<Context*> ok = create(cd); // the null adapter samples everything
+    KILN_REQUIRE(ok.ok());
+    destroy(*ok);
+
+    adapter.supports_format  = &no_bc5;
+    Result<Context*> refused = create(cd);
+    KILN_CHECK_EQ(refused.code(), Code::Unsupported);
+    KILN_CHECK(log.has(kDiagStoreProfileUnsampled));
+    KILN_CHECK_MSG(std::strstr(log.last, "BC5_UNORM") != nullptr, "%s", log.last);
+
+    cd.allowUnsampledFormats = true; // tools and debugging
+    Result<Context*> allowed = create(cd);
+    KILN_CHECK(allowed.ok());
+    if (allowed.ok()) destroy(*allowed);
+    null_adapter_destroy(*na);
+    std::remove(path);
+}

@@ -195,6 +195,13 @@ KILN_API usize store_file_name(u64 key, StrView ext, char* out, usize cap) noexc
 KILN_API Status store_write(StrView dir, StrView name, Span<u8 const> bytes, DiagSink const* diag = nullptr,
                             bool overwrite = false) noexcept;
 
+/// Checks the store's profile before anything is written to it (docs/design/target-profiles.md).
+/// Ok when `<storeDir>/kiln-store.txt` names `target` (same hash_target), or when the store has no
+/// cooked files: the file is then written, and the directory made. A store of another profile, or
+/// with `.mesh` / `.ktx2` files and no profile, is InvalidArgument (K3008). Nothing is ever deleted.
+KILN_API Status bind_store_profile(StrView storeDir, TargetProfile const& target,
+                                   DiagSink const* diag = nullptr) noexcept;
+
 /// True if `<dir>/<name>` exists.
 [[nodiscard]] KILN_API bool store_exists(StrView dir, StrView name) noexcept;
 

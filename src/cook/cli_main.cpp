@@ -51,8 +51,7 @@ struct Options {
     bool verbose            = false;
     u32 threads             = 0; ///< cooking threads including the main one; 0 = auto, 1 = no pool
     char const* profile     = "default";
-    char const* targetName  = "desktop";
-    char const* block       = "bc";
+    char const* targetName  = "compat";
     char const* quality     = "normal";
     u32 zstd                = kDefaultZstdLevel; ///< 0: texture levels stay plain
     MeshCookSettings mesh;
@@ -453,25 +452,6 @@ bool add_input(void* user, char const* arg) {
 
 /// `--root [<name>=]<dir>`. A prefix before `=` that is a valid root name names the root;
 /// otherwise the whole argument is the directory of the default root.
-/// --exclude-format <name>: a block format by its kiln name, any case (BC4_UNORM, bc4_unorm).
-bool add_excluded_format(void* user, char const* arg) {
-    auto* o = static_cast<Options*>(user);
-    for (u32 v = u32(Format::BC1_RGB_UNORM); v <= u32(Format::ASTC_12x12_SRGB); ++v) {
-        FormatInfo const* info = format_info(Format(v));
-        if (!info) continue;
-        char const* n = info->name;
-        usize i       = 0;
-        while (n[i] && arg[i] && (n[i] | 0x20) == (arg[i] | 0x20))
-            ++i;
-        if (n[i] == 0 && arg[i] == 0) {
-            o->target.excludedBlockFormats |= block_format_bit(Format(v));
-            return true;
-        }
-    }
-    std::fprintf(stderr, "kiln-cook: --exclude-format: '%s' is not a block-compressed format\n", arg);
-    return false;
-}
-
 bool add_root(void* user, char const* arg) {
     auto* o              = static_cast<Options*>(user);
     char const* const eq = std::strchr(arg, '=');
@@ -506,8 +486,7 @@ bool add_root(void* user, char const* arg) {
 }
 
 char const* const kProfiles[]  = {"default", "precise", "float", nullptr};
-char const* const kTargets[]   = {"desktop", nullptr};
-char const* const kBlocks[]    = {"none", "bc", nullptr};
+char const* const kTargets[]   = {"compat", "desktop", "uncompressed", nullptr};
 char const* const kQualities[] = {"fast", "normal", "high", nullptr};
 
 } // namespace
@@ -536,24 +515,14 @@ int kiln::cook::cook_cli_main(int argc, char** argv, CookPolicy const& policy) n
          .str  = &o.map},
         {.name    = "--target",
          .arg     = "<name>",
-         .help    = "target profile",
+         .help    = "target profile: the block formats it samples (default compat)",
          .str     = &o.targetName,
          .choices = kTargets},
-        {.name    = "--block",
-         .arg     = "<family>",
-         .help    = "block compression the target samples (default bc)",
-         .str     = &o.block,
-         .choices = kBlocks},
         {.name    = "--quality",
          .arg     = "<level>",
          .help    = "block encoder effort (default normal)",
          .str     = &o.quality,
          .choices = kQualities},
-        {.name = "--exclude-format",
-         .arg  = "<format>",
-         .help =
-             "repeatable; a block format the target cannot sample, e.g. BC4_UNORM (the cooker falls back)", .each = &add_excluded_format,
-         .user = &o},
         {.name   = "--zstd",
          .arg    = "<level>",
          .help   = "Zstd level of texture files, 1..19 (default 3); 0 stores them plain",
@@ -597,7 +566,7 @@ int kiln::cook::cook_cli_main(int argc, char** argv, CookPolicy const& policy) n
     o.mesh.optimize        = !noOptimize;
     o.mesh.useAuthoredLods = !noLods;
     o.tex.genMips          = !noMips;
-    o.target.blockFamily   = std::strcmp(o.block, "bc") == 0 ? BlockFamily::BC : BlockFamily::None;
+    o.target               = *target_profile(StrView(o.targetName)); // one of kTargets
     o.tex.quality          = std::strcmp(o.quality, "fast") == 0   ? EncodeQuality::Fast
                              : std::strcmp(o.quality, "high") == 0 ? EncodeQuality::High
                                                                    : EncodeQuality::Normal;
@@ -624,6 +593,8 @@ int kiln::cook::cook_cli_main(int argc, char** argv, CookPolicy const& policy) n
         std::fprintf(stderr, "kiln-cook: cannot create store directory %s\n", o.store);
         return 2;
     }
+    // A store holds files of one profile (docs/design/target-profiles.md).
+    if (!o.check && bind_store_profile(StrView(o.store), o.target, &c.sink).failed()) return 2;
 
     // The main thread cooks too, so the pool gets one worker fewer than --threads.
     JobSystem pool;

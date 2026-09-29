@@ -515,12 +515,10 @@ KILN_TEST(Settings, TargetHashIdenticalProfilesEqual) {
     KILN_CHECK_EQ(hash_target(a), hash_target(b));
 }
 
-KILN_TEST(Settings, TargetHashCoversExcludedFormats) {
-    TargetProfile a{};
-    TargetProfile b{};
-    b.excludedBlockFormats = block_format_bit(Format::BC4_UNORM);
-    KILN_CHECK(hash_target(a) != hash_target(b));
-    TargetProfile c = b;
-    c.excludedBlockFormats |= block_format_bit(Format::BC1_RGB_UNORM);
-    KILN_CHECK(hash_target(b) != hash_target(c));
+KILN_TEST(Settings, TargetHashCoversBlockFormats) {
+    KILN_CHECK(hash_target(kCompatTarget) != hash_target(kDesktopTarget));
+    KILN_CHECK(hash_target(kCompatTarget) != hash_target(kUncompressedTarget));
+    TargetProfile same = kCompatTarget;
+    same.blockFormats |= block_format_bit(Format::BC4_UNORM); // same name, other formats
+    KILN_CHECK(hash_target(kCompatTarget) != hash_target(same));
 }

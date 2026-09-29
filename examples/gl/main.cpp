@@ -182,9 +182,6 @@ int main(int argc, char** argv) {
     if (gla.failed()) return 2;
 
     // 3. The context, and in dev builds the cook provider, which cooks meshes as plain floats.
-    // The block formats this API cannot sample: the cook falls back from them.
-    u64 const excluded = unsampled_block_formats(adapter);
-    ex::use_target_store(&o, excluded);
     ContextDesc cd{};
     cd.diag                  = ex::stdout_diag();
     cd.adapter               = &adapter;
@@ -198,10 +195,9 @@ int main(int argc, char** argv) {
     bool provider = false;
     if (o.rootCount) {
         cook::ProviderDesc pd{};
-        pd.meshDefaults.profile        = cook::VertexProfile::Float;
-        pd.target.excludedBlockFormats = excluded;
-        pd.watchSources                = o.watch;
-        provider                       = cook::install_provider(ctx, pd).ok();
+        pd.meshDefaults.profile = cook::VertexProfile::Float;
+        pd.watchSources         = o.watch;
+        provider                = cook::install_provider(ctx, pd).ok();
     }
 #endif
 

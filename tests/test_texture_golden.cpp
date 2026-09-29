@@ -84,7 +84,7 @@ void check_golden_ktx2(char const* name, Span<u8 const> got) {
 
 /// The uncompressed goldens predate block compression; the BC cases pass a BC target.
 Result<CookedTexture> run_cook(Span<u8 const> bytes, TextureCookSettings const& s,
-                               TargetProfile const& target = {.blockFamily = BlockFamily::None}) {
+                               TargetProfile const& target = {.blockFormats = 0}) {
     return cook_texture({.bytes = bytes, .assetPath = "test/golden", .sourcePath = "golden.png"}, s, target);
 }
 
@@ -168,7 +168,7 @@ KILN_TEST(TextureGolden, Bc7Color12x9) {
     Vec<u8> f = png::encode({.width = 12, .height = 9, .colorType = 6, .depth = 8, .pixels = rgba});
     Result<CookedTexture> r =
         run_cook(f.span(), {.colorSpace = ColorSpace::Srgb, .usage = TextureUsage::Color},
-                 {.blockFamily = BlockFamily::BC});
+                 {.blockFormats = kDesktopBlockFormats});
     if (!KILN_CHECK_MSG(r.ok(), "cook failed")) return;
     KILN_CHECK(r->desc.format == Format::BC7_SRGB);
     check_golden_ktx2("bc7_color_srgb", r->file.span());
@@ -180,7 +180,7 @@ KILN_TEST(TextureGolden, Bc5Normal16x8) {
     Vec<u8> f = png::encode({.width = 16, .height = 8, .colorType = 6, .depth = 8, .pixels = rgba});
     Result<CookedTexture> r =
         run_cook(f.span(), {.colorSpace = ColorSpace::Linear, .usage = TextureUsage::Normal},
-                 {.blockFamily = BlockFamily::BC});
+                 {.blockFormats = kDesktopBlockFormats});
     if (!KILN_CHECK_MSG(r.ok(), "cook failed")) return;
     KILN_CHECK(r->desc.format == Format::BC5_UNORM);
     check_golden_ktx2("bc5_normal", r->file.span());
@@ -191,7 +191,7 @@ KILN_TEST(TextureGolden, Bc6hHdr8x8) {
     kiln::test::hdr::pattern(rgbe, 64, 12);
     Vec<u8> f = kiln::test::hdr::encode_flat(8, 8, Span<u8 const>(rgbe, sizeof rgbe));
     Result<CookedTexture> r =
-        run_cook(f.span(), {.usage = TextureUsage::Hdr}, {.blockFamily = BlockFamily::BC});
+        run_cook(f.span(), {.usage = TextureUsage::Hdr}, {.blockFormats = kDesktopBlockFormats});
     if (!KILN_CHECK_MSG(r.ok(), "cook failed")) return;
     KILN_CHECK(r->desc.format == Format::BC6H_UFLOAT);
     check_golden_ktx2("bc6h_hdr", r->file.span());
@@ -202,7 +202,7 @@ KILN_TEST(TextureGolden, Bc1Bc4High8x8) {
     u8 rgba[8 * 8 * 4];
     gradient(rgba, 8, 8);
     Vec<u8> f = png::encode({.width = 8, .height = 8, .colorType = 6, .depth = 8, .pixels = rgba});
-    TargetProfile const bc{.blockFamily = BlockFamily::BC};
+    TargetProfile const bc{.blockFormats = kDesktopBlockFormats};
     Result<CookedTexture> r1 = run_cook(f.span(),
                                         {.colorSpace = ColorSpace::Linear,
                                          .usage      = TextureUsage::Color,

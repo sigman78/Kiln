@@ -97,9 +97,9 @@ build/win-msvc-debug/examples/gl/kiln-gl                       # or any of the o
 ```
 
 On first run the model and the textures cook into the build tree's `example-store`, so the first
-frames show placeholders. Each example cooks only the block formats its API samples; when that is
-not every block format, its store is `example-store-<set in hex>` (docs/design/bcn-encoding.md,
-"Fallbacks"). Left-drag orbits, the wheel zooms, + and - change the exposure, Esc
+frames show placeholders. All the examples cook with the default target profile, `compat`, whose
+block formats every example backend samples, so they share that one store
+(docs/design/target-profiles.md). Left-drag orbits, the wheel zooms, + and - change the exposure, Esc
 quits. Hot reload is on: re-export or edit a file under `examples/assets` and the view updates.
 `--dump <file.png>` waits until everything has loaded, writes the frame and exits (the window is
 hidden where the API allows; sokol_app always shows one). Meshes cook as plain floats

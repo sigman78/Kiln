@@ -62,7 +62,7 @@ void write_sample(char const* name, Span<u8 const> bytes) {
 }
 
 /// These tests check the uncompressed texels; test_texture_bc.cpp covers the BC family.
-TargetProfile const kRaw{.blockFamily = BlockFamily::None};
+TargetProfile const kRaw{.blockFormats = 0};
 
 Result<CookedTexture> run_cook(Span<u8 const> bytes, TextureCookSettings const& s, DiagLog* log = nullptr,
                                TargetProfile const& target = kRaw, JobSystem const* jobs = nullptr) {
@@ -313,7 +313,7 @@ KILN_TEST(texture_cook, max_size) {
     // The target cap applies too, and genMips=false keeps a single level.
     s.maxSize                = 0;
     s.genMips                = false;
-    TargetProfile const tiny = {.name = "tiny", .blockFamily = BlockFamily::None, .maxTextureSize = 8};
+    TargetProfile const tiny = {.name = "tiny", .blockFormats = 0, .maxTextureSize = 8};
     DiagLog log2;
     Result<CookedTexture> t = run_cook(f.span(), s, &log2, tiny);
     KILN_REQUIRE(t.ok());

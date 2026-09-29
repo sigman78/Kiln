@@ -68,7 +68,7 @@ struct DiagLog {
     }
 };
 
-TargetProfile const kBc{.blockFamily = BlockFamily::BC};
+TargetProfile const kBc{.blockFormats = kDesktopBlockFormats};
 
 /// Smooth content with some structure: what BC encoders see in real textures, unlike noise.
 Vec<u8> smooth_rgba(u32 w, u32 h) {
@@ -195,17 +195,17 @@ double level0_psnr(CookedTexture const& t, Span<u8 const> src, u32 w, u32 h, u32
 // ---------------------------------------------------------------------------
 
 KILN_TEST(TextureBc, ResolveEncoding) {
-    TargetProfile const none{.blockFamily = BlockFamily::None};
+    TargetProfile const none{.blockFormats = 0};
     DiagLog log;
     DiagSink sink = log.sink();
 
-    // Without a block family an explicit BC encoding becomes Uncompressed (K3003); Auto stays Auto.
+    // An explicit BC encoding the profile does not have is an error, never a substitution
+    // (target-profiles.md); Auto stays Auto.
     Result<TextureCookSettings> r =
         resolve_texture({.usage = TextureUsage::Color, .encoding = TextureEncoding::BC7}, SlotHint::None,
                         none, CookSession{}, &sink);
-    KILN_REQUIRE(r.ok());
-    KILN_CHECK(r->encoding == TextureEncoding::Uncompressed);
-    KILN_CHECK(log.has(kDiagSettingsClampedByTarget, Severity::Warning));
+    KILN_CHECK_EQ(r.code(), Code::InvalidArgument);
+    KILN_CHECK(log.has(kDiagSettingsInvalidCombo, Severity::Error));
     r = resolve_texture({.usage = TextureUsage::Color, .quality = EncodeQuality::High}, SlotHint::None, none,
                         CookSession{});
     KILN_REQUIRE(r.ok());
@@ -270,8 +270,8 @@ KILN_TEST(TextureBc, HashAndSidecar) {
     TextureCookSettings q = base;
     q.quality             = EncodeQuality::High; // value 2: the tags keep the two apart
     KILN_CHECK(hash_settings(s) != h0 && hash_settings(q) != h0 && hash_settings(s) != hash_settings(q));
-    KILN_CHECK(hash_target(kBc) != hash_target(TargetProfile{.blockFamily = BlockFamily::None}));
-    KILN_CHECK(TargetProfile{}.blockFamily == BlockFamily::BC); // the desktop default
+    KILN_CHECK(hash_target(kBc) != hash_target(TargetProfile{.blockFormats = 0}));
+    KILN_CHECK(TargetProfile{}.blockFormats == kCompatBlockFormats); // the default profile is compat
 
     TextureCookSettings t;
     KILN_REQUIRE(apply_sidecar("encoding = \"bc5\"\nquality = \"high\"\n", &t).ok());
@@ -412,10 +412,10 @@ KILN_TEST(TextureBc, ShapesAndThreads) {
 
 // A cook without the BC family stays uncompressed, byte for byte as before.
 KILN_TEST(TextureBc, NoFamilyIsUncompressed) {
-    Vec<u8> const rgba      = smooth_rgba(16, 16);
-    Vec<u8> const png       = encode_png(16, 16, 6, rgba.span());
-    Result<CookedTexture> r = cook_bc(png.span(), {.usage = TextureUsage::Color}, nullptr,
-                                      TargetProfile{.blockFamily = BlockFamily::None});
+    Vec<u8> const rgba = smooth_rgba(16, 16);
+    Vec<u8> const png  = encode_png(16, 16, 6, rgba.span());
+    Result<CookedTexture> r =
+        cook_bc(png.span(), {.usage = TextureUsage::Color}, nullptr, TargetProfile{.blockFormats = 0});
     KILN_REQUIRE(r.ok());
     KILN_CHECK(r->desc.format == Format::R8G8B8A8_SRGB && r->stats.encodeUs == 0);
 }
@@ -439,8 +439,8 @@ KILN_TEST(TextureBc, Hdr) {
     KILN_REQUIRE(bc.ok());
     KILN_CHECK(bc->desc.format == Format::BC6H_UFLOAT && bc->desc.levels == 6);
     write_sample("hdr", bc->file.span());
-    Result<CookedTexture> half = cook_bc(file.span(), {.usage = TextureUsage::Hdr}, nullptr,
-                                         TargetProfile{.blockFamily = BlockFamily::None});
+    Result<CookedTexture> half =
+        cook_bc(file.span(), {.usage = TextureUsage::Hdr}, nullptr, TargetProfile{.blockFormats = 0});
     KILN_REQUIRE(half.ok());
     KILN_CHECK(half->desc.format == Format::R16G16B16A16_SFLOAT);
 
@@ -471,9 +471,10 @@ KILN_TEST(TextureBc, Hdr) {
     KILN_CHECK_MSG(rmse < 0.02, "BC6H log2 RMSE %.4f", rmse);
 }
 
-// A target that cannot sample a format gets the next one of its fallback chain
-// (bcn-encoding.md, "Fallbacks"); an explicit encoding that falls back warns.
-KILN_TEST(TextureBc, ExcludedFormatsFallBack) {
+// A profile's usage table picks the first format a usage prefers that the profile has;
+// an explicit encoding outside the profile is an error, never a substitution
+// (docs/design/target-profiles.md).
+KILN_TEST(TextureBc, ProfilesPickFormats) {
     Vec<u8> const rgba = smooth_rgba(16, 16);
     Vec<u8> const png  = encode_png(16, 16, 6, rgba.span());
     Vec<u8> gray(default_allocator(), Tag::Test);
@@ -481,40 +482,37 @@ KILN_TEST(TextureBc, ExcludedFormatsFallBack) {
     for (usize i = 0; i < gray.size(); ++i)
         gray[i] = rgba[i * 4];
     Vec<u8> const maskPng = encode_png(16, 16, 0, gray.span());
-    u8 rgbe[8 * 8 * 4];
-    kiln::test::hdr::pattern(rgbe, 64, 5);
-    Vec<u8> const hdrFile = kiln::test::hdr::encode_flat(8, 8, Span<u8 const>(rgbe, sizeof rgbe));
 
-    auto const cooked = [](Span<u8 const> file, TextureCookSettings const& s, u64 excluded,
+    auto const cooked = [](Span<u8 const> file, TextureCookSettings const& s, TargetProfile const& t,
                            DiagLog* log = nullptr) {
-        TargetProfile t         = kBc;
-        t.excludedBlockFormats  = excluded;
         Result<CookedTexture> r = cook_bc(file, s, log, t);
         return r.ok() ? r->desc.format : Format::Undefined;
     };
-    u64 const bc7 = block_format_bit(Format::BC7_SRGB) | block_format_bit(Format::BC7_UNORM);
-    u64 const bc3 = block_format_bit(Format::BC3_SRGB) | block_format_bit(Format::BC3_UNORM);
     TextureCookSettings const color{.usage = TextureUsage::Color};
     TextureCookSettings const mask{.usage = TextureUsage::Mask};
     TextureCookSettings const normal{.usage = TextureUsage::Normal};
 
-    KILN_CHECK_EQ(cooked(png.span(), color, bc7), Format::BC3_SRGB);
-    KILN_CHECK_EQ(cooked(png.span(), color, bc7 | bc3), Format::R8G8B8A8_SRGB); // uncompressed at worst
-    KILN_CHECK_EQ(cooked(maskPng.span(), mask, block_format_bit(Format::BC4_UNORM)), Format::BC5_UNORM);
-    KILN_CHECK_EQ(cooked(maskPng.span(), mask,
-                         block_format_bit(Format::BC4_UNORM) | block_format_bit(Format::BC5_UNORM)),
-                  Format::BC7_UNORM);
-    KILN_CHECK_EQ(cooked(png.span(), normal, block_format_bit(Format::BC5_UNORM)), Format::BC7_UNORM);
-    KILN_CHECK_EQ(cooked(hdrFile.span(), {.usage = TextureUsage::Hdr}, block_format_bit(Format::BC6H_UFLOAT)),
-                  Format::R16G16B16A16_SFLOAT);
-    // Formats the cooker does not pick for this usage change nothing.
-    KILN_CHECK_EQ(cooked(png.span(), color, block_format_bit(Format::ASTC_4x4_SRGB)), Format::BC7_SRGB);
+    KILN_CHECK_EQ(cooked(maskPng.span(), mask, kCompatTarget), Format::BC5_UNORM); // no BC4 in compat
+    KILN_CHECK_EQ(cooked(maskPng.span(), mask, kDesktopTarget), Format::BC4_UNORM);
+    KILN_CHECK_EQ(cooked(png.span(), color, kCompatTarget), Format::BC7_SRGB);
+    KILN_CHECK_EQ(cooked(png.span(), normal, kCompatTarget), Format::BC5_UNORM);
+    KILN_CHECK_EQ(cooked(png.span(), color, kUncompressedTarget), Format::R8G8B8A8_SRGB);
+    // A host profile without BC5: normals take BC7, the next preference.
+    TargetProfile const noBc5{.name         = "no-bc5",
+                              .blockFormats = kCompatBlockFormats & ~block_format_bit(Format::BC5_UNORM)};
+    KILN_CHECK_EQ(cooked(png.span(), normal, noBc5), Format::BC7_UNORM);
 
-    DiagLog autoLog, explicitLog;
-    KILN_CHECK_EQ(cooked(png.span(), color, bc7, &autoLog), Format::BC3_SRGB);
-    KILN_CHECK(autoLog.has(kDiagSettingsClampedByTarget, Severity::Info));
+    DiagLog log;
     KILN_CHECK_EQ(cooked(png.span(), {.usage = TextureUsage::Color, .encoding = TextureEncoding::BC1},
-                         block_format_bit(Format::BC1_RGB_SRGB), &explicitLog),
-                  Format::BC7_SRGB);
-    KILN_CHECK(explicitLog.has(kDiagSettingsClampedByTarget, Severity::Warning));
+                         kCompatTarget, &log),
+                  Format::Undefined);
+    KILN_CHECK(log.has(kDiagSettingsInvalidCombo, Severity::Error));
+    KILN_CHECK_EQ(
+        cooked(png.span(), {.usage = TextureUsage::Color, .encoding = TextureEncoding::BC1}, kDesktopTarget),
+        Format::BC1_RGB_SRGB);
+
+    KILN_CHECK(target_profile("compat") == &kCompatTarget);
+    KILN_CHECK(target_profile("desktop") == &kDesktopTarget);
+    KILN_CHECK(target_profile("uncompressed") == &kUncompressedTarget);
+    KILN_CHECK(target_profile("mobile") == nullptr);
 }

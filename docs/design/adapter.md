@@ -27,9 +27,9 @@ The adapter is a **POD struct of function pointers plus `void* user`**, the same
 - Properties come from a constexpr table (`FormatInfo`, `format_info()`, which returns nullptr for
   an unknown format), checked by `static_assert(format_table_ok())`.
 
-Formats the v0.5 cooker writes (textures on a target with `blockFamily = BC`, the default, are
-block-compressed; the uncompressed rows apply to `blockFamily = None` and to usages BC does not
-cover):
+Formats the cooker writes (a texture takes the block format its usage prefers from the target
+profile, `target-profiles.md`; the uncompressed rows apply to the `uncompressed` profile and to
+usages without a block format):
 
 | Format | VkFormat | Texture (KTX2) | Vertex (`.mesh`) |
 |---|---|---|---|
@@ -39,9 +39,9 @@ cover):
 | `R8G8B8A8_SRGB` | 43 | sRGB color | |
 | `R16_UNORM` | 70 | 1-channel mask, height (16-bit) | |
 | `R16G16B16A16_SFLOAT` | 97 | HDR | |
-| `BC1_RGB_UNORM` / `_SRGB` | 131 / 132 | color, by explicit `encoding = bc1` | |
+| `BC1_RGB_UNORM` / `_SRGB` | 131 / 132 | color, by explicit `encoding = bc1` (`desktop` profile) | |
 | `BC3_UNORM` / `_SRGB` | 137 / 138 | color with alpha, by explicit `encoding = bc3` | |
-| `BC4_UNORM` | 139 | 1-channel mask | |
+| `BC4_UNORM` | 139 | 1-channel mask (`desktop` profile; `compat` uses BC5) | |
 | `BC5_UNORM` | 141 | normal (X, Y; Z rebuilt in the shader), 2-channel mask | |
 | `BC6H_UFLOAT` | 143 | HDR | |
 | `BC7_UNORM` / `_SRGB` | 145 / 146 | ORM, linear color / color, UI | |

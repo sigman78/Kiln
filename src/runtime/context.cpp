@@ -233,6 +233,38 @@ void teardown(Context* ctx) noexcept {
 }
 
 } // namespace
+namespace {
+
+/// A store with a profile the adapter cannot fully sample is a configuration error: one report
+/// here instead of a failure per asset (docs/design/target-profiles.md).
+Status check_store_profile(ContextDesc const& desc) noexcept {
+    if (desc.storeDir.empty()) return kOk;
+    StoreProfile p;
+    Status const st = read_store_profile(desc.io, desc.storeDir, &p);
+    if (st.code == Code::NotFound) return kOk; // a store without a profile (made by hand, or older)
+    if (st.failed())
+        return diagf(&desc.diag, st, kDiagStoreProfileUnsampled, Severity::Error, desc.storeDir, "create",
+                     "%s is not a valid store profile", kStoreProfileFile);
+    char missing[512] = {};
+    usize at          = 0;
+    for (u32 v = u32(Format::BC1_RGB_UNORM); v <= u32(Format::ASTC_12x12_SRGB); ++v) {
+        Format const f = Format(v);
+        if (!(p.blockFormats & block_format_bit(f))) continue;
+        if (desc.adapter->supports_format(desc.adapter->user, f, FormatUsage::SampledImage)) continue;
+        FormatInfo const* info = format_info(f);
+        at += format(missing + at, sizeof missing - at, "%s%s", at ? " " : "", info ? info->name : "?");
+    }
+    if (at == 0) return kOk;
+    bool const allow = desc.allowUnsampledFormats;
+    Status const out =
+        diagf(&desc.diag, allow ? kOk : make_status(Code::Unsupported), kDiagStoreProfileUnsampled,
+              allow ? Severity::Warning : Severity::Error, desc.storeDir, "create",
+              "the store's profile '%s' has formats the adapter cannot sample: %s", p.name, missing);
+    return allow ? kOk : out;
+}
+
+} // namespace
+
 } // namespace rt
 
 using namespace rt;
@@ -254,6 +286,8 @@ Result<Context*> create(ContextDesc const& desc) noexcept {
                 return diagf(&desc.diag, make_status(Code::InvalidArgument), kDiagBadAssetName,
                              Severity::Error, name, "create", "root '%.*s' is given twice", KILN_SV(name));
     }
+
+    KILN_TRY(check_store_profile(desc));
 
     Allocator const* a   = desc.alloc ? desc.alloc : default_allocator();
     Context* ctx         = new_object<Context>(a, Tag::Registry);
@@ -410,6 +444,7 @@ Span<Root const> roots(Context* ctx) noexcept {
     return ctx ? Span<Root const>(ctx->roots, ctx->rootCount) : Span<Root const>{};
 }
 Allocator const* allocator(Context* ctx) noexcept { return ctx ? ctx->alloc : nullptr; }
+DiagSink const* diag_sink(Context* ctx) noexcept { return ctx ? &ctx->diag : nullptr; }
 JobSystem const* jobs(Context* ctx) noexcept { return ctx ? &ctx->jobs : nullptr; }
 Adapter const* adapter(Context* ctx) noexcept { return ctx ? &ctx->adapter : nullptr; }
 

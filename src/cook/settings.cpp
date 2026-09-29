@@ -4,6 +4,8 @@
 
 #include "kiln/cook/sidecar.h"
 
+#include "cook_internal.h"
+
 #include "kiln/log.h"
 
 #include <bit>
@@ -35,18 +37,45 @@ bool encoding_fits(TextureEncoding e, TextureUsage u) noexcept {
 
 } // namespace
 
+namespace detail {
+
+Format encoding_format(TextureEncoding e, bool srgb) noexcept {
+    switch (e) {
+    case TextureEncoding::BC1: return srgb ? Format::BC1_RGB_SRGB : Format::BC1_RGB_UNORM;
+    case TextureEncoding::BC3: return srgb ? Format::BC3_SRGB : Format::BC3_UNORM;
+    case TextureEncoding::BC4: return Format::BC4_UNORM;
+    case TextureEncoding::BC5: return Format::BC5_UNORM;
+    case TextureEncoding::BC6H: return Format::BC6H_UFLOAT;
+    case TextureEncoding::BC7: return srgb ? Format::BC7_SRGB : Format::BC7_UNORM;
+    case TextureEncoding::Auto:
+    case TextureEncoding::Uncompressed: return Format::Undefined;
+    }
+    return Format::Undefined;
+}
+
+bool srgb_blocks(ColorSpace cs, TextureUsage usage) noexcept {
+    return cs == ColorSpace::Srgb && (usage == TextureUsage::Color || usage == TextureUsage::Ui);
+}
+
+} // namespace detail
+
+TargetProfile const* target_profile(StrView name) noexcept {
+    for (TargetProfile const* t : {&kCompatTarget, &kDesktopTarget, &kUncompressedTarget})
+        if (t->name == name) return t;
+    return nullptr;
+}
+
 Result<TextureCookSettings> resolve_texture(TextureCookSettings const& overrides, SlotHint hint,
                                             TargetProfile const& target, CookSession const& session,
                                             DiagSink const* diag, StrView asset) noexcept {
     if (u8(overrides.usage) > u8(TextureUsage::Height) || u8(overrides.colorSpace) > u8(ColorSpace::Linear) ||
         u8(overrides.shape) > u8(CookShape::Array) || u8(overrides.encoding) > u8(TextureEncoding::BC7) ||
         u8(overrides.quality) > u8(EncodeQuality::High) ||
-        u8(overrides.supercompression) > u8(Supercompression::Zstd) ||
-        u8(target.blockFamily) > u8(BlockFamily::BC)) {
+        u8(overrides.supercompression) > u8(Supercompression::Zstd)) {
         return diagf(diag, make_status(Code::InvalidArgument), kDiagSettingsEnumRange, Severity::Error, asset,
                      "texture",
-                     "usage, colorSpace, shape, encoding, quality, supercompression or the target's "
-                     "blockFamily holds a value outside its enum range");
+                     "usage, colorSpace, shape, encoding, quality or supercompression holds a value outside "
+                     "its enum range");
     }
 
     TextureCookSettings s = overrides;
@@ -88,14 +117,16 @@ Result<TextureCookSettings> resolve_texture(TextureCookSettings const& overrides
         s.colorSpace == ColorSpace::Srgb)
         return diagf(diag, make_status(Code::InvalidArgument), kDiagSettingsInvalidCombo, Severity::Error,
                      asset, "encoding", "encoding %s has no sRGB variant", texture_encoding_name(s.encoding));
-    if (target.blockFamily == BlockFamily::None && is_block_encoding(s.encoding)) {
-        (void)diagf(diag, kOk, kDiagSettingsClampedByTarget, Severity::Warning, asset, "encoding",
-                    "encoding %s is uncompressed on target %.*s (no block family)",
-                    texture_encoding_name(s.encoding), KILN_SV(target.name));
-        s.encoding = TextureEncoding::Uncompressed;
+    // The cooker never writes another format than the one asked for (target-profiles.md).
+    if (is_block_encoding(s.encoding)) {
+        Format const f = detail::encoding_format(s.encoding, detail::srgb_blocks(s.colorSpace, s.usage));
+        if (!(target.blockFormats & block_format_bit(f)))
+            return diagf(diag, make_status(Code::InvalidArgument), kDiagSettingsInvalidCombo, Severity::Error,
+                         asset, "encoding", "encoding %s: profile %.*s does not have %s",
+                         texture_encoding_name(s.encoding), KILN_SV(target.name), format_name(f));
     }
     // Only the encoders read quality: without them it stays Normal, so the hash stays canonical.
-    if (s.encoding == TextureEncoding::Uncompressed || target.blockFamily == BlockFamily::None)
+    if (s.encoding == TextureEncoding::Uncompressed || target.blockFormats == 0)
         s.quality = EncodeQuality::Normal;
     else if (session.fastPreview)
         s.quality = EncodeQuality::Fast;
@@ -306,12 +337,7 @@ u64 hash_target(TargetProfile const& t) noexcept {
     h.update_value(t.maxTextureSize);
     h.update_value(u8(t.maxVertexProfile));
     // maxArrayLayers only rejects inputs and never changes an output, so it is not hashed.
-    // blockFamily is hashed only when set, so the keys of targets predating it stay valid.
-    if (t.blockFamily != BlockFamily::None) h.update_value(u8(t.blockFamily));
-    if (t.excludedBlockFormats != 0) {
-        h.update_value(u16(0x7E00)); // tag: keeps it apart from the fields above
-        h.update_value(t.excludedBlockFormats);
-    }
+    h.update_value(t.blockFormats);
     return h.digest();
 }
 
@@ -397,14 +423,6 @@ char const* supercompression_name(Supercompression s) noexcept {
     switch (s) {
     case Supercompression::None: return "none";
     case Supercompression::Zstd: return "zstd";
-    }
-    return "?";
-}
-
-char const* block_family_name(BlockFamily f) noexcept {
-    switch (f) {
-    case BlockFamily::None: return "none";
-    case BlockFamily::BC: return "bc";
     }
     return "?";
 }

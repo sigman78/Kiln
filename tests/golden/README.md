@@ -22,7 +22,7 @@ the same input with the same settings ever produce different bytes, a golden tes
 - `ktx2/color_zstd.ktx2` — a 64x64 smooth ramp, big and smooth enough that the cook keeps Zstd:
   it pins the Zstd encoder's frames. Every other texture golden is under 4 KiB, so the cook stores
   it plain (`kZstdMinSaving`).
-- `ktx2/bc*.ktx2` — the BC encoders on a target with `blockFamily = BC`: `bc7_color_srgb`,
+- `ktx2/bc*.ktx2` — the BC encoders on the `desktop` target profile (all of BC): `bc7_color_srgb`,
   `bc5_normal`, `bc6h_hdr` (the default table), `bc1_high` and `bc4_mask_high` (explicit BC1,
   and `High` quality). They pin the vendored encoders' bytes on every compiler and OS in CI.
 
