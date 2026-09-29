@@ -19,6 +19,7 @@ The notes follow HANDOFF v2 and mesh-format-spec draft v0.3 (magic `KMSH`, names
 | [adapter-frames-slots.md](adapter-frames-slots.md) | The host reports frames (`PumpOptions`); kiln releases objects after them, finishes abandoned uploads, and numbers bindless slots (`bind` / `destroy` replace `acquire` / `publish` / `destroy_deferred`). Decided 2026-09-28 |
 | [settings.md](settings.md) | v0.5 cook settings structs, resolution layers, settings hashing and store key |
 | [threading-and-io.md](threading-and-io.md) | std threading in `.cpp` files, `JobSystem`, `IoBackend`, `pump()` as the only surface |
+| [bcn-encoding.md](bcn-encoding.md) | Proposed: BC1/3/4/5/6H/7 per texture usage, encoders (bc7enc_rdo + CMP_Core for BC6H), determinism, settings, adapter changes, then Zstd and RDO |
 | [async-read-path.md](async-read-path.md) | Proposed: completion-based loading of existing cooked assets, IOCP/io_uring backends, ownership and budgets; cooking and cache writes remain outside the optimization scope |
 | [shipping-split.md](shipping-split.md) | The read-only shipping contract: the `kiln_runtime` / `kiln_cook` boundary, the `include/kiln/cook/` header split, install components, shipping presets and the shipping CI job |
 | [mesh-cook.md](mesh-cook.md) | The glTF to `.mesh` cooker stage order and its determinism rules |
