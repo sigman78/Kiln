@@ -6,6 +6,8 @@
 #include "kiln/cook/ktx2_writer.h"
 #include "kiln/log.h"
 
+#include <cstring>
+
 namespace kiln::cook {
 
 namespace {
@@ -144,7 +146,24 @@ Result<CookedTexture> cook_decoded(TextureSource const& src, TextureCookSettings
     TextureUsage const usage = settings.usage == TextureUsage::Auto ? TextureUsage::Color : settings.usage;
     ColorSpace const cs =
         settings.colorSpace == ColorSpace::Auto ? color_space_for(usage) : settings.colorSpace;
-    Plan plan = plan_for(decoded, usage, cs, diag, asset);
+    // HDR (hdr-textures.md): usage Hdr cooks f32 texels to RGBA16F. A float source has no
+    // integer plan; an integer source marked Hdr keeps its 0..1 range.
+    bool const hdr         = usage == TextureUsage::Hdr;
+    bool const floatSource = decoded.bitsPerChannel == 32;
+    if (floatSource && !hdr)
+        return diagf(diag, make_status(Code::Unsupported), kDiagImageUnsupported, Severity::Error, asset,
+                     "texture", "an HDR source needs usage hdr, not %s", texture_usage_name(usage));
+    if (hdr && !floatSource)
+        (void)diagf(diag, kOk, kDiagImageNoHdrRange, Severity::Warning, asset, "texture",
+                    "usage hdr with a %u-bit source: values stay in 0..1", decoded.bitsPerChannel);
+    Plan plan;
+    if (hdr) {
+        plan.format   = Format::R16G16B16A16_SFLOAT;
+        plan.channels = 4;
+        plan.bits     = 32;
+    } else {
+        plan = plan_for(decoded, usage, cs, diag, asset);
+    }
     if ((usage == TextureUsage::Normal || usage == TextureUsage::Height) && is_lossy_image(src.bytes))
         (void)diagf(
             diag, kOk, kDiagImageLossySource, Severity::Warning, asset, "texture",
@@ -154,7 +173,7 @@ Result<CookedTexture> cook_decoded(TextureSource const& src, TextureCookSettings
     detail::Stopwatch const swPrepare;
     Result<Image> converted =
         prepare_image(decoded, plan.channels, plan.bits,
-                      PrepareOptions{.grayAlpha   = plan.rgba8 && decoded.channels == 2,
+                      PrepareOptions{.grayAlpha   = (plan.rgba8 || hdr) && decoded.channels == 2,
                                      .flipGreen   = plan.normal && settings.flipGreen,
                                      .renormalize = plan.normal && settings.normalRenormalize},
                       alloc, budget);
@@ -240,14 +259,30 @@ Result<CookedTexture> cook_decoded(TextureSource const& src, TextureCookSettings
     Span<u8 const> levels[ktx2::kMaxLevels];
     Vec<u8> levelBytes[ktx2::kMaxLevels];
     for (u32 i = 0; i < levelCount; ++i) {
-        if (slices == 1) {
+        if (slices == 1 && !hdr) {
             levels[i] = chains[0][drop + i].pixels.span();
             continue;
         }
         levelBytes[i].init(alloc, Tag::Cook);
-        levelBytes[i].reserve(chains[0][drop + i].pixels.size() * slices);
-        for (Vec<Image> const& chain : chains)
-            levelBytes[i].append(chain[drop + i].pixels.span());
+        usize const sliceBytes = chains[0][drop + i].pixels.size();
+        if (!hdr) {
+            levelBytes[i].reserve(sliceBytes * slices);
+            for (Vec<Image> const& chain : chains)
+                levelBytes[i].append(chain[drop + i].pixels.span());
+        } else {
+            // f32 to half, once per level after the mip chain.
+            levelBytes[i].resize(sliceBytes / 2 * slices);
+            u8* out = levelBytes[i].data();
+            for (Vec<Image> const& chain : chains) {
+                u8 const* px = chain[drop + i].pixels.data();
+                for (usize at = 0; at < sliceBytes; at += 4, out += 2) {
+                    f32 v;
+                    std::memcpy(&v, px + at, 4);
+                    u16 const h = float_to_half(v);
+                    std::memcpy(out, &h, 2);
+                }
+            }
+        }
         levels[i] = levelBytes[i].span();
     }
 
@@ -311,7 +346,7 @@ Result<CookedTexture> cook_texture(TextureSource const& src, TextureCookSettings
 
     if (is_ktx2(src.bytes))
         return pass_through(src, settings.shape, cap, target.maxArrayLayers, alloc, diag, asset, sourceHash);
-    if (is_png(src.bytes) || is_jpeg(src.bytes) || is_webp(src.bytes))
+    if (is_png(src.bytes) || is_jpeg(src.bytes) || is_webp(src.bytes) || is_hdr(src.bytes))
         return cook_decoded(src, settings, target, cap, alloc, diag, JobBudget{env.jobs, env.maxThreads},
                             asset, sourceHash);
     return fail(diag, asset, make_status(Code::Unsupported), kDiagImageUnknownFormat,

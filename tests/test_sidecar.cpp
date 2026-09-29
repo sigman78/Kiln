@@ -298,3 +298,13 @@ KILN_TEST(Layers, ShapeAndSlicesKeys) {
     KILN_CHECK_EQ(r->slices, 0u);
     KILN_CHECK_EQ(dl.code, u32(kDiagSettingsInvalidCombo));
 }
+
+// A .hdr source is HDR by its format: usage Hdr and a linear color space, whatever its name says.
+KILN_TEST(Layers, HdrExtensionImpliesHdr) {
+    Result<TextureCookSettings> r = resolve_texture_layers({}, desc_for("sky/env_albedo.HDR"));
+    KILN_REQUIRE(r.ok());
+    KILN_CHECK(r->usage == TextureUsage::Hdr && r->colorSpace == ColorSpace::Linear);
+    r = resolve_texture_layers({}, desc_for("sky/env.hdr", "usage = \"color\"\n"));
+    KILN_REQUIRE(r.ok());
+    KILN_CHECK(r->usage == TextureUsage::Color); // an explicit usage still wins (and the cook rejects it)
+}

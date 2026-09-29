@@ -1,6 +1,7 @@
 // tests/test_provider.cpp — cook-on-miss provider (kiln/cook/provider.h) on a null-adapter Context;
 // cook-only. Scratch stores and sources live under sample_dir(); models come from
 // `<corpus_dir>/../gltf/generated` and `<corpus_dir>/../gltf/khronos`.
+#include "hdr_writer.h"
 #include "image_fixtures.h"
 #include "kiln_test.h"
 #include "png_writer.h"
@@ -860,4 +861,31 @@ KILN_TEST(Provider, CubeStripFromName) {
     KILN_REQUIRE_EQ(pump_until_settled(tc.ctx, sky), State::Ready);
     TextureInfo const ti = texture_info(tc.ctx, sky);
     KILN_CHECK(ti.desc.isCube && ti.desc.width == 4 && ti.desc.height == 4);
+}
+
+// A .hdr source cooks on miss to RGBA16F with no settings at all.
+KILN_TEST(Provider, HdrSourceCooksToRgba16f) {
+    char root[1024], storeDir[1024];
+    scratch_dir("provider_hdr_src", root, sizeof root);
+    scratch_dir("provider_hdr_store", storeDir, sizeof storeDir);
+    make_dir(root);
+    u8 rgbe[4 * 24 * 4];
+    kiln::test::hdr::pattern(rgbe, 4 * 24, 21);
+    Vec<u8> const file = kiln::test::hdr::encode_flat(4, 24, Span<u8 const>(rgbe, sizeof rgbe));
+    char path[1100];
+    format(path, sizeof path, "%s/sky_cube.hdr", root);
+    replace_file(path, file.span());
+
+    Root const roots[] = {
+        {{}, StrView(root)}
+    };
+    TestContext tc;
+    if (!tc.init(StrView(storeDir), Span<Root const>(roots, 1))) return;
+    KILN_REQUIRE(
+        cook::install_provider(tc.ctx, cook::ProviderDesc{.storeMode = cook::StoreMode::Memory}).ok());
+    TextureHandle const sky =
+        request_texture(tc.ctx, "sky_cube.hdr", RequestOptions{.textureShape = TextureShape::Cube});
+    KILN_REQUIRE_EQ(pump_until_settled(tc.ctx, sky), State::Ready);
+    TextureInfo const ti = texture_info(tc.ctx, sky);
+    KILN_CHECK(ti.desc.isCube && ti.desc.format == Format::R16G16B16A16_SFLOAT);
 }

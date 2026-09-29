@@ -28,7 +28,7 @@ struct ProviderDesc {
 };
 
 /// Register the provider. The source of `root:path` is `<dir of root>/path`; the extension
-/// gives the kind: `.glb` `.gltf` a mesh; `.png` `.jpg` `.jpeg` `.webp` `.ktx2` a texture.
+/// gives the kind: `.glb` `.gltf` a mesh; `.png` `.jpg` `.jpeg` `.webp` `.hdr` `.ktx2` a texture.
 /// A texture named `<mesh>#<image>` is an embedded image: the provider cooks `<mesh>`, which
 /// writes all of its embedded images. Images a mesh references by URI are not cooked with
 /// it; the host requests them by name. Returns InvalidArgument if the context has no roots.

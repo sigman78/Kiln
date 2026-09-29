@@ -191,7 +191,7 @@ The cooked file name in the store is a separate decision (store layout).
 - A sub-asset can be requested directly. The provider splits at `#` and cooks the owner.
 
 **I5. The kind comes from the extension.** *Proposed.* `.glb`, `.gltf`: mesh. `.png`, `.jpg`,
-`.jpeg`, `.webp`, `.ktx2`: texture. `#sub` of a model: texture. Requesting a mesh by a texture
+`.jpeg`, `.webp`, `.hdr`, `.ktx2`: texture. `#sub` of a model: texture. Requesting a mesh by a texture
 name is an error at the call.
 
 **I6. `AssetId` is FNV-1a 64 of the full identity**, root and extension included. *Proposed.*

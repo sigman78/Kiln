@@ -8,6 +8,13 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
 ## [Unreleased]
 
 ### Added
+- HDR textures (`docs/design/hdr-textures.md`): Radiance `.hdr` sources through kiln's own decoder
+  (`decode_hdr`, `is_hdr`; flat and run-length scanlines, standard orientation), usage `Hdr`
+  cooking to `R16G16B16A16_SFLOAT` with f32 mips and `float_to_half` / `half_to_float`
+  (round to nearest even, saturating). `Image::bitsPerChannel` may be 32 (f32). A `.hdr` source
+  implies usage `Hdr` and a linear color space; the provider and `kiln-cook` accept `.hdr`,
+  including cube and array strips. New warning K2011 for an integer source with usage `Hdr`. No
+  new dependency.
 - `kiln-viewer --offscreen` stops when the scene settles (every mesh and texture Ready or Failed)
   by default, capped by the new `--timeout <s>` (exit code 1 when it expires); `--at <ms>` stops at
   the first frame at or after that time; `--frames N` still renders exactly N frames. The default

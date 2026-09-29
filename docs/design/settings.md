@@ -120,6 +120,7 @@ Inference (layer 5, `usage_from_slot`, `usage_from_name`) and the derived color 
 | `metallicRoughnessTexture` | Orm | Linear |
 | `occlusionTexture` | Orm | Linear |
 | standalone image (PNG, JPEG, WebP), no slot | name rule, else Color | from the usage |
+| Radiance `.hdr`, no slot | Hdr (by the extension, before name rules) | Linear |
 
 Name rules (`NameRule { suffix, usage, shape }`, `hints_from_name`) match suffixes of the file stem
 that **stack**: after a match the suffix is removed and the rules match again, each rule at most

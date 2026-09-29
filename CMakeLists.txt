@@ -129,6 +129,7 @@ if(KILN_BUILD_COOK)
         src/cook/parallel.h
         src/cook/parallel.cpp
         src/cook/image_decode.cpp
+        src/cook/hdr_decode.cpp
         src/cook/texture_cook.cpp
         src/cook/cook_internal.h
         src/cook/gltf_import.cpp

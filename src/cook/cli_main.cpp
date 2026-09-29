@@ -1,5 +1,6 @@
 // src/cook/cli_main.cpp — the kiln-cook command line (kiln/cook/cli.h): cook glTF/GLB, PNG,
-// JPEG, WebP and KTX2 sources into the store. Exit codes: 0 all cooked, 1 usage, 2 IO, 3 cook errors.
+// JPEG, WebP, Radiance HDR and KTX2 sources into the store. Exit codes: 0 all cooked, 1 usage, 2 IO, 3 cook
+// errors.
 #include "kiln/cook/cli.h"
 
 #include "cli.h"
@@ -104,7 +105,8 @@ bool iequals(StrView a, char const* b) {
 
 bool is_source_ext(StrView ext) {
     return iequals(ext, "glb") || iequals(ext, "gltf") || iequals(ext, "png") || iequals(ext, "jpg") ||
-           iequals(ext, "jpeg") || (iequals(ext, "webp") && webp_decode_enabled()) || iequals(ext, "ktx2");
+           iequals(ext, "hdr") || iequals(ext, "jpeg") || (iequals(ext, "webp") && webp_decode_enabled()) ||
+           iequals(ext, "ktx2");
 }
 
 /// mkdir -p for forward-slash paths.

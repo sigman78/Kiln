@@ -53,7 +53,8 @@ target_compile_definitions(kiln_tests PRIVATE
 if(TARGET kiln_cook)
     target_sources(kiln_tests PRIVATE test_mesh.cpp test_ktx2.cpp test_ktx2_corpus_rt.cpp
                                        test_settings.cpp test_sidecar.cpp test_store.cpp
-                                       png_writer.h image_fixtures.h test_image.cpp test_texture_cook.cpp
+                                       png_writer.h hdr_writer.h image_fixtures.h test_image.cpp
+                                       test_texture_cook.cpp test_hdr.cpp
                                        test_mesh_cook.cpp test_mesh_golden.cpp test_texture_golden.cpp
                                        test_provider.cpp test_parallel.cpp)
     target_link_libraries(kiln_tests PRIVATE kiln_cook)
@@ -165,7 +166,8 @@ if(KILN_KTX_TOOL)
             list(APPEND _kiln_validate_tests ktx_validate_rt_${_stem})
         endforeach()
         # cook_texture output (test_texture_cook.cpp writes samples/cooked_<case>.ktx2)
-        foreach(_case color_srgb color_linear normal height16 mask_rg nomips maxsize cube_strip array_strip)
+        foreach(_case color_srgb color_linear normal height16 mask_rg nomips maxsize cube_strip array_strip
+                      hdr)
             add_test(NAME ktx_validate_cooked_${_case}
                      COMMAND ${KILN_KTX_TOOL} validate samples/cooked_${_case}.ktx2)
             list(APPEND _kiln_validate_tests ktx_validate_cooked_${_case})

@@ -58,6 +58,14 @@ Result<TextureCookSettings> resolve_texture(TextureCookSettings const& overrides
 
 namespace {
 
+/// A Radiance `.hdr` source is HDR by its format, whatever its name says.
+bool has_hdr_extension(StrView name) noexcept {
+    if (name.size < 4) return false;
+    StrView const ext = name.substr(name.size - 4);
+    auto const lower  = [](char c) { return c >= 'A' && c <= 'Z' ? char(c - 'A' + 'a') : c; };
+    return ext[0] == '.' && lower(ext[1]) == 'h' && lower(ext[2]) == 'd' && lower(ext[3]) == 'r';
+}
+
 Status refused(ResolveDesc const& d, Status st) noexcept {
     return diagf(d.diag, st, kDiagPolicyRefused, Severity::Error, d.asset.name, "policy",
                  "the cook policy refused the asset (%s)", code_name(st.code));
@@ -69,8 +77,9 @@ Result<TextureCookSettings> resolve_texture_layers(TextureCookSettings const& ba
                                                    ResolveDesc const& d) noexcept {
     TextureCookSettings s = base;
     if (!d.sidecar.empty()) KILN_TRY(apply_sidecar(d.sidecar, &s, d.diag, d.sidecarPath));
-    NameHints const hints =
+    NameHints hints =
         d.asset.slot == SlotHint::None ? hints_from_name(d.asset.name, d.nameRules) : NameHints{};
+    if (d.asset.slot == SlotHint::None && has_hdr_extension(d.asset.name)) hints.usage = TextureUsage::Hdr;
     if (s.usage == TextureUsage::Auto) {
         s.usage = d.asset.slot != SlotHint::None ? usage_from_slot(d.asset.slot) : hints.usage;
         if (s.usage == TextureUsage::Auto) s.usage = TextureUsage::Color;

@@ -355,8 +355,9 @@ Result<Image> decode_image(Span<u8 const> bytes, Allocator const* alloc, DiagSin
     if (is_png(bytes)) return decode_png(bytes, alloc, diag, asset);
     if (is_jpeg(bytes)) return decode_jpeg(bytes, alloc, diag, asset);
     if (is_webp(bytes)) return decode_webp(bytes, alloc, diag, asset);
+    if (is_hdr(bytes)) return decode_hdr(bytes, alloc, diag, asset);
     return fail(diag, asset, "image", Code::Unsupported, kDiagImageUnknownFormat,
-                "not a PNG, JPEG or WebP file (%llu bytes)", bytes.size);
+                "not a PNG, JPEG, WebP or Radiance .hdr file (%llu bytes)", bytes.size);
 }
 
 } // namespace kiln::cook

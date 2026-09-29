@@ -186,7 +186,7 @@ struct FoundSource {
 
 [[nodiscard]] bool is_model(StrView path) noexcept { return ext_is(path, "glb") || ext_is(path, "gltf"); }
 [[nodiscard]] bool is_image(StrView path) noexcept {
-    return ext_is(path, "png") || ext_is(path, "jpg") || ext_is(path, "jpeg") ||
+    return ext_is(path, "png") || ext_is(path, "jpg") || ext_is(path, "jpeg") || ext_is(path, "hdr") ||
            (webp_decode_enabled() && ext_is(path, "webp")) || ext_is(path, "ktx2");
 }
 

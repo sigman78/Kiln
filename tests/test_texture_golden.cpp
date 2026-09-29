@@ -1,6 +1,7 @@
 // tests/test_texture_golden.cpp — texture cooker golden files (cook-only); see tests/golden/README.md.
 // Cases mirror test_texture_cook.cpp's color/normal/height ones at smaller, distinct sizes,
 // so a golden mismatch cannot be confused with theirs.
+#include "hdr_writer.h"
 #include "kiln_test.h"
 #include "ktx2_corpus.h" // read_file, bytes_equal
 #include "png_writer.h"
@@ -106,6 +107,16 @@ KILN_TEST(TextureGolden, Normal8x8) {
         run_cook(f.span(), {.colorSpace = ColorSpace::Linear, .usage = TextureUsage::Normal});
     if (!KILN_CHECK_MSG(r.ok(), "cook failed")) return;
     check_golden_ktx2("normal", r->file.span());
+}
+
+// f32 mips and half conversion must give the same bytes on every compiler.
+KILN_TEST(TextureGolden, Hdr8x8) {
+    u8 rgbe[8 * 8 * 4];
+    kiln::test::hdr::pattern(rgbe, 64, 11);
+    Vec<u8> f               = kiln::test::hdr::encode_flat(8, 8, Span<u8 const>(rgbe, sizeof rgbe));
+    Result<CookedTexture> r = run_cook(f.span(), {.usage = TextureUsage::Hdr});
+    if (!KILN_CHECK_MSG(r.ok(), "cook failed")) return;
+    check_golden_ktx2("hdr", r->file.span());
 }
 
 KILN_TEST(TextureGolden, Height16_4x4) {

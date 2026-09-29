@@ -1,6 +1,7 @@
 # HDR textures
 
-**Status:** Draft (2026-09-28), awaiting owner sign-off. Nothing is implemented.
+**Status:** Decided (owner, 2026-09-28): `.hdr` sources, RGBA16F, a warning for integer sources,
+equirectangular to cube later. Rollout steps 1 to 3 are implemented.
 **Decides:** Which HDR source format kiln reads, which GPU format it cooks HDR textures to, and why
 OpenEXR sources and the packed HDR pixel formats are left out for now.
 
@@ -27,8 +28,8 @@ already passes through the cook unchanged.
 - The format is small: a text header (`#?RADIANCE` or `#?RGBE`, `FORMAT=32-bit_rle_rgbe`, a
   resolution line), then 4 bytes per pixel (RGB mantissas and one shared exponent), each scanline
   flat or run-length encoded.
-- kiln decodes it itself: `decode_hdr` in `src/cook/image_decode.cpp`, about 150 lines, with
-  bounds checks on every run. Only the standard orientation (`-Y H +X W`) is accepted; others are
+- kiln decodes it itself: `decode_hdr` in `src/cook/hdr_decode.cpp`, with bounds checks on every
+  run. Only the standard orientation (`-Y H +X W`) is accepted; others are
   K2002 (Unsupported). A truncated or malformed file is K2001.
 - Signature detection joins `decode_image`, and `.hdr` joins the source extensions of the provider
   and `kiln-cook` (and the kind table of `asset-model-next.md` I5).
@@ -38,8 +39,10 @@ already passes through the cook unchanged.
 - Every desktop GPU samples and filters it (Vulkan mandatory support); it keeps negative values
   and alpha; it is exact enough for lighting (10-bit mantissa per channel).
 - The `.hdr` source has no alpha: alpha is 1.
-- Float to half conversion is kiln's own, round to nearest even, about 20 lines. Overflow saturates
-  to the largest half value, not infinity, so a very bright texel does not poison filtering.
+- Float to half conversion is kiln's own (`float_to_half`, `half_to_float` in
+  `kiln/cook/image.h`), integer-only, round to nearest even, subnormals included. Overflow
+  saturates to the largest half value, not infinity, so a very bright texel does not poison
+  filtering; NaN becomes 0.
 
 ### 3. The float image path
 
@@ -54,7 +57,8 @@ already passes through the cook unchanged.
 - A `.hdr` source implies usage `Hdr` and color space Linear when both are `Auto` (inference,
   layer 5 of `settings.md`). No name rule is needed.
 - Usage `Hdr` cooks to RGBA16F. An 8-bit or 16-bit integer source with usage `Hdr` also cooks to
-  RGBA16F (its values in 0..1); a warning K2011 notes that it has no HDR range.
+  RGBA16F (its values in 0..1, read as linear); a warning K2011 notes that it has no HDR range. A
+  float source with any other usage is K2002: kiln does not tonemap into 8 bits.
 - Shapes work unchanged: a `.hdr` vertical strip with `shape = cube` gives an HDR cube.
 
 ## Why not OpenEXR now
@@ -114,15 +118,11 @@ with RGBA16F as the default.
 
 ## Rollout
 
-1. `decode_hdr` with tests on valid and malformed files (truncated runs, bad header, huge sizes).
-2. Float `Image` channels, the float mip kernel, float to half; a golden RGBA16F texture.
-3. Resolution and cook: `.hdr` implies `Hdr` and Linear, `Hdr` cooks to RGBA16F, K2011; `.hdr`
-   in the provider and `kiln-cook`. `ktx validate` on the output.
+1. *(done)* `decode_hdr` with tests on valid and malformed files (truncated runs, bad header,
+   orientations, huge sizes).
+2. *(done)* Float `Image` channels, the float mip kernel, float to half (checked exhaustively over
+   all finite halves); a golden RGBA16F texture.
+3. *(done)* Resolution and cook: `.hdr` implies `Hdr` and Linear, `Hdr` cooks to RGBA16F, K2011;
+   `.hdr` in the provider and `kiln-cook`; `ktx validate` on the output.
 4. Optional: viewer tonemapping, so HDR skies can be checked by eye.
 
-## Open points for the owner
-
-- Confirm `.hdr` as the first HDR source and RGBA16F as the cooked format.
-- Confirm that an integer source with usage `Hdr` cooks to RGBA16F with a warning, rather than
-  being an error.
-- Equirectangular to cube: next step, or later?
