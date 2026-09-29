@@ -8,6 +8,11 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
 ## [Unreleased]
 
 ### Added
+- **Cook:** the KTX2 writer (`kiln::ktx2::write`) accepts BC1-BC7 (UNORM, sRGB, SNORM, BC6H
+  UFLOAT/SFLOAT) with mips, cube faces and array layers. Its DFDs match `ktx create` byte for byte;
+  the new corpus files `tests/corpus/ktx2/generated/bc*.ktx2` check that in the round-trip test,
+  and `ktx validate` checks kiln's output. ETC2 and ASTC are still rejected with K4103. First step
+  of block compression (docs/design/bcn-encoding.md); nothing encodes BC yet.
 - Every example adapter takes an `Allocator` in its desc and reports the shared
   `ex::AdapterStats` (`gl_adapter_stats`, `sokol_adapter_stats`, `nga_adapter_stats`,
   `vkx::adapter_stats`): live objects, pending and failed uploads, bytes committed, staging use and

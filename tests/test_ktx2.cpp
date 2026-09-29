@@ -326,9 +326,9 @@ KILN_TEST(Ktx2, WriterRejectsBadInput) {
     KILN_CHECK_EQ(ev(write(d, default_allocator(), &sink).code()), ev(Code::InvalidArgument));
     KILN_CHECK_EQ(cap.code, u32(kDiagKtxLevelIndex));
 
-    // Block-compressed formats are post-v0.5.
+    // ETC2 and ASTC are not written yet.
     d        = img.desc();
-    d.format = Format::BC7_UNORM;
+    d.format = Format::ETC2_R8G8B8A8_UNORM;
     KILN_CHECK_EQ(ev(write(d, default_allocator(), &sink).code()), ev(Code::InvalidArgument));
     KILN_CHECK_EQ(cap.code, u32(kDiagKtxFormat));
 
@@ -373,6 +373,38 @@ KILN_TEST(Ktx2, WriteSampleFiles) {
     Vec<u8> const snormFile = write_ok(snorm.desc());
     KILN_REQUIRE(!snormFile.empty());
     write_sample_file(dir, "sample_r16g16_snorm.ktx2", snormFile.span());
+}
+
+// BC files with mips and cube faces; the one-level DFDs are checked against libktx by the corpus
+// round trip (tests/corpus/ktx2/generated/bc*.ktx2).
+KILN_TEST(Ktx2, WriteBlockCompressed) {
+    TestImage bc7(Format::BC7_SRGB); // 7x5 -> 2x2, 1x1 and 1x1 blocks
+    Vec<u8> const bc7File = write_ok(bc7.desc());
+    KILN_REQUIRE(!bc7File.empty());
+    Result<Ktx2View> v = Ktx2View::open(bc7File.span());
+    KILN_REQUIRE(v.ok());
+    KILN_CHECK_EQ(v->header().typeSize, 1u);
+    KILN_CHECK(v->desc().format == Format::BC7_SRGB && v->desc().levels == TestImage::kLevels);
+    for (u32 i = 0; i < TestImage::kLevels; ++i)
+        KILN_CHECK(bytes_equal(v->level_data(i), bc7.spans[i]));
+    write_sample_file(kiln::test::sample_dir(), "sample_bc7_srgb_mip.ktx2", bc7File.span());
+
+    u8 blocks[16 * 2 * 2 * 6];
+    for (usize k = 0; k < sizeof blocks; ++k)
+        blocks[k] = u8(k * 37u + 11u);
+    Span<u8 const> const level(blocks, sizeof blocks);
+    WriteDesc const cube{.format = Format::BC5_UNORM,
+                         .width  = 8,
+                         .height = 8,
+                         .faces  = 6,
+                         .levels = Span<Span<u8 const> const>(&level, 1)};
+    Vec<u8> const cubeFile = write_ok(cube);
+    KILN_REQUIRE(!cubeFile.empty());
+    Result<Ktx2View> c = Ktx2View::open(cubeFile.span());
+    KILN_REQUIRE(c.ok());
+    KILN_CHECK(c->desc().isCube && c->desc().format == Format::BC5_UNORM);
+    KILN_CHECK(bytes_equal(c->level_data(0), level));
+    write_sample_file(kiln::test::sample_dir(), "sample_bc5_unorm_cube.ktx2", cubeFile.span());
 }
 
 // Cube and array textures: every level holds all faces or layers (writer and reader agree).

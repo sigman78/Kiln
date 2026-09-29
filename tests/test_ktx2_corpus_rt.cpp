@@ -17,7 +17,8 @@ namespace {
 bool writer_can_express(corpus::Entry const& e) {
     if (!e.expectOk || e.format == Format::Undefined) return false;
     FormatInfo const* info = format_info(e.format);
-    return info && !info->compressed && e.depth == 0 && e.levels != 0 && e.supercompression == 0 &&
+    bool const bc = u32(e.format) >= u32(Format::BC1_RGB_UNORM) && u32(e.format) <= u32(Format::BC7_SRGB);
+    return info && (!info->compressed || bc) && e.depth == 0 && e.levels != 0 && e.supercompression == 0 &&
            (e.faces == 1 || (e.faces == 6 && e.layers == 0));
 }
 

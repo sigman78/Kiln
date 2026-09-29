@@ -1,4 +1,5 @@
-// kiln/cook/ktx2_writer.h — KTX2 writer for uncompressed 2D, cube and array textures with mips.
+// kiln/cook/ktx2_writer.h — KTX2 writer for uncompressed and BC1-BC7 2D, cube and array textures
+// with mips.
 // Identical input gives byte-identical output (no timestamps, zeroed padding).
 // The DFD matches what libktx's vk2dfd produces for the same vkFormat.
 #pragma once
@@ -17,7 +18,7 @@ struct KeyValue {
 };
 
 struct WriteDesc {
-    Format format = Format::Undefined; ///< v0.5: uncompressed formats only
+    Format format = Format::Undefined; ///< uncompressed or BC1-BC7 (not ETC2 / ASTC yet)
     u32 width     = 0;
     u32 height    = 0;
     u32 layers    = 1;     ///< array layers; more than 1 needs isArray

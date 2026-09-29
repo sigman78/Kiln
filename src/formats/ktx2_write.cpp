@@ -1,4 +1,4 @@
-// KTX2 writer for raw (uncompressed, non-supercompressed) 2D textures.
+// KTX2 writer for uncompressed and BC block-compressed textures, without supercompression.
 #include "kiln/cook/ktx2_writer.h"
 #include "kiln/log.h"
 
@@ -22,45 +22,118 @@ constexpr u8 kColorPrimariesBt709 = 1;
 
 constexpr char kWriterKey[] = "KTXwriter"; // written with its NUL
 
-u32 dfd_size(FormatInfo const& info) noexcept {
-    return 4 + kDfdBasicBlockHeaderSize + kDfdSampleSize * info.channels;
+/// One sample of a BC block: a channel id of the block's color model and a 64- or 128-bit range.
+struct BlockSample {
+    u8 channel   = 0;
+    u16 bitStart = 0;
+    u8 bitLength = 0; ///< minus 1, as stored
+};
+/// A BC format's KHR_DF color model (BC1A 128 ... BC7 134) and its samples in memory order, as
+/// `ktx create` writes them (tests/corpus/ktx2/generated/bc*.ktx2).
+struct BlockModel {
+    u8 model   = 0;
+    u8 samples = 0;
+    BlockSample s[2];
+};
+
+BlockModel block_model(Format f) noexcept {
+    constexpr u8 kAlpha = 15;
+    switch (f) {
+    case Format::BC1_RGB_UNORM:
+    case Format::BC1_RGB_SRGB: return {128, 1, {{0, 0, 63}}}; // BC1A color
+    case Format::BC1_RGBA_UNORM:
+    case Format::BC1_RGBA_SRGB: return {128, 1, {{1, 0, 63}}}; // BC1A color with 1-bit alpha
+    case Format::BC2_UNORM:
+    case Format::BC2_SRGB:
+        return {
+            129, 2, {{kAlpha, 0, 63}, {0, 64, 63}}
+        };
+    case Format::BC3_UNORM:
+    case Format::BC3_SRGB:
+        return {
+            130, 2, {{kAlpha, 0, 63}, {0, 64, 63}}
+        };
+    case Format::BC4_UNORM:
+    case Format::BC4_SNORM: return {131, 1, {{0, 0, 63}}};
+    case Format::BC5_UNORM:
+    case Format::BC5_SNORM:
+        return {
+            132, 2, {{0, 0, 63}, {1, 64, 63}}
+        };
+    case Format::BC6H_UFLOAT:
+    case Format::BC6H_SFLOAT: return {133, 1, {{0, 0, 127}}};
+    case Format::BC7_UNORM:
+    case Format::BC7_SRGB: return {134, 1, {{0, 0, 127}}};
+    default: return {};
+    }
 }
 
-/// Write the DFD for an uncompressed format at `out` (dfd_size(info) bytes, zeroed).
+u32 dfd_samples(FormatInfo const& info) noexcept {
+    return info.compressed ? block_model(info.format).samples : info.channels;
+}
+
+u32 dfd_size(FormatInfo const& info) noexcept {
+    return 4 + kDfdBasicBlockHeaderSize + kDfdSampleSize * dfd_samples(info);
+}
+
+/// Sample bounds and qualifiers by component kind (KDF 1.3, 5.19 / 5.20).
+void sample_range(FormatInfo const& info, u32* lower, u32* upper, u32* qualifiers) noexcept {
+    u32 const bits = info.compressed ? 32u : info.bitsPerChannel; // block samples span the full u32
+    *lower = 0, *upper = 0, *qualifiers = 0;
+    switch (info.kind) {
+    case FormatKind::UNorm: *upper = u32((u64(1) << bits) - 1); break;
+    case FormatKind::SNorm:
+        *upper      = u32((u64(1) << (bits - 1)) - 1);
+        *lower      = info.compressed ? 0x80000000u : ~*upper + 1u; // blocks: INT32_MIN, as libktx writes
+        *qualifiers = kQualifierSigned;
+        break;
+    case FormatKind::SFloat:
+        *lower      = 0xBF800000u; // -1.0f
+        *upper      = 0x3F800000u; //  1.0f
+        *qualifiers = kQualifierSigned | kQualifierFloat;
+        break;
+    case FormatKind::UFloat:
+        *upper      = 0x3F800000u;
+        *qualifiers = kQualifierFloat;
+        break;
+    }
+}
+
+/// Write the DFD for `info` at `out` (dfd_size(info) bytes, zeroed).
 void write_dfd(u8* out, FormatInfo const& info, bool premultiplied) noexcept {
     u32 const total     = dfd_size(info);
     u32 const blockSize = total - 4;
     write_unaligned<u32>(out + 0, total);
     write_unaligned<u32>(out + 4, 0u);                     // vendorId 0 (Khronos) | descriptorType 0 (basic)
     write_unaligned<u32>(out + 8, 2u | (blockSize << 16)); // versionNumber 2 | descriptorBlockSize
-    out[12] = kColorModelRgbsda;
-    out[13] = kColorPrimariesBt709;
-    out[14] = info.srgb ? kDfdTransferSrgb : kDfdTransferLinear;
-    out[15] = premultiplied ? kDfdFlagAlphaPremultiplied : u8(0);
-    // out[16..19] texelBlockDimension: 0 == 1 texel in each dimension.
-    out[20]        = info.bytesPerBlock; // bytesPlane0; planes 1..7 stay 0
-    u32 const bits = info.bitsPerChannel;
-
+    out[12]   = kColorModelRgbsda;
+    out[13]   = kColorPrimariesBt709;
+    out[14]   = info.srgb ? kDfdTransferSrgb : kDfdTransferLinear;
+    out[15]   = premultiplied ? kDfdFlagAlphaPremultiplied : u8(0);
+    out[20]   = info.bytesPerBlock; // bytesPlane0; planes 1..7 stay 0
     u32 lower = 0, upper = 0, qualifiers = 0;
-    switch (info.kind) {
-    case FormatKind::UNorm: upper = u32((u64(1) << bits) - 1); break;
-    case FormatKind::SNorm:
-        upper      = u32((u64(1) << (bits - 1)) - 1);
-        lower      = ~upper + 1u; // two's complement of -upper
-        qualifiers = kQualifierSigned;
-        break;
-    case FormatKind::SFloat:
-        lower      = 0xBF800000u; // -1.0f
-        upper      = 0x3F800000u; //  1.0f
-        qualifiers = kQualifierSigned | kQualifierFloat;
-        break;
-    case FormatKind::UFloat: // compressed only (BC6H); rejected before we get here
-        upper      = 0x3F800000u;
-        qualifiers = kQualifierFloat;
-        break;
+    sample_range(info, &lower, &upper, &qualifiers);
+    u8* sample = out + 4 + kDfdBasicBlockHeaderSize;
+
+    if (info.compressed) {
+        BlockModel const m = block_model(info.format);
+        out[12]            = m.model;
+        out[16]            = u8(info.blockWidth - 1); // texelBlockDimension0..1; 2..3 stay 0
+        out[17]            = u8(info.blockHeight - 1);
+        for (u32 i = 0; i < m.samples; ++i, sample += kDfdSampleSize) {
+            BlockSample const& b = m.s[i];
+            u32 channelType      = b.channel | qualifiers;
+            if (b.channel == 15 && info.srgb) channelType |= kQualifierLinear; // BC2/BC3 alpha
+            write_unaligned<u32>(sample + 0,
+                                 u32(b.bitStart) | (u32(b.bitLength) << 16) | (channelType << 24));
+            write_unaligned<u32>(sample + 8, lower);
+            write_unaligned<u32>(sample + 12, upper);
+        }
+        return;
     }
 
-    u8* sample = out + 4 + kDfdBasicBlockHeaderSize;
+    // out[16..19] texelBlockDimension: 0 == 1 texel in each dimension.
+    u32 const bits = info.bitsPerChannel;
     for (u32 c = 0; c < info.channels; ++c, sample += kDfdSampleSize) {
         // Channels in memory order R, G, B, A; one- to three-channel formats have no alpha.
         u32 const id     = kChannelIds[c];
@@ -87,9 +160,10 @@ Result<Vec<u8>> write(WriteDesc const& desc, Allocator const* alloc, DiagSink co
     FormatInfo const* info = format_info(desc.format);
     if (desc.format == Format::Undefined || info == nullptr)
         return invalid(diag, kDiagKtxFormat, "unknown format %llu", u32(desc.format));
-    if (info->compressed)
+    if (info->compressed && block_model(desc.format).samples == 0)
         return invalid(diag, kDiagKtxFormat,
-                       "block-compressed format %llu is not supported by the v0.5 writer", u32(desc.format));
+                       "block-compressed format %llu is not supported by the writer (BC1-BC7 only)",
+                       u32(desc.format));
     if (desc.width == 0 || desc.height == 0)
         return invalid(diag, kDiagKtxDimensions, "extent %llux%llu must be at least 1x1", desc.width,
                        desc.height);
@@ -172,14 +246,14 @@ Result<Vec<u8>> write(WriteDesc const& desc, Allocator const* alloc, DiagSink co
 
     Header h{};
     std::memcpy(h.identifier, kIdentifier, sizeof(kIdentifier));
-    h.vkFormat               = u32(desc.format);
-    h.typeSize               = u32(info->bitsPerChannel / 8);
-    h.pixelWidth             = desc.width;
-    h.pixelHeight            = desc.height;
-    h.pixelDepth             = 0;
-    h.layerCount             = desc.isArray ? desc.layers : 0;
-    h.faceCount              = desc.faces;
-    h.levelCount             = levelCount;
+    h.vkFormat    = u32(desc.format);
+    h.typeSize    = info->compressed ? 1u : u32(info->bitsPerChannel / 8); // 1 for blocks (KTX 2.0 3.3)
+    h.pixelWidth  = desc.width;
+    h.pixelHeight = desc.height;
+    h.pixelDepth  = 0;
+    h.layerCount  = desc.isArray ? desc.layers : 0;
+    h.faceCount   = desc.faces;
+    h.levelCount  = levelCount;
     h.supercompressionScheme = u32(Supercompression::None);
     h.dfdByteOffset          = dfdOffset;
     h.dfdByteLength          = dfdLength;

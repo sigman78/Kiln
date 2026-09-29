@@ -61,6 +61,23 @@ try {
     Invoke-Ktx create --testrun --format R8G8B8A8_UNORM --assign-tf linear --width 7 --height 5 --generate-mipmap src16.png "$out\rgba8_unorm_npot_mip.ktx2"
     # Extra key/value data: KTXswizzle and KTXorientation.
     Invoke-Ktx create --testrun --format R8G8B8A8_SRGB --swizzle rgb1 --assign-texcoord-origin bottom-left src8.png "$out\rgba8_srgb_kvd.ktx2"
+    # Block-compressed: 8x8 (4 blocks) of synthetic block bytes, one file per BC format. The Data
+    # Format Descriptors are the reference for kiln's writer (tests/test_ktx2.cpp).
+    $b8  = [byte[]]::new(32); for ($i = 0; $i -lt 32; ++$i) { $b8[$i]  = [byte](($i * 37 + 11) % 256) }
+    $b16 = [byte[]]::new(64); for ($i = 0; $i -lt 64; ++$i) { $b16[$i] = [byte](($i * 37 + 11) % 256) }
+    [System.IO.File]::WriteAllBytes((Join-Path $tmp 'b8.raw'), $b8)
+    [System.IO.File]::WriteAllBytes((Join-Path $tmp 'b16.raw'), $b16)
+    $bcFormats = @(
+        @('BC1_RGB_UNORM_BLOCK', 'b8'), @('BC1_RGB_SRGB_BLOCK', 'b8'), @('BC1_RGBA_UNORM_BLOCK', 'b8'),
+        @('BC1_RGBA_SRGB_BLOCK', 'b8'), @('BC2_UNORM_BLOCK', 'b16'), @('BC2_SRGB_BLOCK', 'b16'),
+        @('BC3_UNORM_BLOCK', 'b16'), @('BC3_SRGB_BLOCK', 'b16'), @('BC4_UNORM_BLOCK', 'b8'),
+        @('BC4_SNORM_BLOCK', 'b8'), @('BC5_UNORM_BLOCK', 'b16'), @('BC5_SNORM_BLOCK', 'b16'),
+        @('BC6H_UFLOAT_BLOCK', 'b16'), @('BC6H_SFLOAT_BLOCK', 'b16'), @('BC7_UNORM_BLOCK', 'b16'),
+        @('BC7_SRGB_BLOCK', 'b16'))
+    foreach ($f in $bcFormats) {
+        $name = ($f[0] -replace '_BLOCK$', '').ToLowerInvariant()
+        Invoke-Ktx create --testrun --format $f[0] --raw --width 8 --height 8 "$($f[1]).raw" "$out\$name.ktx2"
+    }
     # Supercompressed uncompressed formats (unsupported by kiln v0.5).
     Invoke-Ktx create --testrun --format R8G8B8A8_SRGB --generate-mipmap --zstd 5 src16.png "$out\rgba8_srgb_mip_zstd.ktx2"
     Invoke-Ktx create --testrun --format R8G8B8A8_SRGB --generate-mipmap --zlib 5 src16.png "$out\rgba8_srgb_mip_zlib.ktx2"

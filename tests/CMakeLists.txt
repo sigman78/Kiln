@@ -153,16 +153,17 @@ if(KILN_KTX_TOOL)
         get_filename_component(_base ${_path} NAME)
         get_filename_component(_stem ${_path} NAME_WE)
         add_test(NAME ktx_validate_corpus_${_stem} COMMAND ${KILN_KTX_TOOL} validate ${KILN_KTX2_CORPUS}/${_path})
-        # Same eligibility rule as test_ktx2_corpus_rt.cpp: uncompressed 2D, cube or array.
+        # Same eligibility rule as test_ktx2_corpus_rt.cpp: uncompressed or BC; 2D, cube or array.
         if(_depth EQUAL 0 AND (_faces EQUAL 1 OR (_faces EQUAL 6 AND _layers EQUAL 0)) AND _sc EQUAL 0
-           AND NOT _format MATCHES "^(-|BC[0-9]|ETC2_|EAC_|ASTC_)")
+           AND NOT _format MATCHES "^(-|ETC2_|EAC_|ASTC_)")
             list(APPEND _kiln_rt_names ${_base})
         endif()
     endforeach()
 
     if(TARGET kiln_cook)
         foreach(_file sample_rgba8_srgb.ktx2 sample_r16g16_snorm.ktx2 sample_cube_rgba8.ktx2
-                      sample_array3_rgba8.ktx2 sample_array1_rgba8.ktx2)
+                      sample_array3_rgba8.ktx2 sample_array1_rgba8.ktx2 sample_bc7_srgb_mip.ktx2
+                      sample_bc5_unorm_cube.ktx2)
             get_filename_component(_stem ${_file} NAME_WE)
             add_test(NAME ktx_validate_${_stem} COMMAND ${KILN_KTX_TOOL} validate samples/${_file})
             list(APPEND _kiln_validate_tests ktx_validate_${_stem})
