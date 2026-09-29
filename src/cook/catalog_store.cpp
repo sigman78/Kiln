@@ -502,7 +502,7 @@ Status open_catalog_store(CatalogStoreDesc const& d, CatalogStore** out) noexcep
     }
     format(path, sizeof path, "%.*s/catalogs/%.*s.lock", KILN_SV(s->dir()), KILN_SV(s->profile()));
     if (Status const st = s->lock.acquire(path); st.failed())
-        return fail(diagf(d.diag, st, st.code == Code::Busy ? kDiagCatalogLocked : 0, Severity::Error,
+        return fail(diagf(d.diag, st, st.code == Code::Busy ? u32(kDiagCatalogLocked) : 0u, Severity::Error,
                           d.storeDir, "store",
                           st.code == Code::Busy ? "another process writes the catalog of profile '%.*s' (%s)"
                                                 : "cannot lock the catalog of profile '%.*s' (%s)",
