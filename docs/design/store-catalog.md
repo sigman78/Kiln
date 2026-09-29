@@ -11,16 +11,16 @@ freshness, and explicit cleanup.
 
 ## Motivation and current behavior
 
-Commit `0381070` makes provider installation delete `.mesh` and `.ktx2` files when a global
-store stamp changes or is absent. This forces the existing cook-on-miss path to run, but loses
-previous artifacts before replacements exist. File extensions do not establish ownership;
-sources may be unavailable, and failed deletions can leave stale files under a new stamp.
+A named store file is used as long as it exists (open-questions R9): after a settings, target or
+cooker change it is not re-cooked until someone deletes it. Deleting cooked files to force a
+re-cook loses previous artifacts before replacements exist, file extensions do not establish
+ownership, and sources may be unavailable.
 
 Generated files already embed source/cook hashes, but the loader accepts existing named files
 without consulting the provider. Pass-through KTX2 copies source bytes unchanged and need not
 contain kiln metadata. The existing `kiln-cook --hashed` output has no runtime name catalog.
 
-This proposal replaces deletion-based invalidation. Installing a provider does not remove files.
+This proposal invalidates without deleting. Installing a provider does not remove files.
 A cook publishes new immutable artifacts and then a catalog selecting them. Old artifacts remain
 until an explicitly requested cleanup. Existing runtime behavior remains until this is implemented.
 
@@ -262,7 +262,7 @@ Online collection would need reader leases and writer coordination; it is deferr
 2. Add immutable artifact publication and explicit catalog selection to the CLI/runtime. The new
    catalog mode is distinct from today's `--hashed` files without a manifest.
 3. Add provider preparation on hits, input tracking, transaction publication and catalog hot reload.
-4. Switch examples/default development flow; remove stamp-triggered deletion.
+4. Switch examples/default development flow.
 5. Add explicit migration, snapshot retirement and offline cleanup tools; mapping can follow later.
 
 Keep legacy named-store mode explicitly selectable during migration. Do not silently fall back to
@@ -270,7 +270,7 @@ named files on a catalog miss: that would hide missing entries and bypass versio
 Migration re-cooks from available sources, or explicitly imports precooked files as opaque artifacts
 with a distinct import-key domain based on bytes/kind/name. Imported files are usable by shipping
 readers but have unknown build provenance; a provider must not mistake them for verified cook hits.
-Migration never deletes the old store. A missing legacy stamp does not establish artifact staleness.
+Migration never deletes the old store.
 
 When implemented, update R4/R9, settings, architecture, IO, hot-reload and shipping documentation.
 This note is a proposal and does not redefine their descriptions of current code yet.
