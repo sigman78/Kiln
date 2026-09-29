@@ -1,302 +1,251 @@
-# Immutable cooked artifacts and a mapped catalog
+# Cooked artifacts and a store catalog
 
-**Status:** Proposed (2026-09-29), not implemented. The requested direction is hashed artifacts
-and a binary manifest containing its own lookup index. Loading the manifest into memory is
-acceptable initially; its representation must also support read-only memory mapping.
-**Decides:** Artifact identity, pass-through KTX2, catalog layout and lookup, publication,
-freshness, and explicit cleanup.
-**Related:** [settings.md](settings.md), [asset-model-next.md](asset-model-next.md),
+**Status:** Decided (owner, 2026-09-29), not implemented. The owner asked for hashed artifacts and a
+binary catalog with its own lookup index, then chose: XXH3-128 keys, no source re-hashing for
+freshness, one catalog per profile rewritten in place (not a new file per change), and a single
+writer. Phase A (below) is the last step of v0.6.
+**Decides:** How cooked files are named, how the runtime finds them, how a dev cook knows a file is
+still fresh, how the store is written and cleaned, and how this replaces the named store's
+"a file is used while it exists" rule (open-questions R9).
+**Related:** [target-profiles.md](target-profiles.md), [settings.md](settings.md),
 [hot-reload.md](hot-reload.md), [shipping-split.md](shipping-split.md),
-[async-read-path.md](async-read-path.md).
+[asset-model-next.md](asset-model-next.md).
 
-## Motivation and current behavior
+## Summary
 
-A named store file is used as long as it exists (open-questions R9): after a settings, target or
-cooker change it is not re-cooked until someone deletes it. Deleting cooked files to force a
-re-cook loses previous artifacts before replacements exist, file extensions do not establish
-ownership, and sources may be unavailable.
+- A cooked file (an **artifact**) is named by its **build key**: an XXH3-128 hash of everything that
+  produced it: cooker version, asset kind and name, target profile, resolved settings, and the
+  content of every input file the cook read. A change to any of them gives a new name. So a
+  stale file is never picked by accident, and nothing is deleted to force a re-cook.
+- Artifacts are immutable. A **catalog** per target profile maps each asset name to its artifact.
+  It is a small binary file with a sorted index, read into memory; the runtime looks names up in
+  it without building a table.
+- The catalog file is rewritten in place (a temporary file, then a rename) when a cook publishes.
+  Old catalogs are not kept, so they do not pile up.
+- In dev, the cook provider checks each asset once per session. It compares the size and
+  modification time of the asset's recorded inputs; it hashes nothing when they match. A mismatch
+  re-cooks the asset, which reads and hashes the changed input anyway.
+- One process writes a store's catalog at a time (an OS file lock, fail fast). Hot reload batches
+  its re-cooks into one catalog write.
+- Cleanup is an explicit, offline command that deletes artifacts no catalog references.
 
-Generated files already embed source/cook hashes, but the loader accepts existing named files
-without consulting the provider. Pass-through KTX2 copies source bytes unchanged and need not
-contain kiln metadata. The existing `kiln-cook --hashed` output has no runtime name catalog.
+## What exists
 
-This proposal invalidates without deleting. Installing a provider does not remove files.
-A cook publishes new immutable artifacts and then a catalog selecting them. Old artifacts remain
-until an explicitly requested cleanup. Existing runtime behavior remains until this is implemented.
+- The **named** store layout: `<store>/<asset name>.mesh|.ktx2`. The runtime loads such a file as
+  long as it exists (R9). Cook-on-miss runs only when the file is missing. `kiln-store.txt` records
+  the store's target profile (`target-profiles.md`), so a cook with another profile refuses the
+  store; within one profile, a changed sidecar, host setting or cooker still goes unnoticed.
+- `kiln-cook --hashed`: files named by a 64-bit key (`store_key`), with no catalog, so the runtime
+  cannot find them by name.
+- The provider keeps one source record per cooked asset (path, size, modification time) to watch it
+  for hot reload. It does not know the other files a cook reads (a `.gltf`'s buffers, a sidecar).
+- Cooked files carry `sourceHash` and `cookHash` (in the `.mesh` header, and as KTX2 keys); a
+  pass-through KTX2 source carries nothing of kiln's.
 
-## Identity and keys
+## Decision
 
-Three concepts remain distinct:
+### 1. Artifacts are named by their build key
 
-| Concept | Meaning |
+The build key is XXH3-128 over a field-by-field, versioned serialization (little-endian, a tag per
+field, lengths before variable fields; never struct memory):
+
+- key schema, `kCookerVersion`, asset kind, canonical asset name (a cooked mesh embeds names);
+- the target profile (`hash_target`) and the resolved settings (`hash_settings`);
+- for each input file the cook read, in a fixed order: its role and name, then the XXH3-128 of its
+  content. Inputs are the source, its sidecar, a `.gltf`'s external buffers, and any other file
+  the cooker opens. A texture that a mesh only references by URI is its own asset, not an input;
+- for an embedded image (`mesh.glb#image`), the image's name within its owner.
+
+Sidecars and name rules act through the resolved settings, and their files are inputs too. File
+times and absolute directories never enter the key. XXH3-128 comes from the xxhash that zstd
+already vendors (XXH3 is compiled in for this); it is a checksum, not a signature.
+
+Artifacts live under the store as `artifacts/<first 2 hex digits>/<32 hex digits>.mesh|.ktx2`. They
+are written once (temporary file, then rename) and never changed. The same key means the same bytes;
+if a new cook produces other bytes for an existing key, the cooker is not deterministic, and that is
+reported (K3010), never overwritten.
+
+A pass-through KTX2 source is published unchanged under its build key; it needs no kiln metadata.
+
+### 2. One catalog per target profile
+
+`<store>/catalogs/<profile>.kcat` maps `(asset name, kind)` to a build key. A store may hold
+catalogs of several profiles: each profile's keys differ, so their artifacts never mix, and
+two profiles may share an artifact whose key is the same. (The named layout keeps its one-profile
+rule and `kiln-store.txt`.)
+
+The catalog records the profile's name, `hash_target` and block formats, so `create()` checks the
+adapter against it once (K5018, as for `kiln-store.txt`).
+
+The catalog is written as a new temporary file and renamed over the old one. Readers load it into
+memory, so a rename never disturbs them. Nothing keeps old catalogs.
+
+### 3. The runtime
+
+- `ContextDesc::storeLayout = StoreLayout::Catalog` and `ContextDesc::profile` (a name) select
+  `catalogs/<profile>.kcat`. `create()` reads it into one buffer and validates it fully.
+- A request looks the name up (a binary search of the index, no allocation). The path of the
+  artifact comes from the key. The loader resolves the path on the pump thread when it dispatches
+  the job and copies it into the job, so a later catalog swap does not affect jobs in flight.
+- A name missing from the catalog goes to the cook provider, as a store miss does today; without
+  a provider it fails with K5001. There is no fallback to named files.
+- Hot reload watches the catalog file. When it changes, the runtime loads the new catalog, swaps it
+  in on the pump thread, and reloads each loaded asset whose key changed. An asset that left the
+  catalog stays loaded under the existing lifetime rules; new requests for it miss.
+
+### 4. Freshness in dev: size and modification time, no re-hashing
+
+The provider now takes part on catalog **hits** too, not only on misses: the first request of an
+asset in a session asks the provider to **prepare** it. (The name of the new `CookProvider`
+callback is decided at implementation.)
+
+The provider keeps **input records** in `<store>/inputs/<profile>.kin`: for each catalog entry, the
+path, size, modification time and content hash of every input its cook read, and the host-settings
+digest (below) it was cooked under. It is cook-side only and never ships.
+
+On prepare:
+
+1. **Inputs unchanged** (every recorded size and modification time matches) **and the host settings
+   unchanged**: the entry is fresh. Nothing is read or hashed.
+2. **Host settings changed**: resolve the settings again (a sidecar read at most), rebuild the key
+   from the recorded input hashes, and keep the entry if the key is the same; else re-cook.
+3. **An input changed**, or no record: re-cook. The cook reads the input and hashes it anyway, and
+   the new record replaces the old one.
+
+The **host-settings digest** hashes what the host sets for the whole provider: the default texture
+and mesh settings, the name rules, `fastPreview` and `ProviderDesc::policyVersion` (a `CookPolicy`
+is a function, so the host bumps this number when its choices change). It never deletes anything;
+it only tells step 2 to recompute keys.
+
+The cost: an edit that keeps both size and modification time is not seen. Editors and version
+control always change the time. `kiln-cook --verify` re-hashes every input for CI and shipping
+builds.
+
+A lost input-record file only costs time: prepare then re-hashes the inputs once and rebuilds it.
+Without a provider (shipping), the catalog is trusted as it is.
+
+### 5. Writing: one writer, batched
+
+- A writer (`install_provider` in Disk mode, `kiln-cook`) holds an OS file lock on
+  `<store>/catalogs/<profile>.lock` for its lifetime. A second writer fails at once with K3009; the
+  lock ends with the process, so a crash leaves nothing to clean.
+- A cook first publishes its artifacts, then writes the new catalog and input records. A crash
+  before the catalog rename leaves only unreferenced artifacts; the old catalog stays valid.
+- A mesh and its embedded images enter the catalog together.
+- The provider's source poller re-cooks all changed assets of one poll round, then writes the
+  catalog once.
+
+### 6. Cleanup
+
+`kiln-cook --gc <store>` (with `--dry-run`) takes every catalog's lock, reads all catalogs, and
+deletes the files under `artifacts/` that none references. It never touches other files. It runs
+while no program uses the store. Retiring a profile is deleting its catalog, then running `--gc`.
+
+## Binary catalog, format 0.1
+
+Little-endian. Sections start at 8-byte boundaries; padding is zero. The exact major and minor
+must match; reserved fields are zero. Readers decode fields from the bytes (no struct casts) and
+check every offset and size against the file size.
+
+**Header, 128 bytes:**
+
+| Offset | Type | Field |
+|---:|---|---|
+| 0 | `u8[4]` | magic `KCAT` |
+| 4 | `u16` | major, 0 |
+| 6 | `u16` | minor, 1 |
+| 8 | `u32` | header bytes, 128 |
+| 12 | `u32` | flags, 0 |
+| 16 | `u64` | total file bytes |
+| 24 | `u64` | entry count (also the index count) |
+| 32 | `u64` | entry section offset |
+| 40 | `u64` | index section offset |
+| 48 | `u64` | string section offset |
+| 56 | `u64` | string section bytes |
+| 64 | `u64` | profile hash (`hash_target`) |
+| 72 | `u64` | profile block formats (`block_format_bit()` set) |
+| 80 | `u32` | profile name offset, in the string section |
+| 84 | `u32` | profile name bytes |
+| 88 | `u8[16]` | catalog checksum: XXH3-128 of the file with these 16 bytes as zero |
+| 104 | `u8[24]` | reserved |
+
+**Entry, 56 bytes**, sorted by name bytes, then kind; a duplicate `(name, kind)` is an error:
+
+| Offset | Type | Field |
+|---:|---|---|
+| 0 | `u32` | name offset, in the string section |
+| 4 | `u32` | name bytes (no terminator) |
+| 8 | `u16` | kind: 1 mesh, 2 texture |
+| 10 | `u16` | flags, 0 |
+| 12 | `u32` | reserved |
+| 16 | `u8[16]` | build key |
+| 32 | `u8[16]` | output checksum: XXH3-128 of the artifact's bytes |
+| 48 | `u64` | artifact bytes |
+
+**Index, 16 bytes per entry**, sorted by `(name hash, entry number)`, every entry once:
+`u64 hash_name(name)` (the existing FNV-1a 64), `u64 entry number`. A lookup binary-searches the
+hash, then compares kind and the full name for each candidate; a hash alone never identifies an
+asset.
+
+No timestamps or absolute paths: the same contents give the same bytes. Size: about 1.1 MB for
+10 000 assets (72 bytes per entry, plus names).
+
+## Diagnostics
+
+| Code | When |
 |---|---|
-| Logical asset name | Existing canonical `root:path.ext#sub` identity used by requests and mesh bindings |
-| Build key | Digest of everything needed to reproduce one artifact |
-| Output digest | Digest of the actual artifact bytes, used for integrity and detecting conflicting output |
+| K3009 | another writer holds the catalog's lock |
+| K3010 | a new cook produced other bytes for an existing build key (a nondeterministic cook) |
+| K4201-K4209 | malformed catalog: magic, version, sizes and offsets, order, duplicates, index, checksum |
+| K5018 | (exists) the catalog's profile has formats the adapter cannot sample |
+| K5019 | `StoreLayout::Catalog` and the profile's catalog is missing |
 
-Artifact filenames use the **build key**, not merely the output digest. This is an input-addressed
-cache: a caller can calculate a key before cooking. Different keys may produce identical bytes;
-deduplicating those bytes is deferred. Logical names and `AssetId` semantics do not change.
+## Alternatives considered
 
-Proposed digest algorithm: SHA-256 for build keys, output digests, and catalog identities.
-This is a new format, not a silent reinterpretation of the current 64-bit `store_key`.
-The implementation/provider dependency for SHA-256 must be selected before implementation.
-Existing embedded hashes remain useful diagnostics, but are not the catalog's authority.
+- **A new immutable catalog file per change, with selection pointers** (the first draft of this
+  note): lets readers memory-map a catalog while writers publish, and keeps every past state. But
+  every hot-reload re-cook wrote a whole new catalog, the files piled up, and a retention rule was
+  needed. Reading the catalog into memory makes a plain rename safe; memory mapping can bring
+  versioned files back if it is ever needed.
+- **Hashing every source on first use** to check freshness: correct even when a file keeps its
+  size and time, but it reads every source of a project on each dev start. Size and time are what
+  build tools use; `--verify` covers CI.
+- **SHA-256 keys:** would be kiln's only cryptographic code; the keys need collision resistance, not
+  security. XXH3-128 is in a vendored header and runs at about 30 GB/s.
+- **Checking each named file's `cookHash` before use** (the interim R9 proposal): fixes staleness
+  for kiln's own files, but needs every asset's settings resolved to know the expected hash, costs a
+  header read per load, and does nothing for pass-through KTX2 or cleanup.
+- **A store stamp that deletes stale files** (reverted in `8fc83fa`): deletion loses work before its
+  replacement exists.
+- **Several writers merging their catalog changes:** not needed while one process cooks; the lock
+  makes a second writer fail clearly.
 
-The build-key serializer is versioned, field-by-field, little-endian, with domain tags and
-length-prefixed variable fields. Never hash C++ struct memory or concatenate ambiguous strings.
-Its inputs are:
+## Rollout
 
-- Key schema and cooker version; artifact kind and canonical logical name. Names matter because
-  current cooked meshes can embed identities and references.
-- Digests of the source bytes and every additional input actually consumed by this cook.
-  For a glTF cook this includes external buffers it reads. Referenced textures cooked independently
-  are separate assets; merely mentioning their URI does not require hashing their texels here.
-- Resolved settings serialized directly, including effective fast-preview changes, and the target.
-- Explicit policy version for behavior not represented in the resolved settings.
-- For a generated subasset, its stable output selector and the owner input identity needed to
-  reproduce it. Different embedded images must never alias merely because they share an owner.
+**Phase A (v0.6): fixes R9.**
+1. XXH3-128 from the vendored xxhash; the build-key serializer; the cooker reports every input file
+   it reads.
+2. The catalog writer and reader (format 0.1), with full validation and a fuzz target.
+3. Immutable artifact publication, the writer lock, catalog rewrite, input records.
+4. The runtime: `StoreLayout::Catalog`, `ContextDesc::profile`, lookup, K5019, hot reload of the
+   catalog.
+5. The provider's prepare step on hits, with the size-and-time check and batched publication.
+6. `kiln-cook` writes catalogs (the default for new stores); `--verify`; `--hashed` is retired.
+7. The examples and the viewer use a catalog store.
 
-Sidecars and name rules participate through resolved settings; any additional data consumed outside
-settings must also enter the key. File times and sizes are acceleration hints, not content identity.
-Absolute source directories do not enter the key unless their values actually affect output.
+**Phase B:** `kiln-cook --gc` and `--dry-run`; an export command that copies one profile's catalog
+and its artifacts for shipping.
 
-A configuration digest identifies a catalog's intended cooker/defaults/target/rules/policy
-configuration. It is a selection and diagnostic field, not proof that every entry is fresh.
-Source changes require per-asset checks. A configuration mismatch never deletes artifacts.
+**Phase C, if needed:** memory-mapped catalogs through the IO backend; several writers.
 
-## Store layout and selection
+The named layout stays available (`StoreLayout::Named`) for hosts that want plain files. There is no
+automatic migration: a named store is cooked again into a catalog store, and never deleted by kiln.
 
-Illustrative layout:
+## Open points
 
-```text
-store/
-  artifacts/ab/<64-hex-build-key>.ktx2
-  artifacts/7c/<64-hex-build-key>.mesh
-  catalogs/<64-hex-catalog-digest>.kcat
-  selections/desktop.current
-  selections/mobile.current
-```
-
-The shard directory is the first two hex digits of the key. Extensions come from artifact kind.
-Catalog entries contain keys, not arbitrary filesystem paths. The reader derives paths under the
-configured store. Each catalog selects one artifact per `(logical name, kind)` for one configuration.
-Different configurations may share artifacts while selecting independent catalogs.
-
-A context selects either an immutable catalog explicitly (shipping/reproducibility) or a named
-selection pointer (development). A pointer is a small versioned text record containing exactly one
-catalog digest, not an arbitrary path. Its atomic replacement is the publication commit point.
-Using separate immutable catalog files also avoids replacing a file still mapped by readers.
-
-No directory search or source hashing is needed to resolve an asset in a shipping build.
-
-## Binary catalog, draft format 0.1
-
-The manifest is a serialized catalog: a header, fixed-size entries, a sorted on-disk index, and
-a UTF-8 string table. All offsets are relative to the beginning of the file unless stated otherwise.
-There are no pointers, compression, native container layouts, relocations, or runtime hash tables.
-The exact draft major/minor must match; reserved fields and flags are zero in 0.1.
-
-All integers are little-endian. Sections start at 8-byte boundaries; padding is zero. Digest fields
-are 32 raw bytes, rendered as lowercase hex in filenames. Writers emit the sections below in order.
-An implementation should decode integer fields safely rather than assuming arbitrary input buffers
-have C++ object lifetime or alignment suitable for casting to structs.
-
-### Header: 128 bytes
-
-| Offset | Type | Field |
-|---:|---|---|
-| 0 | `u8[4]` | Magic `KCAT` |
-| 4 | `u16` | Major, 0 |
-| 6 | `u16` | Minor, 1 |
-| 8 | `u32` | Header bytes, 128 |
-| 12 | `u32` | Flags, 0 |
-| 16 | `u64` | Total file bytes |
-| 24 | `u64` | Entry count, also index count |
-| 32 | `u64` | Entry section offset |
-| 40 | `u64` | Index section offset |
-| 48 | `u64` | String section offset |
-| 56 | `u64` | String section bytes |
-| 64 | `u8[32]` | Configuration digest |
-| 96 | `u8[32]` | Catalog digest |
-
-Catalog digest is SHA-256 of the entire file with bytes 96..127 treated as zero. No timestamps,
-absolute paths, or random generation numbers enter the file. Identical catalog contents produce
-identical bytes and filenames. This digest is integrity metadata, not an authenticity signature.
-
-### Entry: 96 bytes
-
-| Offset | Type | Field |
-|---:|---|---|
-| 0 | `u64` | Name offset relative to string section |
-| 8 | `u32` | Name length in bytes, no terminator |
-| 12 | `u16` | Kind: 1 mesh, 2 texture; other values rejected |
-| 14 | `u16` | Flags, 0 |
-| 16 | `u8[32]` | Build key |
-| 48 | `u8[32]` | Output digest |
-| 80 | `u64` | Artifact byte length |
-| 88 | `u64` | Reserved, 0 |
-
-Entries are ordered by canonical name bytes, then kind. Duplicate `(name, kind)` is an error.
-Strings are emitted in entry order; adjacent entries with the same name reuse its string range.
-Source paths, dependency lists and mutable stat hints belong in optional cook-side metadata,
-not the shipping catalog. Loss of that metadata requires recomputation, never deletion.
-
-### Embedded index: 16 bytes per entry
-
-| Offset | Type | Field |
-|---:|---|---|
-| 0 | `u64` | Existing `hash_name(name)`: FNV-1a 64 over exact canonical UTF-8 bytes |
-| 8 | `u64` | Entry ordinal |
-
-Index rows are sorted by `(name hash, entry ordinal)`. Every entry occurs exactly once.
-Lookup binary-searches the hash, examines its equal range, then compares kind and full name bytes.
-Hash equality alone never identifies an asset. Expected work is `O(log N)` plus collision candidates;
-pathological hash collisions can make the candidate scan linear. The index is deliberately a compact
-sorted array rather than a serialized implementation-specific hash table.
-
-### Validation and memory ownership
-
-`CatalogView` conceptually borrows a read-only byte span. Lookup allocates nothing. The first
-implementation may read the entire file into one owned buffer; a future IO backend may supply a
-mapping with the same view. No deserialization into a second catalog or rebuilding of its index.
-Mapping avoids an eager full-file copy, but touched pages still require IO.
-
-Opening checks version, total size, section alignment, non-overlap, and overflow-safe count/range
-arithmetic against the actual file size. Every dereference also requires validated bounds.
-Full validation checks ordering, unique names, valid names/kinds, index permutation and hashes,
-reserved fields, string ranges, and catalog digest. It can use temporary validation workspace;
-it must not retain a runtime lookup index. Writers and untrusted catalog readers perform full
-validation. An eventual trusted-package mode may defer the full scan/digest check to preserve lazy
-paging; that trust mode must be explicit and must retain bounds checks. Initially validate fully.
-
-Views and entry references remain valid only while their owning buffer/mapping remains alive.
-Each load job pins the catalog snapshot used to resolve its artifact. Publication swaps the active
-snapshot for future jobs; old snapshots are released only after their last reader finishes.
-
-## Pass-through KTX2
-
-1. Resolve settings and compute the expected build key from the input and target.
-2. Reuse an existing verified artifact for that key, or validate the source using the pass-through
-   rules (format support, dimensions, shape, layers and complete level data).
-3. If validation succeeds, publish the source bytes unchanged under the build-key filename.
-4. Record build key, output digest and byte length in the catalog.
-
-No KTX2 key/value injection or metadata rewriting is required. If a changed target is incompatible,
-the cook fails without changing the active entry. Two different size caps may produce different
-build keys containing identical KTX2 bytes; this is allowed. Embedded metadata is not required for
-freshness of any catalog-backed artifact.
-
-## Development freshness and cooking
-
-The provider must participate for catalog hits as well as misses. Merely adding a manifest while
-keeping the existing cook-only-on-file-miss hook would retain the present freshness bug.
-The runtime delegates preparation/freshness to the installed provider; knowledge of sources,
-settings and policies stays in `kiln_cook`. Final callback/API names are an implementation decision.
-
-On first request in a provider session, resolve the asset's inputs/settings and compare the expected
-build key with the selected entry. A match reuses the artifact and registers source watching even
-though no cook occurred. A different key selects an already verified cached artifact or cooks one.
-Subsequent requests can use session freshness records; source/sidecar changes invalidate them.
-Changes made while the application was closed must also be detected at first use.
-
-If sources or settings cannot be resolved, the provider reports an unverifiable/stale result; it
-does not silently claim freshness. A caller may explicitly allow using the selected old artifact.
-A runtime without a provider simply treats the selected catalog as authoritative.
-
-A newly selected configuration starts with an empty or fully verified catalog for that configuration;
-do not relabel an old catalog with a new configuration digest. Same-configuration development catalogs
-may contain not-yet-rechecked entries, so they are not sufficient evidence of a fresh shipping build.
-Shipping publication verifies/cooks the entire requested asset set before publishing its catalog.
-
-## Publication, failures and concurrency
-
-1. Build and validate all outputs for one cook transaction in temporary files.
-2. Publish immutable artifacts using atomic create-if-absent semantics. If a key already exists,
-   verify its length/digest. A conflicting result is corruption, a collision, or nondeterminism;
-   report it and never overwrite the artifact. The current overwrite-capable store writer needs
-   a separate immutable-publication path.
-3. Merge changed entries into the latest selected snapshot and write/validate a new catalog.
-4. Publish its immutable catalog file, then atomically replace the selection pointer.
-
-An owner mesh and its generated embedded textures commit together. Outputs that the new cook no
-longer emits disappear from the new catalog, but their old files remain. Independently referenced
-textures keep their own entries and are not implicitly cooked by this transaction.
-
-Cooking may run concurrently, but one publisher serializes catalog updates for a selection. Initial
-scope: an exclusive writer lock across processes for that selection; acquire it before reading the
-latest snapshot and hold it through the pointer update. Merge by affected owner/output set so
-parallel cooks do not drop unrelated changes. Recheck that inputs have not changed before commit;
-discard/retry obsolete work. Different selections may share immutable artifact publication safely.
-
-A failed cook leaves the old entry and files intact and reports failure to the requesting caller.
-Already loaded GPU assets may remain live under existing reload semantics. Serving the old artifact
-to a new request requires the caller's explicit stale fallback policy.
-Failure before pointer replacement leaves at worst unreachable immutable files. Readers never see
-a pointer to an incomplete catalog. Atomic publication assumes local same-filesystem rename/create
-primitives; network filesystems require a supported equivalent. Power-loss durability additionally
-requires platform flush/directory-sync ordering and is separate from process-crash atomicity.
-
-## Hot reload and cleanup
-
-The runtime watches the selection pointer, not immutable artifact modification times. After loading
-and validating a replacement catalog it compares keys for requested assets and schedules reloads
-for changed entries. Preserve existing handles and load through a pinned snapshot. An entry removed
-from the catalog is unavailable to new resolution; already loaded objects follow existing lifetime
-rules rather than being destroyed as a side effect of publication. Group-wide atomic GPU swaps are
-outside this proposal.
-
-Cleanup is a separate explicit operation with a dry-run option. Its roots are all retained catalog
-snapshots, including every configuration/selection and user-pinned release. Keeping all catalog
-files therefore retains all referenced artifacts; retiring snapshots is an explicit prerequisite
-to reclaiming their artifacts. Only recognized files in the managed artifact/catalog namespaces
-are eligible. Never scan arbitrary `.mesh` or `.ktx2` files and infer ownership from extensions.
-
-Initially cleanup requires applications/readers and writers using the store to be stopped. A catalog
-may have readers after its pointer changes, and a published artifact may not yet be catalog-reachable.
-Online collection would need reader leases and writer coordination; it is deferred.
-
-## Migration and implementation sequence
-
-1. Implement the catalog writer/view, deterministic binary index and validation over loaded buffers.
-2. Add immutable artifact publication and explicit catalog selection to the CLI/runtime. The new
-   catalog mode is distinct from today's `--hashed` files without a manifest.
-3. Add provider preparation on hits, input tracking, transaction publication and catalog hot reload.
-4. Switch examples/default development flow.
-5. Add explicit migration, snapshot retirement and offline cleanup tools; mapping can follow later.
-
-Keep legacy named-store mode explicitly selectable during migration. Do not silently fall back to
-named files on a catalog miss: that would hide missing entries and bypass version selection.
-Migration re-cooks from available sources, or explicitly imports precooked files as opaque artifacts
-with a distinct import-key domain based on bytes/kind/name. Imported files are usable by shipping
-readers but have unknown build provenance; a provider must not mistake them for verified cook hits.
-Migration never deletes the old store.
-
-When implemented, update R4/R9, settings, architecture, IO, hot-reload and shipping documentation.
-This note is a proposal and does not redefine their descriptions of current code yet.
-
-## Acceptance checks
-
-- Unchanged requests reuse artifacts, including after restart; source/sidecar/settings/target/cooker
-  changes select appropriate new keys without deleting old files.
-- Pass-through KTX2 is byte-identical to the source and needs no kiln metadata.
-- Multiple configurations coexist; switching back reuses retained artifacts.
-- Real name-hash collisions resolve by full name/kind; malformed offsets, integer overflow,
-  duplicate entries, invalid index rows and unsupported versions are rejected safely.
-- Catalog bytes are deterministic; loaded-buffer and mapped views return identical lookup results
-  without constructing runtime indexes.
-- Failure at every publication step preserves the previous selection; parallel cooks preserve
-  unrelated updates; conflicting bytes for an existing build key are reported.
-- Mesh/subasset publication is atomic at catalog level, removed generated outputs leave no stale
-  bindings in the new catalog, and load jobs safely retain old snapshots during replacement.
-- Shipping loads without source access; legacy migration and explicit cleanup preserve unowned files.
-
-## Open implementation choices
-
-- SHA-256 implementation/dependency and hashing performance; changing the proposed digest algorithm
-  or widths requires settling the wire format before its first release.
-- Public preparation callback and configuration/selection API names, plus limits/budgets for catalog
-  size and validation workspace.
-- Persistence format for optional cook-side input/stat records; correctness must not depend on it.
-- Platform mapping support and Windows file-sharing rules for selection-pointer replacement.
-
+1. Record format of `inputs/<profile>.kin` (binary or text). Correctness does not depend on it.
+2. The name and signature of the provider's prepare callback, and whether a request may accept an
+   unverified entry when the provider cannot resolve its sources (proposed: an explicit option,
+   off by default).
+3. Whether `create()` should also accept a catalog file path directly (a shipping package that is
+   not a store directory).
