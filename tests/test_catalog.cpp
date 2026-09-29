@@ -7,10 +7,14 @@
 #include "../src/formats/formats_internal.h"
 #include "kiln/cook/catalog.h"
 #include "kiln/cook/cook.h"
+#include "kiln/null_adapter.h"
 
+#include <chrono>
+#include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <system_error>
+#include <thread>
 
 using namespace kiln;
 using namespace kiln::cook;
@@ -579,4 +583,168 @@ KILN_TEST(CatalogStore, NamedLayoutRefusesACatalogStore) {
     DiagSink const sink{&LastCode::fn, &lc};
     KILN_CHECK(bind_store_profile(StrView(dir), kCompatTarget, &sink).failed());
     KILN_CHECK_EQ(lc.code, u32(kDiagStoreProfileMismatch));
+}
+
+// ---------------------------------------------------------------------------
+// The runtime on a catalog store
+// ---------------------------------------------------------------------------
+
+namespace {
+
+struct FirstCode {
+    u32 code = 0;
+    static void fn(void* user, Diagnostic const& d) noexcept {
+        auto* self = static_cast<FirstCode*>(user);
+        if (self->code == 0 && d.severity == Severity::Error) self->code = d.code;
+    }
+};
+
+/// A null adapter and a Catalog-layout context over `dir`.
+struct CatalogContext {
+    Adapter adapter{};
+    NullAdapter* na = nullptr;
+    Context* ctx    = nullptr;
+    FirstCode diag;
+
+    CatalogContext(CatalogContext const&)            = delete;
+    CatalogContext& operator=(CatalogContext const&) = delete;
+    CatalogContext() noexcept                        = default;
+
+    Status init(char const* dir, bool hotReload = false) noexcept {
+        Result<NullAdapter*> n = null_adapter_create({}, &adapter);
+        if (n.failed()) return n.status();
+        na = *n;
+        ContextDesc desc{};
+        desc.adapter       = &adapter;
+        desc.storeDir      = StrView(dir);
+        desc.storeLayout   = StoreLayout::Catalog;
+        desc.diag          = {&FirstCode::fn, &diag};
+        desc.hotReload     = {.watchStore = hotReload, .pollMs = 5};
+        Result<Context*> c = create(desc);
+        if (c.failed()) return c.status();
+        ctx = *c;
+        return kOk;
+    }
+    ~CatalogContext() noexcept {
+        if (ctx) destroy(ctx);
+        if (na) null_adapter_destroy(na);
+    }
+};
+
+template <class H> State settle(Context* ctx, H h) {
+    for (int i = 0; i < 2000; ++i) {
+        (void)pump(ctx, {});
+        State const s = state(ctx, h);
+        if (s == State::Ready || s == State::Failed) return s;
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    return state(ctx, h);
+}
+
+/// Cooks the corpus file `source` as the asset `name` and publishes it into the store `dir`.
+void publish(char const* dir, char const* source, char const* name, CookUnit* out = nullptr) {
+    static MeshCookSettings const mesh;
+    static TextureCookSettings const tex;
+    char path[1024];
+    format(path, sizeof path, "%s/../gltf/generated/%s", kiln::test::corpus_dir(), source);
+    CookUnit unit(default_allocator());
+    KILN_REQUIRE(cook_unit({.kind            = AssetKind::Mesh,
+                            .name            = StrView(name),
+                            .sourcePath      = StrView(path),
+                            .meshDefaults    = &mesh,
+                            .textureDefaults = &tex,
+                            .target          = &kCompatTarget},
+                           &unit)
+                     .ok());
+    CatalogStore* s = nullptr;
+    KILN_REQUIRE(open_store(dir, &s).ok());
+    KILN_CHECK(publish_unit(s, unit, 0, nullptr).ok());
+    KILN_CHECK(commit_catalog(s, nullptr).ok());
+    close_catalog_store(s);
+    if (out) *out = std::move(unit);
+}
+
+} // namespace
+
+KILN_TEST(CatalogRuntime, LoadsArtifactsByName) {
+    char dir[1024];
+    fresh_dir("catalog-rt", dir, sizeof dir);
+    CookUnit unit(default_allocator());
+    publish(dir, "pbr_textures.glb", "pbr_textures.glb", &unit);
+    KILN_REQUIRE(unit.outputs.size() > usize(1));
+
+    CatalogContext c;
+    KILN_REQUIRE(c.init(dir).ok());
+    KILN_CHECK(store_layout(c.ctx) == StoreLayout::Catalog);
+    KILN_CHECK(store_profile(c.ctx) == "compat"_sv);
+    MeshHandle const m = request_mesh(c.ctx, "pbr_textures.glb"_sv);
+    KILN_CHECK(settle(c.ctx, m) == State::Ready);
+    TextureHandle const t = request_texture(c.ctx, unit.name(unit.outputs[1]));
+    KILN_CHECK(settle(c.ctx, t) == State::Ready);
+
+    // A name the catalog lacks, with no provider: a store miss.
+    MeshHandle const missing = request_mesh(c.ctx, "nothing.glb"_sv);
+    KILN_CHECK(settle(c.ctx, missing) == State::Failed);
+    KILN_CHECK_EQ(c.diag.code, u32(kDiagStoreMiss));
+
+    // An entry whose artifact is gone: a store miss too.
+    char path[1024];
+    (void)artifact_file_path(StrView(dir), AssetKind::Texture, unit.outputs.back().key, path, sizeof path);
+    KILN_REQUIRE(std::remove(path) == 0);
+    c.diag.code              = 0;
+    TextureHandle const gone = request_texture(c.ctx, unit.name(unit.outputs.back()));
+    KILN_CHECK(settle(c.ctx, gone) == State::Failed);
+    KILN_CHECK_EQ(c.diag.code, u32(kDiagStoreMiss));
+}
+
+KILN_TEST(CatalogRuntime, MissingAndBrokenCatalogs) {
+    char dir[1024];
+    fresh_dir("catalog-rt-none", dir, sizeof dir);
+    {
+        CatalogContext c;
+        KILN_REQUIRE(c.init(dir).ok()); // no catalog yet: a provider may write one
+        MeshHandle const m = request_mesh(c.ctx, "a.glb"_sv);
+        KILN_CHECK(settle(c.ctx, m) == State::Failed);
+        KILN_CHECK_EQ(c.diag.code, u32(kDiagCatalogMissing));
+    }
+    std::error_code ec;
+    std::filesystem::create_directories(std::filesystem::path(dir) / "catalogs", ec);
+    char path[1024];
+    format(path, sizeof path, "%s/catalogs/compat.kcat", dir);
+    std::FILE* f = std::fopen(path, "wb");
+    KILN_REQUIRE(f != nullptr);
+    std::fputs("not a catalog", f);
+    std::fclose(f);
+    CatalogContext c;
+    KILN_CHECK(c.init(dir).code == Code::Corrupt);
+    KILN_CHECK_EQ(c.diag.code, u32(kDiagCatalogMagic));
+}
+
+KILN_TEST(CatalogRuntime, HotReloadFollowsTheCatalog) {
+    char dir[1024];
+    fresh_dir("catalog-rt-reload", dir, sizeof dir);
+    publish(dir, "cube_basic.glb", "model.glb");
+
+    CatalogContext c;
+    KILN_REQUIRE(c.init(dir, true).ok());
+    MeshHandle const m = request_mesh(c.ctx, "model.glb"_sv);
+    KILN_REQUIRE(settle(c.ctx, m) == State::Ready);
+    u64 const gpuBytes     = mesh_view(c.ctx, m)->header().gpuDataSize;
+    MeshHandle const later = request_mesh(c.ctx, "later.glb"_sv);
+    KILN_REQUIRE(settle(c.ctx, later) == State::Failed);
+
+    // Another cook under the same name, and a new name: the catalog changes on disk.
+    publish(dir, "authored_lods.glb", "model.glb");
+    publish(dir, "cube_basic.glb", "later.glb");
+    bool changed = false;
+    for (int i = 0; i < 3000 && !(changed && state(c.ctx, later) == State::Ready); ++i) {
+        (void)pump(c.ctx, {});
+        for (Event const& e : events(c.ctx))
+            if (e.kind == EventKind::Changed && e.handle == m.bits()) changed = true;
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    KILN_CHECK(changed);
+    KILN_CHECK_EQ(version(c.ctx, m), u32(2));
+    KILN_CHECK(mesh_view(c.ctx, m)->header().gpuDataSize != gpuBytes);
+    KILN_CHECK(state(c.ctx, later) == State::Ready); // failed before, in the catalog now
 }

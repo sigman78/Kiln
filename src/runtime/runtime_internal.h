@@ -4,6 +4,7 @@
 #pragma once
 
 #include "kiln/assets.h"
+#include "kiln/catalog.h"
 
 #include <atomic>
 #include <mutex>
@@ -134,6 +135,12 @@ struct Slot {
     CookProvider provider; ///< snapshot at dispatch
     char path[kMaxPathLen] = {};
     u32 pathLen            = 0;
+    Hash128 jobKey;           ///< Catalog layout: the artifact to load, from the catalog at dispatch
+    bool jobKeyValid = false; ///< false: the name missed the catalog
+
+    // --- the loaded content (pump thread) ------------------------------------------
+    Hash128 key;           ///< the build key of what `cur` came from (Catalog layout)
+    bool keyValid = false; ///< false: not from an artifact, or not loaded
 
     // --- metadata (docs/design/hot-reload.md) ----------------------------------------
     // Queries answer from `cur` once Ready. The meta stage (worker) writes only `next`;
@@ -208,10 +215,17 @@ struct Context {
 
     char* storeDir     = nullptr; ///< owned copy (null-terminated)
     usize storeDirLen  = 0;
-    Root* roots        = nullptr; ///< owned copies of ContextDesc::roots
-    u32 rootCount      = 0;
-    char* rootChars    = nullptr;
-    usize rootCharsLen = 0;
+    StoreLayout layout = StoreLayout::Named;
+    char* profile      = nullptr; ///< owned copy of ContextDesc::profile (Catalog layout)
+    usize profileLen   = 0;
+    // Catalog layout, pump thread: the catalog in memory. The store poller swaps in a new one.
+    Vec<u8> catalogBytes;
+    CatalogView catalog;
+    bool catalogPresent = false;   ///< false: the profile has no catalog file (yet)
+    Root* roots         = nullptr; ///< owned copies of ContextDesc::roots
+    u32 rootCount       = 0;
+    char* rootChars     = nullptr;
+    usize rootCharsLen  = 0;
 
     u32 maxAssets = 0, maxGroups = 0, maxEvents = 0, maxIoJobs = 0;
     u64 ioBudget = 0;
@@ -317,6 +331,8 @@ void run_job(void* arg) noexcept;
 /// The store file of an asset (store_file_path()). Returns the length
 /// `format` reports (>= cap - 1 means truncated). Reads only fields fixed at create().
 usize store_path(Context const* ctx, AssetKind kind, StrView path, char* out, usize cap) noexcept;
+/// `<store>/catalogs/<profile>.kcat`, as store_path().
+usize catalog_path(Context const* ctx, char* out, usize cap) noexcept;
 /// Texture upload layout: levels ascending, each at `offsetAlign`, rows padded to
 /// `pitchAlign`. Writes [dstOffset] and [rowPitch] per level; returns the total size.
 u64 texture_layout(ktx2::TextureDesc const& d, u64 pitchAlign, u64 offsetAlign, u64* outOffset,
@@ -344,7 +360,8 @@ void watch_start(Context* ctx, HotReloadDesc const& desc) noexcept;
 void watch_stop(Context* ctx) noexcept;
 /// destroy(), after the jobs drained: free the poller's tables (the poller is joined).
 void watch_free(Context* ctx) noexcept;
-/// pump(): request a reload for every slot the poller reported (generation checked).
+/// pump(): request a reload for every slot the poller reported (generation checked); in the Catalog
+/// layout, swap in a catalog the poller loaded and reload the assets whose key changed.
 void watch_drain(Context* ctx) noexcept;
 /// A slot settled (Ready or Failed, no job, not queued): watch its store file.
 void watch_arm(Context* ctx, Slot const& s) noexcept;

@@ -98,8 +98,39 @@ Span<u8 const> memory_bytes(Slot const& s) noexcept {
     return s.cookedValid ? s.cooked.span() : s.memory.span();
 }
 
-/// Resolve the slot's source. For a store miss with a cook provider (meta stage only)
-/// the provider cooks into `s.cooked`, which then serves both stages.
+/// The provider cooks the asset into `s.cooked`, which then serves both stages. `missed` says what
+/// the store lacked, for the diagnostics; `missCode` is the code of a miss nobody can fill.
+Status cook_on_miss(Context* ctx, Slot& s, Source& src, char const* missed, u32 missCode) noexcept {
+    if (!s.provider.cook) {
+        note(s.capture, "%s and no cook provider", missed);
+        s.jobDiag          = missCode;
+        return s.jobStatus = make_status(Code::NotFound);
+    }
+    // May take seconds; we are on a worker.
+    Vec<u8> out(ctx->alloc, Tag::Payload);
+    DiagSink sink{&capture_fn, &s.capture};
+    Status const cs = s.provider.cook(s.provider.user, s.kind, path_of(s), ctx->alloc, &out, &sink);
+    if (cs.failed()) {
+        if (cs.code == Code::NotFound) {
+            note(s.capture, "%s and the cook provider found no source", missed);
+            s.jobDiag = kDiagStoreMiss;
+        } else {
+            note(s.capture, "cook provider failed");
+            s.jobDiag = kDiagCookOnMissFailed;
+        }
+        return s.jobStatus = cs;
+    }
+    s.cooked      = std::move(out);
+    s.cookedValid = true;
+    s.jobKeyValid = false; // the bytes are the provider's, not an artifact's
+    src.memory    = true;
+    src.mem       = s.cooked.span();
+    src.size      = src.mem.size;
+    return kOk;
+}
+
+/// Resolve the slot's source: the store file (Named layout) or the artifact the catalog named at
+/// dispatch (Catalog layout). A miss in the meta stage goes to the cook provider.
 Status open_source(Context* ctx, Slot& s, Source& src, bool allowCook) noexcept {
     if (s.cookedValid || s.source == SourceKind::Memory) {
         src.memory = true;
@@ -107,8 +138,25 @@ Status open_source(Context* ctx, Slot& s, Source& src, bool allowCook) noexcept 
         src.size   = src.mem.size;
         return kOk;
     }
+    bool const catalog = ctx->layout == StoreLayout::Catalog;
+    char missed[1100];
+    if (catalog && !s.jobKeyValid) {
+        if (ctx->catalogPresent)
+            format(missed, sizeof missed, "not in the catalog of profile '%s'", ctx->profile);
+        else
+            format(missed, sizeof missed, "the store has no catalog for profile '%s'", ctx->profile);
+        if (!allowCook) {
+            note(s.capture, "%s", missed);
+            s.jobDiag          = kDiagStoreMiss;
+            return s.jobStatus = make_status(Code::NotFound);
+        }
+        return cook_on_miss(ctx, s, src, missed, ctx->catalogPresent ? kDiagStoreMiss : kDiagCatalogMissing);
+    }
+
     char file[1024];
-    usize const n = store_path(ctx, s.kind, path_of(s), file, sizeof file);
+    StrView const storeDir(ctx->storeDir, ctx->storeDirLen);
+    usize const n = catalog ? artifact_file_path(storeDir, s.kind, s.jobKey, file, sizeof file)
+                            : store_path(ctx, s.kind, path_of(s), file, sizeof file);
     if (n + 1 >= sizeof file) {
         note(s.capture, "store path too long");
         s.jobDiag          = kDiagAssetLoadFailed;
@@ -117,9 +165,10 @@ Status open_source(Context* ctx, Slot& s, Source& src, bool allowCook) noexcept 
 
     IoBackend const* io = ctx->io;
     StrView const fileSv(file, n);
-    // Stat before open: if the file changes in between, the poller sees one extra change
-    // and reloads again, rather than missing the change.
-    if (allowCook && ctx->watch) s.jobStatValid = io->stat(io->user, fileSv, &s.jobStat).ok();
+    // Named layout: stat before open. If the file changes in between, the poller sees one extra
+    // change and reloads again, rather than missing the change. Artifacts never change.
+    bool const watchFile = !catalog && allowCook && ctx->watch;
+    if (watchFile) s.jobStatValid = io->stat(io->user, fileSv, &s.jobStat).ok();
     Status st = io->open(io->user, fileSv, &src.file);
     if (st.ok()) {
         src.io = io;
@@ -137,34 +186,16 @@ Status open_source(Context* ctx, Slot& s, Source& src, bool allowCook) noexcept 
         s.jobDiag          = kDiagAssetLoadFailed;
         return s.jobStatus = st;
     }
-    if (!allowCook || !s.provider.cook) {
-        note(s.capture, "no cooked file '%s' and no cook provider", file);
+    format(missed, sizeof missed, "no cooked file '%s'", file);
+    if (!allowCook) {
+        note(s.capture, "%s", missed);
         s.jobDiag          = kDiagStoreMiss;
         return s.jobStatus = st;
     }
-
-    // Cook on miss (may take seconds; we are on a worker).
-    Vec<u8> out(ctx->alloc, Tag::Payload);
-    DiagSink sink{&capture_fn, &s.capture};
-    Status const cs = s.provider.cook(s.provider.user, s.kind, path_of(s), ctx->alloc, &out, &sink);
-    if (cs.failed()) {
-        if (cs.code == Code::NotFound) {
-            note(s.capture, "no cooked file '%s' and the cook provider found no source", file);
-            s.jobDiag = kDiagStoreMiss;
-        } else {
-            note(s.capture, "cook provider failed");
-            s.jobDiag = kDiagCookOnMissFailed;
-        }
-        return s.jobStatus = cs;
-    }
+    Status const cooked = cook_on_miss(ctx, s, src, missed, kDiagStoreMiss);
     // A provider that writes the store (storeMode Disk) leaves a file to watch.
-    if (ctx->watch) s.jobStatValid = io->stat(io->user, fileSv, &s.jobStat).ok();
-    s.cooked      = std::move(out);
-    s.cookedValid = true;
-    src.memory    = true;
-    src.mem       = s.cooked.span();
-    src.size      = src.mem.size;
-    return kOk;
+    if (cooked.ok() && watchFile) s.jobStatValid = io->stat(io->user, fileSv, &s.jobStat).ok();
+    return cooked;
 }
 
 // ---------------------------------------------------------------------------
@@ -484,6 +515,11 @@ void post(Context* ctx, Completion const& c) noexcept {
 
 usize store_path(Context const* ctx, AssetKind kind, StrView path, char* out, usize cap) noexcept {
     return store_file_path(StrView(ctx->storeDir, ctx->storeDirLen), kind, path, out, cap);
+}
+
+usize catalog_path(Context const* ctx, char* out, usize cap) noexcept {
+    return catalog_file_path(StrView(ctx->storeDir, ctx->storeDirLen), StrView(ctx->profile, ctx->profileLen),
+                             out, cap);
 }
 
 u64 texture_layout(ktx2::TextureDesc const& d, u64 pitchAlign, u64 offsetAlign, u64* outOffset,

@@ -93,6 +93,7 @@ void fail_slot(Context* ctx, Slot& s, u32 code, Status st) noexcept {
     s.reloading = false;
     s.state     = State::Failed;
     s.phase     = Phase::Done;
+    s.keyValid  = false;
 
     (void)diagf(&ctx->diag, st, code, Severity::Error, path_of(s),
                 s.kind == AssetKind::Mesh ? "mesh" : "texture", "%s (%s)%s%s", failure_text(code),
@@ -133,7 +134,17 @@ void submit_stage(Context* ctx, Slot& s, Stage stage) noexcept {
     s.jobGen      = s.generation;
     s.jobInFlight = true;
     s.phase       = stage == Stage::Meta ? Phase::MetaJob : Phase::UploadJob;
-    if (stage == Stage::Meta) s.provider = ctx->provider;
+    if (stage == Stage::Meta) {
+        s.provider    = ctx->provider;
+        s.jobKeyValid = false;
+        // The artifact is chosen here, so a catalog swapped in later leaves this load alone.
+        CatalogEntry e;
+        if (ctx->layout == StoreLayout::Catalog && s.source == SourceKind::File && !s.cookedValid &&
+            ctx->catalogPresent && ctx->catalog.find(s.kind, path_of(s), &e)) {
+            s.jobKey      = e.key;
+            s.jobKeyValid = true;
+        }
+    }
     ++ctx->jobsOutstanding;
     ctx->jobsInFlight.fetch_add(1, std::memory_order_acq_rel);
     ctx->jobs.submit(ctx->jobs.user, &run_job, &s);
@@ -224,6 +235,8 @@ void make_ready(Context* ctx, Slot& s) noexcept {
     free_meta_set(ctx->alloc, s.cur);
     s.cur       = s.next;
     s.next      = {};
+    s.key       = s.jobKey;
+    s.keyValid  = s.jobKeyValid;
     s.reloading = false;
     if (reload) ++s.version;
     s.state = State::Ready;

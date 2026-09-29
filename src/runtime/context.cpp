@@ -169,6 +169,8 @@ void free_tables(Context* ctx) noexcept {
     free_array(a, ctx->compScratch, ctx->compCap, Tag::Registry);
     free_array(a, ctx->events, ctx->maxEvents, Tag::Registry);
     if (ctx->storeDir) free_array(a, ctx->storeDir, ctx->storeDirLen + 1, Tag::Registry);
+    if (ctx->profile) free_array(a, ctx->profile, ctx->profileLen + 1, Tag::Registry);
+    ctx->catalogBytes.release();
     free_array(a, ctx->roots, ctx->rootCount, Tag::Registry);
     free_array(a, ctx->rootChars, ctx->rootCharsLen, Tag::Registry);
     ctx->meshMap.release();
@@ -237,6 +239,26 @@ namespace {
 
 /// A store with a profile the adapter cannot fully sample is a configuration error: one report
 /// here instead of a failure per asset (docs/design/target-profiles.md).
+Status check_formats(ContextDesc const& desc, StrView profile, u64 blockFormats) noexcept {
+    char missing[512] = {};
+    usize at          = 0;
+    for (u32 v = u32(Format::BC1_RGB_UNORM); v <= u32(Format::ASTC_12x12_SRGB); ++v) {
+        Format const f = Format(v);
+        if (!(blockFormats & block_format_bit(f))) continue;
+        if (desc.adapter->supports_format(desc.adapter->user, f, FormatUsage::SampledImage)) continue;
+        FormatInfo const* info = format_info(f);
+        at += format(missing + at, sizeof missing - at, "%s%s", at ? " " : "", info ? info->name : "?");
+    }
+    if (at == 0) return kOk;
+    bool const allow = desc.allowUnsampledFormats;
+    Status const out = diagf(
+        &desc.diag, allow ? kOk : make_status(Code::Unsupported), kDiagStoreProfileUnsampled,
+        allow ? Severity::Warning : Severity::Error, desc.storeDir, "create",
+        "the store's profile '%.*s' has formats the adapter cannot sample: %s", KILN_SV(profile), missing);
+    return allow ? kOk : out;
+}
+
+/// Named layout: the profile in `kiln-store.txt`, if any.
 Status check_store_profile(ContextDesc const& desc) noexcept {
     if (desc.storeDir.empty()) return kOk;
     StoreProfile p;
@@ -245,22 +267,34 @@ Status check_store_profile(ContextDesc const& desc) noexcept {
     if (st.failed())
         return diagf(&desc.diag, st, kDiagStoreProfileUnsampled, Severity::Error, desc.storeDir, "create",
                      "%s is not a valid store profile", kStoreProfileFile);
-    char missing[512] = {};
-    usize at          = 0;
-    for (u32 v = u32(Format::BC1_RGB_UNORM); v <= u32(Format::ASTC_12x12_SRGB); ++v) {
-        Format const f = Format(v);
-        if (!(p.blockFormats & block_format_bit(f))) continue;
-        if (desc.adapter->supports_format(desc.adapter->user, f, FormatUsage::SampledImage)) continue;
-        FormatInfo const* info = format_info(f);
-        at += format(missing + at, sizeof missing - at, "%s%s", at ? " " : "", info ? info->name : "?");
-    }
-    if (at == 0) return kOk;
-    bool const allow = desc.allowUnsampledFormats;
-    Status const out =
-        diagf(&desc.diag, allow ? kOk : make_status(Code::Unsupported), kDiagStoreProfileUnsampled,
-              allow ? Severity::Warning : Severity::Error, desc.storeDir, "create",
-              "the store's profile '%s' has formats the adapter cannot sample: %s", p.name, missing);
-    return allow ? kOk : out;
+    return check_formats(desc, StrView(p.name), p.blockFormats);
+}
+
+/// Catalog layout: reads and validates the profile's catalog into `bytes`. A missing catalog is
+/// no error: a cook provider may write it later.
+Status load_catalog(ContextDesc const& desc, Allocator const* a, Vec<u8>* bytes, CatalogView* view,
+                    bool* present) noexcept {
+    *present = false;
+    if (char const* why = check_profile_name(desc.profile))
+        return diagf(&desc.diag, make_status(Code::InvalidArgument), kDiagBadAssetName, Severity::Error,
+                     desc.profile, "create", "invalid profile name: %s", why);
+    if (desc.storeDir.empty())
+        return diagf(&desc.diag, make_status(Code::InvalidArgument), kDiagCatalogMissing, Severity::Error, {},
+                     "create", "the Catalog layout needs ContextDesc::storeDir");
+    char path[1024];
+    usize const n = catalog_file_path(desc.storeDir, desc.profile, path, sizeof path);
+    if (n >= sizeof path - 1) return make_status(Code::InvalidArgument);
+    IoBackend const* io = desc.io ? desc.io : compat_io_backend();
+    Status const st     = io_read_file(io, StrView(path, n), a, bytes);
+    if (st.code == Code::NotFound) return kOk;
+    if (st.failed())
+        return diagf(&desc.diag, st, kDiagCatalogMissing, Severity::Error, StrView(path, n), "create",
+                     "cannot read the catalog");
+    Result<CatalogView> v = CatalogView::open(bytes->span(), &desc.diag, StrView(path, n));
+    if (v.failed()) return v.status();
+    *view    = *v;
+    *present = true;
+    return check_formats(desc, v->profile().name, v->profile().blockFormats);
 }
 
 } // namespace
@@ -287,9 +321,15 @@ Result<Context*> create(ContextDesc const& desc) noexcept {
                              Severity::Error, name, "create", "root '%.*s' is given twice", KILN_SV(name));
     }
 
-    KILN_TRY(check_store_profile(desc));
+    Allocator const* a = desc.alloc ? desc.alloc : default_allocator();
+    Vec<u8> catalogBytes(a, Tag::Registry);
+    CatalogView catalog;
+    bool catalogPresent = false;
+    if (desc.storeLayout == StoreLayout::Catalog)
+        KILN_TRY(load_catalog(desc, a, &catalogBytes, &catalog, &catalogPresent));
+    else
+        KILN_TRY(check_store_profile(desc));
 
-    Allocator const* a   = desc.alloc ? desc.alloc : default_allocator();
     Context* ctx         = new_object<Context>(a, Tag::Registry);
     ctx->alloc           = a;
     ctx->log             = desc.log;
@@ -327,6 +367,14 @@ Result<Context*> create(ContextDesc const& desc) noexcept {
 
     ctx->storeDirLen = desc.storeDir.size;
     ctx->storeDir    = copy_str(a, desc.storeDir);
+    ctx->layout      = desc.storeLayout;
+    if (ctx->layout == StoreLayout::Catalog) {
+        ctx->profileLen     = desc.profile.size;
+        ctx->profile        = copy_str(a, desc.profile);
+        ctx->catalogBytes   = std::move(catalogBytes); // the view's bytes stay where they are
+        ctx->catalog        = catalog;
+        ctx->catalogPresent = catalogPresent;
+    }
     if (!desc.roots.empty()) {
         usize chars = 0;
         for (Root const& m : desc.roots)
@@ -439,6 +487,10 @@ ContextStats stats(Context* ctx) noexcept {
 
 StrView store_dir(Context* ctx) noexcept {
     return ctx ? StrView(ctx->storeDir, ctx->storeDirLen) : StrView{};
+}
+StoreLayout store_layout(Context* ctx) noexcept { return ctx ? ctx->layout : StoreLayout::Named; }
+StrView store_profile(Context* ctx) noexcept {
+    return ctx && ctx->profile ? StrView(ctx->profile, ctx->profileLen) : StrView{};
 }
 Span<Root const> roots(Context* ctx) noexcept {
     return ctx ? Span<Root const>(ctx->roots, ctx->rootCount) : Span<Root const>{};
