@@ -404,7 +404,7 @@ void frame(void* user) {
     App& app = *static_cast<App*>(user);
     if (!app.ctx) return;
     // 5. kiln: the adapter's flush makes this frame's images and buffers, then completions,
-    //    publishing and events. Nothing here waits.
+    //    and events. Nothing here waits.
     (void)pump(app.ctx);
     for (Event const& e : events(app.ctx))
         handle_event(app, e);
@@ -436,7 +436,7 @@ void frame(void* user) {
 
 void cleanup(void* user) {
     App& app = *static_cast<App*>(user);
-    // 7. kiln first (it hands every object back through destroy_deferred), then sokol.
+    // 7. kiln first (it hands every object back through Adapter::destroy), then sokol.
 #if KILN_SOKOL_HAS_COOK
     if (app.provider) cook::uninstall_provider(app.ctx);
 #endif

@@ -113,8 +113,8 @@ struct ContextDesc {
 /// adapter or one with Adapter::flush, create() waits for them, otherwise gpu() returns a
 /// null object until the first pump() sees them complete.
 [[nodiscard]] KILN_API Result<Context*> create(ContextDesc const& desc) noexcept;
-/// Releases every asset (destroy_deferred for each GpuObject), stops the built-in
-/// pool, frees everything. Outstanding handles become stale.
+/// Releases every asset (Adapter::destroy for each GpuObject, at once: the host has waited for
+/// its GPU to go idle), stops the built-in pool, frees everything. Outstanding handles become stale.
 KILN_API void destroy(Context* ctx) noexcept;
 
 // ---------------------------------------------------------------------------
@@ -187,7 +187,8 @@ struct AssetNameParts {
 
 /// Current GPU object: the placeholder while Pending/Failed (textures), the real
 /// object once Ready, the new one after a hot reload. Meshes have no placeholder:
-/// a null object until Ready.
+/// a null object until Ready. With a bindless adapter, a texture's `slot` is kiln's slot
+/// number from the request on; it does not change while the asset lives.
 [[nodiscard]] KILN_API GpuObject gpu(Context* ctx, MeshHandle h) noexcept;
 [[nodiscard]] KILN_API GpuObject gpu(Context* ctx, TextureHandle h) noexcept;
 
@@ -215,6 +216,13 @@ struct TextureInfo {
 struct PumpOptions {
     u64 uploadBytes    = 64u << 20; ///< max bytes committed to the adapter per pump
     u32 maxCompletions = 0;         ///< 0 = unlimited
+    /// Frames, counted from 1; 0 keeps the value last reported. `frame` is the frame the host
+    /// records after this pump; `completedFrame` says every frame up to it finished on the GPU.
+    /// An object or bindless slot kiln drops during a pump is released (Adapter::destroy) once
+    /// `completedFrame` reaches that pump's `frame`. A host that never reports gets immediate
+    /// release (docs/design/adapter-frames-slots.md).
+    u64 frame          = 0;
+    u64 completedFrame = 0;
 };
 
 struct PumpStats {
@@ -267,7 +275,8 @@ KILN_API void release(Context* ctx, Group g) noexcept; ///< frees the group reco
 
 /// Reload the asset from its store file (through the cook provider if the file is
 /// missing). A Ready asset keeps serving its current payload until the new one is
-/// published: then version + 1, publish(), destroy_deferred(old), a Changed event.
+/// ready: then version + 1, bind() for a bindless slot, the old object released after the frames
+/// that use it, a Changed event.
 /// A failed reload keeps the old version and emits K5010. Memory-registered assets
 /// cannot be reloaded (K5012). Works without KILN_HOT_RELOAD; the store poller
 /// (ContextDesc::hotReload) calls this for you.

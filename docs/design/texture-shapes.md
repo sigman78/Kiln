@@ -89,8 +89,8 @@ New fields in `TextureCookSettings` (texture settings schema 2):
   Without the bit, kiln uploads no placeholder of that shape and a request for it fails with K5004.
   The null adapter and the example Vulkan and GL adapters set both.
 - **A request says the shape it expects.** `RequestOptions::textureShape` (default `Tex2D`) works
-  like `textureKind`: the first request wins, and `acquire()` receives it. `acquire()` runs at
-  request time, before the metadata, and a bindless slot of cube type cannot hold a 2D placeholder.
+  like `textureKind`: the first request wins. A bindless slot is bound to the placeholder of that
+  shape at request time, before the metadata, and a slot of cube type cannot hold a 2D placeholder.
 - **A mismatch fails the load** with the new **K5017** (`kDiagTextureShapeMismatch`), checked at
   the meta stage before the level checks. A hot reload that changes the shape fails with K5010 and
   keeps the old version.
@@ -105,7 +105,7 @@ New fields in `TextureCookSettings` (texture settings schema 2):
   Six face files would need kiln to follow references between files, which the retrospective in
   `asset-model-next.md` rules out.
 - A shape hint in the request keeps the placeholder guarantee: a texture is usable from the moment
-  it is requested. Waiting for the metadata before `acquire()` would break that.
+  it is requested. Waiting for the metadata before binding the slot would break that.
 - Capability bits let an adapter that binds only 2D views keep working unchanged.
 - Errors instead of clamps for the slice count and the shape: a wrong shape is a content bug that
   a clamp would hide.
@@ -118,7 +118,7 @@ New fields in `TextureCookSettings` (texture settings schema 2):
 | Cross layouts (4×3) for cubes | Another slicing rule; add when a real source needs it. |
 | One file per face or layer | Breaks "one file, one asset" and needs reference tracking. |
 | Equirectangular sources for cubes | A resampling step, not slicing. Usually HDR, and kiln has no HDR decoder yet. |
-| `acquire()` after the metadata | No placeholder until the metadata is read; breaks the handles contract. |
+| Binding the slot after the metadata | No placeholder until the metadata is read; breaks the handles contract. |
 | Volumes | Not needed now (owner). Would need 3D mips and a reader change. |
 
 ## Rollout

@@ -215,6 +215,33 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
   relative path, as the `UriResolver` already received for buffers.
 
 ### Changed
+- **Breaking (runtime, adapter):** kiln learns the host's frames, releases GPU objects after them
+  and numbers bindless slots itself (`docs/design/adapter-frames-slots.md`).
+  - `PumpOptions` gains `frame` (the frame the host records after this pump) and `completedFrame`
+    (the last one the GPU finished); 0 keeps the last value. An object or slot number kiln drops
+    during a pump is released once `completedFrame` reaches that pump's `frame`. A host that never
+    reports gets immediate release.
+  - `Adapter::destroy(user, obj)` replaces `destroy_deferred`: free now, kiln has waited for the
+    frames. kiln also finishes uploads it abandons (unload or failure while in flight): it keeps
+    polling the token and destroys the object after it completes.
+  - `Adapter::bindlessSlots` and `Adapter::bind(user, slot, obj, shape)` replace `acquire` and
+    `publish`. kiln hands out slots in `[0, bindlessSlots)`, one per texture asset, and calls
+    `bind` at the request (the placeholder of its kind and shape), when Ready, after each reload
+    and with the Failed checker. `gpu()` returns kiln's slot in `GpuObject::slot`. A request with
+    every slot in use fails with K5004.
+  - `destroy(ctx)` destroys every object at once: wait for the GPU to go idle before it.
+  - Null adapter: `NullAdapterDesc::bindlessSlots` replaces `bindless`; `NullAdapterStats::binds`
+    replaces `acquires` and `publishes`; `null_adapter_flush_deferred()` is gone (`destroy` frees at
+    once; simulate frames with `PumpOptions`).
+  - Example adapters: `vkx::adapter_retire`, `nga_adapter_retire`, `AdapterDesc::framesInFlight`,
+    `NgaAdapterDesc::framesInFlight` and `AdapterStats::slotsInUse` are gone;
+    `vkx::renderer_wait_frame()` returns the frame numbers to pass to `pump()`.
+  - Migration: move `acquire` + `publish` into `bind` (write `obj` into slot `slot`; the adapter no
+    longer needs asset ids, placeholder ids or an id → slot map), make `destroy_deferred` an
+    immediate `destroy`, delete retire lists and "destroyed while uploading" handling, and pass
+    `frame` / `completedFrame` to `pump()` from the host loop if the API does not keep objects alive
+    for issued commands. An adapter that tracked when kiln starts using an upload (the Vulkan
+    watermark) does it in `is_upload_complete`: kiln stops polling a token at its first true.
 - **Breaking (runtime, adapter):** textures carry a shape: 2D, cube or array
   (`docs/design/texture-shapes.md`, step 1).
   - New `TextureShape` and `texture_shape_name()` in `kiln/adapter.h`. The adapter's `TextureDesc`

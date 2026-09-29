@@ -17,8 +17,7 @@ offscreen mode.
   upload gets its timeline value at `commit_upload`, so uploads submit in commit order and a
   small one never waits for a larger one that began earlier) and
   bindless (one descriptor array per `TextureShape`: 2D, cube, array, sharing one slot index;
-  `acquire` writes the placeholder of the kind and shape into a slot, `publish` overwrites the
-  same slot). It declares `kCubeTextures` and `kArrayTextures`. It shows that an adapter is a few hundred lines. It knows
+  `bind` writes the image kiln names into kiln's slot, in the binding of its shape). It declares `kCubeTextures` and `kArrayTextures`. It shows that an adapter is a few hundred lines. It knows
   nothing about windows, swapchains, pipelines or drawing.
 - **The viewer:** `vk_device.{h,cpp}` (instance and device bring-up, shared with the smoke test),
   `viewer_render.{h,cpp}` (swapchain or offscreen image, frames in flight, one pipeline per vertex
@@ -46,12 +45,12 @@ The library never sees a Vulkan header.
 | Queues | Graphics queue for the viewer; a dedicated transfer queue for uploads when the device has one, else a second graphics-capable queue, else the graphics queue itself (still self-submitting). |
 | Ownership | Buffers and images use `VK_SHARING_MODE_CONCURRENT` over the graphics and transfer families, so no queue-family ownership transfer barriers are needed. Slightly slower on some drivers; keeps the adapter small. |
 | Staging | One host-visible, host-coherent buffer (`AdapterDesc::stagingBytes`, default 64 MiB) used as a ring. `begin_upload` carves `size` bytes at `alignment`; when the ring cannot fit the request it returns `Code::Busy` and kiln retries on a later pump. An upload larger than the whole ring is `Unsupported`. A ring entry is released when its upload has completed. |
-| Threads | `begin_upload` and `commit_upload` run on kiln workers: one mutex guards the ring, the transfer command pool and the object tables. `is_upload_complete` reads the timeline counter without the lock. `publish`, `destroy_deferred` and the per-frame retire run on the pump thread, which is the render thread. |
+| Threads | `begin_upload` and `commit_upload` run on kiln workers: one mutex guards the ring, the transfer command pool and the object tables. `is_upload_complete` reads the timeline counter without the lock. `bind` and `destroy` run on the pump thread, which is the render thread. |
 | Completion | Each `commit_upload` records one command buffer (copies plus the layout transition to `SHADER_READ_ONLY_OPTIMAL`, or a buffer barrier for meshes) and submits it on the transfer queue with `vkQueueSubmit2`, signaling the timeline semaphore with the upload's value. The token is that value, issued at `begin_upload`; timeline values must be signaled in order, so a commit that overtakes an earlier one is held until that one arrives (kiln always commits what it began). `is_upload_complete(token)` is `counter >= token`. When the transfer queue is the graphics queue, submission happens inside `is_upload_complete` on the pump thread, so no two threads use one queue. |
-| Frame ordering | Each frame submit waits on the timeline semaphore at `adapter_upload_watermark()`, so a slot published this pump is safe to sample this frame. |
-| Objects | `GpuObject::native` is a 1-based index into the adapter's object table (image + view + memory, or buffer + memory). `slot` is the bindless slot for textures and is also set on the upload's object, so `gpu()` keeps returning the stable slot once the texture is Ready. Meshes have no slot. |
-| Placeholders | The adapter records the objects kiln publishes for ids 1..4 and 15, and `acquire` writes the placeholder for `texKind` into every new slot. A null object in `publish` at unload frees the slot after `framesInFlight` frames. |
-| Deferred destroy | `destroy_deferred` queues the object with the current frame number; `adapter_retire(frame)` frees everything queued at least `framesInFlight` (default 2) frames ago. The viewer calls it after waiting the frame fence. |
+| Frame ordering | `is_upload_complete` raises `adapter_upload_watermark()` when it returns true; each frame submit waits on the timeline semaphore at that value, so a slot bound this pump is safe to sample this frame. |
+| Objects | `GpuObject::native` is a 1-based index into the adapter's object table (image + view + memory, or buffer + memory). kiln sets `slot` (its own slot number) on what `gpu()` returns. Meshes have no slot. |
+| Placeholders | Nothing special: kiln binds a new slot to the placeholder object of the texture's kind and shape. |
+| Destroy | `destroy` frees at once. The viewer reports its frames (`renderer_wait_frame` returns the frame about to be recorded and the last one whose fence it waited), so kiln calls `destroy` only after the frames that used the object. |
 | Memory | One `vkAllocateMemory` per object. Enough for an example; a real renderer sub-allocates. |
 | Copy constraints | `optimalRowPitchAlign = 1`, `optimalOffsetAlign = 16`, `bufferOffsetAlign = 256`. The adapter recomputes level offsets the same way `texture_layout` in `src/runtime/loader.cpp` does, so copy regions match what kiln wrote. |
 | Formats | A `static_assert` table in `vk_adapter.cpp` checks every `kiln::Format` value against `VK_FORMAT_*`. `supports_format` asks `vkGetPhysicalDeviceFormatProperties` for sampled-image or vertex-buffer support. |
@@ -92,7 +91,7 @@ The library never sees a Vulkan header.
 - **Sky.** `--sky <name>` requests a cube texture (`RequestOptions::textureShape = Cube`), for
   example a vertical strip `sky_cube.png` (`texture-shapes.md`), and draws it behind the scene:
   a full-screen triangle whose fragment shader turns the camera basis into a ray per pixel. The
-  cube placeholder shows until the cube is published.
+  cube placeholder shows until the cube arrives.
 - **Tonemapping.** The target is an sRGB image, so the shaders output linear color and values
   above 1 would clip. `--tonemap auto|none|aces` picks the display curve: `aces` is Narkowicz's
   ACES fit, `none` only clamps, and `auto` (default) uses `aces` once the `--sky` texture has
@@ -135,15 +134,14 @@ Vulkan-Headers (`vulkan-sdk-1.4.357.0`), volk (1.4.364), GLFW 3.5.1.
 
 ## Consequences / what this constrains later
 
-- Hot reload (M5) needs nothing new at the adapter: `publish` on the same slot and
-  `destroy_deferred` of the old object already cover it.
-- Progressive mips (v0.8) arrive as further `publish` calls on a slot; the adapter would then keep
+- Hot reload (M5) needs nothing new at the adapter: `bind` on the same slot and `destroy` of the
+  old object after its frames cover it.
+- Progressive mips (v0.8) arrive as further `bind` calls on a slot; the adapter would then keep
   per-level views.
 - `vk_adapter.cpp` is the reference for the external project's adapter; keep it readable over
   clever.
 
 ## Open points for the owner
 
-- `framesInFlight` default 2; confirm.
 - Whether the viewer should also demonstrate the per-frame-lookup binding model (a `--no-bindless`
   switch) or bindless only.

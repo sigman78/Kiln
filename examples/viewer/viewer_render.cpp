@@ -781,14 +781,14 @@ void renderer_resize(Renderer* r) noexcept { r->needRecreate = !r->offscreen; }
 void renderer_wait_idle(Renderer* r) noexcept { vkDeviceWaitIdle(r->device); }
 char const* renderer_color_format_name(Renderer* r) noexcept { return vk_format_name(r->colorFormat); }
 
-void renderer_wait_frame(Renderer* r) noexcept {
+FrameNumbers renderer_wait_frame(Renderer* r) noexcept {
     r->slot  = u32(r->frameNumber % kFramesInFlight);
     Frame& f = r->frames[r->slot];
     VKX_CHECK(vkWaitForFences(r->device, 1, &f.fence, VK_TRUE, UINT64_MAX));
-    // Everything the slot's previous frame submitted has finished; deferred objects that no
-    // frame still in flight can reference are freed.
-    adapter_retire(r->adapter, f.number);
-    f.number = ++r->frameNumber;
+    // The slot's previous frame finished, and every frame before it (one queue, in order).
+    u64 const completed = f.number;
+    f.number            = ++r->frameNumber;
+    return {f.number, completed};
 }
 
 VkCommandBuffer renderer_begin(Renderer* r) noexcept {
@@ -939,7 +939,7 @@ void renderer_end(Renderer* r, bool readback) noexcept {
     }
     VKX_CHECK(vkEndCommandBuffer(f.cmd));
 
-    // Wait for every upload kiln has published so far before reading vertices or sampling.
+    // Wait for every upload kiln uses so far before reading vertices or sampling.
     VkSemaphoreSubmitInfo waits[2];
     u32 waitCount              = 0;
     waits[waitCount]           = VkSemaphoreSubmitInfo{};

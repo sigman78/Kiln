@@ -370,10 +370,9 @@ int main(int argc, char** argv) {
     VkSurfaceKHR surface = VK_NULL_HANDLE;
     if (window && glfwCreateWindowSurface(device.instance, window, nullptr, &surface) != VK_SUCCESS) return 2;
 
-    // 2. The adapter without bindless: no acquire(); gpu() gives objects, adapter_texture() their views.
+    // 2. The adapter without bindless: gpu() gives objects, adapter_texture() their views.
     Adapter adapter{};
-    Result<vkx::VkAdapter*> va =
-        vkx::adapter_create({.device = &device, .framesInFlight = kFif, .bindless = false}, &adapter);
+    Result<vkx::VkAdapter*> va = vkx::adapter_create({.device = &device, .bindless = false}, &adapter);
     if (va.failed()) return 2;
 
     // 3. The frame plumbing with this example's shaders and its material set layout.
@@ -439,9 +438,9 @@ int main(int argc, char** argv) {
             glfwPollEvents();
             if (glfwWindowShouldClose(window)) break;
         }
-        vkx::renderer_wait_frame(s.ren);
-        u32 const slot = u32(frame++ % kFif); // the slot renderer_wait_frame just freed
-        (void)pump(s.ctx);
+        vkx::FrameNumbers const fn = vkx::renderer_wait_frame(s.ren);
+        u32 const slot             = u32(frame++ % kFif); // the slot renderer_wait_frame just freed
+        (void)pump(s.ctx, {.frame = fn.frame, .completedFrame = fn.completed});
         for (Event const& e : events(s.ctx))
             handle_event(s, e);
         update_sets(s, slot);
@@ -513,7 +512,7 @@ int main(int argc, char** argv) {
     }
     if (state(s.ctx, s.model) == State::Failed && exitCode == 0) exitCode = 1;
 
-    // 7. Teardown: kiln first (it hands every object back through destroy_deferred), then Vulkan.
+    // 7. Teardown: kiln first (it hands every object back through Adapter::destroy), then Vulkan.
 #if KILN_VK_BASIC_HAS_COOK
     if (provider) cook::uninstall_provider(s.ctx);
 #endif

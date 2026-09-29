@@ -91,9 +91,13 @@ void renderer_destroy(Renderer* r) noexcept;
 /// 64 zero bytes; bound at instance rate for vertex inputs a layout does not provide.
 [[nodiscard]] VkBuffer renderer_zero_buffer(Renderer* r) noexcept;
 
-/// Step 1 of a frame: waits for the frame slot's fence and retires the adapter's deferred
-/// objects up to the frame that used the slot last. Pump kiln after this.
-void renderer_wait_frame(Renderer* r) noexcept;
+/// Step 1 of a frame: waits for the frame slot's fence. Returns the frame about to be recorded
+/// and the last one known complete: pump kiln after this with both (PumpOptions).
+struct FrameNumbers {
+    u64 frame     = 0;
+    u64 completed = 0;
+};
+FrameNumbers renderer_wait_frame(Renderer* r) noexcept;
 /// Step 2: acquires the target, begins the command buffer and dynamic rendering, binds the
 /// bindless and frame sets. VK_NULL_HANDLE means skip this frame (minimized window).
 [[nodiscard]] VkCommandBuffer renderer_begin(Renderer* r) noexcept;

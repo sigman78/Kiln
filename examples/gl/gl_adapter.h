@@ -14,10 +14,10 @@ struct GlAdapterDesc {
     u64 stagingBytes = 96u << 20; ///< persistently mapped upload ring; a larger upload fails
     u32 maxObjects   = 4096;      ///< textures and buffers alive at once
     u32 maxUploads   = 256;       ///< uploads between begin_upload and completion
-    /// acquire() gives each texture a slot in a table of resident handles (gl_handle_table), showing
-    /// its placeholder until publish() writes the real handle. Needs ARB_bindless_texture.
+    /// bind() writes each texture's resident handle into kiln's slot of a table (gl_handle_table).
+    /// Needs ARB_bindless_texture, and a host that reports frames (PumpOptions).
     bool bindless = false;
-    u32 maxSlots  = 4096;
+    u32 maxSlots  = 4096; ///< Adapter::bindlessSlots
 };
 
 /// Creates the adapter and fills `out`. Call on the thread that owns the GL context; call create()

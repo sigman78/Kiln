@@ -56,8 +56,7 @@ void settle(Context* ctx, Slot& s) noexcept {
 /// current version. One K5010, no event.
 void fail_reload(Context* ctx, Slot& s, u32 code, Status st) noexcept {
     queue_remove(ctx, s);
-    if (s.hasTarget) ctx->adapter.destroy_deferred(ctx->adapter.user, s.target.object);
-    s.hasTarget = false;
+    orphan_upload(ctx, s);
     s.reloading = false;
     s.phase     = Phase::Done;
     free_meta_set(ctx->alloc, s.next);
@@ -80,8 +79,7 @@ void fail_slot(Context* ctx, Slot& s, u32 code, Status st) noexcept {
         return;
     }
     queue_remove(ctx, s);
-    if (s.hasTarget) ctx->adapter.destroy_deferred(ctx->adapter.user, s.target.object);
-    s.hasTarget = false;
+    orphan_upload(ctx, s);
     if (!s.reloading) { // a reload from Failed: the group already counts the slot as failed
         if (GroupRec* g = group_of(ctx, s)) {
             --g->pending;
@@ -101,11 +99,8 @@ void fail_slot(Context* ctx, Slot& s, u32 code, Status st) noexcept {
 
     push_event(ctx, EventKind::Failed, s.kind, handle_bits(s), s.version, st);
     ++ctx->cur.completed;
-    Placeholder const& fp = ctx->ph[failed_placeholder_index(s.texShape)];
-    if (s.kind == AssetKind::Texture && ctx->adapter.publish && !s.acquired.is_null() &&
-        ctx->devPlaceholders && fp.ready)
-        ctx->adapter.publish(ctx->adapter.user, s.id, fp.obj, s.version); // bindless slot shows the checker
-    free_load_data(s);                                                    // Failed holds no metadata
+    bind_placeholder(ctx, s); // with devPlaceholders, the Failed checker
+    free_load_data(s);        // Failed holds no metadata
     settle(ctx, s);
 }
 
@@ -148,7 +143,8 @@ void poll_placeholders(Context* ctx) noexcept {
         if (!p.pending || !ctx->adapter.is_upload_complete(ctx->adapter.user, p.token)) continue;
         p.pending = false;
         p.ready   = true;
-        if (ctx->adapter.publish) ctx->adapter.publish(ctx->adapter.user, p.id, p.obj, 1);
+        for (u32 i = 0; i < ctx->maxAssets && ctx->bindPendingCount; ++i)
+            if (ctx->slots[i].bindPending) bind_placeholder(ctx, ctx->slots[i]);
     }
 }
 
@@ -203,7 +199,7 @@ void on_meta_ready(Context* ctx, Slot& s) noexcept {
     queue_push(ctx, upload_queue(s), s);
 }
 
-/// First load and reload alike: swap `next` into `cur` and publish the new object.
+/// First load and reload alike: swap `next` into `cur` and bind the new object.
 /// A reload bumps the content version and emits Changed (from Ready) or Ready (from
 /// Failed); a first load and a Failed -> Ready reload count in the group.
 void make_ready(Context* ctx, Slot& s) noexcept {
@@ -217,11 +213,10 @@ void make_ready(Context* ctx, Slot& s) noexcept {
     s.next      = {};
     s.reloading = false;
     if (reload) ++s.version;
-    s.state          = State::Ready;
-    s.phase          = Phase::Done;
-    Adapter const& a = ctx->adapter;
-    if (a.publish) a.publish(a.user, s.id, s.realObj, s.version);
-    if (!old.is_null()) a.destroy_deferred(a.user, old);
+    s.state = State::Ready;
+    s.phase = Phase::Done;
+    bind_object(ctx, s, s.realObj);
+    retire(ctx, old, kInvalid);
     ++ctx->cur.uploadsCommitted;
     ++ctx->cur.completed;
     if (!reload) {
@@ -258,8 +253,7 @@ void process(Context* ctx, Completion const& c) noexcept {
     s.jobInFlight = false;
     --ctx->jobsOutstanding;
     if (s.zombie) { // released while the job ran: discard the result
-        if (s.hasTarget) ctx->adapter.destroy_deferred(ctx->adapter.user, s.target.object);
-        s.hasTarget = false;
+        orphan_upload(ctx, s);
         free_slot(ctx, s);
         return;
     }
@@ -349,7 +343,7 @@ void dispatch_meta(Context* ctx) noexcept {
             if (s.preFail.failed()) {
                 s.capture.reset();
                 format(s.capture.msg, sizeof s.capture.msg, "%s",
-                       caps_allow(ctx, s.kind, s.texShape) ? "acquire() failed"
+                       caps_allow(ctx, s.kind, s.texShape) ? "all Adapter::bindlessSlots are in use"
                                                            : "the adapter's caps do not allow this asset");
                 s.capture.set = true;
                 fail_slot(ctx, s, kDiagAdapterRejected, s.preFail);
@@ -371,12 +365,16 @@ void bind_pump_thread(Context* ctx) noexcept {
 
 PumpStats pump_impl(Context* ctx, PumpOptions const& opt, bool keepEvents) noexcept {
     ++ctx->pumpIndex;
+    if (opt.frame) ctx->frame = opt.frame;
+    if (opt.completedFrame) ctx->completedFrame = opt.completedFrame;
     if (ctx->adapter.flush) ctx->adapter.flush(ctx->adapter.user);
+    process_retired(ctx);
     ctx->cur = {};
     if (!keepEvents) ctx->eventCount = 0;
     ctx->droppedWarned = false;
     watch_drain(ctx); // reloads the store poller asked for; dispatched below
     poll_placeholders(ctx);
+    poll_orphans(ctx);
     drain_completions(ctx, opt.maxCompletions);
     poll_awaiting(ctx);
     dispatch_uploads(ctx, opt.uploadBytes);

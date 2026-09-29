@@ -33,8 +33,8 @@ enum AdapterCaps : u32 {
     /// placeholder of that shape and a request for it fails (K5004).
     kCubeTextures  = 1u << 1,
     kArrayTextures = 1u << 2,
-    /// The adapter accepts UploadKind::MeshPayload. Without the bit, kiln never acquires or
-    /// uploads a mesh, and a mesh request fails (K5004).
+    /// The adapter accepts UploadKind::MeshPayload. Without the bit, kiln never uploads a mesh,
+    /// and a mesh request fails (K5004).
     kMeshes = 1u << 3,
     // bits 4..31 reserved, must be 0
 };
@@ -90,32 +90,31 @@ struct UploadTarget {
     GpuObject object;            ///< the object that holds the data once the upload completes
 };
 
-/// Every function pointer except `acquire` and `publish` must be set. `acquire` runs on
-/// the requesting thread, `begin_upload` / `commit_upload` may run on kiln worker threads,
-/// everything else runs on the pump thread (threading contract: docs/design/adapter.md).
+/// Every function pointer except `bind` and `flush` must be set. `begin_upload` /
+/// `commit_upload` may run on kiln worker threads, everything else runs on the pump thread
+/// (threading contract and frames: docs/design/adapter.md, docs/design/adapter-frames-slots.md).
 struct Adapter {
     bool (*supports_format)(void* user, Format f, FormatUsage usage) = nullptr;
     void (*copy_constraints)(void* user, CopyConstraints* out)       = nullptr;
-    /// Called once per asset on its first request. Bindless adapters allocate a slot
-    /// bound to the placeholder of `texKind` and `shape` and return it; others may return a
-    /// null object. Meshes pass Tex2D.
-    Status (*acquire)(void* user, AssetId id, UploadKind kind, TextureKind texKind, TextureShape shape,
-                      GpuObject* out) = nullptr;
     /// May return Code::Busy (back-pressure); kiln retries on a later pump.
     Status (*begin_upload)(void* user, UploadDesc const& desc, UploadTarget* out) = nullptr;
     void (*commit_upload)(void* user, u64 token)                                  = nullptr;
-    bool (*is_upload_complete)(void* user, u64 token)                             = nullptr;
-    /// During pump(), when an asset becomes Ready or a hot reload swaps its payload.
-    /// `version` is the content version. A null `obj` frees the asset's slot at unload.
-    void (*publish)(void* user, AssetId id, GpuObject obj, u32 version) = nullptr;
-    /// The renderer delays destruction by its frames in flight. The object's upload may still be
-    /// in flight: kiln then never polls that token again, and the adapter retires it itself.
-    void (*destroy_deferred)(void* user, GpuObject obj) = nullptr;
+    /// Polled on the pump thread until true. After true, kiln uses the object (or destroys it if the
+    /// asset was dropped meanwhile).
+    bool (*is_upload_complete)(void* user, u64 token) = nullptr;
+    /// Bindless adapters: slot `slot` (kiln numbers them, [0, bindlessSlots)) shows `obj` from now
+    /// on: the placeholder of the texture's kind and shape at the request, the texture once Ready,
+    /// the new one after a reload, the Failed checker with devPlaceholders.
+    void (*bind)(void* user, u32 slot, GpuObject obj, TextureShape shape) = nullptr;
+    /// No frame the host reported (PumpOptions::frame / completedFrame) can use `obj` any more:
+    /// free it now. Its upload has completed.
+    void (*destroy)(void* user, GpuObject obj) = nullptr;
     /// Optional. Called at the start of every pump() (so in every wait() loop too) and while
     /// create() waits for the placeholders, on that thread. An adapter whose GPU work must run
     /// on the graphics context's thread does it here; the host then calls pump() on that thread.
     void (*flush)(void* user) = nullptr;
     u32 caps                  = 0;  ///< AdapterCaps
+    u32 bindlessSlots         = 0;  ///< with `bind`: the slots kiln may hand out; 0 = not bindless
     void* reserved[4]         = {}; ///< residency hooks (v0.8); must be null
     void* user                = nullptr;
 };
@@ -127,11 +126,13 @@ struct Adapter {
 [[nodiscard]] KILN_API u64 texture_level_layout(TextureDesc const& t, CopyConstraints const& c, u64* offsets,
                                                 u64* pitches) noexcept;
 
-/// True if every required entry point is set and the reserved tail is null.
+/// True if every required entry point is set, `bind` comes with `bindlessSlots`, and the reserved
+/// tail is null.
 [[nodiscard]] constexpr bool adapter_is_valid(Adapter const& a) noexcept {
     return a.supports_format && a.copy_constraints && a.begin_upload && a.commit_upload &&
-           a.is_upload_complete && a.destroy_deferred && !a.reserved[0] && !a.reserved[1] && !a.reserved[2] &&
-           !a.reserved[3] && (a.caps & ~u32(kSelfSubmitting | kCubeTextures | kArrayTextures | kMeshes)) == 0;
+           a.is_upload_complete && a.destroy && (a.bind != nullptr) == (a.bindlessSlots != 0) &&
+           !a.reserved[0] && !a.reserved[1] && !a.reserved[2] && !a.reserved[3] &&
+           (a.caps & ~u32(kSelfSubmitting | kCubeTextures | kArrayTextures | kMeshes)) == 0;
 }
 
 } // namespace kiln

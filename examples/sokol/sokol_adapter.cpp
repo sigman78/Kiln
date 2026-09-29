@@ -1,6 +1,6 @@
 // examples/sokol/sokol_adapter.cpp — kiln adapter over sokol_gfx.
 // Threads: begin_upload / commit_upload run on kiln workers and only touch memory under `mutex`.
-// Every sokol call (flush, destroy_deferred) runs on the frame thread, which is the pump thread.
+// Every sokol call (flush, destroy) runs on the frame thread, which is the pump thread.
 #include "sokol_adapter.h"
 
 #include <kiln/alloc.h>
@@ -20,9 +20,8 @@ struct Object {
     sg_image image{};
     sg_view view{};
     sg_buffer buffer{};
-    u32 gen     = 1;
-    bool used   = false;
-    bool doomed = false; ///< destroyed before its upload was flushed
+    u32 gen   = 1;
+    bool used = false;
 };
 
 struct Upload {
@@ -98,7 +97,7 @@ void release_object(SokolAdapter* a, u32 index) noexcept {
     if (o.view.id) sg_destroy_view(o.view);
     if (o.image.id) sg_destroy_image(o.image);
     if (o.buffer.id) sg_destroy_buffer(o.buffer);
-    o = Object{{}, {}, {}, o.gen + 1, false, false};
+    o = Object{{}, {}, {}, o.gen + 1, false};
     std::lock_guard<std::mutex> const lock(a->mutex);
     a->freeObjects.push_back(index);
 }
@@ -212,20 +211,11 @@ bool is_upload_complete(void* user, u64 token) {
     return true;
 }
 
-/// sokol defers the release of a resource that in-flight frames use, so it goes at once.
-void destroy_deferred(void* user, GpuObject obj) {
+/// sokol defers the release of a resource that in-flight frames use, so the host reports no frames.
+void destroy(void* user, GpuObject obj) {
     auto* a = static_cast<SokolAdapter*>(user);
-    if (obj.native == 0 || obj.native > a->objects.size()) return;
-    u32 const index = u32(obj.native - 1);
-    Object& o       = a->objects[index];
-    if (!o.used) return;
-    bool pending = false; // not flushed yet: flush drops it
-    for (Upload const& u : a->uploads)
-        pending |= u.used && !u.done && u.object == index;
-    if (pending)
-        o.doomed = true;
-    else
-        release_object(a, index);
+    if (obj.native == 0 || obj.native > a->objects.size() || !a->objects[obj.native - 1].used) return;
+    release_object(a, u32(obj.native - 1));
 }
 
 /// Makes the images and buffers of every committed upload. kiln calls this at the start of each
@@ -241,11 +231,6 @@ void flush(void* user) {
     }
     for (u32 i : a->flushing) {
         Upload& u = a->uploads[i];
-        if (a->objects[u.object].doomed) { // kiln forgot this upload: nobody polls its token
-            release_object(a, u.object);
-            free_upload(a, i);
-            continue;
-        }
         make_object(a, u);
         kiln::free(default_allocator(), u.bytes, usize(max<u64>(u.size, 1)), 16, Tag::Payload);
         u.bytes = nullptr;
@@ -284,12 +269,11 @@ Result<SokolAdapter*> sokol_adapter_create(SokolAdapterDesc const& desc, Adapter
     *out = Adapter{
         .supports_format    = &supports_format,
         .copy_constraints   = &copy_constraints,
-        .acquire            = nullptr, // bindings are rebuilt per draw from gpu()
         .begin_upload       = &begin_upload,
         .commit_upload      = &commit_upload,
         .is_upload_complete = &is_upload_complete,
-        .publish            = nullptr,
-        .destroy_deferred   = &destroy_deferred,
+        .bind               = nullptr, // bindings are rebuilt per draw from gpu()
+        .destroy            = &destroy,
         .flush              = &flush,
         .caps               = kCubeTextures | kArrayTextures | kMeshes,
         .reserved           = {},
@@ -310,13 +294,13 @@ void sokol_adapter_destroy(SokolAdapter* a) noexcept {
 sg_view sokol_texture(SokolAdapter const* a, GpuObject obj) noexcept {
     if (obj.native == 0 || obj.native > a->objects.size() || obj.kind != u32(ObjectKind::Texture)) return {};
     Object const& o = a->objects[obj.native - 1];
-    return o.used && !o.doomed ? o.view : sg_view{};
+    return o.used ? o.view : sg_view{};
 }
 
 sg_buffer sokol_buffer(SokolAdapter const* a, GpuObject obj) noexcept {
     if (obj.native == 0 || obj.native > a->objects.size() || obj.kind != u32(ObjectKind::Buffer)) return {};
     Object const& o = a->objects[obj.native - 1];
-    return o.used && !o.doomed ? o.buffer : sg_buffer{};
+    return o.used ? o.buffer : sg_buffer{};
 }
 
 } // namespace kiln::sk

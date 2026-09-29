@@ -1,6 +1,6 @@
 // examples/viewer/adapter_smoke.cpp — loads cooked assets through the Vulkan adapter with no
 // window (docs/design/viewer.md): device, adapter, an upload-order check, context, one group
-// waited on, a report per asset, then frames that release everything and retire deferred objects.
+// waited on, a report per asset, then frames that release everything as they complete.
 #include <kiln/assets.h>
 #include <kiln/log.h>
 
@@ -97,8 +97,8 @@ bool check_commit_order(Adapter const& a, u64 stagingBytes) {
     bool const bigWaited = !a.is_upload_complete(a.user, bigT.token);
     a.commit_upload(a.user, bigT.token);
     bool const bigDone = wait_upload(a, bigT.token, 5000);
-    a.destroy_deferred(a.user, smallT.object);
-    a.destroy_deferred(a.user, bigT.object);
+    a.destroy(a.user, smallT.object);
+    a.destroy(a.user, bigT.object);
 
     if (!smallDone || !bigWaited || !bigDone) {
         KILN_ERROR("smoke", "commit order: small upload %s, big upload %s before its commit, %s after it",
@@ -146,9 +146,9 @@ bool add_item(void* user, char const* arg) {
 
 void print_stats(char const* when, vkx::AdapterStats const& s) {
     KILN_INFO("smoke",
-              "adapter %s: %u uploads in flight, %u busy, %llu bytes uploaded, %u live objects, %u slots, "
+              "adapter %s: %u uploads in flight, %u busy, %llu bytes uploaded, %u live objects, "
               "%llu staging bytes reserved",
-              when, s.uploadsInFlight, s.busyReturned, ull(s.bytesUploaded), s.liveObjects, s.slotsInUse,
+              when, s.uploadsInFlight, s.busyReturned, ull(s.bytesUploaded), s.liveObjects,
               ull(s.stagingUsed));
 }
 
@@ -166,7 +166,7 @@ int main(int argc, char** argv) {
          .flag = &o.validate},
         {.name   = "--frames",
          .arg    = "<n>",
-         .help   = "frames to pump after the load, retiring deferred objects (default: 8)",
+         .help   = "frames to pump after the load, two in flight (default: 8)",
          .number = &o.frames},
         {.name   = "--staging-kib",
          .arg    = "<n>",
@@ -255,8 +255,9 @@ int main(int argc, char** argv) {
     }
     print_stats("after load", vkx::adapter_stats(vka));
 
-    // 4. Release everything, then run frames: unloads hand objects to destroy_deferred and
-    //    adapter_retire frees them framesInFlight frames later.
+    // 4. Release everything, then run frames with two in flight: kiln destroys the objects once the
+    //    frame that was being recorded at the release completes.
+    (void)pump(ctx, {.frame = 2, .completedFrame = 0});
     for (u32 i = 0; i < o.itemCount; ++i) {
         Item const& it = o.items[i];
         if (it.kind == AssetKind::Mesh)
@@ -265,10 +266,8 @@ int main(int argc, char** argv) {
             release(ctx, it.texture);
     }
     release(ctx, g);
-    for (u32 f = 1; f <= o.frames; ++f) {
-        (void)pump(ctx);
-        vkx::adapter_retire(vka, f);
-    }
+    for (u32 f = 1; f <= o.frames; ++f)
+        (void)pump(ctx, {.frame = f + 2, .completedFrame = f});
     print_stats("after frames", vkx::adapter_stats(vka));
 
     // 5. Teardown: the context hands its last objects back, then the adapter, then the device.

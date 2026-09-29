@@ -10,7 +10,7 @@ namespace kiln {
 
 namespace {
 
-enum class EntryState : u8 { Uploading, Complete, Deferred, Freed };
+enum class EntryState : u8 { Uploading, Complete, Freed };
 
 /// One uploaded object. `native` in the GpuObject kiln is handed back is this
 /// entry's 1-based index into NullAdapter::table.
@@ -33,9 +33,8 @@ struct NullAdapter {
     NullAdapterDesc desc{};
 
     std::mutex mutex;
-    Vec<ObjectEntry> table;           ///< table[i] is native (i + 1); reserved, never regrows
-    Vec<GpuObject> slots;             ///< bindless slot table
-    HashMap<AssetId, u32> assetSlots; ///< id -> slot, bindless only
+    Vec<ObjectEntry> table; ///< table[i] is native (i + 1); reserved, never regrows
+    Vec<GpuObject> slots;   ///< bindless slot table
     NullAdapterStats stats{};
 
     std::atomic<u32> busyCalls{0}; ///< begin_upload call counter for busyEveryN
@@ -57,30 +56,6 @@ void null_copy_constraints(void* user, CopyConstraints* out) noexcept {
     out->optimalRowPitchAlign = na->desc.rowPitchAlign;
     out->optimalOffsetAlign   = na->desc.offsetAlign;
     out->bufferOffsetAlign    = na->desc.offsetAlign;
-}
-
-Status null_acquire(void* user, AssetId id, UploadKind kind, TextureKind /*texKind*/, TextureShape /*shape*/,
-                    GpuObject* out) noexcept {
-    NullAdapter* na = self(user);
-    std::lock_guard<std::mutex> lock(na->mutex);
-    ++na->stats.acquires;
-
-    if (!na->desc.bindless) {
-        *out = GpuObject{};
-        return kOk;
-    }
-
-    u32 slot;
-    if (u32* found = na->assetSlots.find(id)) {
-        slot = *found;
-    } else {
-        KILN_VERIFY(na->slots.size() < na->desc.maxObjects);
-        slot = u32(na->slots.size());
-        na->slots.push_back(GpuObject{});
-        na->assetSlots.insert(id, slot);
-    }
-    *out = GpuObject{.native = 0, .slot = slot, .kind = u32(kind)};
-    return kOk;
 }
 
 Status null_begin_upload(void* user, UploadDesc const& desc, UploadTarget* out) noexcept {
@@ -158,22 +133,28 @@ bool null_is_upload_complete(void* user, u64 token) noexcept {
     return na->table[usize(token - 1)].state == EntryState::Complete;
 }
 
-void null_publish(void* user, AssetId id, GpuObject obj, u32 /*version*/) noexcept {
+void null_bind(void* user, u32 slot, GpuObject obj, TextureShape /*shape*/) noexcept {
     NullAdapter* na = self(user);
     std::lock_guard<std::mutex> lock(na->mutex);
-    ++na->stats.publishes;
-    if (!na->desc.bindless) return;
-    u32* slot = na->assetSlots.find(id);
-    if (!slot || *slot >= na->slots.size()) return;
-    na->slots[*slot] = obj; // a null obj clears the slot
+    KILN_VERIFY(slot < na->desc.bindlessSlots);
+    KILN_VERIFY(obj.native != 0 && obj.native <= u64(na->table.size()) &&
+                na->table[usize(obj.native - 1)].state == EntryState::Complete);
+    ++na->stats.binds;
+    na->slots[slot] = obj;
 }
 
-void null_destroy_deferred(void* user, GpuObject obj) noexcept {
+void null_destroy(void* user, GpuObject obj) noexcept {
     NullAdapter* na = self(user);
     std::lock_guard<std::mutex> lock(na->mutex);
-    if (obj.native == 0 || obj.native > u64(na->table.size())) return;
+    KILN_VERIFY(obj.native != 0 && obj.native <= u64(na->table.size()));
     ObjectEntry& e = na->table[usize(obj.native - 1)];
-    if (e.state == EntryState::Complete || e.state == EntryState::Uploading) e.state = EntryState::Deferred;
+    KILN_VERIFY(e.state == EntryState::Complete && "destroy of an incomplete or destroyed object");
+    free(na->allocator, e.bytes, e.size ? usize(e.size) : 1, e.align, Tag::Payload);
+    e.bytes = nullptr;
+    e.size  = 0;
+    e.state = EntryState::Freed;
+    ++na->stats.destroys;
+    --na->stats.liveObjects;
 }
 
 } // namespace
@@ -190,18 +171,17 @@ Result<NullAdapter*> null_adapter_create(NullAdapterDesc const& desc, Adapter* o
     na->table.init(allocator, Tag::Payload);
     na->table.reserve(na->desc.maxObjects);
     na->slots.init(allocator, Tag::Payload);
-    na->slots.reserve(na->desc.maxObjects);
-    na->assetSlots.init(allocator, Tag::Payload);
+    na->slots.resize(na->desc.bindlessSlots);
 
     *out                    = Adapter{};
     out->supports_format    = &null_supports_format;
     out->copy_constraints   = &null_copy_constraints;
-    out->acquire            = &null_acquire;
     out->begin_upload       = &null_begin_upload;
     out->commit_upload      = &null_commit_upload;
     out->is_upload_complete = &null_is_upload_complete;
-    out->publish            = &null_publish;
-    out->destroy_deferred   = &null_destroy_deferred;
+    out->bind               = desc.bindlessSlots ? &null_bind : nullptr;
+    out->destroy            = &null_destroy;
+    out->bindlessSlots      = desc.bindlessSlots;
     out->caps               = kSelfSubmitting | kCubeTextures | kArrayTextures | kMeshes;
     out->user               = na;
 
@@ -237,23 +217,6 @@ NullAdapterStats null_adapter_stats(NullAdapter* na) noexcept {
     if (!na) return {};
     std::lock_guard<std::mutex> lock(na->mutex);
     return na->stats;
-}
-
-u32 null_adapter_flush_deferred(NullAdapter* na) noexcept {
-    if (!na) return 0;
-    std::lock_guard<std::mutex> lock(na->mutex);
-    u32 freed = 0;
-    for (ObjectEntry& e : na->table) {
-        if (e.state != EntryState::Deferred) continue;
-        free(na->allocator, e.bytes, e.size ? usize(e.size) : 1, e.align, Tag::Payload);
-        e.bytes = nullptr;
-        e.size  = 0;
-        e.state = EntryState::Freed;
-        ++freed;
-        ++na->stats.destroys;
-        if (na->stats.liveObjects) --na->stats.liveObjects;
-    }
-    return freed;
 }
 
 } // namespace kiln

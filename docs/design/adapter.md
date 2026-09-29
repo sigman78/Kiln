@@ -2,7 +2,8 @@
 
 **Status:** Proposed (awaiting owner sign-off). Implemented in M3: `include/kiln/adapter.h`,
 `include/kiln/formats.h`, the null adapter in `include/kiln/null_adapter.h`; M4 adds the Vulkan
-example (`viewer.md`).
+example (`viewer.md`). Frames, `bind` and `destroy` replace `acquire`, `publish` and
+`destroy_deferred` (`adapter-frames-slots.md`, decided 2026-09-28).
 **Decides:** The `Format` enum and the shape, calls, binding models and threading contract of the
 renderer adapter.
 
@@ -48,8 +49,8 @@ Formats the v0.5 cooker writes:
 
 - All three values are **opaque to kiln**. kiln stores, copies and returns them.
 - `native == 0` and `slot == kInvalid` is **null** (`is_null()`); `kind` does not matter.
-- A slot-only object (`native == 0`, valid `slot`) is legal: a bindless adapter returns it from
-  `acquire()` before the real image exists.
+- kiln sets `slot` itself for a texture of a bindless adapter (`gpu()`); the adapter's own `slot`
+  in `UploadTarget::object` is ignored there.
 - The object may name something that does not exist yet. `begin_upload` runs on a worker thread,
   where a GL or sokol adapter cannot create its texture; it returns an index into its own table in
   `native` and creates the real object in `flush` (`kiln-gl` does this).
@@ -57,24 +58,31 @@ Formats the v0.5 cooker writes:
 ### Adapter calls
 
 The structs (`CopyConstraints`, `TextureDesc`, `MeshPayloadDesc`, `UploadDesc`, `UploadTarget`,
-`Adapter`) are in `adapter.h`. `adapter_is_valid()` requires every entry point except `acquire`
-and `publish`, a null `reserved[4]` and no unknown `caps` bits; `create()` rejects anything else.
+`Adapter`) are in `adapter.h`. `adapter_is_valid()` requires every entry point except `bind` and
+`flush`, `bind` set exactly when `bindlessSlots` is non-zero, a null `reserved[4]` and no unknown
+`caps` bits; `create()` rejects anything else.
 
 | Call | Contract |
 |---|---|
 | `supports_format` | Called on the pump thread when an asset reaches metadata: the texture format with `SampledImage`, every vertex attribute format with `VertexBuffer`. False fails the asset (K5004). Must be cheap and pure. |
 | `copy_constraints` | Called once in `create()`. kiln rounds each value up to a power of two. |
-| `acquire` | Called once per asset, on the first `request()` of its id, on the requesting thread. A bindless adapter allocates a descriptor slot of the type of `shape`, writes the placeholder for `texKind` and `shape` into it, and returns a slot-bound object. A per-frame-lookup adapter returns a null object or leaves `acquire` null. Non-Ok moves the asset to `Failed` on the next `pump()`. `Busy` is not allowed. `texKind` is ignored for meshes. |
 | `begin_upload` | Returns destination memory and the `GpuObject` it will hold. The memory may be plain CPU memory that the adapter hands to its API later (sokol copies it at image creation). `Code::Busy` means "not now" (staging full): kiln retries on a later `pump()`. Any other failure moves the asset to `Failed` (K5004). |
 | `commit_upload` | kiln has finished writing `dst`. Always called after a successful `begin_upload`, even when the load then fails. The renderer records and submits the copy (itself if `kSelfSubmitting`, else with its next frame). |
-| `is_upload_complete` | Polled in `pump()` (and in `create()`'s placeholder spin). When true, the asset becomes `Ready` in the same pump. |
-| `publish` | Called during `pump()` when an asset becomes `Ready` (or, from M5, a hot reload swaps its payload). `version` is the **content version** (`handles-and-states.md`), not the handle generation. A bindless adapter overwrites the slot it acquired for `id`. At unload and at `destroy()` kiln calls `publish(id, null, version)`, and a bindless adapter frees the slot after its frames in flight. |
-| `destroy_deferred` | kiln no longer references the object. The renderer frees it after its frames in flight; an API that keeps objects alive for issued commands (GL, sokol) may free it at once, but a bindless GL handle must stay resident until the frames that may sample it have finished (`kiln-gl-bindless` fences it). The object's upload may still be in flight when an asset is unloaded: kiln then never polls that token again, and the adapter retires the upload itself (frees its staging space when the GPU is done). |
+| `is_upload_complete` | Polled in `pump()` (and in `create()`'s placeholder spin) until true. When true, the asset becomes `Ready` in the same pump. kiln also polls the uploads it abandoned (an unload or a failure while in flight) until they complete, then destroys their objects. |
+| `bind` | Bindless adapters only (`bindlessSlots > 0`). Slot `slot` shows `obj` from now on. kiln numbers the slots, `[0, bindlessSlots)`, one per texture asset, and calls `bind` at the request (the placeholder of the texture's kind and shape, or as soon as that placeholder's upload completes), when the texture is `Ready`, after each reload, and with the Failed checker (`devPlaceholders`). Pump thread. |
+| `destroy` | No frame the host reported can use the object any more (see Frames below): free it now. Its upload has completed. |
 | `flush` | Optional. Called at the start of every `pump()` (so in every `wait()` loop) and in `create()`'s placeholder spin, on that thread. An adapter whose API must be called on the graphics context's thread (GL, sokol) does its GPU work here: create the objects, record the copies, insert fences. |
 | `caps` | Constant for the life of the context. Unknown bits must be 0. |
 
-HANDOFF names the last `publish` parameter `generation`. kiln names it `version` to make clear it
-is the content version.
+### Frames
+
+The host reports its frames in `PumpOptions` (`adapter-frames-slots.md`): `frame` is the frame it
+records after this pump, `completedFrame` the last one the GPU finished; 0 keeps the last value. An
+object or slot number kiln drops during a pump with `frame` F is released once `completedFrame >= F`.
+A host that never reports gets immediate release, which suits APIs that keep objects alive for
+issued commands (GL with bound textures, sokol). A bindless GL handle, a Vulkan image or a
+NoGraphicsAPI descriptor needs the frames. `destroy(ctx)` releases everything at once: the host
+waits for its GPU to go idle first.
 
 ### `kSelfSubmitting`
 
@@ -105,15 +113,15 @@ fails with K5004. The example Vulkan adapter sets both: one bindless binding per
 
 ### `kMeshes`
 
-The adapter accepts `UploadKind::MeshPayload`. Without the bit, kiln never calls `acquire` or
-`begin_upload` for a mesh, and `request_mesh` / `register_mesh` give a handle that fails with
+The adapter accepts `UploadKind::MeshPayload`. Without the bit, kiln never calls `begin_upload` for
+a mesh, and `request_mesh` / `register_mesh` give a handle that fails with
 K5004. A texture-only adapter leaves it clear and can ignore `bufferOffsetAlign`
 (`texture-only.md`). The null adapter and the example Vulkan adapter set it.
 
 A slot need not be a descriptor. NoGraphicsAPI forbids rewriting a descriptor while earlier frames may
-read it, so `kiln-nga`'s adapter keeps a CPU table: `acquire` points a stable slot at the
-placeholder's descriptor, `publish` points it at the texture's own descriptor, and the host resolves
-slot to descriptor index when it writes each frame's root data. Materials still store the slot once.
+read it, so `kiln-nga`'s adapter keeps a CPU table: `bind` points kiln's slot at the object's own
+descriptor, and the host resolves slot to descriptor index when it writes each frame's root data.
+Materials still store the slot once.
 
 ### Two binding models
 
@@ -121,8 +129,7 @@ The renderer picks one; `gpu(ctx, handle)` (an allocation-free table lookup) ser
 
 | | Per-frame lookup | Stable bindless slot (recommended for Vulkan 1.4) |
 |---|---|---|
-| `acquire` | null, or returns a null object | allocates a slot, writes the kind placeholder into it, returns `{ 0, slot, kind }` |
-| `publish` | null, or ignores the call | overwrites the same slot with the real image |
+| `bind`, `bindlessSlots` | null, 0 | writes kiln's slot: the kind placeholder at the request, the real image later |
 | Material stores | nothing; looks up `gpu(ctx, h)` each frame | the slot index, once, at request time |
 | Arrival, hot reload | next `gpu()` returns the new object | nothing to do: the slot already shows it |
 | Fits | sokol / bgfx-style binding, any renderer | descriptor-indexing renderers |
@@ -131,10 +138,13 @@ The renderer picks one; `gpu(ctx, handle)` (an allocation-free table lookup) ser
 
 | Asset state | Texture | Mesh |
 |---|---|---|
-| `Pending`, `MetaReady` | the acquired object if non-null, else the kind placeholder | null |
-| `Ready` | the published (real) object | the payload object |
-| `Failed` | the acquired object if non-null (its slot shows the checker when `devPlaceholders` is on), else the Failed placeholder (`devPlaceholders`) or the kind placeholder | null |
+| `Pending`, `MetaReady` | the kind placeholder | null |
+| `Ready` | the real object | the payload object |
+| `Failed` | the Failed placeholder (`devPlaceholders`), else the kind placeholder | null |
 | stale or null handle | the Failed placeholder (`devPlaceholders`), else the `BaseColor` placeholder | null |
+
+With a bindless adapter, a texture's object carries kiln's slot number in `slot` from the request
+until the release. A request when all `bindlessSlots` are in use fails with K5004.
 
 ### Placeholders through the adapter
 
@@ -143,11 +153,10 @@ The renderer picks one; `gpu(ctx, handle)` (an allocation-free table lookup) ser
   `1 + TextureKind` (1..4). The Failed placeholder is id 15 (`kFailedPlaceholderId`,
   `placeholders.h`) and is uploaded only when `devPlaceholders` is on. `Busy` is retried for up to
   10 s (R5j).
-- When a placeholder upload completes, kiln calls `publish(placeholderId, obj, 1)`. A bindless
-  adapter records the object per id, so `acquire()` can write it into new slots.
-- When a texture with an acquired slot fails and `devPlaceholders` is on, kiln calls
-  `publish(id, failedPlaceholder, version)`, so the slot shows the magenta checker.
-- kiln passes placeholder objects to `destroy_deferred` only at `destroy()`.
+- The adapter needs no placeholder ids: `bind` passes the placeholder object like any other.
+- When a bindless texture fails and `devPlaceholders` is on, kiln binds its slot to the Failed
+  placeholder, so the slot shows the magenta checker.
+- kiln passes placeholder objects to `destroy` only at `destroy()`.
 - Readiness: with `kSelfSubmitting`, `create()` spins until all placeholders are complete (panics
   after 10 s). Without it, `gpu()` returns null for textures until the first `pump()` that sees
   them complete.
@@ -176,12 +185,12 @@ Part of `kiln_runtime` (`null_adapter.h`, `src/runtime/null_adapter.cpp`), used 
 
 - `caps = kSelfSubmitting`; uploads complete immediately.
 - `supports_format`: true for every known format, except block formats as vertex formats.
-- `NullAdapterDesc::bindless` (default true): `acquire` hands out slot numbers and `publish` binds
-  them. Off, `acquire` returns null objects, so tests cover both binding models.
+- `NullAdapterDesc::bindlessSlots` (default 4096): `bind` records what each slot shows. 0 turns
+  bindless off, so tests cover both binding models.
 - `begin_upload` allocates `size` bytes (`Tag::Payload`) and returns a 1-based object index as
   token and `native`. `busyEveryN` / `failEveryN` inject `Busy` / `Unsupported`.
-- `destroy_deferred` keeps objects until `null_adapter_flush_deferred()` (simulated frames in
-  flight).
+- `destroy` frees at once and panics on an object whose upload has not completed or that was
+  destroyed already. Tests simulate frames through `PumpOptions`.
 - `null_adapter_stats()` counts every call; `null_adapter_payload()` and `null_adapter_slot()`
   expose what kiln wrote and bound.
 
@@ -191,10 +200,9 @@ Part of `kiln_runtime` (`null_adapter.h`, `src/runtime/null_adapter.cpp`), used 
 |---|---|
 | `copy_constraints` | the thread calling `create()` |
 | `supports_format` | the pump thread |
-| `acquire` | the thread calling `request()` |
 | `begin_upload`, `commit_upload` | **kiln worker threads** (and the thread calling `create()` for placeholders), so a worker decodes straight into staging memory; must be thread-safe |
 | `is_upload_complete`, `flush` | the pump thread (`pump()`, `wait()`), and the thread calling `create()` |
-| `publish`, `destroy_deferred` | the pump thread, and the threads calling `create()` / `destroy()` |
+| `bind`, `destroy` | the pump thread (requests are pump-thread calls), and the threads calling `create()` / `destroy()` |
 
 Alternative, not taken: every call on the pump thread. The decode would go to a kiln-owned buffer
 first, and the copy into staging would serialize on the pump thread. A `workerUploads` flag (or an
@@ -207,15 +215,16 @@ first, and the copy into staging would serialize on the pump thread. A `workerUp
 - A VkFormat-valued enum removes a translation table for the primary backend and keeps on-disk data
   and API values identical, while staying a kiln-owned type.
 - `Busy` as a normal return gives back-pressure without a separate query.
-- `acquire` at request time lets a bindless material store its slot before the asset arrives, so
-  arrival and hot reload need no material rebuild.
+- A slot number at request time lets a bindless material store it before the asset arrives, so
+  arrival and hot reload need no material rebuild. kiln numbers the slots because it already tracks
+  every asset's lifetime (`adapter-frames-slots.md`).
 - A capability bit is cheaper and clearer than a runtime probe for "can uploads finish without a
   frame".
 
 ## Alternatives considered
 
 Full `VkFormat` mirror, dense own enum plus mapping table, virtual interface class,
-callback-based completion (no callbacks from workers), slot allocation in `publish` only, and
+callback-based completion (no callbacks from workers), slot allocation at arrival only, and
 per-frame lookup only: all rejected for the reasons above.
 
 ## Consequences / what this constrains later
@@ -224,7 +233,7 @@ per-frame lookup only: all rejected for the reasons above.
 - `reserved[4]` must be null and is the only place residency hooks may go (v0.8) without breaking
   the struct layout. `caps` bits 1..31 are for new capability flags.
 - `TextureDesc.firstLevel` is the hook for partial mip loads (v0.8). Progressive mips then arrive
-  through further `publish` calls on the same slot.
+  through further `bind` calls on the same slot.
 - Adapter implementations need thread-safe staging, because uploads come from workers.
 - A `.mesh` codec changes nothing at the adapter: it always receives decoded bytes.
 
@@ -233,8 +242,7 @@ per-frame lookup only: all rejected for the reasons above.
 - Confirm the VkFormat-valued compact `Format` enum (open-questions A5), including block formats
   the v0.5 cooker never writes.
 - Confirm `begin_upload` / `commit_upload` on worker threads.
-- Confirm `acquire` on the requesting thread (the hook itself is decided, R3).
 - Confirm the `reserved[4]` tail plus `caps` (vs a versioned `structSize` field).
 - Confirm `UploadTarget.object` as the way kiln learns the `GpuObject` of an upload (HANDOFF does
   not say).
-- Confirm slot release at unload through `publish(id, null, version)`.
+- Slot release at unload: decided, kiln owns slot numbers (`adapter-frames-slots.md`).

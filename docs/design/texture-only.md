@@ -58,7 +58,7 @@ it validates a `.mesh` blob table; it decodes nothing.
 ### 3. `kMeshes` at the adapter boundary
 
 - `AdapterCaps` gains `kMeshes = 1u << 3`: "the adapter accepts `UploadKind::MeshPayload`".
-- Without the bit, kiln never calls `acquire` or `begin_upload` with `MeshPayload`, and
+- Without the bit, kiln never calls `begin_upload` with `MeshPayload`, and
   `request_mesh` / `register_mesh` return a failed handle with K5004 (`Unsupported`), as a cube
   request does without `kCubeTextures`. Such an adapter can ignore `bufferOffsetAlign`.
 - The bit is positive, like the texture shape bits. Existing adapters must add it; this is an API

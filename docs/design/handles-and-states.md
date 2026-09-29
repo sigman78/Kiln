@@ -25,12 +25,12 @@ request refcounting, events, placeholders and load groups.
 | Counter | Where | Starts at | Changes when | Meaning |
 |---|---|---|---|---|
 | **Slot generation** | `Handle::generation` and the slot | 1 | unload | identity; fixed for the life of a loaded asset |
-| **Content version** | the slot (`version()`, `TextureInfo.version`, events, `publish()`) | 1 | each successful hot reload swap (M5) | which payload the asset currently serves |
+| **Content version** | the slot (`version()`, `TextureInfo.version`, events) | 1 | each successful hot reload swap (M5) | which payload the asset currently serves |
 
 **Hot reload must not bump the handle generation.** The host stores handles in its own structures.
 If a reload changed the generation, every stored handle would go stale after every edit. Hosts that
-cache derived data compare the version or react to `Changed` events. `publish()`'s last parameter
-and `Changed` events carry the content version. This departs from HANDOFF's "bumps the
+cache derived data compare the version or react to `Changed` events. `Changed` events carry the
+content version. This departs from HANDOFF's "bumps the
 generation" wording but keeps its intent.
 
 ### `AssetId`
@@ -61,7 +61,7 @@ applies to **both meshes and textures** (owner decision, open-questions A10).
 | `Unloaded` | no live request, or stale handle | nullptr | placeholder, `isPlaceholder = true` |
 | `Pending` | requested; reading, cooking or decoding metadata | nullptr | placeholder |
 | `MetaReady` | metadata loaded and validated; payload in flight | parts, LODs, submeshes, mounts, bounds, materials | extent, format, levels, layers; still samples as the placeholder |
-| `Ready` | payload uploaded and published | full view | full info, `isPlaceholder = false` |
+| `Ready` | payload uploaded and in use | full view | full info, `isPlaceholder = false` |
 | `Failed` | recoverable error; one diagnostic emitted | nullptr | placeholder |
 | `Partial` | reserved for progressive loads (v0.8) | never produced | |
 
@@ -102,8 +102,9 @@ counters alone.
 
 **Hot reload (proposed, M5):** the old payload stays `Ready` and servable while the new version
 cooks and loads, so there is no placeholder flash. When the new upload completes, `pump()` swaps
-metadata and payload together, increments the content version, calls `publish`, emits `Changed`,
-and passes the old payload to `destroy_deferred`. A failed reload keeps the old payload and state
+metadata and payload together, increments the content version, binds a bindless slot to the new
+object, emits `Changed`, and releases the old payload once the host's frames that used it complete
+(`adapter-frames-slots.md`). A failed reload keeps the old payload and state
 and emits one `Severity::Error` diagnostic, no `Failed` event.
 
 ### Requests
@@ -117,10 +118,10 @@ add in-memory cooked bytes under a path.
 reserved for partial loads (v0.8).
 
 - A request increments a refcount. Requesting a live path returns **the same handle**.
-- The first request calls the adapter's `acquire()` on the requesting thread. Repeat requests do
-  not. IO starts on the next `pump()`, never inside the request (R5c).
-- `release()` decrements. At 0 the asset unloads at once: `publish(id, null)`, the payload goes to
-  `destroy_deferred`, handles go stale. A slot with a job in flight returns to the free list only
+- The first request of a texture with a bindless adapter takes a slot number and binds it to the
+  placeholder. Repeat requests do not. IO starts on the next `pump()`, never inside the request (R5c).
+- `release()` decrements. At 0 the asset unloads at once: handles go stale, and the payload and the
+  slot number are released once the host's frames that used them complete. A slot with a job in flight returns to the free list only
   when the job's completion is processed (R5b). Deferred or LRU unload may come later.
 - Priority has two levels, `Normal` and `High`. A `High` request of a live asset raises it.
 
@@ -241,8 +242,8 @@ rejected for the reasons above.
 
 ## Open points for the owner
 
-- Two counters (slot generation vs content version), with `publish()` and `Changed` carrying the
-  content version (R2).
+- Two counters (slot generation vs content version), with `Changed` carrying the content version
+  (R2).
 - Confirm hot reload keeps the old payload `Ready`, and that reload failure does not change state.
 - Confirm immediate unload at refcount 0 for v0.5.
 - Confirm the placeholder table and the `devPlaceholders` default (`KILN_DEBUG != 0`).

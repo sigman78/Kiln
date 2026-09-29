@@ -575,7 +575,7 @@ struct App {
 #if KILN_VIEWER_HAS_COOK
         if (provider) cook::uninstall_provider(ctx);
 #endif
-        if (ctx) destroy(ctx); // hands every GPU object to destroy_deferred
+        if (ctx) destroy(ctx); // hands every GPU object to Adapter::destroy
         if (ren) vkx::renderer_destroy(ren);
         if (vka) vkx::adapter_destroy(vka);
         if (surface) vkDestroySurfaceKHR(device.instance, surface, nullptr);
@@ -735,8 +735,7 @@ int main(int argc, char** argv) {
 
     // 2. Adapter, renderer, context.
     Adapter adapter{};
-    Result<vkx::VkAdapter*> va =
-        vkx::adapter_create({.device = &app.device, .framesInFlight = vkx::kFramesInFlight}, &adapter);
+    Result<vkx::VkAdapter*> va = vkx::adapter_create({.device = &app.device}, &adapter);
     if (va.failed()) {
         KILN_ERROR("viewer", "adapter_create: %s", code_name(va.code()));
         return 2;
@@ -841,7 +840,7 @@ int main(int argc, char** argv) {
               u32(scene.textures.size()), o.budgetMiB);
 
     // 4. Frames.
-    PumpOptions const pumpOpt{.uploadBytes = u64(o.budgetMiB) << 20};
+    PumpOptions pumpOpt{.uploadBytes = u64(o.budgetMiB) << 20};
     u32 frames      = 0;
     double totalMs  = 0;
     double worstMs  = 0;
@@ -859,7 +858,9 @@ int main(int argc, char** argv) {
         }
         if (!o.offscreen && maxFrames && frames >= maxFrames) break;
 
-        vkx::renderer_wait_frame(app.ren);
+        vkx::FrameNumbers const fn = vkx::renderer_wait_frame(app.ren);
+        pumpOpt.frame              = fn.frame;
+        pumpOpt.completedFrame     = fn.completed;
         Clock::time_point const t0 = Clock::now();
         scene.frame                = frames + 1;
         PumpStats const ps         = pump(app.ctx, pumpOpt);
@@ -903,7 +904,7 @@ int main(int argc, char** argv) {
         write_uniforms(scene, input.camera, vkx::renderer_extent(app.ren), aces, f32(std::exp2(o.exposure)),
                        vkx::renderer_uniforms(app.ren), &sky);
         if (skyItem != kInvalid) {
-            // The slot serves the cube placeholder until the real cube is published.
+            // The slot serves the cube placeholder until the real cube arrives.
             sky.cubeSlot = gpu(app.ctx, scene.textures[skyItem].handle).slot;
             if (sky.cubeSlot != kInvalid) vkx::renderer_draw_sky(app.ren, cmd, sky);
         }
@@ -957,9 +958,9 @@ int main(int argc, char** argv) {
               "retries; textures ready %u/%u",
               ull(uploads), ull(uploadBytes), busyRetries, texturesReady, u32(scene.textures.size()));
     KILN_INFO("viewer",
-              "adapter: %u uploads in flight, %u busy, %llu bytes uploaded, %u live objects, %u slots, %llu "
-              "staging bytes reserved",
-              as.uploadsInFlight, as.busyReturned, ull(as.bytesUploaded), as.liveObjects, as.slotsInUse,
+              "adapter: %u uploads in flight, %u busy, %llu bytes uploaded, %u live objects, %llu staging "
+              "bytes reserved",
+              as.uploadsInFlight, as.busyReturned, ull(as.bytesUploaded), as.liveObjects,
               ull(as.stagingUsed));
 
     for (TextureItem const& t : scene.textures)

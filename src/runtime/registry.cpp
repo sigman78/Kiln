@@ -180,8 +180,9 @@ void free_slot(Context* ctx, Slot& s) noexcept {
     s.hasTarget                          = false;
     s.reloading                          = false;
     s.reloadPending                      = false;
-    s.acquired                           = {};
     s.realObj                            = {};
+    s.bindSlot                           = kInvalid;
+    s.bindPending                        = false;
     ctx->freeSlots[ctx->freeSlotCount++] = s.index;
 }
 
@@ -242,9 +243,10 @@ Slot* request_slot(Context* ctx, AssetKind kind, StrView path, RequestOptions co
     s.groupGen      = 0;
     s.groupBytes    = 0;
     s.retryAfter    = 0;
-    s.acquired      = {};
     s.realObj       = {};
     s.preFail       = kOk;
+    s.bindSlot      = kInvalid;
+    s.bindPending   = false;
     s.hasTarget     = false;
     s.target        = {};
     s.reloading     = false;
@@ -268,13 +270,17 @@ Slot* request_slot(Context* ctx, AssetKind kind, StrView path, RequestOptions co
 
     if (!caps_allow(ctx, kind, s.texShape)) {
         s.preFail = make_status(Code::Unsupported);
-    } else if (ctx->adapter.acquire) {
-        UploadKind const uk = kind == AssetKind::Mesh ? UploadKind::MeshPayload : UploadKind::TextureLevels;
-        Status const st = ctx->adapter.acquire(ctx->adapter.user, id, uk, s.texKind, s.texShape, &s.acquired);
-        if (st.failed()) {
-            s.preFail  = st;
-            s.acquired = {};
+    } else if (kind == AssetKind::Texture && ctx->adapter.bind) {
+        if (!ctx->freeBindSlots.empty()) {
+            s.bindSlot = ctx->freeBindSlots.back();
+            ctx->freeBindSlots.pop_back();
+        } else if (ctx->nextBindSlot < ctx->adapter.bindlessSlots) {
+            s.bindSlot = ctx->nextBindSlot++;
         }
+        if (s.bindSlot == kInvalid)
+            s.preFail = make_status(Code::Busy);
+        else
+            bind_placeholder(ctx, s);
     }
     queue_push(ctx, opt.priority == Priority::High ? QueueId::MetaHigh : QueueId::MetaNormal, s);
     join_group(ctx, s, opt.group);
@@ -285,15 +291,14 @@ namespace {
 
 void unload(Context* ctx, Slot& s) noexcept {
     leave_group(ctx, s);
-    if (s.queue == QueueId::Await && s.hasTarget) {
-        ctx->adapter.destroy_deferred(ctx->adapter.user, s.target.object);
-        s.hasTarget = false;
-    }
+    if (s.queue == QueueId::Await) orphan_upload(ctx, s);
     queue_remove(ctx, s);
     watch_disarm(ctx, s.index);
-    if (ctx->adapter.publish) ctx->adapter.publish(ctx->adapter.user, s.id, GpuObject{}, s.version);
-    if (!s.realObj.is_null()) ctx->adapter.destroy_deferred(ctx->adapter.user, s.realObj);
-    s.realObj = {};
+    if (s.bindPending) --ctx->bindPendingCount;
+    retire(ctx, s.realObj, s.bindSlot);
+    s.realObj     = {};
+    s.bindSlot    = kInvalid;
+    s.bindPending = false;
     map_for(ctx, s.kind).erase(s.id);
     s.state = State::Unloaded;
     // Handles go stale now; the slot is reused only after the in-flight job (if any) completed.
@@ -329,7 +334,68 @@ Placeholder const& texture_placeholder(Context* ctx, Slot const* s) noexcept {
 
 GpuObject placeholder_obj(Placeholder const& p) noexcept { return p.ready ? p.obj : GpuObject{}; }
 
+void release_now(Context* ctx, GpuObject obj, u32 bindSlot) noexcept {
+    if (!obj.is_null()) ctx->adapter.destroy(ctx->adapter.user, obj);
+    if (bindSlot != kInvalid) ctx->freeBindSlots.push_back(bindSlot);
+}
+
 } // namespace
+
+void retire(Context* ctx, GpuObject obj, u32 bindSlot) noexcept {
+    if (obj.is_null() && bindSlot == kInvalid) return;
+    if (ctx->completedFrame >= ctx->frame)
+        release_now(ctx, obj, bindSlot);
+    else
+        ctx->retired.push_back({obj, bindSlot, ctx->frame});
+}
+
+void process_retired(Context* ctx) noexcept {
+    for (usize i = 0; i < ctx->retired.size();) {
+        Retired const r = ctx->retired[i];
+        if (ctx->completedFrame < r.frame) {
+            ++i;
+            continue;
+        }
+        ctx->retired.erase_unordered(i);
+        release_now(ctx, r.obj, r.bindSlot);
+    }
+}
+
+void orphan_upload(Context* ctx, Slot& s) noexcept {
+    if (!s.hasTarget) return;
+    ctx->orphans.push_back({s.target.token, s.target.object});
+    s.hasTarget = false;
+}
+
+void poll_orphans(Context* ctx) noexcept {
+    for (usize i = 0; i < ctx->orphans.size();) {
+        Orphan const o = ctx->orphans[i];
+        if (!ctx->adapter.is_upload_complete(ctx->adapter.user, o.token)) {
+            ++i;
+            continue;
+        }
+        ctx->orphans.erase_unordered(i);
+        retire(ctx, o.obj, kInvalid);
+    }
+}
+
+void bind_object(Context* ctx, Slot& s, GpuObject obj) noexcept {
+    if (s.bindSlot == kInvalid) return;
+    if (s.bindPending) --ctx->bindPendingCount;
+    s.bindPending = false;
+    ctx->adapter.bind(ctx->adapter.user, s.bindSlot, obj, s.texShape);
+}
+
+void bind_placeholder(Context* ctx, Slot& s) noexcept {
+    if (s.bindSlot == kInvalid) return;
+    GpuObject const obj = placeholder_obj(texture_placeholder(ctx, &s));
+    if (!obj.is_null()) {
+        bind_object(ctx, s, obj);
+    } else if (!s.bindPending) {
+        s.bindPending = true;
+        ++ctx->bindPendingCount;
+    }
+}
 } // namespace rt
 
 using namespace rt;
@@ -415,9 +481,9 @@ GpuObject gpu(Context* ctx, MeshHandle h) noexcept {
 GpuObject gpu(Context* ctx, TextureHandle h) noexcept {
     if (!ctx) return {};
     Slot const* s = resolve(ctx, h.bits(), AssetKind::Texture);
-    if (s && s->state == State::Ready) return s->realObj;
-    if (s && !s->acquired.is_null()) return s->acquired; // bindless: the slot shows placeholder / publish
-    return placeholder_obj(texture_placeholder(ctx, s));
+    GpuObject obj = s && s->state == State::Ready ? s->realObj : placeholder_obj(texture_placeholder(ctx, s));
+    if (s && s->bindSlot != kInvalid) obj.slot = s->bindSlot;
+    return obj;
 }
 
 mesh::MeshView const* mesh_view(Context* ctx, MeshHandle h) noexcept {

@@ -114,10 +114,11 @@ struct Slot {
     QueueId queue  = QueueId::None;
     u32 qPrev      = kInvalid;
     u32 qNext      = kInvalid;
-    u64 retryAfter = 0;   ///< Busy retry: not before this pump index
-    GpuObject acquired;   ///< from Adapter::acquire (may be null)
-    GpuObject realObj;    ///< the published payload object (Ready)
-    Status preFail = kOk; ///< acquire() failure, reported on the next pump
+    u64 retryAfter = 0;          ///< Busy retry: not before this pump index
+    GpuObject realObj;           ///< the payload object (Ready)
+    Status preFail   = kOk;      ///< a request-time failure (caps, bindless slots), reported on the next pump
+    u32 bindSlot     = kInvalid; ///< bindless slot number (textures with Adapter::bind)
+    bool bindPending = false;    ///< bindSlot waits for its placeholder upload to complete
 
     // --- job input (written by the pump thread before submit) -----------------
     Stage jobStage    = Stage::Meta;
@@ -172,6 +173,19 @@ struct Placeholder {
     u64 pitch  = 0; ///< level 0 row pitch
 };
 
+/// An object and/or bindless slot number kiln dropped during frame `frame`.
+struct Retired {
+    GpuObject obj;
+    u32 bindSlot = kInvalid;
+    u64 frame    = 0;
+};
+
+/// An upload kiln abandoned (unload, failure) before it completed.
+struct Orphan {
+    u64 token = 0;
+    GpuObject obj;
+};
+
 } // namespace rt
 
 struct Context {
@@ -220,6 +234,15 @@ struct Context {
 
     rt::Placeholder ph[rt::kPlaceholderCount];
 
+    // Frames the host reported (PumpOptions); objects and slot numbers wait in `retired`.
+    u64 frame          = 0;
+    u64 completedFrame = 0;
+    Vec<rt::Retired> retired;
+    Vec<rt::Orphan> orphans;
+    Vec<u32> freeBindSlots;   ///< released bindless slot numbers
+    u32 nextBindSlot     = 0; ///< numbers below it were handed out once
+    u32 bindPendingCount = 0; ///< slots with bindPending
+
     CookProvider provider;
 
     rt::Watch* watch = nullptr; ///< store poller (null unless ContextDesc::hotReload.watchStore works)
@@ -245,6 +268,15 @@ HashMap<AssetId, u32>& map_for(Context* ctx, AssetKind kind) noexcept;
 Slot* request_slot(Context* ctx, AssetKind kind, StrView path, RequestOptions const& opt, Buffer* memory,
                    bool rejectExisting) noexcept;
 void free_slot(Context* ctx, Slot& s) noexcept;
+/// kiln no longer uses `obj` (may be null) and bindless slot `bindSlot` (may be kInvalid):
+/// released now if the host reported no frame that may still use them, else in process_retired().
+void retire(Context* ctx, GpuObject obj, u32 bindSlot) noexcept;
+/// Drop `s`'s upload target: it goes to Context::orphans until its upload completes.
+void orphan_upload(Context* ctx, Slot& s) noexcept;
+/// Bind `s`'s bindless slot to the placeholder its state shows, or mark it pending.
+void bind_placeholder(Context* ctx, Slot& s) noexcept;
+/// Bind `s`'s bindless slot to `obj` (no-op without a slot).
+void bind_object(Context* ctx, Slot& s, GpuObject obj) noexcept;
 void free_load_data(Slot& s) noexcept;
 void free_meta_set(Allocator const* a, MetaSet& m) noexcept;
 /// The metadata queries show: `cur` when Ready, `next` when MetaReady, else null.
@@ -293,6 +325,10 @@ PumpStats pump_impl(Context* ctx, PumpOptions const& opt, bool keepEvents) noexc
 void reload_slot(Context* ctx, Slot& s) noexcept;
 /// Poll non-self-submitting placeholder uploads (create() and pump()).
 void poll_placeholders(Context* ctx) noexcept;
+/// Poll abandoned uploads; a completed one is retired.
+void poll_orphans(Context* ctx) noexcept;
+/// Release the retired entries whose frame completed.
+void process_retired(Context* ctx) noexcept;
 
 // --- watch.cpp (store poller; stubs without KILN_HOT_RELOAD) ----------------------------
 /// create(): start the poller if `desc.watchStore`; K5011 (Warning) if it cannot run.

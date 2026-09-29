@@ -70,6 +70,7 @@ inline constexpr GLenum GL_FRAMEBUFFER = 0x8D40, GL_READ_FRAMEBUFFER = 0x8CA8, G
                         GL_FRAMEBUFFER_COMPLETE = 0x8CD5;
 
 #define KILN_GL_FUNCTIONS(X)                                                                                   \
+    X(void, glFinish, ())                                                                                      \
     X(void, glClear, (GLbitfield mask))                                                                        \
     X(void, glClearColor, (GLfloat r, GLfloat g, GLfloat b, GLfloat a))                                        \
     X(void, glEnable, (GLenum cap))                                                                            \

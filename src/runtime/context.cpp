@@ -99,7 +99,7 @@ Status upload_placeholder(Context* ctx, u32 index, AssetId id, TextureShape shap
     }
     a.commit_upload(a.user, t.token);
     if (!t.dst || !pitchOk) {
-        a.destroy_deferred(a.user, t.object);
+        ctx->orphans.push_back({t.token, t.object});
         return diagf(&ctx->diag, make_status(Code::Unsupported), kDiagPlaceholderFailed, Severity::Error, {},
                      "placeholder", "placeholder %u: %s", index,
                      t.dst ? "adapter row pitch alignment differs from copy_constraints"
@@ -168,6 +168,9 @@ void free_tables(Context* ctx) noexcept {
     free_array(a, ctx->rootChars, ctx->rootCharsLen, Tag::Registry);
     ctx->meshMap.release();
     ctx->texMap.release();
+    ctx->retired.release();
+    ctx->orphans.release();
+    ctx->freeBindSlots.release();
     watch_free(ctx);
 }
 
@@ -185,27 +188,40 @@ void teardown(Context* ctx) noexcept {
         }
         ctx->compCount = 0;
     }
-    // 3. Release every asset.
+    // 3. Release every asset at once (the host waited for its GPU to go idle); abandoned uploads
+    //    become orphans.
+    ctx->completedFrame = ~u64(0);
+    process_retired(ctx);
     if (ctx->slots) {
         for (u32 i = 0; i < ctx->maxAssets; ++i) {
             Slot& s = ctx->slots[i];
             if (!s.live) continue;
-            if (s.hasTarget) a.destroy_deferred(a.user, s.target.object);
-            s.hasTarget = false;
-            if (!s.zombie && a.publish) a.publish(a.user, s.id, GpuObject{}, s.version);
-            if (!s.realObj.is_null()) a.destroy_deferred(a.user, s.realObj);
+            orphan_upload(ctx, s);
+            if (!s.realObj.is_null()) a.destroy(a.user, s.realObj);
             s.realObj = {};
             free_load_data(s);
             s.live = false;
         }
     }
-    // 4. Placeholders (the only time kiln passes them to destroy_deferred).
     for (Placeholder& p : ctx->ph) {
-        if (p.obj.is_null()) continue;
-        if (p.ready && a.publish) a.publish(a.user, p.id, GpuObject{}, 1);
-        a.destroy_deferred(a.user, p.obj);
+        if (p.pending)
+            ctx->orphans.push_back({p.token, p.obj});
+        else if (!p.obj.is_null())
+            a.destroy(a.user, p.obj);
         p = {};
     }
+    // 4. Orphans: wait for their uploads where the adapter can finish them without the host.
+    if ((a.caps & kSelfSubmitting) || a.flush) {
+        auto const deadline = Clock::now() + std::chrono::seconds(10);
+        while (!ctx->orphans.empty() && Clock::now() < deadline) {
+            if (a.flush) a.flush(a.user);
+            poll_orphans(ctx);
+            if (!ctx->orphans.empty()) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+    }
+    for (Orphan const& o : ctx->orphans)
+        a.destroy(a.user, o.obj);
+    ctx->orphans.clear();
     if (ctx->ownsJobs) destroy_thread_pool(ctx->jobs);
     ctx->ownsJobs = false;
 }
@@ -307,6 +323,13 @@ Result<Context*> create(ContextDesc const& desc) noexcept {
     ctx->meshMap.reserve(ctx->maxAssets);
     ctx->texMap.init(a, Tag::Registry);
     ctx->texMap.reserve(ctx->maxAssets);
+    // Grow only when the host lets many frames' worth of drops pile up.
+    ctx->retired.init(a, Tag::Registry);
+    ctx->retired.reserve(ctx->maxAssets);
+    ctx->orphans.init(a, Tag::Registry);
+    ctx->orphans.reserve(ctx->maxAssets);
+    ctx->freeBindSlots.init(a, Tag::Registry);
+    ctx->freeBindSlots.reserve(ctx->maxAssets);
     ctx->groups     = alloc_array<GroupRec>(a, ctx->maxGroups, Tag::Registry);
     ctx->freeGroups = alloc_array<u32>(a, ctx->maxGroups, Tag::Registry);
     for (u32 i = 0; i < ctx->maxGroups; ++i) {

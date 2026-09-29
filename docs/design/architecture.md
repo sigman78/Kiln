@@ -24,7 +24,7 @@ flowchart TB
     runtime["<b>kiln_runtime</b><br/>requests · pump · events<br/>loader jobs · readers<br/>IO backend<br/>store watch"]
 
     core["<b>kiln_core</b><br/>allocators · containers<br/>Status · diagnostics · log"]
-    adapter["<b>Adapter</b><br/>host implements<br/>GPU upload · publish"]
+    adapter["<b>Adapter</b><br/>host implements<br/>GPU upload · bind · destroy"]
 
     cli --> cook
     sources ==>|read| cook
@@ -35,7 +35,7 @@ flowchart TB
     store ==>|read| runtime
     cook -->|"CookProvider<br/>on store miss"| runtime
     runtime --> core
-    runtime ==>|"upload · publish"| adapter
+    runtime ==>|"upload · bind · destroy"| adapter
 
     classDef ship fill:#e3f2e6,stroke:#2e7d32,color:#1b3a1f
     classDef dev fill:#fff3e0,stroke:#e08a00,color:#4a2c00
@@ -76,7 +76,6 @@ sequenceDiagram
 
     Host->>Ctx: request_mesh("props/chair.glb")
     Ctx->>Ctx: check_asset_name, AssetId = FNV-1a 64 of the name
-    Ctx->>Adapter: acquire(id) for a placeholder GPU object
     Ctx-->>Host: handle (state Pending)
 
     Host->>Ctx: pump()
@@ -104,7 +103,6 @@ sequenceDiagram
         Host->>Ctx: pump()
         Ctx->>Adapter: is_upload_complete(token)
     end
-    Ctx->>Adapter: publish(id, object, version)
     Ctx-->>Host: event Ready (gpu(handle) is the real object)
 ```
 
@@ -155,8 +153,8 @@ sequenceDiagram
 
     alt both stages succeed
         Host->>Adapter: is_upload_complete(token)
-        Host->>Adapter: publish(id, new object, version + 1)
-        Host->>Adapter: destroy_deferred(old object)
+        Host->>Adapter: bind(slot, new object), bindless textures only
+        Note over Host,Adapter: the old object goes to destroy() once the host's frames that used it complete
         Host->>Host: event Changed (Ready, if the asset was Failed)
     else a stage fails
         Host->>Host: K5010, the old version stays, no event

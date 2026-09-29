@@ -1,13 +1,12 @@
 // examples/nga/nga_adapter.cpp — kiln adapter over NoGraphicsAPI.
-// Threads: begin_upload / commit_upload (kiln workers) and acquire (the requesting thread) only touch
-// memory under `mutex`. NoGraphicsAPI calls (flush, is_upload_complete, publish, destroy_deferred,
-// retire) run on the pump thread, which also submits the host's frames to queue 0.
+// Threads: begin_upload / commit_upload (kiln workers) only touch memory under `mutex`. NoGraphicsAPI
+// calls (flush, is_upload_complete, bind, destroy) run on the pump thread, which also submits the
+// host's frames to queue 0.
 #include "nga_adapter.h"
 
 #include <kiln/alloc.h>
 #include <kiln/containers.h>
 #include <kiln/log.h>
-#include <kiln/placeholders.h>
 
 #include <mutex>
 
@@ -81,7 +80,6 @@ struct Object {
     u32 descriptor        = kInvalid;
     u32 gen               = 1;
     bool used             = false;
-    bool doomed           = false; ///< destroyed while its upload was in flight
 };
 
 struct Upload {
@@ -101,11 +99,6 @@ struct Upload {
 struct Span {
     u64 begin = 0, end = 0;
     bool done = false;
-};
-
-struct Deferred {
-    u32 object     = 0;
-    u64 afterFrame = 0; ///< freed once the host reports this frame completed
 };
 
 gpu::Format gpu_format(Format f) noexcept {
@@ -154,8 +147,6 @@ struct NgaAdapter {
     Vec<u32> committed;
     Vec<u32> flushing;
     Vec<u32> inFlight;
-    Vec<Deferred> deferred;
-    u64 completedFrame = 0; ///< the last frame nga_adapter_retire() was given
 
     gpu::TimelineSemaphore* timeline       = nullptr;
     u64 lastValue                          = 0;
@@ -163,11 +154,8 @@ struct NgaAdapter {
     u64 poolValues[kCommandPools]          = {};
     u32 nextPool                           = 0;
 
-    // Slots: a stable index per texture asset, mapped to the descriptor it shows now.
+    /// kiln's slot -> the descriptor it shows now. A descriptor is written once; bind() moves a slot.
     Vec<u32> slotDescriptor;
-    Vec<u32> freeSlots;
-    HashMap<AssetId, u32> assetSlots;
-    u32 placeholderDescriptor[kLastPlaceholderId + 1] = {};
 };
 
 namespace {
@@ -221,7 +209,7 @@ void release_object(NgaAdapter* a, u32 index) noexcept {
     if (o.kind == ObjectKind::Texture && o.heapSize) a->textureRanges.release(o.heapOffset, o.heapSize);
     if (o.kind == ObjectKind::Mesh && o.heapSize) a->meshRanges.release(o.heapOffset, o.heapSize);
     if (o.descriptor != kInvalid) a->freeDescriptors.push_back(o.descriptor);
-    o = Object{ObjectKind::Texture, nullptr, 0, 0, kInvalid, o.gen + 1, false, false};
+    o = Object{ObjectKind::Texture, nullptr, 0, 0, kInvalid, o.gen + 1, false};
     a->freeObjects.push_back(index);
 }
 
@@ -292,10 +280,6 @@ bool poll(NgaAdapter* a, u32 index) noexcept {
     if (u.kind == UploadKind::TextureLevels && gpu::timeline_completed_value(a->timeline) < u.value)
         return false;
     u.done = true;
-    if (a->objects[u.object].doomed) { // kiln forgot this upload: nobody polls the token
-        release_object(a, u.object);
-        free_upload(a, index);
-    }
     return true;
 }
 
@@ -316,29 +300,6 @@ void copy_constraints(void*, CopyConstraints* out) {
     out->optimalRowPitchAlign = 1; // copies take tightly packed rows (row_pitch_bytes 0)
     out->optimalOffsetAlign   = kOffsetAlign;
     out->bufferOffsetAlign    = kUploadAlign;
-}
-
-Status acquire(void* user, AssetId id, UploadKind kind, TextureKind texKind, TextureShape shape,
-               GpuObject* out) {
-    *out = GpuObject{};
-    if (kind != UploadKind::TextureLevels) return kOk;
-    auto* a = static_cast<NgaAdapter*>(user);
-    std::lock_guard<std::mutex> const lock(a->mutex);
-    u32 slot = kInvalid;
-    if (u32 const* found = a->assetSlots.find(id)) {
-        slot = *found;
-    } else {
-        if (a->freeSlots.empty()) return make_status(Code::OutOfMemory);
-        slot = a->freeSlots.back();
-        a->freeSlots.pop_back();
-        a->assetSlots.insert(id, slot);
-    }
-    // create() waited for the placeholders (flush), so their descriptors exist.
-    u32 ph = a->placeholderDescriptor[placeholder_asset_id(texKind, shape)];
-    if (ph == kInvalid) ph = a->placeholderDescriptor[placeholder_asset_id(TextureKind::BaseColor, shape)];
-    a->slotDescriptor[slot] = ph; // CPU only: no descriptor is written, so any thread may do this
-    *out                    = GpuObject{.native = 0, .slot = slot, .kind = u32(ObjectKind::Texture)};
-    return kOk;
 }
 
 Status begin_upload(void* user, UploadDesc const& desc, UploadTarget* out) {
@@ -380,10 +341,7 @@ Status begin_upload(void* user, UploadDesc const& desc, UploadTarget* out) {
     out->dst           = (isTexture ? a->staging.range.cpu : a->meshHeap.range.cpu) + offset;
     out->rowPitchAlign = 1;
     out->token         = make_token(u, ui);
-    u32 slot           = kInvalid;
-    if (isTexture)
-        if (u32 const* found = a->assetSlots.find(desc.id)) slot = *found;
-    out->object = GpuObject{.native = oi + 1, .slot = slot, .kind = u32(o.kind)};
+    out->object        = GpuObject{.native = oi + 1, .slot = kInvalid, .kind = u32(o.kind)};
     return kOk;
 }
 
@@ -409,40 +367,19 @@ bool is_upload_complete(void* user, u64 token) {
     return true;
 }
 
-void publish(void* user, AssetId id, GpuObject obj, u32 /*version*/) {
-    auto* a         = static_cast<NgaAdapter*>(user);
-    Object const* o = obj.native && obj.native <= a->objects.size() ? &a->objects[obj.native - 1] : nullptr;
-    u32 const descriptor = o && o->kind == ObjectKind::Texture ? o->descriptor : kInvalid;
-    std::lock_guard<std::mutex> const lock(a->mutex);
-    if (id >= kFirstPlaceholderId && id <= kLastPlaceholderId) {
-        a->placeholderDescriptor[id] = descriptor;
-        return;
-    }
-    u32 const* found = a->assetSlots.find(id);
-    if (!found) return; // meshes, and textures whose acquire failed
-    u32 const slot = *found;
-    if (obj.is_null()) { // unload: frames recorded earlier hold descriptor indices, not slots
-        a->assetSlots.erase(id);
-        a->slotDescriptor[slot] = kInvalid;
-        a->freeSlots.push_back(slot);
-        return;
-    }
-    if (descriptor != kInvalid) a->slotDescriptor[slot] = descriptor;
-}
-
-void destroy_deferred(void* user, GpuObject obj) {
+/// Frames recorded earlier hold descriptor indices, not slots, so moving a slot is safe at any time.
+void bind(void* user, u32 slot, GpuObject obj, TextureShape) {
     auto* a = static_cast<NgaAdapter*>(user);
     if (obj.native == 0 || obj.native > a->objects.size()) return;
-    u32 const index = u32(obj.native - 1);
-    Object& o       = a->objects[index];
-    if (!o.used) return;
-    bool inFlight = false;
-    for (Upload const& u : a->uploads)
-        inFlight |= u.used && !u.done && u.object == index;
-    if (inFlight)
-        o.doomed = true;
-    else // frames up to the next framesInFlight may still read it
-        a->deferred.push_back(Deferred{index, a->completedFrame + a->desc.framesInFlight + 1});
+    std::lock_guard<std::mutex> const lock(a->mutex);
+    a->slotDescriptor[slot] = a->objects[obj.native - 1].descriptor;
+}
+
+/// kiln calls this once the frames that could read the object's descriptor completed.
+void destroy(void* user, GpuObject obj) {
+    auto* a = static_cast<NgaAdapter*>(user);
+    if (obj.native == 0 || obj.native > a->objects.size() || !a->objects[obj.native - 1].used) return;
+    release_object(a, u32(obj.native - 1));
 }
 
 /// Records and submits the copies of every committed texture upload; mesh payloads are already in
@@ -469,11 +406,6 @@ void flush(void* user) {
     for (u32 n = 0; n < a->flushing.size(); ++n) {
         u32 const i = a->flushing[n];
         Upload& u   = a->uploads[i];
-        if (a->objects[u.object].doomed) { // unloaded before it was flushed
-            u.flushed = true;
-            (void)poll(a, i);
-            continue;
-        }
         if (u.kind == UploadKind::MeshPayload) { // written in place by kiln; visible to later submissions
             u.flushed = true;
             u.done    = true;
@@ -506,7 +438,7 @@ void flush(void* user) {
 } // namespace
 
 Result<NgaAdapter*> nga_adapter_create(NgaAdapterDesc const& desc, Adapter* out) noexcept {
-    if (!out || !desc.device || desc.maxSlots == 0 || desc.maxDescriptors == 0 || desc.framesInFlight == 0)
+    if (!out || !desc.device || desc.maxSlots == 0 || desc.maxDescriptors == 0)
         return make_status(Code::InvalidArgument);
     auto* a        = new_object<NgaAdapter>(default_allocator(), Tag::Payload);
     a->desc        = desc;
@@ -544,29 +476,22 @@ Result<NgaAdapter*> nga_adapter_create(NgaAdapterDesc const& desc, Adapter* out)
         a->freeUploads.push_back(i);
     for (u32 i = desc.maxDescriptors; i-- > 0;)
         a->freeDescriptors.push_back(i);
-    a->slotDescriptor.resize(desc.maxSlots);
-    for (u32 i = desc.maxSlots; i-- > 0;) {
-        a->slotDescriptor[i] = kInvalid;
-        a->freeSlots.push_back(i);
-    }
-    for (u32& d : a->placeholderDescriptor)
-        d = kInvalid;
+    a->slotDescriptor.resize(desc.maxSlots, kInvalid);
     a->committed.reserve(kMaxUploads);
     a->flushing.reserve(kMaxUploads);
     a->inFlight.reserve(kMaxUploads);
-    a->deferred.reserve(kMaxObjects);
 
     *out = Adapter{
         .supports_format    = &supports_format,
         .copy_constraints   = &copy_constraints,
-        .acquire            = &acquire,
         .begin_upload       = &begin_upload,
         .commit_upload      = &commit_upload,
         .is_upload_complete = &is_upload_complete,
-        .publish            = &publish,
-        .destroy_deferred   = &destroy_deferred,
+        .bind               = &bind,
+        .destroy            = &destroy,
         .flush              = &flush,
         .caps               = kCubeTextures | kArrayTextures | kMeshes,
+        .bindlessSlots      = desc.maxSlots,
         .reserved           = {},
         .user               = a,
     };
@@ -600,21 +525,8 @@ u32 nga_descriptor(NgaAdapter* a, u32 slot) noexcept {
 NgaMesh nga_mesh(NgaAdapter* a, GpuObject obj) noexcept {
     if (obj.native == 0 || obj.native > a->objects.size() || obj.kind != u32(ObjectKind::Mesh)) return {};
     Object const& o = a->objects[obj.native - 1];
-    if (!o.used || o.doomed) return {};
+    if (!o.used) return {};
     return NgaMesh{.gpu = reinterpret_cast<u64>(a->meshHeap.range.gpu + o.heapOffset), .size = o.heapSize};
-}
-
-void nga_adapter_retire(NgaAdapter* a, u64 completedFrame) noexcept {
-    a->completedFrame = completedFrame;
-    for (usize i = 0; i < a->deferred.size();) {
-        if (a->deferred[i].afterFrame <= completedFrame) {
-            release_object(a, a->deferred[i].object);
-            a->deferred[i] = a->deferred.back();
-            a->deferred.pop_back();
-        } else {
-            ++i;
-        }
-    }
 }
 
 } // namespace kiln::nga

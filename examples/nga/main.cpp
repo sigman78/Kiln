@@ -89,7 +89,7 @@ TextureHandle texture_for(Scene& s, StrView name, mesh::TextureSlot slot) {
     return s.textures[s.textureCount++].handle;
 }
 
-/// MetaReady / Changed: request the textures, keep each material's slots (acquire() gave them at the
+/// MetaReady / Changed: request the textures, keep each material's slots (kiln numbers them at the
 /// request), place the model, check the vertex data is what the shader pulls.
 void prepare(Scene& s, mesh::MeshView const& v) {
     s.materialCount = min<u32>(max<u32>(v.materials().size(), 1), kMaxMaterials);
@@ -372,7 +372,7 @@ int main(int argc, char** argv) {
 
     // 2. The adapter: kiln writes mesh payloads in place and textures into its staging ring.
     Adapter adapter{};
-    Result<NgaAdapter*> na = nga_adapter_create({.device = device, .framesInFlight = kFif}, &adapter);
+    Result<NgaAdapter*> na = nga_adapter_create({.device = device}, &adapter);
     if (na.failed()) {
         gpu::destroy_device(device);
         return 2;
@@ -398,7 +398,7 @@ int main(int argc, char** argv) {
     }
 #endif
 
-    // 4. Requests: the sky's slot is known at once (acquire) and never changes.
+    // 4. Requests: the sky's slot is known at once and never changes.
     Scene s;
     s.ctx       = ctx;
     s.na        = *na;
@@ -434,11 +434,12 @@ int main(int argc, char** argv) {
             glfwPollEvents();
             if (glfwWindowShouldClose(window)) break;
         }
-        // 6a. The frame slot's previous use is done; so is everything retired before it.
+        // 6a. The frame slot's previous use is done. Frame numbers are the timeline values.
         if (done.value >= kFif) gpu::wait_timeline({done.semaphore, done.value - (kFif - 1)});
-        nga_adapter_retire(s.na, gpu::timeline_completed_value(done.semaphore));
-        // 6b. kiln: the adapter's flush submits the texture copies; completions, publishing, events.
-        (void)pump(ctx);
+        // 6b. kiln: the adapter's flush submits the texture copies; completions, events, and the
+        //     release of what the completed frames no longer use.
+        (void)pump(
+            ctx, {.frame = done.value + 1, .completedFrame = gpu::timeline_completed_value(done.semaphore)});
         for (Event const& e : events(ctx))
             handle_event(s, e);
 
@@ -563,7 +564,8 @@ int main(int argc, char** argv) {
     gpu::wait_idle(device);
     if (exitCode == 0 && state(ctx, s.model) == State::Failed) exitCode = 1;
 
-    // 7. Teardown: kiln first (destroy_deferred for every object), then the adapter, then the host's.
+    // 7. Teardown (the GPU is idle): kiln first (Adapter::destroy for every object), then the adapter,
+    //    then the host's.
 #if KILN_NGA_HAS_COOK
     if (provider) cook::uninstall_provider(ctx);
 #endif

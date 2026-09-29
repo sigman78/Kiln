@@ -1,6 +1,6 @@
 // examples/gl/main_bindless.cpp — kiln-gl-bindless: kiln-gl with ARB_bindless_texture. Each texture
-// gets a slot in a table of resident handles at request time (Adapter::acquire); kiln rewrites the
-// slot when the texture arrives or reloads (Adapter::publish). Materials store slot numbers once and
+// gets kiln's slot number at request time; Adapter::bind writes the resident handle into a table
+// at the request (placeholder), on arrival and on reload. Materials store slot numbers once and
 // never look textures up per frame (docs/design/integration-examples.md).
 #include "gl_adapter.h"
 #include "gl_util.h"
@@ -69,6 +69,44 @@ void main() {
 }
 )";
 
+/// The frame numbers kiln needs (PumpOptions): a fence after each frame's draws. A resident handle
+/// must stay resident, and its table slot unchanged, until the frames that read it finished.
+struct FrameFences {
+    static constexpr u32 kMax = 4; ///< frames in flight before the host blocks
+    GLsync fences[kMax]       = {};
+    u64 frames[kMax]          = {};
+    u32 count                 = 0;
+    u64 next                  = 1; ///< the frame about to be recorded
+    u64 completed             = 0;
+
+    /// Collects finished frames; blocks on the oldest one only when kMax are in flight.
+    void poll() noexcept {
+        while (count) {
+            GLuint64 const timeout = count == kMax ? GLuint64(1'000'000'000) : 0;
+            GLenum const r         = glClientWaitSync(fences[0], GL_SYNC_FLUSH_COMMANDS_BIT, timeout);
+            if (r != GL_ALREADY_SIGNALED && r != GL_CONDITION_SATISFIED && r != GL_WAIT_FAILED) return;
+            glDeleteSync(fences[0]);
+            completed = frames[0];
+            for (u32 i = 1; i < count; ++i) {
+                fences[i - 1] = fences[i];
+                frames[i - 1] = frames[i];
+            }
+            --count;
+        }
+    }
+    /// After the frame's draws.
+    void end_frame() noexcept {
+        fences[count] = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+        frames[count] = next++;
+        ++count;
+    }
+    void release() noexcept {
+        for (u32 i = 0; i < count; ++i)
+            glDeleteSync(fences[i]);
+        count = 0;
+    }
+};
+
 struct TextureItem {
     AssetId id = 0;
     TextureHandle handle;
@@ -108,9 +146,8 @@ TextureHandle texture_for(Scene& s, StrView name, mesh::TextureSlot slot) {
     return s.textures[s.textureCount - 1].handle;
 }
 
-/// Requests the model's textures and records each material's slots. The slot is known at once:
-/// acquire() ran inside request_texture, and the slot shows the placeholder until the texture
-/// arrives. Nothing here runs again per frame.
+/// Requests the model's textures and records each material's slots. The slot is known at once and
+/// shows the placeholder until the texture arrives. Nothing here runs again per frame.
 void request_textures(Scene& s, mesh::MeshView const& v) {
     for (u32 m = 0; m < kMaxMaterials; ++m)
         for (u32 i = 0; i < kSlotsPerDraw; ++i)
@@ -171,14 +208,14 @@ int main(int argc, char** argv) {
     ex::OrbitCamera camera;
     ex::attach_camera(window, &camera);
 
-    // 2. The adapter in bindless mode: acquire() and publish() maintain the handle table.
+    // 2. The adapter in bindless mode: bind() maintains the handle table.
     Adapter adapter{};
     Result<GlAdapter*> gla = gl_adapter_create({.bindless = true}, &adapter);
     if (gla.failed()) return 2;
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, gl_handle_table(*gla));
 
-    // 3. The context: create() waits for the placeholders (flush), so every slot acquire() hands
-    //    out shows one from the start.
+    // 3. The context: create() waits for the placeholders (flush), so every slot shows one from
+    //    the request on.
     ContextDesc cd{};
     cd.diag                  = ex::stdout_diag();
     cd.adapter               = &adapter;
@@ -216,10 +253,12 @@ int main(int argc, char** argv) {
     // 5. The frame loop: pump, then draw with the slots the materials stored.
     Target target;
     OffscreenRun run;
+    FrameFences frames;
     int exitCode = 0;
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
-        (void)pump(ctx);
+        frames.poll();
+        (void)pump(ctx, {.frame = frames.next, .completedFrame = frames.completed});
         for (Event const& e : events(ctx))
             handle_event(s, e);
 
@@ -250,12 +289,15 @@ int main(int argc, char** argv) {
             draw_geometry(s.geometry, *v, buffer, &bind_material, &s);
         }
         end_frame(window, target, o.offscreen);
+        frames.end_frame();
         if (o.offscreen &&
             offscreen_done(o, target, scene_settled(s), state(ctx, s.model) == State::Failed, run, &exitCode))
             break;
     }
 
-    // 6. Teardown: kiln first, then GL.
+    // 6. Teardown: the GPU idle, kiln, then GL.
+    glFinish();
+    frames.release();
 #if KILN_GL_HAS_COOK
     if (provider) cook::uninstall_provider(ctx);
 #endif

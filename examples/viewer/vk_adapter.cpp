@@ -5,7 +5,6 @@
 
 #include <kiln/containers.h>
 #include <kiln/log.h>
-#include <kiln/placeholders.h>
 
 #include <atomic>
 #include <mutex>
@@ -127,9 +126,8 @@ struct Object {
     TextureDesc texture{};                    ///< copy of the upload's TextureDesc
     UploadKind kind   = UploadKind::MeshPayload;
     ObjectState state = ObjectState::Free;
-    bool deferred     = false; ///< destroy_deferred received it
-    u32 generation    = 0;     ///< bumped when the object is freed; part of the upload token
-    u32 ringItem      = 0;     ///< its staging reservation in VkAdapter::ring.items
+    u32 generation    = 0; ///< bumped when the object is freed; part of the upload token
+    u32 ringItem      = 0; ///< its staging reservation in VkAdapter::ring.items
 };
 
 /// A staging ring reservation, released when the timeline reaches `value`. Reservations are
@@ -142,16 +140,6 @@ struct RingEntry {
 struct CmdEntry {
     VkCommandBuffer cmd = VK_NULL_HANDLE;
     u64 value           = 0;
-};
-
-struct DeferredObject {
-    u32 index = 0;
-    u64 frame = 0;
-};
-
-struct SlotRelease {
-    u32 slot  = 0;
-    u64 frame = 0;
 };
 
 /// A fixed-capacity FIFO over a Vec that is sized once at create.
@@ -179,8 +167,8 @@ template <class T> struct Fifo {
 
 } // namespace
 
-// One mutex guards the ring, the command pool, the object and slot tables and the
-// descriptor set. is_upload_complete reads the timeline without it.
+// One mutex guards the ring, the command pool, the object table and the descriptor set. is_upload_complete
+// reads the timeline without it.
 struct VkAdapter {
     AdapterDesc desc{};
     Allocator const* alloc = nullptr;
@@ -215,7 +203,6 @@ struct VkAdapter {
     // Objects.
     Vec<Object> objects;
     Vec<u32> freeObjects;
-    Vec<DeferredObject> deferred;
     u32 liveObjects = 0;
 
     // Bindless.
@@ -223,12 +210,7 @@ struct VkAdapter {
     VkDescriptorPool descPool       = VK_NULL_HANDLE;
     VkDescriptorSet set             = VK_NULL_HANDLE;
     VkSampler sampler               = VK_NULL_HANDLE;
-    HashMap<AssetId, u32> assetSlots;
-    Vec<u32> freeSlots;
-    Vec<SlotRelease> slotReleases;
-    GpuObject placeholders[kLastPlaceholderId + 1] = {}; ///< by placeholder id
 
-    u64 frame = 0; ///< the last completed frame given to adapter_retire
     std::atomic<u64> watermark{0};
     u32 busyReturned  = 0;
     u64 bytesUploaded = 0;
@@ -625,33 +607,6 @@ void vk_copy_constraints(void* /*user*/, CopyConstraints* out) noexcept {
     out->bufferOffsetAlign    = kBufferOffsetAlign;
 }
 
-Status vk_acquire(void* user, AssetId id, UploadKind kind, TextureKind texKind, TextureShape shape,
-                  GpuObject* out) noexcept {
-    *out = GpuObject{};
-    if (kind != UploadKind::TextureLevels) return kOk; // meshes have no slot
-    VkAdapter* a = self(user);
-    std::lock_guard<std::mutex> lock(a->mutex);
-    u32 slot = kInvalid;
-    if (u32 const* found = a->assetSlots.find(id)) {
-        slot = *found;
-    } else {
-        if (a->freeSlots.empty()) {
-            KILN_WARN("vk-adapter", "all %u bindless slots are in use", a->desc.maxSlots);
-            return make_status(Code::OutOfMemory);
-        }
-        slot = a->freeSlots.back();
-        a->freeSlots.pop_back();
-        a->assetSlots.insert(id, slot);
-    }
-    // The placeholder of the kind and shape, or the shape's BaseColor one while that is not
-    // published yet.
-    Object const* ph = object_of(a, a->placeholders[placeholder_asset_id(texKind, shape)]);
-    if (!ph) ph = object_of(a, a->placeholders[placeholder_asset_id(TextureKind::BaseColor, shape)]);
-    if (ph && ph->view) write_slot(a, slot, ph->view, shape);
-    *out = GpuObject{.native = 0, .slot = slot, .kind = u32(kind)};
-    return kOk;
-}
-
 Status vk_begin_upload(void* user, UploadDesc const& desc, UploadTarget* out) noexcept {
     VkAdapter* a         = self(user);
     bool const isTexture = desc.kind == UploadKind::TextureLevels;
@@ -719,13 +674,10 @@ Status vk_begin_upload(void* user, UploadDesc const& desc, UploadTarget* out) no
     a->ring.push(RingEntry{.value = 0, .end = start + n});
     a->ringHead = start + n;
 
-    u32 slot = kInvalid;
-    if (isTexture)
-        if (u32 const* s = a->assetSlots.find(desc.id)) slot = *s;
     out->dst           = a->mapped + start;
     out->rowPitchAlign = kRowPitchAlign;
     out->token         = token_of(index, o);
-    out->object        = GpuObject{.native = u64(index) + 1, .slot = slot, .kind = u32(desc.kind)};
+    out->object        = GpuObject{.native = u64(index) + 1, .slot = kInvalid, .kind = u32(desc.kind)};
     return kOk;
 }
 
@@ -762,38 +714,22 @@ bool vk_is_upload_complete(void* user, u64 token) noexcept {
     Object const* o = object_of_token(a, token);
     if (!o) return true; // freed: nothing is left to wait for
     if (o->state == ObjectState::Recorded && a->submitOnPoll) submit_ready(a);
-    return o->state == ObjectState::Submitted && timeline_value(a) >= o->value;
-}
-
-void vk_publish(void* user, AssetId id, GpuObject obj, u32 /*version*/) noexcept {
-    VkAdapter* a = self(user);
-    std::lock_guard<std::mutex> lock(a->mutex);
-    Object const* o = object_of(a, obj);
-    if (o && o->value > a->watermark.load(std::memory_order_relaxed))
+    if (o->state != ObjectState::Submitted || timeline_value(a) < o->value) return false;
+    if (o->value > a->watermark.load(std::memory_order_relaxed))
         a->watermark.store(o->value, std::memory_order_relaxed);
-    if (id >= kFirstPlaceholderId && id <= kLastPlaceholderId) {
-        a->placeholders[id] = obj; // a null object at destroy() clears it
-        return;
-    }
-    u32 const* found = a->assetSlots.find(id);
-    if (!found) return; // meshes, and textures whose acquire failed
-    u32 const slot = *found;
-    if (obj.is_null()) {
-        // Unload: frames in flight may still sample the slot, so it is reused only later.
-        a->assetSlots.erase(id);
-        a->slotReleases.push_back(SlotRelease{.slot = slot, .frame = a->frame});
-        return;
-    }
-    if (o && o->view) write_slot(a, slot, o->view, o->texture.shape);
+    return true;
 }
 
-void vk_destroy_deferred(void* user, GpuObject obj) noexcept {
+void vk_bind(void* user, u32 slot, GpuObject obj, TextureShape shape) noexcept {
     VkAdapter* a = self(user);
     std::lock_guard<std::mutex> lock(a->mutex);
-    Object* o = object_of(a, obj);
-    if (!o || o->deferred) return;
-    o->deferred = true;
-    a->deferred.push_back(DeferredObject{.index = u32(obj.native - 1), .frame = a->frame});
+    if (Object const* o = object_of(a, obj); o && o->view) write_slot(a, slot, o->view, shape);
+}
+
+void vk_destroy(void* user, GpuObject obj) noexcept {
+    VkAdapter* a = self(user);
+    std::lock_guard<std::mutex> lock(a->mutex);
+    if (object_of(a, obj)) object_free(a, u32(obj.native - 1));
 }
 
 } // namespace
@@ -956,16 +892,6 @@ Result<VkAdapter*> adapter_create(AdapterDesc const& desc, Adapter* out) noexcep
     a->cmdsInFlight.init(alloc, maxObj);
     a->freeCmds.init(alloc, Tag::Payload);
     a->freeCmds.reserve(maxObj);
-    a->deferred.init(alloc, Tag::Payload);
-    a->deferred.reserve(maxObj);
-    a->freeSlots.init(alloc, Tag::Payload);
-    a->freeSlots.reserve(desc.maxSlots);
-    for (u32 i = desc.maxSlots; i > 0; --i)
-        a->freeSlots.push_back(i - 1);
-    a->slotReleases.init(alloc, Tag::Payload);
-    a->slotReleases.reserve(desc.maxSlots);
-    a->assetSlots.init(alloc, Tag::Payload);
-    a->assetSlots.reserve(desc.maxSlots);
 
     Status const st = create_vulkan_objects(a);
     if (st.failed()) {
@@ -978,13 +904,13 @@ Result<VkAdapter*> adapter_create(AdapterDesc const& desc, Adapter* out) noexcep
     *out                    = Adapter{};
     out->supports_format    = &vk_supports_format;
     out->copy_constraints   = &vk_copy_constraints;
-    out->acquire            = desc.bindless ? &vk_acquire : nullptr;
     out->begin_upload       = &vk_begin_upload;
     out->commit_upload      = &vk_commit_upload;
     out->is_upload_complete = &vk_is_upload_complete;
-    out->publish            = &vk_publish;
-    out->destroy_deferred   = &vk_destroy_deferred;
+    out->bind               = desc.bindless ? &vk_bind : nullptr;
+    out->destroy            = &vk_destroy;
     out->caps               = kSelfSubmitting | kCubeTextures | kArrayTextures | kMeshes;
+    out->bindlessSlots      = desc.bindless ? desc.maxSlots : 0;
     out->user               = a;
     KILN_ASSERT(adapter_is_valid(*out));
     return a;
@@ -1035,36 +961,6 @@ TextureView adapter_texture(VkAdapter* a, GpuObject obj) noexcept {
     return TextureView{.view = o->view, .shape = o->texture.shape};
 }
 
-void adapter_retire(VkAdapter* a, u64 completedFrame) noexcept {
-    if (!a) return;
-    std::lock_guard<std::mutex> lock(a->mutex);
-    a->frame            = completedFrame;
-    u64 const fif       = a->desc.framesInFlight;
-    u64 const completed = timeline_value(a);
-    ring_reclaim(a, completed);
-    cmds_reclaim(a, completed);
-    for (usize i = 0; i < a->deferred.size();) {
-        DeferredObject const d = a->deferred[i];
-        Object const& o        = a->objects[d.index];
-        // An upload still on the transfer queue (e.g. unloaded while awaiting) waits for it too.
-        bool const idle = o.state == ObjectState::Submitted && o.value <= completed;
-        if (d.frame + fif <= completedFrame && idle) {
-            object_free(a, d.index);
-            a->deferred.erase_unordered(i);
-        } else {
-            ++i;
-        }
-    }
-    for (usize i = 0; i < a->slotReleases.size();) {
-        if (a->slotReleases[i].frame + fif <= completedFrame) {
-            a->freeSlots.push_back(a->slotReleases[i].slot);
-            a->slotReleases.erase_unordered(i);
-        } else {
-            ++i;
-        }
-    }
-}
-
 AdapterStats adapter_stats(VkAdapter* a) noexcept {
     if (!a) return {};
     std::lock_guard<std::mutex> lock(a->mutex);
@@ -1076,7 +972,6 @@ AdapterStats adapter_stats(VkAdapter* a) noexcept {
         .busyReturned    = a->busyReturned,
         .bytesUploaded   = a->bytesUploaded,
         .liveObjects     = a->liveObjects,
-        .slotsInUse      = a->desc.maxSlots - u32(a->freeSlots.size()),
         .stagingUsed     = ring_used(a),
     };
 }

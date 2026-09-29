@@ -21,51 +21,14 @@ KILN_TEST(NullAdapter, CreateProducesValidAdapter) {
     null_adapter_destroy(created.value());
 }
 
-KILN_TEST(NullAdapter, AcquireReturnsDistinctSlotsPerIdAndSameSlotForRepeat) {
+KILN_TEST(NullAdapter, NonBindlessHasNoBind) {
     Adapter adapter{};
-    Result<NullAdapter*> created = null_adapter_create(NullAdapterDesc{.bindless = true}, &adapter);
+    Result<NullAdapter*> created = null_adapter_create(NullAdapterDesc{.bindlessSlots = 0}, &adapter);
     KILN_REQUIRE(created.ok());
-    NullAdapter* na = created.value();
-
-    GpuObject o1{}, o2{}, o1Again{};
-    KILN_REQUIRE(adapter
-                     .acquire(adapter.user, 10, UploadKind::TextureLevels, TextureKind::BaseColor,
-                              TextureShape::Tex2D, &o1)
-                     .ok());
-    KILN_REQUIRE(adapter
-                     .acquire(adapter.user, 20, UploadKind::TextureLevels, TextureKind::Normal,
-                              TextureShape::Tex2D, &o2)
-                     .ok());
-    KILN_REQUIRE(adapter
-                     .acquire(adapter.user, 10, UploadKind::TextureLevels, TextureKind::BaseColor,
-                              TextureShape::Tex2D, &o1Again)
-                     .ok());
-
-    KILN_CHECK(o1.slot != kInvalid);
-    KILN_CHECK(o2.slot != kInvalid);
-    KILN_CHECK_NE(o1.slot, o2.slot);
-    KILN_CHECK_EQ(o1.slot, o1Again.slot);
-
-    NullAdapterStats stats = null_adapter_stats(na);
-    KILN_CHECK_EQ(stats.acquires, u32(3));
-
-    null_adapter_destroy(na);
-}
-
-KILN_TEST(NullAdapter, NonBindlessAcquireReturnsNullObject) {
-    Adapter adapter{};
-    Result<NullAdapter*> created = null_adapter_create(NullAdapterDesc{.bindless = false}, &adapter);
-    KILN_REQUIRE(created.ok());
-    NullAdapter* na = created.value();
-
-    GpuObject obj{};
-    KILN_REQUIRE(adapter
-                     .acquire(adapter.user, 10, UploadKind::TextureLevels, TextureKind::BaseColor,
-                              TextureShape::Tex2D, &obj)
-                     .ok());
-    KILN_CHECK(obj.is_null());
-
-    null_adapter_destroy(na);
+    KILN_CHECK(adapter.bind == nullptr);
+    KILN_CHECK_EQ(adapter.bindlessSlots, 0u);
+    KILN_CHECK(adapter_is_valid(adapter));
+    null_adapter_destroy(created.value());
 }
 
 KILN_TEST(NullAdapter, MeshUploadCycleWritesAndReadsBytes) {
@@ -188,64 +151,48 @@ KILN_TEST(NullAdapter, FailEveryNReturnsUnsupportedOnEveryThirdCall) {
     null_adapter_destroy(na);
 }
 
-KILN_TEST(NullAdapter, PublishBindsSlotAndNullPublishFreesIt) {
-    Adapter adapter{};
-    Result<NullAdapter*> created = null_adapter_create({}, &adapter);
-    KILN_REQUIRE(created.ok());
-    NullAdapter* na = created.value();
-
-    GpuObject acquired{};
-    KILN_REQUIRE(adapter
-                     .acquire(adapter.user, 42, UploadKind::TextureLevels, TextureKind::BaseColor,
-                              TextureShape::Tex2D, &acquired)
-                     .ok());
-    u32 slot = acquired.slot;
-    KILN_REQUIRE(slot != kInvalid);
-    KILN_CHECK(null_adapter_slot(na, slot).is_null());
-
-    GpuObject real{.native = 999, .slot = kInvalid, .kind = 7};
-    adapter.publish(adapter.user, 42, real, 1);
-    GpuObject bound = null_adapter_slot(na, slot);
-    KILN_CHECK_EQ(bound.native, u64(999));
-
-    adapter.publish(adapter.user, 42, GpuObject{}, 2);
-    KILN_CHECK(null_adapter_slot(na, slot).is_null());
-
-    NullAdapterStats stats = null_adapter_stats(na);
-    KILN_CHECK_EQ(stats.publishes, u32(2));
-
-    null_adapter_destroy(na);
-}
-
-KILN_TEST(NullAdapter, DestroyDeferredKeepsPayloadUntilFlush) {
-    Adapter adapter{};
-    Result<NullAdapter*> created = null_adapter_create({}, &adapter);
-    KILN_REQUIRE(created.ok());
-    NullAdapter* na = created.value();
-
+UploadTarget upload_rgba_1x1(Adapter const& adapter) {
     TextureDesc texDesc{.format = Format::R8G8B8A8_UNORM, .width = 1, .height = 1};
     UploadDesc ud{
         .id = 5, .kind = UploadKind::TextureLevels, .size = 4, .alignment = 16, .texture = &texDesc};
     UploadTarget target{};
-    KILN_REQUIRE(adapter.begin_upload(adapter.user, ud, &target).ok());
+    KILN_VERIFY(adapter.begin_upload(adapter.user, ud, &target).ok());
     std::memset(target.dst, 0xAB, 4);
     adapter.commit_upload(adapter.user, target.token);
+    return target;
+}
 
-    NullAdapterStats before = null_adapter_stats(na);
-    KILN_CHECK(before.liveObjects >= u32(1));
+KILN_TEST(NullAdapter, BindShowsObjectInSlot) {
+    Adapter adapter{};
+    Result<NullAdapter*> created = null_adapter_create({.bindlessSlots = 8}, &adapter);
+    KILN_REQUIRE(created.ok());
+    NullAdapter* na = created.value();
+    KILN_CHECK_EQ(adapter.bindlessSlots, 8u);
+    KILN_CHECK(null_adapter_slot(na, 3).is_null());
 
-    adapter.destroy_deferred(adapter.user, target.object);
-    Span<u8 const> stillThere = null_adapter_payload(na, target.object);
-    KILN_CHECK_EQ(stillThere.size, usize(4));
+    UploadTarget const t = upload_rgba_1x1(adapter);
+    adapter.bind(adapter.user, 3, t.object, TextureShape::Tex2D);
+    KILN_CHECK_EQ(null_adapter_slot(na, 3).native, t.object.native);
+    KILN_CHECK_EQ(null_adapter_stats(na).binds, 1u);
 
-    u32 freed = null_adapter_flush_deferred(na);
-    KILN_CHECK(freed >= u32(1));
+    null_adapter_destroy(na);
+}
 
-    Span<u8 const> gone = null_adapter_payload(na, target.object);
-    KILN_CHECK(gone.empty());
+KILN_TEST(NullAdapter, DestroyFreesPayload) {
+    Adapter adapter{};
+    Result<NullAdapter*> created = null_adapter_create({}, &adapter);
+    KILN_REQUIRE(created.ok());
+    NullAdapter* na = created.value();
 
+    UploadTarget const target = upload_rgba_1x1(adapter);
+    NullAdapterStats before   = null_adapter_stats(na);
+    KILN_CHECK_EQ(null_adapter_payload(na, target.object).size, usize(4));
+
+    adapter.destroy(adapter.user, target.object);
+    KILN_CHECK(null_adapter_payload(na, target.object).empty());
     NullAdapterStats after = null_adapter_stats(na);
-    KILN_CHECK(after.liveObjects < before.liveObjects);
+    KILN_CHECK_EQ(after.liveObjects + 1, before.liveObjects);
+    KILN_CHECK_EQ(after.destroys, 1u);
 
     null_adapter_destroy(na);
 }

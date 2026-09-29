@@ -43,7 +43,7 @@ surface.
 - Workers post completions to a mutex-guarded queue; `pump()` drains it (R5a).
 - No user callback fires on a worker thread, except `Allocator`, `LogSink`, the `IoBackend`, the
   cook provider's `cook()`, and the adapter's `begin_upload` / `commit_upload` (`adapter.md`). All
-  of these must be thread-safe. `acquire` runs on the thread that calls `request_*()`.
+  of these must be thread-safe. `bind` and `destroy` run on the pump thread.
 
 ### Runtime state ownership
 

@@ -251,7 +251,7 @@ KILN_TEST(Runtime, CreateDestroyPlaceholders) {
     for (bool dev : {true, false}) {
         Rt rt;
         NullAdapterDesc nd;
-        nd.bindless = false;
+        nd.bindlessSlots = 0;
         ContextDesc cd;
         cd.devPlaceholders = dev;
         cd.storeDir        = "does/not/exist";
@@ -260,7 +260,7 @@ KILN_TEST(Runtime, CreateDestroyPlaceholders) {
         // 4 kinds + the Failed checker, for each of Tex2D, Cube and Array.
         KILN_CHECK_EQ(st.beginUploads, dev ? 15u : 12u);
         KILN_CHECK_EQ(st.completes, dev ? 15u : 12u);
-        KILN_CHECK_EQ(st.publishes, dev ? 15u : 12u);
+        KILN_CHECK_EQ(st.binds, 0u);
 
         // A fresh texture handle serves its kind placeholder (objects are created in kind order).
         RequestOptions ro;
@@ -289,7 +289,7 @@ KILN_TEST(Runtime, CreateDestroyPlaceholders) {
 KILN_TEST(Runtime, HostPlaceholderOverride) {
     Rt rt;
     NullAdapterDesc nd;
-    nd.bindless            = false;
+    nd.bindlessSlots       = 0;
     nd.rowPitchAlign       = 256;
     u8 const px[2 * 2 * 4] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16};
     PlaceholderDesc pd;
@@ -379,8 +379,7 @@ KILN_TEST(Runtime, LoadMesh) {
     KILN_CHECK_EQ(state(rt.ctx, m), State::Unloaded);
     KILN_CHECK(mesh_view(rt.ctx, m) == nullptr);
     KILN_CHECK(find_mesh(rt.ctx, "mesh/cube_basic"_h).is_null());
-    KILN_CHECK_EQ(null_adapter_flush_deferred(rt.na), 1u);
-    KILN_CHECK_EQ(null_adapter_stats(rt.na).destroys, destroysBefore + 1);
+    KILN_CHECK_EQ(null_adapter_stats(rt.na).destroys, destroysBefore + 1); // no frames reported: at once
 
     // A new request gets a new generation (stale old handle stays Unloaded).
     MeshHandle m3 = request_mesh(rt.ctx, "mesh/cube_basic");
@@ -528,7 +527,7 @@ KILN_TEST(Runtime, MissingAssetFails) {
     for (bool dev : {true, false}) {
         Rt rt;
         NullAdapterDesc nd;
-        nd.bindless = false;
+        nd.bindlessSlots = 0;
         ContextDesc cd;
         cd.devPlaceholders = dev;
         if (!rt.init(nd, cd)) return;
@@ -806,19 +805,102 @@ KILN_TEST(Runtime, EventOverflowDropsOldest) {
         release(rt.ctx, h);
 }
 
-KILN_TEST(Runtime, BindlessPublish) {
+KILN_TEST(Runtime, BindlessSlots) {
     Rt rt;
-    NullAdapterDesc nd;
-    nd.bindless = true;
-    if (!rt.init(nd)) return;
-    TextureHandle t          = request_texture(rt.ctx, "ktx2/normal");
-    GpuObject const acquired = gpu(rt.ctx, t);
-    KILN_REQUIRE(acquired.slot != kInvalid);
+    if (!rt.init()) return;
+    RequestOptions ro;
+    ro.textureKind          = TextureKind::Normal;
+    TextureHandle t         = request_texture(rt.ctx, "ktx2/normal", ro);
+    GpuObject const pending = gpu(rt.ctx, t);
+    u32 const slot          = pending.slot;
+    KILN_REQUIRE(slot != kInvalid);
+    // The slot shows the Normal placeholder from the request on.
+    KILN_CHECK_EQ(null_adapter_slot(rt.na, slot).native, u64(u32(TextureKind::Normal) + 1));
+    KILN_CHECK_EQ(pending.native, u64(u32(TextureKind::Normal) + 1));
     KILN_REQUIRE(rt.pump_until([&] { return is_ready(rt.ctx, t); }));
     GpuObject const real = gpu(rt.ctx, t);
-    KILN_CHECK_EQ(null_adapter_slot(rt.na, acquired.slot).native, real.native);
+    KILN_CHECK_EQ(real.slot, slot);
+    KILN_CHECK_EQ(null_adapter_slot(rt.na, slot).native, real.native);
+
+    TextureHandle t2 = request_texture(rt.ctx, "ktx2/color_srgb");
+    KILN_CHECK(gpu(rt.ctx, t2).slot != slot);
+    release(rt.ctx, t2);
+    // No frames reported: the number comes back at once and the next request reuses it.
     release(rt.ctx, t);
-    KILN_CHECK(null_adapter_slot(rt.na, acquired.slot).is_null()); // publish(id, null) at unload
+    TextureHandle t3 = request_texture(rt.ctx, "ktx2/normal");
+    KILN_CHECK_EQ(gpu(rt.ctx, t3).slot, slot);
+    release(rt.ctx, t3);
+}
+
+// With frames reported, a dropped object and its slot number wait for completedFrame.
+KILN_TEST(Runtime, FramesDelayRelease) {
+    Rt rt;
+    if (!rt.init()) return;
+    PumpOptions po;
+    po.frame          = 1;
+    po.completedFrame = 0;
+    rt.pump_once(po);
+    TextureHandle t = request_texture(rt.ctx, "ktx2/normal");
+    KILN_REQUIRE(rt.pump_until([&] { return is_ready(rt.ctx, t); }, po));
+    u32 const slot           = gpu(rt.ctx, t).slot;
+    GpuObject const obj      = gpu(rt.ctx, t);
+    u32 const destroysBefore = null_adapter_stats(rt.na).destroys;
+    po.frame                 = 5;
+    po.completedFrame        = 3;
+    rt.pump_once(po);
+    release(rt.ctx, t); // dropped after frame 5 was announced
+    TextureHandle t2 = request_texture(rt.ctx, "ktx2/color_srgb");
+    KILN_CHECK(gpu(rt.ctx, t2).slot != slot); // the number waits too
+    po.frame          = 6;
+    po.completedFrame = 4;
+    rt.pump_once(po);
+    KILN_CHECK_EQ(null_adapter_stats(rt.na).destroys, destroysBefore);
+    KILN_CHECK_EQ(null_adapter_payload(rt.na, obj).size != 0, true);
+    po.frame          = 0; // 0 keeps the last frame
+    po.completedFrame = 5;
+    rt.pump_once(po);
+    KILN_CHECK_EQ(null_adapter_stats(rt.na).destroys, destroysBefore + 1);
+    KILN_CHECK(null_adapter_payload(rt.na, obj).empty());
+    TextureHandle t3 = request_texture(rt.ctx, "ktx2/normal");
+    KILN_CHECK_EQ(gpu(rt.ctx, t3).slot, slot);
+    release(rt.ctx, t2);
+    release(rt.ctx, t3);
+}
+
+// Assets dropped at every stage of a load leave no object behind: kiln finishes the abandoned
+// uploads and destroys their objects.
+KILN_TEST(Runtime, DropMidLoadReleasesObjects) {
+    Rt rt;
+    if (!rt.init()) return;
+    u32 const baseline = null_adapter_stats(rt.na).liveObjects; // the placeholders
+    for (int round = 0; round < 8; ++round) {
+        TextureHandle t = request_texture(rt.ctx, "ktx2/normal");
+        MeshHandle m    = request_mesh(rt.ctx, kGoldenMeshes[0]);
+        for (int i = 0; i < round; ++i)
+            rt.pump_once();
+        release(rt.ctx, t);
+        release(rt.ctx, m);
+    }
+    KILN_REQUIRE(rt.pump_until([&] { return stats(rt.ctx).ioJobsInFlight == 0; }));
+    for (int i = 0; i < 3; ++i)
+        rt.pump_once();
+    KILN_CHECK_EQ(null_adapter_stats(rt.na).liveObjects, baseline);
+}
+
+// A request beyond Adapter::bindlessSlots fails with K5004.
+KILN_TEST(Runtime, BindlessSlotsExhausted) {
+    Rt rt;
+    NullAdapterDesc nd;
+    nd.bindlessSlots = 1;
+    if (!rt.init(nd)) return;
+    TextureHandle a = request_texture(rt.ctx, "ktx2/normal");
+    TextureHandle b = request_texture(rt.ctx, "ktx2/color_srgb");
+    KILN_CHECK_EQ(gpu(rt.ctx, a).slot, 0u);
+    KILN_CHECK_EQ(gpu(rt.ctx, b).slot, kInvalid);
+    KILN_REQUIRE(rt.pump_until([&] { return state(rt.ctx, b) == State::Failed && is_ready(rt.ctx, a); }));
+    KILN_CHECK(rt.diags.has(kDiagAdapterRejected));
+    release(rt.ctx, a);
+    release(rt.ctx, b);
 }
 
 // No allocation in pump() or the queries.
@@ -971,7 +1053,6 @@ KILN_TEST(Runtime, ReloadSwapsVersion) {
     KILN_CHECK(counts_of(*v1) == boxCounts);
     GpuObject const oldObj = gpu(rt.ctx, m);
 
-    null_adapter_flush_deferred(rt.na);
     NullAdapterStats const st0 = null_adapter_stats(rt.na);
     usize const ev0            = rt.events.size();
     KILN_REQUIRE(put_golden("mesh/MultiUVTest", ".mesh", store.mesh));
@@ -1007,8 +1088,7 @@ KILN_TEST(Runtime, ReloadSwapsVersion) {
         KILN_CHECK(got.size == decoded.size() && bytes_equal(got.data, decoded.data(), got.size));
     }
     NullAdapterStats const st1 = null_adapter_stats(rt.na);
-    KILN_CHECK_EQ(st1.publishes, st0.publishes + 1);
-    KILN_CHECK_EQ(null_adapter_flush_deferred(rt.na), 1u); // the old object
+    KILN_CHECK_EQ(st1.destroys, st0.destroys + 1); // the old object
     KILN_CHECK(null_adapter_payload(rt.na, oldObj).size == 0);
     KILN_CHECK_EQ(rt.diags.count, 0u);
     release(rt.ctx, m);
@@ -1054,7 +1134,7 @@ KILN_TEST(Runtime, ReloadFailureKeepsOld) {
     KILN_CHECK_EQ(count_code(rt.diags, kDiagReloadFailed), 1u);
     KILN_CHECK_EQ(rt.diags.count, 1u);
     KILN_CHECK_EQ(rt.events.size(), ev0);
-    KILN_CHECK_EQ(null_adapter_stats(rt.na).publishes, st0.publishes);
+    KILN_CHECK_EQ(null_adapter_stats(rt.na).binds, st0.binds);
     GroupStatus const gs1 = progress(rt.ctx, g);
     KILN_CHECK_EQ(gs1.ready, gs0.ready);
     KILN_CHECK_EQ(gs1.failed, gs0.failed);
@@ -1132,18 +1212,16 @@ KILN_TEST(Runtime, ReloadTexture) {
     KILN_REQUIRE(put_golden("ktx2/color_srgb", ".ktx2", store.tex));
 
     Rt rt;
-    NullAdapterDesc nd;
-    nd.bindless = true;
     ContextDesc cd;
     cd.storeDir = store.dir;
-    if (!rt.init(nd, cd)) return;
-    TextureHandle t          = request_texture(rt.ctx, "ktx2/thing");
-    GpuObject const acquired = gpu(rt.ctx, t);
-    KILN_REQUIRE(acquired.slot != kInvalid);
+    if (!rt.init({}, cd)) return;
+    TextureHandle t       = request_texture(rt.ctx, "ktx2/thing");
+    GpuObject const first = gpu(rt.ctx, t);
+    KILN_REQUIRE(first.slot != kInvalid);
     KILN_REQUIRE(rt.pump_until([&] { return is_ready(rt.ctx, t); }));
     TextureInfo const ti1 = texture_info(rt.ctx, t);
     GpuObject const obj1  = gpu(rt.ctx, t);
-    KILN_CHECK_EQ(null_adapter_slot(rt.na, acquired.slot).native, obj1.native);
+    KILN_CHECK_EQ(null_adapter_slot(rt.na, first.slot).native, obj1.native);
 
     usize const ev0 = rt.events.size();
     KILN_REQUIRE(put_golden("ktx2/height16", ".ktx2", store.tex));
@@ -1168,8 +1246,8 @@ KILN_TEST(Runtime, ReloadTexture) {
     GpuObject const obj2 = gpu(rt.ctx, t);
     KILN_CHECK(obj2.native != obj1.native);
     KILN_CHECK_EQ(ti2.gpu.native, obj2.native);
-    KILN_CHECK_EQ(null_adapter_slot(rt.na, acquired.slot).native, obj2.native);
-    KILN_CHECK_EQ(null_adapter_flush_deferred(rt.na), 1u);
+    KILN_CHECK_EQ(null_adapter_slot(rt.na, first.slot).native, obj2.native);
+    KILN_CHECK(null_adapter_payload(rt.na, obj1).empty());
     release(rt.ctx, t);
 }
 
@@ -1445,7 +1523,7 @@ KILN_TEST(Runtime, TextureShapeMismatchFails) {
 // another shape fails as adapter-rejected.
 KILN_TEST(Runtime, AdapterWithoutShapeCaps) {
     Rt rt;
-    Result<NullAdapter*> a = null_adapter_create({.bindless = false}, &rt.adapter);
+    Result<NullAdapter*> a = null_adapter_create({.bindlessSlots = 0}, &rt.adapter);
     KILN_REQUIRE(a.ok());
     rt.na = *a;
     rt.adapter.caps &= ~u32(kCubeTextures | kArrayTextures);
@@ -1460,11 +1538,11 @@ KILN_TEST(Runtime, AdapterWithoutShapeCaps) {
     release(rt.ctx, cube);
 }
 
-// A texture-only adapter (no kMeshes) is never asked to acquire or upload a mesh, and a
+// A texture-only adapter (no kMeshes) is never asked to upload a mesh, and a
 // requested or registered mesh fails as adapter-rejected (docs/design/texture-only.md).
 KILN_TEST(Runtime, AdapterWithoutMeshes) {
     Rt rt;
-    Result<NullAdapter*> a = null_adapter_create({.bindless = false}, &rt.adapter);
+    Result<NullAdapter*> a = null_adapter_create({.bindlessSlots = 0}, &rt.adapter);
     KILN_REQUIRE(a.ok());
     rt.na = *a;
     rt.adapter.caps &= ~u32(kMeshes);

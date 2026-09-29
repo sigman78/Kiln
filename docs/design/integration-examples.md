@@ -23,7 +23,7 @@ adapter onto, how their third-party code is fetched, and how the work feeds the 
 | Sky | `examples/assets/skies/hdr_cube.hdr` (committed) | `TextureShape::Cube`, `R16G16B16A16_SFLOAT` |
 | Vertex data | `VertexProfile::Float` (owner decision, 2026-09-28) | no decoding in any shader: float3 position and normal, float4 tangent, float2 UV |
 | Cooking | cook-on-miss from `--source`, as the viewer does | the provider path |
-| Controls | orbit camera, `--watch` for hot reload | `publish` with a new version |
+| Controls | orbit camera, hot reload | `Changed` events, `bind` with the new object |
 
 `VertexProfile::Float` is implemented (`mesh-format-spec.md` §6). The quantized `default` profile
 stays the profile for shipped content; the existing Vulkan viewer keeps showing it.
@@ -48,13 +48,13 @@ measures.
 
 | Adapter part | `vk-basic` | `gl` | `gl-bindless` | `sokol` | `nga` |
 |---|---|---|---|---|---|
-| `acquire` | null | null | a slot in the handle table, showing the placeholder | null | a stable slot in a CPU table, pointing at the placeholder's descriptor |
+| `bind` (`bindlessSlots`) | null | null | writes the resident handle into kiln's slot of the handle table | null | points kiln's slot in a CPU table at the object's descriptor |
 | `begin_upload` memory | staging ring | persistently mapped PBO | same as `gl` | CPU memory per upload | CPU-visible GPU heap (`gpu_heap`, ReBAR) |
 | `commit_upload` | submits a copy | queues | queues | queues | queues |
 | GPU work | transfer queue | `flush`: `glTextureSubImage*`, then a fence | same as `gl` | `flush`: `sg_make_image` + view / `sg_make_buffer`; complete at once | `flush`: texture creation and copies on queue 0, a timeline semaphore; meshes: none (written in place) |
-| `GpuObject` | `VkImage` / `VkBuffer` | the adapter's own table index | table index in `native`, handle slot in `slot` | the adapter's own table index | table index in `native` (a mesh's GPU address from `nga_mesh`), stable slot in `slot` |
-| After `publish` | rebuild that material's set | nothing; bound per draw | write the new handle | nothing; bound per draw | the slot points at another descriptor; the next root data picks it up |
-| `destroy_deferred` | by frames in flight | immediate | make non-resident, then delete | immediate | by frames the host reports (`nga_adapter_retire`) |
+| `GpuObject` | `VkImage` / `VkBuffer` | the adapter's own table index | table index in `native`, kiln's slot in `slot` | the adapter's own table index | table index in `native` (a mesh's GPU address from `nga_mesh`), kiln's slot in `slot` |
+| After `Ready` / `Changed` | rebuild that material's set | nothing; bound per draw | nothing: `bind` wrote the handle | nothing; bound per draw | nothing: the next root data reads the slot's new descriptor |
+| `destroy` | immediate; the host reports frames | immediate; no frames | make non-resident, then delete; the host reports frames (fences) | immediate; no frames | immediate; the host reports frames (timeline values) |
 
 `nga` is the one example where kiln writes mesh payloads straight into GPU memory, with no staging
 copy. The adapter interface allows it (`UploadTarget::dst` is "staging / ReBAR / scratch"), but

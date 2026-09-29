@@ -228,7 +228,7 @@ int main(int argc, char** argv) {
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
         // 5a. kiln runs the adapter's flush (the GL work its workers queued), hands out upload
-        //     memory, polls completions, publishes and emits events.
+        //     memory, polls completions and emits events.
         (void)pump(ctx);
         for (Event const& e : events(ctx))
             handle_event(s, e);
@@ -268,7 +268,7 @@ int main(int argc, char** argv) {
             break;
     }
 
-    // 6. Teardown: kiln first (it hands every GPU object back through destroy_deferred), then GL.
+    // 6. Teardown: kiln first (it hands every GPU object back through Adapter::destroy), then GL.
 #if KILN_GL_HAS_COOK
     if (provider) cook::uninstall_provider(ctx);
 #endif
