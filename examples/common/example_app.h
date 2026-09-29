@@ -6,6 +6,7 @@
 
 #include <kiln/assets.h>
 #include <kiln/log.h>
+#include <kiln/mesh.h>
 
 struct GLFWwindow;
 
@@ -38,6 +39,16 @@ struct Options {
 /// Returns -1 to run, else the exit code: 0 after --help, 2 on a usage error or when the demo model
 /// has not been downloaded yet (the message says how).
 [[nodiscard]] int parse_options(char const* program, int argc, char** argv, Options* o) noexcept;
+
+/// A material's PBR factors (mesh::MaterialSlot) as the three vec4s every example shader reads.
+/// A shader multiplies each texture by its factor, and uses the factor alone without the texture.
+struct MaterialFactors {
+    f32 baseColor[4];      ///< RGBA
+    f32 emissiveNormal[4]; ///< xyz: emissive; w: normal scale
+    f32 mro[4];            ///< x: metallic; y: roughness; z: occlusion strength; w: 0
+};
+/// The factors of `material`, or glTF's defaults when the view has no such material.
+[[nodiscard]] MaterialFactors material_factors(mesh::MeshView const& v, u32 material) noexcept;
 
 [[nodiscard]] char const* state_name(State s) noexcept;
 [[nodiscard]] char const* event_name(EventKind k) noexcept;

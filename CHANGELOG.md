@@ -42,6 +42,12 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
   diagnostic sink. `unsampled_block_formats(adapter)` (`kiln/adapter.h`) reads the set an adapter
   cannot sample.
 - Examples: every integration example cooks with the default profile into one `example-store`.
+- Examples: every renderer (the viewer, `kiln-gl`, `kiln-gl-bindless`, `kiln-sokol`,
+  `kiln-vk-basic`, `kiln-nga`) shades with the `MaterialSlot` PBR factors: a texture times its
+  factor, the factor alone without the texture (glTF's rules), so untextured materials get their
+  authored color. `ex::material_factors()` and `vkx::material_uniforms()` pack them; the Vulkan
+  examples read them from a material table in the frame uniforms (`DrawPush::material`), the others
+  per draw. Scenes with all factors at 1 render as before (WaterBottle: identical pixels).
 
 ## [0.5.0] - 2026-09-29
 

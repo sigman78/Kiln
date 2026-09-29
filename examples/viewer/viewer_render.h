@@ -15,14 +15,28 @@ namespace kiln::vkx {
 
 inline constexpr u32 kFramesInFlight = 2;
 
+/// A material's PBR factors (mesh::MaterialSlot), as the mesh shaders read them.
+struct MaterialUniforms {
+    f32 baseColor[4];      ///< RGBA
+    f32 emissiveNormal[4]; ///< xyz: emissive; w: normal scale
+    f32 mro[4];            ///< x: metallic; y: roughness; z: occlusion strength
+};
+/// Entries of FrameUniforms::materials. A draw indexes it with DrawPush::material; the last entry
+/// holds glTF's defaults, for materials past the table.
+inline constexpr u32 kMaxMaterials = 128;
+
+/// The factors of `material`, or glTF's defaults when the view has no such material.
+[[nodiscard]] MaterialUniforms material_uniforms(mesh::MeshView const* v, u32 material) noexcept;
+
 /// Set 1, binding 0 of both shaders (std140).
 struct FrameUniforms {
     f32 viewProj[16];
     f32 cameraPos[4];
     f32 lightDir[4]; ///< towards the light, xyz
     f32 tonemap[4];  ///< x: exposure multiplier (2^EV), y: 0 none, 1 ACES
+    MaterialUniforms materials[kMaxMaterials];
 };
-static_assert(sizeof(FrameUniforms) == 112);
+static_assert(sizeof(FrameUniforms) == 112 + 48 * kMaxMaterials);
 
 /// The shaders' push constant block `Draw` (std430 push constant layout).
 struct DrawPush {
@@ -30,8 +44,9 @@ struct DrawPush {
     f32 posScale[4];
     f32 posBias[4];
     u32 baseColorSlot;
-    u32 flags; ///< kDrawBaseColor | kDrawVertexColor
-    u32 pad[2];
+    u32 flags;    ///< kDrawBaseColor | kDrawVertexColor
+    u32 material; ///< into FrameUniforms::materials
+    u32 pad;
 };
 static_assert(sizeof(DrawPush) == 112); // mat4 + 2 vec4 + 4 uint, as laid out by the shaders
 

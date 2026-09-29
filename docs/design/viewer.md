@@ -68,8 +68,12 @@ The library never sees a Vulkan header.
   attributes are real and whether the normal is octahedral.
 - **Draw.** Per part and LOD 0: push constants carry the model matrix (part translation and
   rotation, parent chain resolved), `posScale` / `posBias`, the base-color bindless slot from
-  `gpu_object(ctx, textureHandle)`, and flags. `vkCmdDrawIndexed` per submesh with the spec's index offset
-  formula. A frame uniform buffer holds the view-projection matrix.
+  `gpu_object(ctx, textureHandle)`, flags, and the draw's entry in the material table.
+  `vkCmdDrawIndexed` per submesh with the spec's index offset formula. A frame uniform buffer holds
+  the view-projection matrix and the material table: the PBR factors of `MaterialSlot` for up to
+  127 materials, every loaded model's materials in order, the last entry glTF's defaults
+  (`vkx::FrameUniforms::materials`). The viewer multiplies the base color by its factor and adds
+  the emissive factor of a material without an emissive map (it binds no emissive map).
 - **Streaming.** The meshes named on the command line form a boot group, waited on with `wait()`
   before the first frame. Their textures are requested afterwards and stream in under a per-pump
   `uploadBytes` budget (`--budget-mib`), so the first frames show placeholders. The viewer logs

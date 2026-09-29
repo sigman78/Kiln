@@ -154,6 +154,7 @@ inline constexpr GLenum GL_FRAMEBUFFER = 0x8D40, GL_READ_FRAMEBUFFER = 0x8CA8, G
     X(void, glUniform1f, (GLint location, GLfloat x))                                                          \
     X(void, glUniform1ui, (GLint location, GLuint x))                                                          \
     X(void, glUniform1uiv, (GLint location, GLsizei count, GLuint const* value))                               \
+    X(void, glUniform4fv, (GLint location, GLsizei count, GLfloat const* value))                               \
     X(void, glBindBufferBase, (GLenum target, GLuint index, GLuint buffer))                                    \
     X(void, glBindBufferRange, (GLenum target, GLuint index, GLuint buffer, GLintptr offset, GLsizeiptr size)) \
     X(void, glGetIntegerv, (GLenum pname, GLint* data))                                                        \

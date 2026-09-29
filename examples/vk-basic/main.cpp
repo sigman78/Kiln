@@ -280,6 +280,7 @@ void draw_model(Scene& s, VkCommandBuffer cmd, u32 slot) {
             mesh::Submesh const& sm = v->submeshes()[lod.submeshFirst + si];
             Material const& mat     = s.materials[min(sm.material, s.materialCount - 1)];
             push.flags              = mat.mask[slot];
+            push.material           = min(sm.material, vkx::kMaxMaterials - 1); // the last entry: defaults
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 1, 1, &mat.sets[slot], 0,
                                     nullptr);
             vkCmdPushConstants(cmd, layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
@@ -460,11 +461,14 @@ int main(int argc, char** argv) {
             if (window) glfwWaitEventsTimeout(0.05); // minimized
             continue;
         }
-        VkExtent2D const extent = vkx::renderer_extent(s.ren);
-        f32 const aspect        = extent.height ? f32(extent.width) / f32(extent.height) : 1.0f;
-        ex::View const view     = ex::orbit_view(camera, Vec3{}, 1.0f, kFovY, aspect);
-        Mat4 const viewProj     = ex::perspective_vk(kFovY, aspect, view.nearZ, view.farZ) * view.view;
-        vkx::FrameUniforms* u   = vkx::renderer_uniforms(s.ren);
+        VkExtent2D const extent  = vkx::renderer_extent(s.ren);
+        f32 const aspect         = extent.height ? f32(extent.width) / f32(extent.height) : 1.0f;
+        ex::View const view      = ex::orbit_view(camera, Vec3{}, 1.0f, kFovY, aspect);
+        Mat4 const viewProj      = ex::perspective_vk(kFovY, aspect, view.nearZ, view.farZ) * view.view;
+        vkx::FrameUniforms* u    = vkx::renderer_uniforms(s.ren);
+        mesh::MeshView const* mv = mesh_view(s.ctx, s.model);
+        for (u32 i = 0; i < vkx::kMaxMaterials; ++i) // the last entry: glTF's defaults
+            u->materials[i] = vkx::material_uniforms(i + 1 < vkx::kMaxMaterials ? mv : nullptr, i);
         std::memcpy(u->viewProj, viewProj.m, sizeof u->viewProj);
         u->cameraPos[0]     = view.eye.x;
         u->cameraPos[1]     = view.eye.y;

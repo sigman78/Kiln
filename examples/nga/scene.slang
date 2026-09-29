@@ -23,6 +23,9 @@ struct MeshRoot
     uint tex_occlusion;
     uint tex_emissive;
     uint tex_sky;
+    float4 base_color_factor;
+    float4 emissive_normal; // xyz: emissive factor; w: normal scale
+    float4 mro;             // metallic, roughness, occlusion strength
 };
 
 static const uint kNone = 0xFFFFFFFFu;
@@ -31,14 +34,15 @@ float3 aces(float3 x) { return saturate((x * (2.51 * x + 0.03)) / (x * (2.43 * x
 // Cube maps use a left-handed frame; this world is right-handed (docs/design/texture-shapes.md).
 float3 cube_dir(float3 d) { return float3(d.x, d.y, -d.z); }
 
-// Z is rebuilt from X and Y, so a BC5 normal map (X and Y only) and an RGBA8 one both work.
-float3 perturb(float3 n, float4 tangent, float2 texel)
+// Z is rebuilt from X and Y, so a BC5 normal map (X and Y only) and an RGBA8 one both work; `scale`
+// then scales X and Y.
+float3 perturb(float3 n, float4 tangent, float2 texel, float scale)
 {
     if (dot(tangent.xyz, tangent.xyz) == 0.0) return n;
     float3 t  = normalize(tangent.xyz - n * dot(n, tangent.xyz));
     float3 b  = cross(n, t) * tangent.w;
     float2 xy = texel * 2.0 - 1.0;
-    return normalize(t * xy.x + b * xy.y + n * sqrt(max(1.0 - dot(xy, xy), 0.0)));
+    return normalize((t * xy.x + b * xy.y) * scale + n * sqrt(max(1.0 - dot(xy, xy), 0.0)));
 }
 
 float3 shade(float3 base, float3 n, float3 v, float rough, float metal, float ao, float3 ambient, float3 env)
@@ -102,13 +106,14 @@ float3 sky_lod(float3 d, float lod)
 [shader("fragment")]
 float4 meshFragment(MeshVaryings i) : SV_Target0
 {
-    float3 base     = mesh.tex_base_color != kNone ? tex(mesh.tex_base_color, i.uv).rgb : float3(0.8);
+    float3 base     = mesh.base_color_factor.rgb * (mesh.tex_base_color != kNone ? tex(mesh.tex_base_color, i.uv).rgb : float3(1.0));
     float3 n        = normalize(i.normal);
-    if (mesh.tex_normal != kNone) n = perturb(n, i.tangent, tex(mesh.tex_normal, i.uv).xy);
-    float3 mr       = mesh.tex_metal_rough != kNone ? tex(mesh.tex_metal_rough, i.uv).rgb : float3(1.0, 0.7, 0.0);
-    float ao        = mesh.tex_occlusion != kNone ? tex(mesh.tex_occlusion, i.uv).r : 1.0;
-    float3 emissive = mesh.tex_emissive != kNone ? tex(mesh.tex_emissive, i.uv).rgb : float3(0.0);
-    float rough     = clamp(mr.g, 0.05, 1.0); // G rough, B metal
+    if (mesh.tex_normal != kNone) n = perturb(n, i.tangent, tex(mesh.tex_normal, i.uv).xy, mesh.emissive_normal.w);
+    float3 mr       = mesh.tex_metal_rough != kNone ? tex(mesh.tex_metal_rough, i.uv).rgb : float3(1.0);
+    float ao        = mesh.tex_occlusion != kNone ? 1.0 + mesh.mro.z * (tex(mesh.tex_occlusion, i.uv).r - 1.0) : 1.0;
+    float3 emissive = mesh.emissive_normal.rgb * (mesh.tex_emissive != kNone ? tex(mesh.tex_emissive, i.uv).rgb : float3(1.0));
+    float rough     = clamp(mesh.mro.y * mr.g, 0.05, 1.0); // G rough, B metal
+    mr.b *= mesh.mro.x;
     float3 v        = normalize(mesh.eye_exposure.xyz - i.world);
     bool sky        = mesh.tex_sky != kNone;
     float3 ambient  = sky ? sky_lod(n, 6.0) : float3(0.3);

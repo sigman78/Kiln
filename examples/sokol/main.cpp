@@ -196,11 +196,15 @@ void bind_material(App const& app, mesh::MeshView const& v, u32 material, sg_bin
             has[view]     = 1.0f;
         }
     }
-    fs.has_a[0] = has[0];
-    fs.has_a[1] = has[1];
-    fs.has_a[2] = has[2];
-    fs.has_a[3] = has[3];
-    fs.has_b[0] = has[4];
+    fs.has_a[0]                 = has[0];
+    fs.has_a[1]                 = has[1];
+    fs.has_a[2]                 = has[2];
+    fs.has_a[3]                 = has[3];
+    fs.has_b[0]                 = has[4];
+    ex::MaterialFactors const f = ex::material_factors(v, material);
+    std::memcpy(fs.base_color_factor, f.baseColor, sizeof fs.base_color_factor);
+    std::memcpy(fs.emissive_normal, f.emissiveNormal, sizeof fs.emissive_normal);
+    std::memcpy(fs.mro, f.mro, sizeof fs.mro);
 }
 
 /// One frame of the scene into the pass `pass` (the swapchain, or the --dump target).
@@ -237,9 +241,12 @@ void draw_scene(App& app, sg_pass const& pass, f32 aspect) {
     sg_buffer const buffer  = sokol_buffer(app.sa, gpu_object(app.ctx, app.model)); // invalid until Ready
     if (v && buffer.id && !app.unsupported) {
         mesh_fs_params_t fs{
-            .eye   = {view.eye.x, view.eye.y, view.eye.z, exposure},
-            .has_a = {},
-            .has_b = {0, sky.id ? 1.0f : 0.0f, 0, 0},
+            .eye               = {view.eye.x, view.eye.y, view.eye.z, exposure},
+            .has_a             = {},
+            .has_b             = {0, sky.id ? 1.0f : 0.0f, 0, 0},
+            .base_color_factor = {}, // bind_material() sets the factors per draw
+            .emissive_normal   = {},
+            .mro               = {},
         };
         u32 const partCount = min<u32>(v->parts().size(), kMaxParts);
         for (u32 p = 0; p < partCount; ++p) {

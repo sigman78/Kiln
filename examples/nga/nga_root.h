@@ -28,9 +28,13 @@ struct MeshRoot {
     u32 texOcclusion;
     u32 texEmissive;
     u32 texSky;
+    f32 baseColorFactor[4]; ///< ex::MaterialFactors
+    f32 emissiveNormal[4];
+    f32 mro[4];
 };
 static_assert(offsetof(MeshRoot, stream0) == 144 && offsetof(MeshRoot, stride0) == 160);
-static_assert(offsetof(MeshRoot, texBaseColor) == 184 && sizeof(MeshRoot) == 208);
+static_assert(offsetof(MeshRoot, texBaseColor) == 184 && offsetof(MeshRoot, baseColorFactor) == 208);
+static_assert(sizeof(MeshRoot) == 256);
 
 struct SkyRoot {
     f32 forward[4]; ///< xyz; w: 2^exposure

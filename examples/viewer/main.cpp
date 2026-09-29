@@ -320,6 +320,15 @@ void material_bindings(Scene& s, StrView meshPath, mesh::MeshView const& v, u32 
     }
 }
 
+/// The entry of `material` of mesh `mi` in FrameUniforms::materials: every mesh whose metadata is
+/// here takes the next entries, in mesh order. Past the table: the last entry, glTF's defaults.
+u32 material_entry(Scene const& s, u32 mi, u32 material) {
+    u32 base = 0;
+    for (u32 i = 0; i < mi; ++i)
+        if (mesh::MeshView const* v = mesh_view(s.ctx, s.meshes[i].handle)) base += v->materials().size();
+    return min(base + material, vkx::kMaxMaterials - 1);
+}
+
 /// Spec §8 per part: world matrix from the parent chain, LOD 0, one draw per submesh.
 void draw_scene(Scene& s, VkCommandBuffer cmd) {
     VkPipelineLayout const layout = vkx::renderer_pipeline_layout(s.ren);
@@ -391,6 +400,7 @@ void draw_scene(Scene& s, VkCommandBuffer cmd) {
             for (u32 si = 0; si < lod.submeshCount; ++si) {
                 mesh::Submesh const& sm = v->submeshes()[lod.submeshFirst + si];
                 material_bindings(s, m.path, *v, sm.material, push);
+                push.material = material_entry(s, mi, sm.material);
                 vkCmdPushConstants(cmd, layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
                                    sizeof push, &push);
                 // indexFirst is relative to the LOD's index range, which is where the buffer is bound.
@@ -478,9 +488,24 @@ void write_uniforms(Scene const& s, Camera const& cam, VkExtent2D extent, bool a
     u->lightDir[2]   = light.z;
     u->lightDir[3]   = 0.0f;
     u->tonemap[0]    = exposure;
-    u->tonemap[1]    = aces ? 1.0f : 0.0f;
-    u->tonemap[2]    = 0.0f;
-    u->tonemap[3]    = 0.0f;
+    for (u32 i = 0; i < vkx::kMaxMaterials; ++i)
+        u->materials[i] = vkx::material_uniforms(nullptr, 0); // glTF's defaults
+    for (u32 mi = 0; mi < s.meshCount; ++mi)
+        if (mesh::MeshView const* v = mesh_view(s.ctx, s.meshes[mi].handle))
+            for (u32 k = 0; k < v->materials().size(); ++k)
+                if (u32 const e = material_entry(s, mi, k); e + 1 < vkx::kMaxMaterials) {
+                    u->materials[e] = vkx::material_uniforms(v, k);
+                    // The emissive factor multiplies an emissive map, which the viewer does not bind.
+                    mesh::MaterialSlot const& mat = v->materials()[k];
+                    for (u32 t = 0; t < mat.textureCount && mat.textureFirst + t < v->textures().size(); ++t)
+                        if (mesh::TextureSlot(v->textures()[mat.textureFirst + t].slot) ==
+                            mesh::TextureSlot::Emissive)
+                            u->materials[e].emissiveNormal[0]     = u->materials[e].emissiveNormal[1] =
+                                u->materials[e].emissiveNormal[2] = 0.0f;
+                }
+    u->tonemap[1] = aces ? 1.0f : 0.0f;
+    u->tonemap[2] = 0.0f;
+    u->tonemap[3] = 0.0f;
 
     // The same basis as look_at(); right and up span the view at distance 1.
     Vec3 const f    = vkx::normalize(s.center - eye);

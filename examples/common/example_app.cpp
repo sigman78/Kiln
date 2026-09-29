@@ -122,6 +122,23 @@ int parse_options(char const* program, int argc, char** argv, Options* o) noexce
     return -1;
 }
 
+MaterialFactors material_factors(mesh::MeshView const& v, u32 material) noexcept {
+    MaterialFactors f{
+        {1, 1, 1, 1},
+        {0, 0, 0, 1},
+        {1, 1, 1, 0}
+    };
+    if (material >= v.materials().size()) return f;
+    mesh::MaterialSlot const& m = v.materials()[material];
+    std::memcpy(f.baseColor, m.baseColorFactor, sizeof f.baseColor);
+    std::memcpy(f.emissiveNormal, m.emissiveFactor, sizeof m.emissiveFactor);
+    f.emissiveNormal[3] = m.normalScale;
+    f.mro[0]            = m.metallicFactor;
+    f.mro[1]            = m.roughnessFactor;
+    f.mro[2]            = m.occlusionStrength;
+    return f;
+}
+
 char const* state_name(State s) noexcept {
     switch (s) {
     case State::Unloaded: return "Unloaded";

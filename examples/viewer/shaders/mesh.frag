@@ -6,11 +6,17 @@
 
 layout(set = 0, binding = 0) uniform sampler2D textures[];
 
+struct Material {
+    vec4 baseColor;
+    vec4 emissiveNormal; // xyz: emissive factor; w: normal scale
+    vec4 mro;            // metallic, roughness, occlusion strength
+};
 layout(set = 1, binding = 0) uniform Frame {
     mat4 viewProj;
     vec4 cameraPos;
     vec4 lightDir;
     vec4 tonemap;
+    Material materials[128]; // vkx::kMaxMaterials
 } frame;
 
 // Display transform (frame.tonemap: x = exposure multiplier, y = mode). The target is an sRGB
@@ -27,7 +33,8 @@ layout(push_constant) uniform Draw {
     vec4 posBias;
     uint baseColorSlot;
     uint flags;
-    uint pad0, pad1;
+    uint material; // into frame.materials
+    uint pad1;
 } draw;
 
 layout(location = 0) in vec3 vNormal;
@@ -38,11 +45,12 @@ layout(location = 3) in vec3 vWorldPos;
 layout(location = 0) out vec4 outColor;
 
 void main() {
-    vec4 base = vColor;
+    Material m = frame.materials[draw.material];
+    vec4 base  = vColor * m.baseColor;
     if ((draw.flags & 1u) != 0u) base *= texture(textures[nonuniformEXT(draw.baseColorSlot)], vUv);
     vec3 n      = normalize(vNormal);
     vec3 l      = normalize(frame.lightDir.xyz);
     float ndl   = max(dot(n, l), 0.0);
-    vec3 lit    = base.rgb * (0.15 + 0.85 * ndl);
+    vec3 lit    = base.rgb * (0.15 + 0.85 * ndl) + m.emissiveNormal.rgb; // the viewer binds no emissive map
     outColor    = vec4(tonemap(lit), base.a);
 }

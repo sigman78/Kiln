@@ -35,18 +35,22 @@ layout(std430, binding = 0) readonly buffer Handles { uvec2 uHandles[]; }; // gl
 layout(location = 2) uniform vec3 uEye;
 layout(location = 4) uniform float uExposure;
 layout(location = 5) uniform uint uSlots[6]; // see kSlotsPerDraw; 0xFFFFFFFF = none
+layout(location = 11) uniform vec4 uBaseColorFactor;
+layout(location = 12) uniform vec4 uEmissiveNormal; // xyz: emissive factor; w: normal scale
+layout(location = 13) uniform vec4 uMro;            // metallic, roughness, occlusion strength
 out vec4 outColor;
 bool has(int i) { return uSlots[i] != 0xFFFFFFFFu; }
 vec4 tex(int i) { return texture(sampler2D(uHandles[uSlots[i]]), vUv); }
 vec3 sky(vec3 d, float lod) { return textureLod(samplerCube(uHandles[uSlots[5]]), cube_dir(d), lod).rgb; }
 void main() {
-    vec3 base     = has(0) ? tex(0).rgb : vec3(0.8);
+    vec3 base     = uBaseColorFactor.rgb * (has(0) ? tex(0).rgb : vec3(1.0));
     vec3 n        = normalize(vNormal);
-    if (has(1)) n = perturb(n, vTangent, tex(1).xy);
-    vec3 mr       = has(2) ? tex(2).rgb : vec3(1.0, 0.7, 0.0); // G rough, B metal
-    float ao      = has(3) ? tex(3).r : 1.0;
-    vec3 emissive = has(4) ? tex(4).rgb : vec3(0.0);
-    float rough   = clamp(mr.g, 0.05, 1.0);
+    if (has(1)) n = perturb(n, vTangent, tex(1).xy, uEmissiveNormal.w);
+    vec3 mr       = has(2) ? tex(2).rgb : vec3(1.0); // G rough, B metal
+    float ao      = has(3) ? 1.0 + uMro.z * (tex(3).r - 1.0) : 1.0;
+    vec3 emissive = uEmissiveNormal.rgb * (has(4) ? tex(4).rgb : vec3(1.0));
+    float rough   = clamp(uMro.y * mr.g, 0.05, 1.0);
+    mr.b *= uMro.x;
     vec3 v        = normalize(uEye - vWorld);
     vec3 ambient  = has(5) ? sky(n, 6.0) : vec3(0.3);
     vec3 env      = has(5) ? sky(reflect(-v, n), rough * 6.0) : vec3(0.3);
@@ -188,6 +192,10 @@ void handle_event(Scene& s, Event const& e) {
 void bind_material(void* user, u32 material) {
     Scene const& s = *static_cast<Scene const*>(user);
     glUniform1uiv(5, GLsizei(kSlotsPerDraw), s.materialSlots[min(material, kMaxMaterials - 1)]);
+    ex::MaterialFactors const f = ex::material_factors(*mesh_view(s.ctx, s.model), material);
+    glUniform4fv(11, 1, f.baseColor);
+    glUniform4fv(12, 1, f.emissiveNormal);
+    glUniform4fv(13, 1, f.mro);
 }
 
 bool scene_settled(Scene const& s) {

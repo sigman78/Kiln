@@ -24,6 +24,7 @@ adapter onto, how their third-party code is fetched, and how the work feeds the 
 | Vertex data | `VertexProfile::Float` (owner decision, 2026-09-28) | no decoding in any shader: float3 position and normal, float4 tangent, float2 UV |
 | Cooking | cook-on-miss from `--source`, as the viewer does | the provider path |
 | Controls | orbit camera, hot reload | `Changed` events, `bind` with the new object |
+| Materials | the glTF factors of `MaterialSlot` (`ex::material_factors`) | each texture times its factor, the factor alone without the texture; the normal scale and occlusion strength |
 
 `VertexProfile::Float` is implemented (`mesh-format-spec.md` §6). The quantized `default` profile
 stays the profile for shipped content; the existing Vulkan viewer keeps showing it.

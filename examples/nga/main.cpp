@@ -222,13 +222,17 @@ void draw_model(Scene& s, gpu::CommandBuffer* cmd, Bump& frame, Mat4 const& view
             r->uvOffset       = st.uvOffset;
             r->vertexBase     = u32(sm.vertexBase);
             // The material stored slots; the slot shows the placeholder, then the texture.
-            u32 const* slots    = s.materialSlots[min(sm.material, s.materialCount - 1)];
-            r->texBaseColor     = descriptor_of(s.na, slots[0]);
-            r->texNormal        = descriptor_of(s.na, slots[1]);
-            r->texMetalRough    = descriptor_of(s.na, slots[2]);
-            r->texOcclusion     = descriptor_of(s.na, slots[3]);
-            r->texEmissive      = descriptor_of(s.na, slots[4]);
-            r->texSky           = descriptor_of(s.na, s.skySlot);
+            u32 const* slots            = s.materialSlots[min(sm.material, s.materialCount - 1)];
+            r->texBaseColor             = descriptor_of(s.na, slots[0]);
+            r->texNormal                = descriptor_of(s.na, slots[1]);
+            r->texMetalRough            = descriptor_of(s.na, slots[2]);
+            r->texOcclusion             = descriptor_of(s.na, slots[3]);
+            r->texEmissive              = descriptor_of(s.na, slots[4]);
+            r->texSky                   = descriptor_of(s.na, s.skySlot);
+            ex::MaterialFactors const f = ex::material_factors(*v, sm.material);
+            std::memcpy(r->baseColorFactor, f.baseColor, sizeof r->baseColorFactor);
+            std::memcpy(r->emissiveNormal, f.emissiveNormal, sizeof r->emissiveNormal);
+            std::memcpy(r->mro, f.mro, sizeof r->mro);
             u64 const indexSize = mesh::index_size(indexType);
             gpu::GpuRange const indices{reinterpret_cast<void*>(payload.gpu + lod.indexOffset),
                                         u64(lod.indexCount) * indexSize};

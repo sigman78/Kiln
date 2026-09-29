@@ -776,6 +776,23 @@ void renderer_draw_sky(Renderer* r, VkCommandBuffer cmd, SkyPush const& push) no
 }
 VkBuffer renderer_zero_buffer(Renderer* r) noexcept { return r->zero; }
 VkExtent2D renderer_extent(Renderer* r) noexcept { return r->extent; }
+MaterialUniforms material_uniforms(mesh::MeshView const* v, u32 material) noexcept {
+    MaterialUniforms u{
+        {1, 1, 1, 1},
+        {0, 0, 0, 1},
+        {1, 1, 1, 0}
+    };
+    if (!v || material >= v->materials().size()) return u;
+    mesh::MaterialSlot const& m = v->materials()[material];
+    std::memcpy(u.baseColor, m.baseColorFactor, sizeof u.baseColor);
+    std::memcpy(u.emissiveNormal, m.emissiveFactor, sizeof m.emissiveFactor);
+    u.emissiveNormal[3] = m.normalScale;
+    u.mro[0]            = m.metallicFactor;
+    u.mro[1]            = m.roughnessFactor;
+    u.mro[2]            = m.occlusionStrength;
+    return u;
+}
+
 FrameUniforms* renderer_uniforms(Renderer* r) noexcept { return r->frames[r->slot].uniforms; }
 void renderer_resize(Renderer* r) noexcept { r->needRecreate = !r->offscreen; }
 void renderer_wait_idle(Renderer* r) noexcept { vkDeviceWaitIdle(r->device); }

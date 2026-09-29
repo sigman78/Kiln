@@ -37,16 +37,20 @@ layout(binding = 5) uniform samplerCube uSky;
 layout(location = 2) uniform vec3 uEye;
 layout(location = 3) uniform uint uTextures; // bit per unit above that holds a texture
 layout(location = 4) uniform float uExposure;
+layout(location = 5) uniform vec4 uBaseColorFactor;
+layout(location = 6) uniform vec4 uEmissiveNormal; // xyz: emissive factor; w: normal scale
+layout(location = 7) uniform vec4 uMro;            // metallic, roughness, occlusion strength
 out vec4 outColor;
 bool has(uint unit) { return (uTextures & (1u << unit)) != 0u; }
 void main() {
-    vec3 base     = has(0u) ? texture(uBaseColor, vUv).rgb : vec3(0.8);
+    vec3 base     = uBaseColorFactor.rgb * (has(0u) ? texture(uBaseColor, vUv).rgb : vec3(1.0));
     vec3 n        = normalize(vNormal);
-    if (has(1u)) n = perturb(n, vTangent, texture(uNormalMap, vUv).xy);
-    vec3 mr       = has(2u) ? texture(uMetalRough, vUv).rgb : vec3(1.0, 0.7, 0.0); // G rough, B metal
-    float ao      = has(3u) ? texture(uOcclusion, vUv).r : 1.0;
-    vec3 emissive = has(4u) ? texture(uEmissive, vUv).rgb : vec3(0.0);
-    float rough   = clamp(mr.g, 0.05, 1.0);
+    if (has(1u)) n = perturb(n, vTangent, texture(uNormalMap, vUv).xy, uEmissiveNormal.w);
+    vec3 mr       = has(2u) ? texture(uMetalRough, vUv).rgb : vec3(1.0); // G rough, B metal
+    float ao      = has(3u) ? 1.0 + uMro.z * (texture(uOcclusion, vUv).r - 1.0) : 1.0;
+    vec3 emissive = uEmissiveNormal.rgb * (has(4u) ? texture(uEmissive, vUv).rgb : vec3(1.0));
+    float rough   = clamp(uMro.y * mr.g, 0.05, 1.0);
+    mr.b *= uMro.x;
     vec3 v        = normalize(uEye - vWorld);
     vec3 ambient  = has(5u) ? textureLod(uSky, cube_dir(n), 6.0).rgb : vec3(0.3);
     vec3 env      = has(5u) ? textureLod(uSky, cube_dir(reflect(-v, n)), rough * 6.0).rgb : vec3(0.3);
@@ -152,6 +156,10 @@ void bind_material(void* user, u32 material) {
         }
     }
     glUniform1ui(3, mask);
+    ex::MaterialFactors const f = ex::material_factors(v, material);
+    glUniform4fv(5, 1, f.baseColor);
+    glUniform4fv(6, 1, f.emissiveNormal);
+    glUniform4fv(7, 1, f.mro);
 }
 
 bool scene_settled(Scene const& s) {
