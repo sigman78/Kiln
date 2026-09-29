@@ -75,20 +75,22 @@ are cooked with it. `--root <name>=<dir>` adds a named root, whose assets are na
 `--root <dir>` without a name is the same as `--source <dir>`. Roots have separate namespaces, and
 a glTF file's references must stay inside its own root.
 
-## GL recipes
+## Integration examples: nothing to pass
+
+`kiln-gl`, `kiln-gl-bindless`, `kiln-sokol`, `kiln-vk-basic` and `kiln-nga` all show the same
+reference scene, WaterBottle under the HDR test sky, and take no arguments:
 
 ```sh
-# WaterBottle with its four texture kinds and the HDR test sky; meshes cook as plain floats
-kiln-gl --source examples/assets/khronos --root sky=examples/assets/skies --sky sky:hdr_cube.hdr \
-    --store build/gl-store WaterBottle.glb
-
-# no window: wait until everything is Ready, then write the frame
-kiln-gl --offscreen --dump gl.png --source examples/assets/khronos --root sky=examples/assets/skies \
-    --sky sky:hdr_cube.hdr --store build/gl-store WaterBottle.glb
+cmake --build --preset win-msvc-debug --target viewer-assets   # once: downloads the demo models
+build/win-msvc-debug/examples/gl/kiln-gl                       # or any of the others
 ```
 
-`kiln-gl-bindless`, `kiln-sokol`, `kiln-vk-basic` and `kiln-nga` take the same options. `kiln-gl` and `kiln-gl-bindless` read only float vertex data: its provider cooks meshes with `VertexProfile::Float`, and a
-store mesh in the quantized profile is rejected with a message.
+On first run the model and the textures cook into the build tree's `example-store`, so the first
+frames show placeholders. Left-drag orbits, the wheel zooms, + and - change the exposure, Esc
+quits. Hot reload is on: re-export or edit a file under `examples/assets` and the view updates.
+`--dump <file.png>` waits until everything has loaded, writes the frame and exits (the window is
+hidden where the API allows; sokol_app always shows one). Meshes cook as plain floats
+(`VertexProfile::Float`), so the shaders need no vertex decoding.
 
 ## Headless recipes
 

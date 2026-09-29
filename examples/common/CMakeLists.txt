@@ -21,5 +21,14 @@ add_library(kiln_example_common STATIC example_math.h example_app.h example_app.
 kiln_apply_defaults(kiln_example_common)
 target_include_directories(kiln_example_common PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
                                                PRIVATE ${CMAKE_SOURCE_DIR}/tests)
-target_compile_definitions(kiln_example_common PUBLIC GLFW_INCLUDE_NONE)
+target_compile_definitions(kiln_example_common PUBLIC GLFW_INCLUDE_NONE
+    PRIVATE KILN_EXAMPLE_ASSETS_DIR="${CMAKE_SOURCE_DIR}/examples/assets"
+            KILN_EXAMPLE_STORE_DIR="${CMAKE_BINARY_DIR}/example-store")
+
+# The demo models (CC0, Khronos glTF-Sample-Assets, pinned and hash-checked) into
+# examples/assets/khronos/, which git ignores. Never part of ALL; see examples/assets/README.md.
+add_custom_target(viewer-assets
+    COMMAND ${CMAKE_COMMAND} -DOUT_DIR=${CMAKE_SOURCE_DIR}/examples/assets/khronos
+            -P ${CMAKE_SOURCE_DIR}/examples/viewer/fetch_assets.cmake
+    COMMENT "Fetching the demo models")
 target_link_libraries(kiln_example_common PUBLIC kiln_runtime glfw PRIVATE kiln_cli)

@@ -501,7 +501,7 @@ int main(int argc, char** argv) {
         f32 const aspect    = f32(w) / f32(h);
         ex::View const view = ex::orbit_view(camera, Vec3{}, 1.0f, kFovY, aspect);
         Mat4 const viewProj = ex::perspective_vk(kFovY, aspect, view.nearZ, view.farZ) * view.view;
-        f32 const exposure  = std::exp2(f32(o.exposure));
+        f32 const exposure  = std::exp2(camera.exposure);
         if (s.skySlot != kInvalid) {
             Vec3 const f    = ex::normalize(Vec3{} - view.eye);
             Vec3 const side = ex::normalize(ex::cross(f, Vec3{0, 1, 0}));

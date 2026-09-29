@@ -8,6 +8,12 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
 ## [Unreleased]
 
 ### Added
+- The integration examples (`kiln-gl`, `kiln-gl-bindless`, `kiln-sokol`, `kiln-vk-basic`, `kiln-nga`)
+  take no arguments: they show the reference scene (WaterBottle under the HDR test sky) from
+  `examples/assets`, cook into the build tree's `example-store` and hot reload. The only option is
+  `--dump <file.png>`; `+` / `-` change the exposure. Migration: drop `--store`, `--source`, `--root`,
+  `--sky`, `--exposure`, `--width`, `--height`, `--watch`, `--offscreen`, `--timeout` and the model
+  name. The `viewer-assets` target (the demo models) now exists whenever a windowed example is built.
 - `kiln-nga` (`examples/nga`, CMake option `KILN_EXAMPLE_NGA`, OFF everywhere, its own CI job): the
   scene through NoGraphicsAPI. Mesh payloads are written by kiln straight into CPU-visible GPU
   memory and read through GPU pointers; textures are descriptor heap indices behind a CPU slot table.

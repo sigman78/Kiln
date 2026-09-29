@@ -29,21 +29,15 @@ void diag_fn(void*, Diagnostic const& d) {
     std::fflush(stdout);
 }
 
-bool add_root(void* user, char const* arg) {
-    auto* o = static_cast<Options*>(user);
-    if (o->rootCount == Options::kMaxRoots) return false;
-    char const* const eq = std::strchr(arg, '=');
-    bool const named     = eq && !check_root_name(StrView(arg, usize(eq - arg)));
-    o->roots[o->rootCount++] =
-        named ? Root{StrView(arg, usize(eq - arg)), StrView(eq + 1)} : Root{{}, StrView(arg)};
-    return true;
-}
+char const kAssets[]  = KILN_EXAMPLE_ASSETS_DIR;
+char const kKhronos[] = KILN_EXAMPLE_ASSETS_DIR "/khronos";
+char const kSkies[]   = KILN_EXAMPLE_ASSETS_DIR "/skies";
+char const kStore[]   = KILN_EXAMPLE_STORE_DIR;
 
-bool set_model(void* user, char const* arg) {
-    auto* o = static_cast<Options*>(user);
-    if (o->model) return false; // one model
-    o->model = arg;
-    return true;
+bool file_exists(char const* path) {
+    std::FILE* f = std::fopen(path, "rb");
+    if (f) std::fclose(f);
+    return f != nullptr;
 }
 
 OrbitCamera* camera_of(GLFWwindow* w) { return static_cast<OrbitCamera*>(glfwGetWindowUserPointer(w)); }
@@ -70,7 +64,11 @@ void on_scroll(GLFWwindow* w, double /*dx*/, double dy) {
 }
 
 void on_key(GLFWwindow* w, int key, int /*scancode*/, int action, int /*mods*/) {
-    if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS) glfwSetWindowShouldClose(w, GLFW_TRUE);
+    if (action != GLFW_PRESS && action != GLFW_REPEAT) return;
+    OrbitCamera* c = camera_of(w);
+    if (key == GLFW_KEY_ESCAPE) glfwSetWindowShouldClose(w, GLFW_TRUE);
+    if (key == GLFW_KEY_EQUAL || key == GLFW_KEY_KP_ADD) c->exposure += 0.5f;
+    if (key == GLFW_KEY_MINUS || key == GLFW_KEY_KP_SUBTRACT) c->exposure -= 0.5f;
 }
 
 } // namespace
@@ -85,49 +83,40 @@ DiagSink stdout_diag() noexcept { return DiagSink{&diag_fn, nullptr}; }
 
 int parse_options(char const* program, int argc, char** argv, Options* o) noexcept {
     cli::Option const opts[] = {
-        {.name = "--store", .arg = "<dir>", .help = "cooked store root (default: cooked)", .str = &o->store},
-        {.name = "--source",
-         .arg  = "<dir>",
-         .help = "the default root; enables cook-on-miss (needs kiln_cook)",
-         .each = &add_root,
-         .user = o},
-        {.name = "--root",
-         .arg  = "[<name>=]<dir>",
-         .help = "a source root; <name>=<dir> names <name>:<path> (repeatable)",
-         .each = &add_root,
-         .user = o},
-        {.name = "--sky", .arg = "<name>", .help = "a cube texture behind the model", .str = &o->sky},
-        {.name = "--exposure",
-         .arg  = "<ev>",
-         .help = "scale colors by 2^<ev> (default: 0)",
-         .real = &o->exposure},
-        {.name = "--width", .arg = "<px>", .help = "default: 1280", .number = &o->width, .max = 16384},
-        {.name = "--height", .arg = "<px>", .help = "default: 720", .number = &o->height, .max = 16384},
-        {.name = "--watch", .help = "hot reload store files (and sources with --source)", .flag = &o->watch},
-        {.name = "--offscreen", .help = "hidden window; stop when the scene settles", .flag = &o->offscreen},
         {.name = "--dump",
          .arg  = "<file.png>",
-         .help = "offscreen: write the settled frame",
+         .help = "no window interaction: wait until everything has loaded, write the frame, exit",
          .str  = &o->dump},
-        {.name   = "--timeout",
-         .arg    = "<s>",
-         .help   = "offscreen: give up after <s> seconds (default: 60)",
-         .number = &o->timeoutS},
     };
     cli::Spec const spec{
         .program  = program,
-        .synopsis = "[options] <model>",
+        .synopsis = "[--dump <file.png>]",
         .options  = {opts, countof(opts)},
         .footer =
-            "<model> is an asset name, e.g. WaterBottle.glb. Left-drag orbits, wheel zooms, Esc quits.\n"
-            "Exit codes: 0 ok, 1 an asset Failed or --timeout expired, 2 usage or setup error.",
-        .positional = &set_model,
-        .user       = o,
+            "Shows WaterBottle under the HDR test sky, cooked on first use into the build tree's\n"
+            "example-store. Left-drag orbits, the wheel zooms, + and - change the exposure, Esc quits.\n"
+            "Edit a source under examples/assets and the view updates (hot reload).",
     };
     cli::Result const args = cli::parse(spec, argc, argv);
     if (args.help) return 0;
-    if (!args.ok || !o->model || o->width == 0 || o->height == 0 || (o->dump && !o->offscreen)) {
+    if (!args.ok) {
         cli::usage(spec, stderr);
+        return 2;
+    }
+    o->store     = kStore;
+    o->roots[0]  = Root{{}, StrView(kKhronos)};
+    o->roots[1]  = Root{StrView("sky"), StrView(kSkies)};
+    o->rootCount = 2;
+    o->offscreen = o->dump != nullptr;
+    char source[1024], cooked[1024];
+    format(source, sizeof source, "%s/%s", kKhronos, o->model);
+    format(cooked, sizeof cooked, "%s/%s.mesh", kStore, o->model);
+    if (!file_exists(source) && !file_exists(cooked)) {
+        std::fprintf(stderr,
+                     "%s: the demo model %s is not downloaded yet (it is not in the repository).\n"
+                     "Fetch it once with:  cmake --build --preset <your preset> --target viewer-assets\n"
+                     "(it lands in %s/khronos)\n",
+                     program, o->model, kAssets);
         return 2;
     }
     return -1;

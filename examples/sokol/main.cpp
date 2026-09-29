@@ -209,7 +209,7 @@ void draw_scene(App& app, sg_pass const& pass, f32 aspect) {
     ex::View const view = ex::orbit_view(app.camera, Vec3{}, 1.0f, kFovY, aspect);
     Mat4 const viewProj =
         ex::perspective_gl(kFovY, aspect, view.nearZ, view.farZ) * view.view; // see scene.glsl
-    f32 const exposure = f32(app.o.exposure);
+    f32 const exposure = app.camera.exposure;
 
     sg_view const sky = app.sky ? sokol_texture(app.sa, gpu(app.ctx, app.sky)) : sg_view{};
     if (sky.id) {
@@ -464,6 +464,8 @@ void on_event(sapp_event const* e, void* user) {
         break;
     case SAPP_EVENTTYPE_KEY_DOWN:
         if (e->key_code == SAPP_KEYCODE_ESCAPE) sapp_request_quit();
+        if (e->key_code == SAPP_KEYCODE_EQUAL || e->key_code == SAPP_KEYCODE_KP_ADD) c.exposure += 0.5f;
+        if (e->key_code == SAPP_KEYCODE_MINUS || e->key_code == SAPP_KEYCODE_KP_SUBTRACT) c.exposure -= 0.5f;
         break;
     default: break;
     }

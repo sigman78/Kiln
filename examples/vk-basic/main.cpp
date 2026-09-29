@@ -472,7 +472,7 @@ int main(int argc, char** argv) {
         u->cameraPos[1]     = view.eye.y;
         u->cameraPos[2]     = view.eye.z;
         u->cameraPos[3]     = 1.0f;
-        u->tonemap[0]       = std::exp2(f32(o.exposure));
+        u->tonemap[0]       = std::exp2(camera.exposure);
         Material const& sky = sky_material(s);
         if (sky.mask[slot] & (1u << kSkyBinding)) {
             Vec3 const f    = ex::normalize(Vec3{} - view.eye);

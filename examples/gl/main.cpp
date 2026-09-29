@@ -244,7 +244,7 @@ int main(int argc, char** argv) {
             glUniform3f(0, f.skyForward.x, f.skyForward.y, f.skyForward.z);
             glUniform3f(1, f.skyRight.x, f.skyRight.y, f.skyRight.z);
             glUniform3f(2, f.skyUp.x, f.skyUp.y, f.skyUp.z);
-            glUniform1f(4, f32(o.exposure));
+            glUniform1f(4, camera.exposure);
             glDisable(GL_DEPTH_TEST);
             glDepthMask(GL_FALSE);
             glBindVertexArray(emptyVao);
@@ -259,7 +259,7 @@ int main(int argc, char** argv) {
             glUseProgram(meshProgram);
             glUniformMatrix4fv(1, 1, GL_FALSE, f.viewProj.m);
             glUniform3f(2, f.view.eye.x, f.view.eye.y, f.view.eye.z);
-            glUniform1f(4, f32(o.exposure));
+            glUniform1f(4, camera.exposure);
             draw_geometry(s.geometry, *v, buffer, &bind_material, &s);
         }
         end_frame(window, target, o.offscreen);
