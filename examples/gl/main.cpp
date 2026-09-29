@@ -74,8 +74,11 @@ struct TextureItem {
 };
 
 struct Scene {
-    Context* ctx   = nullptr;
-    GlAdapter* gla = nullptr;
+    /// The model content version the materials and geometry were set up for. MetaReady, Changed
+    /// and a Ready that follows Failed (a repaired model: reloads emit no MetaReady) carry a new one.
+    u32 preparedVersion = 0;
+    Context* ctx        = nullptr;
+    GlAdapter* gla      = nullptr;
     StrView modelName;
     MeshHandle model;
     TextureHandle sky;
@@ -110,9 +113,11 @@ void handle_event(Scene& s, Event const& e) {
     KILN_INFO("gl", "event %-9s %s v%u", ex::event_name(e.kind), isModel ? "model" : "texture", e.version);
     if (!isModel || e.kind == EventKind::Failed) return;
     // MetaReady: the metadata is readable before the payload arrives, so the textures can be
-    // requested and the vertex arrays built early. Changed: a hot reload, the same again.
+    // requested and the vertex arrays built early. Changed (a hot reload) and a Ready after Failed
+    // (a repaired model) carry a new version: the same again.
     mesh::MeshView const* v = mesh_view(s.ctx, s.model);
-    if (v && (e.kind == EventKind::MetaReady || e.kind == EventKind::Changed)) {
+    if (v && e.version != s.preparedVersion) {
+        s.preparedVersion = e.version;
         request_textures(s, *v);
         prepare_geometry(s.geometry, *v, s.modelName);
     }

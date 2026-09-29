@@ -103,7 +103,8 @@ void release_object(SokolAdapter* a, u32 index) noexcept {
 }
 
 /// The sokol side of one committed upload. sokol copies the data, so the bytes can go at once.
-void make_object(SokolAdapter* a, Upload const& u) noexcept {
+/// False (logged; nothing left behind) when sokol rejects the buffer, the image or its view.
+bool make_object(SokolAdapter* a, Upload const& u) noexcept {
     Object& o = a->objects[u.object];
     if (u.kind == UploadKind::MeshPayload) {
         sg_buffer_desc d{};
@@ -114,7 +115,12 @@ void make_object(SokolAdapter* a, Upload const& u) noexcept {
         d.data                = sg_range{u.bytes, usize(u.size)};
         d.label               = "kiln mesh";
         o.buffer              = sg_make_buffer(&d);
-        return;
+        if (sg_query_buffer_state(o.buffer) == SG_RESOURCESTATE_VALID) return true;
+        KILN_ERROR("sokol", "mesh buffer of %llu bytes: creation failed",
+                   static_cast<unsigned long long>(u.size));
+        sg_destroy_buffer(o.buffer);
+        o.buffer = {};
+        return false;
     }
     TextureDesc const& t = u.tex;
     sg_image_desc d{};
@@ -139,11 +145,20 @@ void make_object(SokolAdapter* a, Upload const& u) noexcept {
     if (sg_query_image_state(o.image) != SG_RESOURCESTATE_VALID) { // sokol logged why
         KILN_ERROR("sokol", "image %ux%u, %u layer(s), %u level(s), %s: creation failed", t.width, t.height,
                    t.layers, t.levels, format_info(t.format) ? format_info(t.format)->name : "?");
-        return;
+        sg_destroy_image(o.image);
+        o.image = {};
+        return false;
     }
     sg_view_desc v{};
     v.texture.image = o.image;
     o.view          = sg_make_view(&v);
+    if (sg_query_view_state(o.view) == SG_RESOURCESTATE_VALID) return true;
+    KILN_ERROR("sokol", "view of a %ux%u image: creation failed", t.width, t.height);
+    sg_destroy_view(o.view);
+    sg_destroy_image(o.image);
+    o.view  = {};
+    o.image = {};
+    return false;
 }
 
 // --- Adapter callbacks ---------------------------------------------------------------------------
@@ -231,7 +246,9 @@ void flush(void* user) {
     }
     for (u32 i : a->flushing) {
         Upload& u = a->uploads[i];
-        make_object(a, u);
+        // The adapter contract has no way to fail an upload after commit_upload: a failed object
+        // completes empty, and the host's sokol_texture() / sokol_buffer() give an invalid handle.
+        (void)make_object(a, u);
         kiln::free(default_allocator(), u.bytes, usize(max<u64>(u.size, 1)), 16, Tag::Payload);
         u.bytes = nullptr;
         u.done  = true;
@@ -257,6 +274,12 @@ sg_vertex_format sokol_vertex_format(Format f) noexcept {
 
 Result<SokolAdapter*> sokol_adapter_create(SokolAdapterDesc const& desc, Adapter* out) noexcept {
     if (!out || desc.maxObjects == 0 || desc.maxUploads == 0) return make_status(Code::InvalidArgument);
+    sg_desc const gd = sg_query_desc();
+    if (u32(min(gd.buffer_pool_size, min(gd.image_pool_size, gd.view_pool_size))) <= desc.maxObjects) {
+        KILN_ERROR("sokol", "sg_setup pools (buffers %d, images %d, views %d) must exceed maxObjects %u",
+                   gd.buffer_pool_size, gd.image_pool_size, gd.view_pool_size, desc.maxObjects);
+        return make_status(Code::InvalidArgument);
+    }
     auto* a = new_object<SokolAdapter>(default_allocator(), Tag::Payload);
     a->objects.resize(desc.maxObjects);
     a->uploads.resize(desc.maxUploads);

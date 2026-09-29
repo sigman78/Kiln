@@ -51,11 +51,12 @@ inline constexpr GLenum GL_TEXTURE_MAG_FILTER = 0x2800, GL_TEXTURE_MIN_FILTER = 
 inline constexpr GLenum GL_NEAREST = 0x2600, GL_LINEAR = 0x2601, GL_LINEAR_MIPMAP_LINEAR = 0x2703,
                         GL_REPEAT = 0x2901, GL_CLAMP_TO_EDGE = 0x812F;
 inline constexpr GLenum GL_UNPACK_ROW_LENGTH = 0x0CF2, GL_UNPACK_ALIGNMENT = 0x0CF5, GL_PACK_ALIGNMENT = 0x0D05;
-inline constexpr GLenum GL_PIXEL_UNPACK_BUFFER = 0x88EC, GL_SHADER_STORAGE_BUFFER = 0x90D2;
+inline constexpr GLenum GL_PIXEL_UNPACK_BUFFER = 0x88EC, GL_SHADER_STORAGE_BUFFER = 0x90D2,
+                        GL_SHADER_STORAGE_BUFFER_OFFSET_ALIGNMENT = 0x90DF;
 inline constexpr GLbitfield GL_MAP_WRITE_BIT = 0x0002, GL_MAP_PERSISTENT_BIT = 0x0040,
                             GL_MAP_COHERENT_BIT = 0x0080;
 inline constexpr GLenum GL_SYNC_GPU_COMMANDS_COMPLETE = 0x9117, GL_ALREADY_SIGNALED = 0x911A,
-                        GL_CONDITION_SATISFIED = 0x911C, GL_WAIT_FAILED = 0x911D;
+                        GL_TIMEOUT_EXPIRED = 0x911B, GL_CONDITION_SATISFIED = 0x911C, GL_WAIT_FAILED = 0x911D;
 inline constexpr GLbitfield GL_SYNC_FLUSH_COMMANDS_BIT = 0x0001;
 inline constexpr GLenum GL_VERTEX_SHADER = 0x8B31, GL_FRAGMENT_SHADER = 0x8B30, GL_COMPILE_STATUS = 0x8B81,
                         GL_LINK_STATUS = 0x8B82;
@@ -140,6 +141,8 @@ inline constexpr GLenum GL_FRAMEBUFFER = 0x8D40, GL_READ_FRAMEBUFFER = 0x8CA8, G
     X(void, glUniform1ui, (GLint location, GLuint x))                                                          \
     X(void, glUniform1uiv, (GLint location, GLsizei count, GLuint const* value))                               \
     X(void, glBindBufferBase, (GLenum target, GLuint index, GLuint buffer))                                    \
+    X(void, glBindBufferRange, (GLenum target, GLuint index, GLuint buffer, GLintptr offset, GLsizeiptr size)) \
+    X(void, glGetIntegerv, (GLenum pname, GLint* data))                                                        \
     X(void, glDrawElementsBaseVertex,                                                                          \
       (GLenum mode, GLsizei count, GLenum type, void const* indices, GLint baseVertex))                        \
     X(void, glDrawArrays, (GLenum mode, GLint first, GLsizei count))                                           \

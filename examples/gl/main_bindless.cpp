@@ -70,21 +70,25 @@ void main() {
 )";
 
 /// The frame numbers kiln needs (PumpOptions): a fence after each frame's draws. A resident handle
-/// must stay resident, and its table slot unchanged, until the frames that read it finished.
+/// must stay resident until the frames that read it finished.
 struct FrameFences {
-    static constexpr u32 kMax = 4; ///< frames in flight before the host blocks
+    static constexpr u32 kMax = 4; ///< fences kept; a new frame starts with at most kMax - 1 in flight
     GLsync fences[kMax]       = {};
     u64 frames[kMax]          = {};
     u32 count                 = 0;
     u64 next                  = 1; ///< the frame about to be recorded
     u64 completed             = 0;
 
-    /// Collects finished frames; blocks on the oldest one only when kMax are in flight.
+    /// Collects finished frames; blocks on the oldest one while kMax are in flight.
     void poll() noexcept {
         while (count) {
-            GLuint64 const timeout = count == kMax ? GLuint64(1'000'000'000) : 0;
+            GLuint64 const timeout = count == kMax ? GLuint64(100'000'000) : 0;
             GLenum const r         = glClientWaitSync(fences[0], GL_SYNC_FLUSH_COMMANDS_BIT, timeout);
-            if (r != GL_ALREADY_SIGNALED && r != GL_CONDITION_SATISFIED && r != GL_WAIT_FAILED) return;
+            if (r == GL_WAIT_FAILED) KILN_PANIC("gl: glClientWaitSync failed on a frame fence");
+            if (r == GL_TIMEOUT_EXPIRED) {
+                if (count == kMax) continue; // the next end_frame() needs a free entry
+                return;
+            }
             glDeleteSync(fences[0]);
             completed = frames[0];
             for (u32 i = 1; i < count; ++i) {
@@ -113,7 +117,10 @@ struct TextureItem {
 };
 
 struct Scene {
-    Context* ctx = nullptr;
+    /// The model content version the materials and geometry were set up for. MetaReady, Changed
+    /// and a Ready that follows Failed (a repaired model: reloads emit no MetaReady) carry a new one.
+    u32 preparedVersion = 0;
+    Context* ctx        = nullptr;
     StrView modelName;
     MeshHandle model;
     TextureHandle sky;
@@ -171,7 +178,8 @@ void handle_event(Scene& s, Event const& e) {
     KILN_INFO("gl", "event %-9s %s v%u", ex::event_name(e.kind), isModel ? "model" : "texture", e.version);
     if (!isModel || e.kind == EventKind::Failed) return;
     mesh::MeshView const* v = mesh_view(s.ctx, s.model);
-    if (v && (e.kind == EventKind::MetaReady || e.kind == EventKind::Changed)) {
+    if (v && e.version != s.preparedVersion) {
+        s.preparedVersion = e.version;
         request_textures(s, *v);
         prepare_geometry(s.geometry, *v, s.modelName);
     }
@@ -210,9 +218,9 @@ int main(int argc, char** argv) {
 
     // 2. The adapter in bindless mode: bind() maintains the handle table.
     Adapter adapter{};
-    Result<GlAdapter*> gla = gl_adapter_create({.bindless = true}, &adapter);
+    Result<GlAdapter*> gla =
+        gl_adapter_create({.bindless = true, .tableFrames = FrameFences::kMax}, &adapter);
     if (gla.failed()) return 2;
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, gl_handle_table(*gla));
 
     // 3. The context: create() waits for the placeholders (flush), so every slot shows one from
     //    the request on.
@@ -259,6 +267,9 @@ int main(int argc, char** argv) {
         glfwPollEvents();
         frames.poll();
         (void)pump(ctx, {.frame = frames.next, .completedFrame = frames.completed});
+        GlBufferRange const table = gl_handle_table(*gla, frames.next); // after pump(): this frame's binds
+        glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 0, table.buffer, GLintptr(table.offset),
+                          GLsizeiptr(table.size));
         for (Event const& e : events(ctx))
             handle_event(s, e);
 

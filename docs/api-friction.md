@@ -36,6 +36,8 @@ Rejected (with reason), Done (with version). The integration examples
 | 2026-09-28 | agent (`kiln-sokol`) | index types | The `.mesh` format allows 8-bit indices; sokol (and D3D11, Metal, WebGPU) has none. The cooker never writes them, but a host cannot know that from the API. | State in `mesh-format-spec.md` / `mesh.h` that the cooker emits 16- or 32-bit indices only | Done (unreleased): `IndexType` in `mesh.h`, `mesh-format-spec.md` §5.5, `adapter.md` ("Vertex formats") |
 | 2026-09-28 | agent (`kiln-sokol`) | mesh payload | One payload buffer holds vertices and indices. sokol takes that (one buffer with both usages) everywhere but WebGL2, which needs separate buffers (`sg_features.separate_buffer_types`). | Nothing now; revisit with a WebGL/WebGPU target (two uploads, or index offset metadata the host can split on) | Predicted |
 | 2026-09-28 | agent (`kiln-sokol`) | upload memory | sokol creates immutable images from data it copies, so the adapter hands kiln CPU memory it allocates per upload and frees at flush: kiln decodes into it, sokol copies it again. | None needed: per-upload memory is the natural shape for such APIs; note it in `adapter.md` | Rejected as an API change: documented in `adapter.md` (`begin_upload`) |
+| 2026-09-29 | review (`kiln-sokol`) | upload failure | An adapter can fail an upload only in `begin_upload`. sokol creates the image in `flush`, after `commit_upload`, and can still reject it (a full pool, an invalid description); `is_upload_complete` has only "not yet" and "done", so the asset becomes Ready with an empty object. The example sizes sokol's pools so this does not happen and logs the rest. | `is_upload_complete` returns a tri-state (pending, done, failed), failed ending in `Failed` with K5004 | Open |
+| 2026-09-29 | review (all examples) | events | A reload emits no MetaReady, so a model that goes Failed -> Ready (repaired while hot reload runs) announces itself only with Ready. Five examples set up on MetaReady / Changed and missed it. | Nothing in the API: track the content version the host set up for (the examples now do); `EventKind` docs could name the case | Done (unreleased): examples fixed, and `EventKind` names the case; see below |
 
 Review this table at the end of every milestone; resolved rows that change the API get a
 `CHANGELOG.md` entry with migration notes.
@@ -172,3 +174,18 @@ rediscover them). The design and the mapping tables are in `design/integration-e
   place, with the example behind each.
 - Still left until they bite: per-API cook-target presets (no example hit a format rejection) and
   WebGL2's separate vertex and index buffers (the "mesh payload" row).
+
+### Code review of the examples (2026-09-29)
+
+- Bindless GL: `bind` rewrote the one mapped handle table while earlier frames could still read
+  it (a data race in GL terms, though both handles stay resident). The adapter now keeps the
+  handles on the CPU and `gl_handle_table(a, frame)` copies them into one of `tableFrames` tables
+  per frame. The host's fence ring could overflow after a wait timed out; it now waits while full,
+  and `GL_WAIT_FAILED` panics instead of counting as done (also in the adapter's upload fences).
+- Failed -> Ready: every example records the model version it set up for and sets up again for any
+  newer one (table row).
+- sokol: pools default to 128 images while the adapter allowed 4096 objects. The host now sizes
+  the pools from `SokolAdapterDesc`, the adapter checks them, and `make_object` checks every
+  creation (table row: upload failure).
+- nga: the offscreen color target had no barrier between frames, only the depth target; added.
+- sokol on macOS: `LANGUAGE OBJC` needs `enable_language(OBJC)` first.

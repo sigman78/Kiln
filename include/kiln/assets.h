@@ -26,7 +26,7 @@ enum class State : u8 {
     Unloaded = 0, ///< no request outstanding (also: null / stale handle)
     Pending,      ///< requested; nothing usable yet (textures serve their placeholder)
     MetaReady,    ///< metadata readable (mesh_view / texture_info); GPU payload in flight
-    Ready,        ///< payload published; gpu_object() returns the real object
+    Ready,        ///< payload uploaded; gpu_object() returns the real object
     Failed,       ///< recoverable error; placeholder served; one diagnostic emitted
     Partial,      ///< reserved (progressive loads, v0.8)
 };
@@ -35,6 +35,8 @@ enum class Priority : u8 { Normal = 0, High };
 enum class AssetKind : u8 { Mesh = 0, Texture };
 /// After Ready, Changed or Failed, gpu_object() may return another object than before the event (the real
 /// one, the reloaded one, the Failed placeholder); after MetaReady it returns the same one.
+/// A reload emits no MetaReady: a Failed asset that reloads successfully emits only Ready, with a
+/// new version. Set up again for any event whose version is new, not only after MetaReady.
 enum class EventKind : u8 { MetaReady = 0, Ready, Changed, Failed };
 
 struct Event {

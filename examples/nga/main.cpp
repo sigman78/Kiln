@@ -57,8 +57,11 @@ struct TextureItem {
 };
 
 struct Scene {
-    Context* ctx   = nullptr;
-    NgaAdapter* na = nullptr;
+    /// The model content version the materials and geometry were set up for. MetaReady, Changed
+    /// and a Ready that follows Failed (a repaired model: reloads emit no MetaReady) carry a new one.
+    u32 preparedVersion = 0;
+    Context* ctx        = nullptr;
+    NgaAdapter* na      = nullptr;
     StrView modelName;
     MeshHandle model;
     TextureHandle sky;
@@ -146,7 +149,10 @@ void handle_event(Scene& s, Event const& e) {
     KILN_INFO("nga", "event %-9s %s v%u", ex::event_name(e.kind), isModel ? "model" : "texture", e.version);
     if (!isModel || e.kind == EventKind::Failed) return;
     mesh::MeshView const* v = mesh_view(s.ctx, s.model);
-    if (v && (e.kind == EventKind::MetaReady || e.kind == EventKind::Changed)) prepare(s, *v);
+    if (v && e.version != s.preparedVersion) {
+        s.preparedVersion = e.version;
+        prepare(s, *v);
+    }
 }
 
 bool scene_settled(Scene const& s) {
@@ -479,8 +485,13 @@ int main(int argc, char** argv) {
         if (!window) target = targets.colorView;
         gpu::set_texture_descriptor_heap(cmd, nga_texture_heap(s.na));
         gpu::set_sampler_descriptor_heap(cmd, nga_sampler_heap(s.na));
+        // One depth target (and offscreen, one color target) serves every frame in flight: order this
+        // frame's clear and writes after the previous frame's.
         gpu::barrier(cmd, gpu::Stage::depth_stencil_tests, gpu::Access::depth_stencil_write,
                      gpu::Stage::depth_stencil_tests, gpu::Access::depth_stencil_write);
+        if (!window)
+            gpu::barrier(cmd, gpu::Stage::color_output, gpu::Access::color_write, gpu::Stage::color_output,
+                         gpu::Access::color_write);
         gpu::ColorAttachment const color{
             .render_view = target,
             .load        = gpu::LoadOp::clear,

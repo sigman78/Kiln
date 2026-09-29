@@ -57,10 +57,13 @@ struct Material {
 };
 
 struct Scene {
-    Context* ctx       = nullptr;
-    vkx::VkAdapter* va = nullptr;
-    vkx::Renderer* ren = nullptr;
-    VkDevice device    = VK_NULL_HANDLE;
+    /// The model content version the materials and geometry were set up for. MetaReady, Changed
+    /// and a Ready that follows Failed (a repaired model: reloads emit no MetaReady) carry a new one.
+    u32 preparedVersion = 0;
+    Context* ctx        = nullptr;
+    vkx::VkAdapter* va  = nullptr;
+    vkx::Renderer* ren  = nullptr;
+    VkDevice device     = VK_NULL_HANDLE;
     StrView modelName;
     MeshHandle model;
     u32 skyItem = kInvalid;
@@ -196,7 +199,10 @@ void handle_event(Scene& s, Event const& e) {
     }
     if (!isModel || e.kind == EventKind::Failed) return;
     mesh::MeshView const* v = mesh_view(s.ctx, s.model);
-    if (v && (e.kind == EventKind::MetaReady || e.kind == EventKind::Changed)) build_materials(s, *v);
+    if (v && e.version != s.preparedVersion) {
+        s.preparedVersion = e.version;
+        build_materials(s, *v);
+    }
 }
 
 /// Rewrites this frame slot's set of every material whose stamp moved since the slot was written.

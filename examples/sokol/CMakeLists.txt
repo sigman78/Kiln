@@ -57,6 +57,7 @@ if(WIN32)
     target_compile_definitions(kiln_sokol_impl PUBLIC SOKOL_D3D11)
 elseif(APPLE)
     target_compile_definitions(kiln_sokol_impl PUBLIC SOKOL_METAL)
+    enable_language(OBJC) # the Metal backend is Objective-C; the project enables only C and C++
     set_source_files_properties(sokol_impl.c PROPERTIES LANGUAGE OBJC)
     target_link_libraries(kiln_sokol_impl PUBLIC "-framework Cocoa" "-framework QuartzCore" "-framework Metal"
                                                  "-framework MetalKit")

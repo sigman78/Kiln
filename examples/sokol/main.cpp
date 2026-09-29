@@ -41,6 +41,9 @@ struct TextureItem {
 };
 
 struct App {
+    /// The model content version the materials and geometry were set up for. MetaReady, Changed
+    /// and a Ready that follows Failed (a repaired model: reloads emit no MetaReady) carry a new one.
+    u32 preparedVersion = 0;
     ex::Options o;
     int exitCode = 0;
     ex::OrbitCamera camera;
@@ -148,7 +151,8 @@ void handle_event(App& app, Event const& e) {
     KILN_INFO("sokol", "event %-9s %s v%u", ex::event_name(e.kind), isModel ? "model" : "texture", e.version);
     if (!isModel || e.kind == EventKind::Failed) return;
     mesh::MeshView const* v = mesh_view(app.ctx, app.model);
-    if (v && (e.kind == EventKind::MetaReady || e.kind == EventKind::Changed)) {
+    if (v && e.version != app.preparedVersion) {
+        app.preparedVersion = e.version;
         request_textures(app, *v);
         build_pipelines(app, *v);
     }
@@ -321,14 +325,19 @@ bool dump(App& app, int w, int h) {
 void init(void* user) {
     App& app = *static_cast<App*>(user);
     // 1. sokol_gfx on the window sokol_app made.
+    // The pools hold the adapter's objects and the host's own (targets, pipelines' views).
+    SokolAdapterDesc const ad{};
     sg_desc gd{};
-    gd.environment = sglue_environment();
-    gd.logger.func = slog_func;
+    gd.environment      = sglue_environment();
+    gd.logger.func      = slog_func;
+    gd.buffer_pool_size = int(ad.maxObjects) + 64;
+    gd.image_pool_size  = int(ad.maxObjects) + 64;
+    gd.view_pool_size   = int(ad.maxObjects) + 64;
     sg_setup(&gd);
 
     // 2. The adapter, then the context. create() runs the adapter's flush while it waits for the
     //    placeholders, so it belongs here, after sg_setup().
-    Result<SokolAdapter*> sa = sokol_adapter_create({}, &app.adapter);
+    Result<SokolAdapter*> sa = sokol_adapter_create(ad, &app.adapter);
     if (sa.failed()) {
         app.exitCode = 2;
         sapp_request_quit();

@@ -12,11 +12,12 @@ namespace kiln::sk {
 struct SokolAdapter;
 
 struct SokolAdapterDesc {
-    u32 maxObjects = 4096; ///< images and buffers alive at once
+    u32 maxObjects = 1024; ///< images and buffers alive at once
     u32 maxUploads = 256;  ///< uploads between begin_upload and completion
 };
 
-/// After sg_setup(). Fills `out`.
+/// After sg_setup(), whose buffer, image and view pools must each hold maxObjects more than the
+/// host's own (InvalidArgument otherwise). Fills `out`.
 [[nodiscard]] Result<SokolAdapter*> sokol_adapter_create(SokolAdapterDesc const& desc, Adapter* out) noexcept;
 /// After destroy(ctx), before sg_shutdown().
 void sokol_adapter_destroy(SokolAdapter* a) noexcept;

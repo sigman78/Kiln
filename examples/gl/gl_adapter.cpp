@@ -10,6 +10,7 @@
 #include <kiln/containers.h>
 #include <kiln/log.h>
 
+#include <cstring>
 #include <mutex>
 
 namespace kiln::glx {
@@ -103,8 +104,12 @@ struct GlAdapter {
     // Bindless only.
     bool bindless      = false;
     GLuint samplers[2] = {}; ///< [0] repeat, [1] clamp (cubes); a handle bakes in its sampler
-    GLuint table       = 0;  ///< SSBO of u64 handles, one per slot, persistently mapped
-    u64* tableMapped   = nullptr;
+    GLuint table       = 0;  ///< SSBO: `tableFrames` copies of the u64 handle per slot, persistently mapped
+    u8* tableMapped    = nullptr;
+    u32 tableFrames    = 0;
+    u64 tableStride    = 0; ///< bytes per copy, a multiple of the storage buffer offset alignment
+    Vec<u64> handles;       ///< what each slot shows now; gl_handle_table() copies it
+    u32 slotsUsed = 0;      ///< slots below it were bound at least once
 };
 
 namespace {
@@ -209,7 +214,8 @@ bool poll(GlAdapter* a, u32 index) noexcept {
     if (u.done) return true;
     if (!u.flushed) return false;
     GLenum const r = glClientWaitSync(u.fence, GL_SYNC_FLUSH_COMMANDS_BIT, 0);
-    if (r != GL_ALREADY_SIGNALED && r != GL_CONDITION_SATISFIED && r != GL_WAIT_FAILED) return false;
+    if (r == GL_WAIT_FAILED) KILN_PANIC("gl: glClientWaitSync failed on an upload fence");
+    if (r == GL_TIMEOUT_EXPIRED) return false;
     glDeleteSync(u.fence);
     u.fence = nullptr;
     u.done  = true;
@@ -320,10 +326,13 @@ u64 resident_handle(GlAdapter* a, GpuObject obj) noexcept {
     return o.handle;
 }
 
-/// Slot `slot` of the handle table shows `obj`. No GL call beyond the handle: the table is mapped.
+/// Slot `slot` shows `obj` from the next gl_handle_table() on; frames in flight keep their copy.
 void bind(void* user, u32 slot, GpuObject obj, TextureShape) {
     auto* a = static_cast<GlAdapter*>(user);
-    if (u64 const h = resident_handle(a, obj)) a->tableMapped[slot] = h;
+    if (u64 const h = resident_handle(a, obj)) {
+        a->handles[slot] = h;
+        a->slotsUsed     = max(a->slotsUsed, slot + 1);
+    }
 }
 
 /// The GL work of every committed upload, and the retirement of finished ones. kiln calls this at
@@ -417,10 +426,15 @@ Result<GlAdapter*> gl_adapter_create(GlAdapterDesc const& desc, Adapter* out) no
         // The global GL_TEXTURE_CUBE_MAP_SEAMLESS does not reach bindless handles on every driver;
         // the per-sampler switch (ARB_seamless_cubemap_per_texture) does.
         glSamplerParameteri(a->samplers[1], GL_TEXTURE_CUBE_MAP_SEAMLESS, GL_TRUE);
-        GLsizeiptr const bytes = GLsizeiptr(desc.maxSlots * sizeof(u64));
+        GLint align = 256;
+        glGetIntegerv(GL_SHADER_STORAGE_BUFFER_OFFSET_ALIGNMENT, &align);
+        a->tableFrames         = max(desc.tableFrames, 2u);
+        a->tableStride         = align_up(u64(desc.maxSlots) * sizeof(u64), u64(max(align, 1)));
+        GLsizeiptr const bytes = GLsizeiptr(a->tableStride * a->tableFrames);
         glCreateBuffers(1, &a->table);
         glNamedBufferStorage(a->table, bytes, nullptr, flags);
-        a->tableMapped = static_cast<u64*>(glMapNamedBufferRange(a->table, 0, bytes, flags));
+        a->tableMapped = static_cast<u8*>(glMapNamedBufferRange(a->table, 0, bytes, flags));
+        a->handles.resize(desc.maxSlots, 0);
     }
 
     *out = Adapter{
@@ -462,7 +476,11 @@ GlTexture gl_texture(GlAdapter const* a, GpuObject obj) noexcept {
     return o.used ? GlTexture{o.name, o.target} : GlTexture{};
 }
 
-unsigned gl_handle_table(GlAdapter const* a) noexcept { return a->table; }
+GlBufferRange gl_handle_table(GlAdapter* a, u64 frame) noexcept {
+    u64 const offset = (frame % a->tableFrames) * a->tableStride;
+    std::memcpy(a->tableMapped + offset, a->handles.data(), usize(a->slotsUsed) * sizeof(u64));
+    return {a->table, offset, a->tableStride};
+}
 
 unsigned gl_buffer(GlAdapter const* a, GpuObject obj) noexcept {
     if (obj.native == 0 || obj.native > a->objects.size() || obj.kind != u32(ObjectKind::Buffer)) return 0;
