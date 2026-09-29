@@ -40,12 +40,11 @@ void close_catalog_store(CatalogStore* s) noexcept;
 /// Sets the host-settings digest of the unit `name`'s record (its keys were checked again).
 void set_record_digest(CatalogStore* s, StrView name, u64 hostDigest) noexcept;
 
-/// Session state, never written: a unit is fresh once this process checked its inputs or cooked
-/// it (publish_unit() marks it). The source poller watches the fresh units.
-[[nodiscard]] bool is_fresh(CatalogStore* s, StrView name) noexcept;
-void mark_fresh(CatalogStore* s, StrView name) noexcept;
-/// The names of the fresh units, NUL-separated, into `out` (replaced).
-void fresh_units(CatalogStore* s, Vec<char>* out) noexcept;
+/// True if the unit `d.name`'s record still describes it: the same source path, every input
+/// unchanged (recorded_inputs_unchanged()), and `hostDigest` or, when the digest differs, the
+/// host's settings giving the recorded keys (the record then takes `hostDigest`).
+[[nodiscard]] bool record_is_current(CatalogStore* s, UnitDesc const& d, u64 hostDigest,
+                                     bool rehash) noexcept;
 
 /// Session state, never written: a unit is fresh once this process checked its inputs or cooked
 /// it (publish_unit() marks it). The source poller watches the fresh units.

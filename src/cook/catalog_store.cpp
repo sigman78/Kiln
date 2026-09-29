@@ -640,6 +640,20 @@ bool copy_input_record(CatalogStore* s, StrView name, CookUnit* out, u64* hostDi
     return true;
 }
 
+bool record_is_current(CatalogStore* s, UnitDesc const& d, u64 hostDigest, bool rehash) noexcept {
+    CookUnit rec(d.env.alloc ? d.env.alloc : s->alloc);
+    u64 digest = 0;
+    if (!copy_input_record(s, d.name, &rec, &digest) || rec.inputs.empty()) return false;
+    UnitInput const& source = rec.inputs[0];
+    if (source.role != InputRole::Source || rec.str(source.pathOff, source.pathLen) != d.sourcePath)
+        return false;
+    if (!recorded_inputs_unchanged(rec, rehash)) return false;
+    if (digest == hostDigest) return true;
+    if (!recorded_keys_match(d, rec)) return false;
+    set_record_digest(s, d.name, hostDigest);
+    return true;
+}
+
 bool is_fresh(CatalogStore* s, StrView name) noexcept {
     std::lock_guard<std::mutex> const lock(s->mutex);
     u32 const i = s->find_record(name);

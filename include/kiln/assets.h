@@ -110,7 +110,7 @@ struct ContextDesc {
 
     StrView storeDir        = {}; ///< cooked store root (read-only for the runtime)
     Span<Root const> roots  = {}; ///< where the cook provider looks for sources (dev)
-    StoreLayout storeLayout = StoreLayout::Named;
+    StoreLayout storeLayout = StoreLayout::Catalog;
     /// Catalog layout: the target profile whose catalog create() reads (check_profile_name()).
     StrView profile      = "compat";
     bool devPlaceholders = KILN_DEBUG != 0; ///< Failed textures show the magenta checker

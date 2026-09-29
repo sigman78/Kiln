@@ -8,8 +8,18 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
 ## [Unreleased]
 
 ### Changed
-- `kiln-cook --hashed` names files by their 128-bit build key (32 hex digits); `--map` prints that
-  key instead of the 64-bit `store_key`.
+- **Breaking (runtime, tools): stores are catalog stores by default** (store-catalog.md, Phase A
+  step 6). `ContextDesc::storeLayout` defaults to `StoreLayout::Catalog` (profile `compat`), and
+  `kiln-cook` writes artifacts and `catalogs/<target>.kcat` unless given `--layout named`. `kiln-cook`
+  cooks only the sources whose recorded inputs changed (size and time); `--verify` compares their
+  content instead, for CI and shipping builds. `--hashed` is gone; `--map` prints
+  `<name>\t<file>\t<build key>`. `cook_cli_main` takes a `policyVersion`. `kiln-info` reads a
+  catalog (`--check` verifies every artifact); `kiln-headless --layout named` reads a named store.
+  - Migration: a host that reads a named store sets `storeLayout = StoreLayout::Named`, and cooks it
+    with `kiln-cook --layout named`. Otherwise cook the store again into a new directory: a named
+    store is refused by the catalog writer (K3008), and a catalog store by the named layout. kiln
+    deletes no store; remove the old one by hand. A cook provider in the Catalog layout needs its
+    `target` to be the context's profile.
 - **Breaking (cook): target profiles replace `blockFamily`.** `TargetProfile::blockFamily` and the
   `BlockFamily` enum are gone (`blockFormats` replaces them); the default target is `compat`, not
   `desktop`, so one-channel masks are BC5 instead of BC4 by default. `kiln-cook --block` is gone

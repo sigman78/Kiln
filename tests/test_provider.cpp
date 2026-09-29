@@ -90,10 +90,11 @@ struct TestContext {
         na = na_.value();
 
         ContextDesc desc{};
-        desc.adapter  = &adapter;
-        desc.storeDir = storeDir;
-        desc.roots    = roots;
-        desc.diag     = diag;
+        desc.storeLayout = StoreLayout::Named;
+        desc.adapter     = &adapter;
+        desc.storeDir    = storeDir;
+        desc.roots       = roots;
+        desc.diag        = diag;
 
         Result<Context*> c = create(desc);
         if (!KILN_CHECK_MSG(c.ok(), "create() failed (%s)", code_name(c.code()))) return false;
@@ -232,6 +233,7 @@ KILN_TEST(Provider, DestroyReleasesAnInstalledProvider) {
         Result<NullAdapter*> na = null_adapter_create({}, &adapter);
         KILN_REQUIRE(na.ok());
         ContextDesc desc{};
+        desc.storeLayout     = StoreLayout::Named;
         desc.adapter         = &adapter;
         desc.storeDir        = StrView(storeDir);
         desc.roots           = Span<Root const>(roots, 1);
@@ -861,11 +863,11 @@ KILN_TEST(Provider, CliMainAppliesThePolicy) {
     format(src, sizeof src, "%s/tex.png", root);
     replace_file(src, test_png(rgba).span());
 
-    char arg0[] = "kiln-cook", argO[] = "-o", argQ[] = "-q";
-    char* argv[] = {arg0, src, argO, storeDir, argQ};
+    char arg0[] = "kiln-cook", argO[] = "-o", argQ[] = "-q", argL[] = "--layout", argN[] = "named";
+    char* argv[] = {arg0, src, argO, storeDir, argQ, argL, argN};
     cook::CookPolicy policy;
     policy.texture = &no_mips_policy;
-    KILN_REQUIRE_EQ(cook::cook_cli_main(5, argv, policy), 0);
+    KILN_REQUIRE_EQ(cook::cook_cli_main(7, argv, policy), 0);
 
     char storeFile[1100];
     format(storeFile, sizeof storeFile, "%s/tex.png.ktx2", storeDir);
@@ -876,9 +878,9 @@ KILN_TEST(Provider, CliMainAppliesThePolicy) {
     KILN_CHECK_EQ(v->desc().levels, 1u);
 
     // Without the policy the same input gets its mips.
-    char* argv2[] = {arg0, src, argO, storeDir, argQ};
+    char* argv2[] = {arg0, src, argO, storeDir, argQ, argL, argN};
     std::remove(storeFile);
-    KILN_REQUIRE_EQ(cook::cook_cli_main(5, argv2), 0);
+    KILN_REQUIRE_EQ(cook::cook_cli_main(7, argv2), 0);
     KILN_REQUIRE(read_file(storeFile, bytes));
     Result<ktx2::Ktx2View> v2 = ktx2::Ktx2View::open(bytes.span());
     KILN_REQUIRE(v2.ok());
@@ -901,9 +903,9 @@ KILN_TEST(Provider, CliMainWithoutMeshCook) {
     format(glb, sizeof glb, "%s/Box.glb", khronos);
     replace_file(png, test_png(rgba).span());
 
-    char arg0[] = "kiln-cook", argO[] = "-o", argQ[] = "-q";
-    char* argv[] = {arg0, glb, png, argO, storeDir, argQ};
-    KILN_CHECK_EQ(cook::cook_cli_main(6, argv), 3);
+    char arg0[] = "kiln-cook", argO[] = "-o", argQ[] = "-q", argL[] = "--layout", argN[] = "named";
+    char* argv[] = {arg0, glb, png, argO, storeDir, argQ, argL, argN};
+    KILN_CHECK_EQ(cook::cook_cli_main(8, argv), 3);
 
     char storeFile[1100];
     format(storeFile, sizeof storeFile, "%s/tex.png.ktx2", storeDir);

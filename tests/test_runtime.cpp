@@ -72,9 +72,10 @@ struct Rt {
     bool init(NullAdapterDesc nd = {}, ContextDesc cd = {}) {
         Result<NullAdapter*> a = null_adapter_create(nd, &adapter);
         if (!KILN_CHECK(a.ok())) return false;
-        na         = *a;
-        cd.adapter = &adapter;
-        cd.diag    = diags.sink();
+        na             = *a;
+        cd.adapter     = &adapter;
+        cd.diag        = diags.sink();
+        cd.storeLayout = StoreLayout::Named; // every store here is a named one (the goldens)
         if (cd.storeDir.empty()) cd.storeDir = test::golden_dir();
         Result<Context*> c = create(cd);
         if (!KILN_CHECK(c.ok())) return false;
@@ -243,7 +244,8 @@ KILN_TEST(Runtime, InvalidNamesAndMountsAreRejected) {
     Result<NullAdapter*> a = null_adapter_create({}, &r3.adapter);
     KILN_REQUIRE(a.ok());
     r3.na              = *a;
-    Result<Context*> c = create(ContextDesc{.adapter = &r3.adapter, .roots = Span<Root const>(twice, 2)});
+    Result<Context*> c = create(ContextDesc{
+        .adapter = &r3.adapter, .roots = Span<Root const>(twice, 2), .storeLayout = StoreLayout::Named});
     KILN_CHECK(c.failed());
     if (c.ok()) destroy(*c);
 }
@@ -254,6 +256,7 @@ KILN_TEST(Runtime, CreateDestroyPlaceholders) {
         NullAdapterDesc nd;
         nd.bindlessSlots = 0;
         ContextDesc cd;
+        cd.storeLayout     = StoreLayout::Named;
         cd.devPlaceholders = dev;
         cd.storeDir        = "does/not/exist";
         if (!rt.init(nd, cd)) return;
@@ -306,6 +309,7 @@ KILN_TEST(Runtime, HostPlaceholderOverride) {
     pd.height = 2;
     pd.pixels = Span<u8 const>(px, sizeof px);
     ContextDesc cd;
+    cd.storeLayout  = StoreLayout::Named;
     cd.placeholders = Span<PlaceholderDesc const>(&pd, 1);
     if (!rt.init(nd, cd)) return;
     RequestOptions ro;
@@ -330,6 +334,7 @@ KILN_TEST(Runtime, HostPlaceholderOverride) {
     DiagLog dl;
     pd.pixels = Span<u8 const>(px, 3);
     ContextDesc bad;
+    bad.storeLayout     = StoreLayout::Named;
     bad.adapter         = &a2;
     bad.diag            = dl.sink();
     bad.placeholders    = Span<PlaceholderDesc const>(&pd, 1);
@@ -583,6 +588,7 @@ KILN_TEST(Runtime, MissingAssetFails) {
         NullAdapterDesc nd;
         nd.bindlessSlots = 0;
         ContextDesc cd;
+        cd.storeLayout     = StoreLayout::Named;
         cd.devPlaceholders = dev;
         if (!rt.init(nd, cd)) return;
         TextureHandle t = request_texture(rt.ctx, "tex/nope");
@@ -621,7 +627,8 @@ KILN_TEST(Runtime, CorruptStoreFileFails) {
 
     Rt rt;
     ContextDesc cd;
-    cd.storeDir = dir;
+    cd.storeLayout = StoreLayout::Named;
+    cd.storeDir    = dir;
     if (!rt.init({}, cd)) return;
     MeshHandle m    = request_mesh(rt.ctx, "bad");
     TextureHandle t = request_texture(rt.ctx, "short");
@@ -639,6 +646,7 @@ KILN_TEST(Runtime, AdapterRejectFails) {
     NullAdapterDesc nd2;
     nd2.failEveryN = 16; // the 15 placeholder uploads succeed, the 16th (the mesh) fails
     ContextDesc cd;
+    cd.storeLayout     = StoreLayout::Named;
     cd.devPlaceholders = true;
     if (!rt2.init(nd2, cd)) return;
     MeshHandle m = request_mesh(rt2.ctx, "mesh/Box");
@@ -807,7 +815,8 @@ KILN_TEST(Runtime, RegisterInMemory) {
 KILN_TEST(Runtime, ReleaseWhileLoading) {
     Rt rt;
     ContextDesc cd;
-    cd.maxAssets = 4;
+    cd.storeLayout = StoreLayout::Named;
+    cd.maxAssets   = 4;
     if (!rt.init({}, cd)) return;
     for (int round = 0; round < 20; ++round) {
         MeshHandle m    = request_mesh(rt.ctx, "mesh/authored_lods");
@@ -841,7 +850,8 @@ KILN_TEST(Runtime, ReleaseWhileLoading) {
 KILN_TEST(Runtime, EventOverflowDropsOldest) {
     Rt rt;
     ContextDesc cd;
-    cd.maxEvents = 2;
+    cd.storeLayout = StoreLayout::Named;
+    cd.maxEvents   = 2;
     if (!rt.init({}, cd)) return;
     Group g = group(rt.ctx);
     RequestOptions ro;
@@ -1097,7 +1107,8 @@ KILN_TEST(Runtime, ReloadSwapsVersion) {
 
     Rt rt;
     ContextDesc cd;
-    cd.storeDir = store.dir;
+    cd.storeLayout = StoreLayout::Named;
+    cd.storeDir    = store.dir;
     if (!rt.init({}, cd)) return;
     MeshHandle m = request_mesh(rt.ctx, "mesh/thing");
     KILN_REQUIRE(rt.pump_until([&] { return is_ready(rt.ctx, m); }));
@@ -1192,8 +1203,10 @@ KILN_TEST(Runtime, CpuFailureDiscardsUpload) {
         KILN_REQUIRE(na.ok());
         rt.na = *na;
         if (!withDiscard) rt.adapter.discard_upload = nullptr;
-        Result<Context*> c = create(
-            ContextDesc{.diag = rt.diags.sink(), .adapter = &rt.adapter, .storeDir = test::golden_dir()});
+        Result<Context*> c = create(ContextDesc{.diag        = rt.diags.sink(),
+                                                .adapter     = &rt.adapter,
+                                                .storeDir    = test::golden_dir(),
+                                                .storeLayout = StoreLayout::Named});
         KILN_REQUIRE(c.ok());
         rt.ctx                    = *c;
         NullAdapterStats const s0 = null_adapter_stats(rt.na);
@@ -1242,7 +1255,8 @@ KILN_TEST(Runtime, UploadFailedPlaceholderFailsCreate) {
     KILN_REQUIRE(a.ok());
     rt.na = *a;
     null_adapter_fail_uploads(rt.na, true);
-    Result<Context*> c = create(ContextDesc{.diag = rt.diags.sink(), .adapter = &rt.adapter});
+    Result<Context*> c = create(
+        ContextDesc{.diag = rt.diags.sink(), .adapter = &rt.adapter, .storeLayout = StoreLayout::Named});
     KILN_CHECK(c.failed());
     if (c.ok()) destroy(*c);
     KILN_CHECK(rt.diags.has(kDiagPlaceholderFailed));
@@ -1258,7 +1272,8 @@ KILN_TEST(Runtime, ReloadFailureKeepsOld) {
 
     Rt rt;
     ContextDesc cd;
-    cd.storeDir = store.dir;
+    cd.storeLayout = StoreLayout::Named;
+    cd.storeDir    = store.dir;
     if (!rt.init({}, cd)) return;
     Group g = group(rt.ctx);
     RequestOptions ro;
@@ -1307,7 +1322,8 @@ KILN_TEST(Runtime, ReloadFromFailed) {
 
     Rt rt;
     ContextDesc cd;
-    cd.storeDir = store.dir;
+    cd.storeLayout = StoreLayout::Named;
+    cd.storeDir    = store.dir;
     if (!rt.init({}, cd)) return;
     Group g = group(rt.ctx);
     RequestOptions ro;
@@ -1368,7 +1384,8 @@ KILN_TEST(Runtime, ReloadTexture) {
 
     Rt rt;
     ContextDesc cd;
-    cd.storeDir = store.dir;
+    cd.storeLayout = StoreLayout::Named;
+    cd.storeDir    = store.dir;
     if (!rt.init({}, cd)) return;
     TextureHandle t       = request_texture(rt.ctx, "ktx2/thing");
     GpuObject const first = gpu_object(rt.ctx, t);
@@ -1415,7 +1432,8 @@ KILN_TEST(Runtime, ReloadWhileLoading) {
 
     Rt rt;
     ContextDesc cd;
-    cd.storeDir = store.dir;
+    cd.storeLayout = StoreLayout::Named;
+    cd.storeDir    = store.dir;
     if (!rt.init({}, cd)) return;
 
     // Queued: the reload waits for the first load to settle, then runs once.
@@ -1476,9 +1494,10 @@ KILN_TEST(Runtime, HotReloadUnavailableWarns) {
     noStat.stat      = nullptr;
     Rt rt;
     ContextDesc cd;
-    cd.storeDir  = "nowhere";
-    cd.io        = &noStat;
-    cd.hotReload = {.watchStore = true, .pollMs = 20};
+    cd.storeLayout = StoreLayout::Named;
+    cd.storeDir    = "nowhere";
+    cd.io          = &noStat;
+    cd.hotReload   = {.watchStore = true, .pollMs = 20};
     if (!rt.init({}, cd)) return;
     KILN_CHECK_EQ(count_code(rt.diags, kDiagHotReloadUnavailable), 1u);
     rt.shutdown();
@@ -1486,8 +1505,9 @@ KILN_TEST(Runtime, HotReloadUnavailableWarns) {
 #if !(defined(KILN_HOT_RELOAD) && KILN_HOT_RELOAD)
     Rt rt2;
     ContextDesc cd2;
-    cd2.storeDir  = "nowhere";
-    cd2.hotReload = {.watchStore = true};
+    cd2.storeLayout = StoreLayout::Named;
+    cd2.storeDir    = "nowhere";
+    cd2.hotReload   = {.watchStore = true};
     if (!rt2.init({}, cd2)) return;
     KILN_CHECK_EQ(count_code(rt2.diags, kDiagHotReloadUnavailable), 1u);
 #endif
@@ -1503,8 +1523,9 @@ KILN_TEST(Runtime, StorePollerDetectsChange) {
 
     Rt rt;
     ContextDesc cd;
-    cd.storeDir  = store.dir;
-    cd.hotReload = {.watchStore = true, .pollMs = 20};
+    cd.storeLayout = StoreLayout::Named;
+    cd.storeDir    = store.dir;
+    cd.hotReload   = {.watchStore = true, .pollMs = 20};
     if (!rt.init({}, cd)) return;
     KILN_CHECK(!rt.diags.has(kDiagHotReloadUnavailable));
     MeshHandle m = request_mesh(rt.ctx, "mesh/thing");
@@ -1539,7 +1560,8 @@ KILN_TEST(RuntimePanic, WaitOffThread) {
     set_panic_handler(&exit_on_panic, nullptr);
     Rt rt;
     ContextDesc cd;
-    cd.storeDir = "nowhere";
+    cd.storeLayout = StoreLayout::Named;
+    cd.storeDir    = "nowhere";
     if (!rt.init({}, cd)) return;
     Group g = group(rt.ctx);
     RequestOptions ro;
@@ -1560,6 +1582,7 @@ KILN_TEST(RuntimePanic, WaitNotSelfSubmitting) {
     KILN_REQUIRE(na.ok());
     a.caps = 0; // uploads "need a frame"
     ContextDesc cd;
+    cd.storeLayout     = StoreLayout::Named;
     cd.adapter         = &a;
     cd.storeDir        = "nowhere";
     Result<Context*> c = create(cd);
@@ -1621,7 +1644,8 @@ TextureHandle request_shape(Rt& rt, char const* name, TextureShape shape) {
 KILN_TEST(Runtime, ShapePlaceholders) {
     Rt rt;
     ContextDesc cd;
-    cd.storeDir = "does/not/exist";
+    cd.storeLayout = StoreLayout::Named;
+    cd.storeDir    = "does/not/exist";
     if (!rt.init({}, cd)) return;
     TextureHandle const cube = request_shape(rt, "tex/cube", TextureShape::Cube);
     TextureInfo ti           = texture_info(rt.ctx, cube);
@@ -1639,7 +1663,8 @@ KILN_TEST(Runtime, CubeAndArrayLoad) {
     if (!store.init()) return;
     Rt rt;
     ContextDesc cd;
-    cd.storeDir = StrView(store.dir);
+    cd.storeLayout = StoreLayout::Named;
+    cd.storeDir    = StrView(store.dir);
     if (!rt.init({}, cd)) return;
     TextureHandle const sky    = request_shape(rt, "sky", TextureShape::Cube);
     TextureHandle const layers = request_shape(rt, "layers", TextureShape::Array);
@@ -1658,7 +1683,8 @@ KILN_TEST(Runtime, TextureShapeMismatchFails) {
     if (!store.init()) return;
     Rt rt;
     ContextDesc cd;
-    cd.storeDir = StrView(store.dir);
+    cd.storeLayout = StoreLayout::Named;
+    cd.storeDir    = StrView(store.dir);
     if (!rt.init({}, cd)) return;
     TextureHandle const cubeAs2D   = request_shape(rt, "sky", TextureShape::Tex2D);
     TextureHandle const flatAsCube = request_shape(rt, "flat", TextureShape::Cube);
@@ -1682,8 +1708,10 @@ KILN_TEST(Runtime, AdapterWithoutShapeCaps) {
     KILN_REQUIRE(a.ok());
     rt.na = *a;
     rt.adapter.caps &= ~u32(kCubeTextures | kArrayTextures);
-    Result<Context*> c =
-        create(ContextDesc{.diag = rt.diags.sink(), .adapter = &rt.adapter, .storeDir = "none"});
+    Result<Context*> c = create(ContextDesc{.diag        = rt.diags.sink(),
+                                            .adapter     = &rt.adapter,
+                                            .storeDir    = "none",
+                                            .storeLayout = StoreLayout::Named});
     KILN_REQUIRE(c.ok());
     rt.ctx = *c;
     KILN_CHECK_EQ(null_adapter_stats(rt.na).beginUploads, KILN_DEBUG ? 5u : 4u);
@@ -1703,8 +1731,10 @@ KILN_TEST(Runtime, AdapterWithoutMeshes) {
     KILN_REQUIRE(a.ok());
     rt.na = *a;
     rt.adapter.caps &= ~u32(kMeshes);
-    Result<Context*> c =
-        create(ContextDesc{.diag = rt.diags.sink(), .adapter = &rt.adapter, .storeDir = test::golden_dir()});
+    Result<Context*> c = create(ContextDesc{.diag        = rt.diags.sink(),
+                                            .adapter     = &rt.adapter,
+                                            .storeDir    = test::golden_dir(),
+                                            .storeLayout = StoreLayout::Named});
     KILN_REQUIRE(c.ok());
     rt.ctx                 = *c;
     u32 const placeholders = null_adapter_stats(rt.na).beginUploads;
@@ -1805,10 +1835,12 @@ KILN_TEST(Runtime, AdapterFlush) {
     KILN_REQUIRE(a.ok());
     rt.na = *a;
     rt.adapter.caps &= ~u32(kSelfSubmitting);
-    rt.adapter.flush = &count_flush;
-    g_flushes        = 0;
-    Result<Context*> c =
-        create(ContextDesc{.diag = rt.diags.sink(), .adapter = &rt.adapter, .storeDir = test::golden_dir()});
+    rt.adapter.flush   = &count_flush;
+    g_flushes          = 0;
+    Result<Context*> c = create(ContextDesc{.diag        = rt.diags.sink(),
+                                            .adapter     = &rt.adapter,
+                                            .storeDir    = test::golden_dir(),
+                                            .storeLayout = StoreLayout::Named});
     KILN_REQUIRE(c.ok());
     rt.ctx = *c;
     KILN_CHECK(g_flushes >= 1);
@@ -1851,6 +1883,7 @@ KILN_TEST(Runtime, CreateChecksStoreProfile) {
     KILN_REQUIRE(na.ok());
     DiagLog log;
     ContextDesc cd{};
+    cd.storeLayout      = StoreLayout::Named;
     cd.adapter          = &adapter;
     cd.storeDir         = StrView(dir);
     cd.diag             = log.sink();
