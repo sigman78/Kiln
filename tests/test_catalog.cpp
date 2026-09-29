@@ -2,12 +2,15 @@
 // (docs/design/store-catalog.md); cook-only.
 #include "kiln_test.h"
 
+#include "../src/cook/catalog_store.h"
 #include "../src/cook/unit.h"
 #include "../src/formats/formats_internal.h"
 #include "kiln/cook/catalog.h"
 #include "kiln/cook/cook.h"
 
 #include <cstring>
+#include <filesystem>
+#include <system_error>
 
 using namespace kiln;
 using namespace kiln::cook;
@@ -344,4 +347,236 @@ KILN_TEST(Catalog, Paths) {
     KILN_CHECK(check_profile_name(""_sv) != nullptr);
     KILN_CHECK(check_profile_name("Compat"_sv) != nullptr);
     KILN_CHECK(check_profile_name("a/b"_sv) != nullptr);
+}
+
+// ---------------------------------------------------------------------------
+// Catalog stores: artifacts, the lock, catalog and input records
+// ---------------------------------------------------------------------------
+
+namespace {
+
+/// An empty `<sample_dir()>/<suffix>`.
+void fresh_dir(char const* suffix, char* out, usize cap) {
+    format(out, cap, "%s/%s", kiln::test::sample_dir(), suffix);
+    std::error_code ec;
+    std::filesystem::remove_all(out, ec);
+}
+
+Status cook_corpus(char const* file, AssetKind kind, CookUnit* unit) {
+    static MeshCookSettings const mesh;
+    static TextureCookSettings const tex;
+    char source[1024];
+    format(source, sizeof source, "%s/../gltf/generated/%s", kiln::test::corpus_dir(), file);
+    return cook_unit({.kind            = kind,
+                      .name            = StrView(file),
+                      .sourcePath      = StrView(source),
+                      .meshDefaults    = &mesh,
+                      .textureDefaults = &tex,
+                      .target          = &kCompatTarget,
+                      .statInputs      = true},
+                     unit);
+}
+
+Status open_store(char const* dir, CatalogStore** out, DiagSink const* diag = nullptr) {
+    return open_catalog_store({.storeDir = StrView(dir), .target = &kCompatTarget, .diag = diag}, out);
+}
+
+bool read_file(char const* path, Vec<u8>& out) {
+    return io_read_file(compat_io_backend(), StrView(path), default_allocator(), &out).ok();
+}
+
+} // namespace
+
+KILN_TEST(CatalogStore, PublishCommitReopen) {
+    char dir[1024];
+    fresh_dir("catalog-store", dir, sizeof dir);
+    CookUnit unit(default_allocator());
+    KILN_REQUIRE(cook_corpus("pbr_textures.glb", AssetKind::Mesh, &unit).ok());
+    KILN_REQUIRE(unit.outputs.size() > usize(1));
+
+    CatalogStore* s = nullptr;
+    KILN_REQUIRE(open_store(dir, &s).ok());
+    KILN_REQUIRE(publish_unit(s, unit, 7, nullptr).ok());
+    KILN_REQUIRE(commit_catalog(s, nullptr).ok());
+    close_catalog_store(s);
+
+    // The catalog on disk names every output, and each artifact holds its bytes.
+    char path[1024];
+    (void)catalog_file_path(StrView(dir), "compat"_sv, path, sizeof path);
+    Vec<u8> bytes(default_allocator(), Tag::Test);
+    KILN_REQUIRE(read_file(path, bytes));
+    Result<CatalogView> v = CatalogView::open(bytes.span());
+    KILN_REQUIRE(v.ok());
+    KILN_CHECK_EQ(v->size(), u64(unit.outputs.size()));
+    KILN_CHECK(v->profile().name == "compat"_sv);
+    KILN_CHECK_EQ(v->profile().hash, hash_target(kCompatTarget));
+    for (UnitOutput const& o : unit.outputs) {
+        CatalogEntry e;
+        KILN_REQUIRE(v->find(o.kind, unit.name(o), &e));
+        KILN_CHECK(e.key == o.key);
+        KILN_CHECK_EQ(e.bytes, u64(o.bytes.size()));
+        (void)artifact_file_path(StrView(dir), o.kind, o.key, path, sizeof path);
+        Vec<u8> artifact(default_allocator(), Tag::Test);
+        KILN_REQUIRE(read_file(path, artifact));
+        KILN_CHECK(xxh3_128(artifact.span()) == e.checksum);
+    }
+
+    // A new writer sees the entries and the input record.
+    KILN_REQUIRE(open_store(dir, &s).ok());
+    Hash128 key;
+    KILN_CHECK(catalog_find(s, AssetKind::Mesh, "pbr_textures.glb"_sv, &key) && key == unit.outputs[0].key);
+    CookUnit rec(default_allocator());
+    u64 digest = 0;
+    KILN_REQUIRE(copy_input_record(s, "pbr_textures.glb"_sv, &rec, &digest));
+    KILN_CHECK_EQ(digest, u64(7));
+    KILN_REQUIRE_EQ(rec.inputs.size(), unit.inputs.size());
+    for (usize i = 0; i < rec.inputs.size(); ++i) {
+        KILN_CHECK(rec.inputs[i].role == unit.inputs[i].role);
+        KILN_CHECK(rec.inputs[i].content == unit.inputs[i].content);
+        KILN_CHECK_EQ(rec.inputs[i].stat.mtimeNs, unit.inputs[i].stat.mtimeNs);
+        KILN_CHECK(rec.str(rec.inputs[i].pathOff, rec.inputs[i].pathLen) ==
+                   unit.str(unit.inputs[i].pathOff, unit.inputs[i].pathLen));
+    }
+    KILN_REQUIRE_EQ(rec.outputs.size(), unit.outputs.size());
+    for (usize i = 0; i < rec.outputs.size(); ++i) {
+        KILN_CHECK(rec.name(rec.outputs[i]) == unit.name(unit.outputs[i]));
+        KILN_CHECK(rec.outputs[i].key == unit.outputs[i].key);
+        KILN_CHECK(rec.outputs[i].slot == unit.outputs[i].slot);
+    }
+    set_record_digest(s, "pbr_textures.glb"_sv, 8);
+    KILN_REQUIRE(commit_catalog(s, nullptr).ok());
+    close_catalog_store(s);
+    KILN_REQUIRE(open_store(dir, &s).ok());
+    KILN_REQUIRE(copy_input_record(s, "pbr_textures.glb"_sv, &rec, &digest));
+    KILN_CHECK_EQ(digest, u64(8));
+    close_catalog_store(s);
+}
+
+KILN_TEST(CatalogStore, OneWriterAtATime) {
+    char dir[1024];
+    fresh_dir("catalog-lock", dir, sizeof dir);
+    CatalogStore* a = nullptr;
+    CatalogStore* b = nullptr;
+    KILN_REQUIRE(open_store(dir, &a).ok());
+    LastCode lc;
+    DiagSink const sink{&LastCode::fn, &lc};
+    Status const st = open_store(dir, &b, &sink);
+    KILN_CHECK(st.code == Code::Busy);
+    KILN_CHECK_EQ(lc.code, u32(kDiagCatalogLocked));
+    KILN_CHECK(b == nullptr);
+    close_catalog_store(a);
+    KILN_REQUIRE(open_store(dir, &b).ok());
+    close_catalog_store(b);
+}
+
+KILN_TEST(CatalogStore, OtherBytesForAKeyAreReported) {
+    char dir[1024];
+    fresh_dir("catalog-nondet", dir, sizeof dir);
+    CookUnit unit(default_allocator());
+    KILN_REQUIRE(cook_corpus("cube_basic.glb", AssetKind::Mesh, &unit).ok());
+    CatalogStore* s = nullptr;
+    KILN_REQUIRE(open_store(dir, &s).ok());
+    KILN_REQUIRE(publish_unit(s, unit, 0, nullptr).ok());
+
+    // Same key, other bytes: the artifact keeps its bytes and the publish fails.
+    char path[1024];
+    (void)artifact_file_path(StrView(dir), AssetKind::Mesh, unit.outputs[0].key, path, sizeof path);
+    Vec<u8> before(default_allocator(), Tag::Test);
+    KILN_REQUIRE(read_file(path, before));
+    CookUnit again(default_allocator());
+    KILN_REQUIRE(cook_corpus("cube_basic.glb", AssetKind::Mesh, &again).ok());
+    again.outputs[0].bytes[0] ^= 0xFF;
+    LastCode lc;
+    DiagSink const sink{&LastCode::fn, &lc};
+    KILN_CHECK(publish_unit(s, again, 0, &sink).code == Code::ValidationFailed);
+    KILN_CHECK_EQ(lc.code, u32(kDiagNondeterministicCook));
+    Vec<u8> after(default_allocator(), Tag::Test);
+    KILN_REQUIRE(read_file(path, after));
+    KILN_CHECK(after.size() == before.size() && std::memcmp(after.data(), before.data(), after.size()) == 0);
+
+    // The same bytes again are fine.
+    CookUnit same(default_allocator());
+    KILN_REQUIRE(cook_corpus("cube_basic.glb", AssetKind::Mesh, &same).ok());
+    KILN_CHECK(publish_unit(s, same, 0, nullptr).ok());
+    close_catalog_store(s);
+}
+
+KILN_TEST(CatalogStore, OutputsTheCookNoLongerMakesLeave) {
+    char dir[1024];
+    fresh_dir("catalog-drop", dir, sizeof dir);
+    CookUnit unit(default_allocator());
+    KILN_REQUIRE(cook_corpus("pbr_textures.glb", AssetKind::Mesh, &unit).ok());
+    KILN_REQUIRE(unit.outputs.size() > usize(2));
+    CatalogStore* s = nullptr;
+    KILN_REQUIRE(open_store(dir, &s).ok());
+    KILN_REQUIRE(publish_unit(s, unit, 0, nullptr).ok());
+
+    // A second cook without the last image, and with the first image failing.
+    CookUnit fewer(default_allocator());
+    KILN_REQUIRE(cook_corpus("pbr_textures.glb", AssetKind::Mesh, &fewer).ok());
+    StrView const lastName  = unit.name(unit.outputs.back());
+    StrView const firstName = unit.name(unit.outputs[1]);
+    fewer.outputs.pop_back();
+    fewer.outputs[1].status = make_status(Code::ParseError);
+    KILN_REQUIRE(publish_unit(s, fewer, 0, nullptr).ok());
+    Hash128 key;
+    KILN_CHECK(catalog_find(s, AssetKind::Mesh, "pbr_textures.glb"_sv, &key));
+    KILN_CHECK(!catalog_find(s, AssetKind::Texture, lastName, &key));
+    KILN_CHECK(!catalog_find(s, AssetKind::Texture, firstName, &key));
+    KILN_REQUIRE(commit_catalog(s, nullptr).ok());
+    close_catalog_store(s);
+
+    char path[1024];
+    (void)catalog_file_path(StrView(dir), "compat"_sv, path, sizeof path);
+    Vec<u8> bytes(default_allocator(), Tag::Test);
+    KILN_REQUIRE(read_file(path, bytes));
+    Result<CatalogView> v = CatalogView::open(bytes.span());
+    KILN_REQUIRE(v.ok());
+    KILN_CHECK_EQ(v->size(), u64(unit.outputs.size() - 2));
+}
+
+KILN_TEST(CatalogStore, RefusesNamedStoresAndSurvivesLostRecords) {
+    char dir[1024];
+    fresh_dir("catalog-named", dir, sizeof dir);
+    KILN_REQUIRE(bind_store_profile(StrView(dir), kCompatTarget).ok()); // writes kiln-store.txt
+    CatalogStore* s = nullptr;
+    LastCode lc;
+    DiagSink const sink{&LastCode::fn, &lc};
+    KILN_CHECK(open_store(dir, &s, &sink).failed());
+    KILN_CHECK_EQ(lc.code, u32(kDiagStoreProfileMismatch));
+
+    fresh_dir("catalog-lost", dir, sizeof dir);
+    CookUnit unit(default_allocator());
+    KILN_REQUIRE(cook_corpus("cube_basic.glb", AssetKind::Mesh, &unit).ok());
+    KILN_REQUIRE(open_store(dir, &s).ok());
+    KILN_REQUIRE(publish_unit(s, unit, 0, nullptr).ok());
+    KILN_REQUIRE(commit_catalog(s, nullptr).ok());
+    close_catalog_store(s);
+
+    // A damaged input-record file is dropped; the catalog stays.
+    char path[1024];
+    format(path, sizeof path, "%s/inputs/compat.kin", dir);
+    Vec<u8> bytes(default_allocator(), Tag::Test);
+    KILN_REQUIRE(read_file(path, bytes));
+    bytes[bytes.size() / 2] ^= 1;
+    KILN_REQUIRE(store_write(StrView(dir), "inputs/compat.kin"_sv, bytes.span(), nullptr, true).ok());
+    KILN_REQUIRE(open_store(dir, &s).ok());
+    Hash128 key;
+    KILN_CHECK(catalog_find(s, AssetKind::Mesh, "cube_basic.glb"_sv, &key));
+    u64 digest = 0;
+    CookUnit rec(default_allocator());
+    KILN_CHECK(!copy_input_record(s, "cube_basic.glb"_sv, &rec, &digest));
+    close_catalog_store(s);
+}
+
+KILN_TEST(CatalogStore, NamedLayoutRefusesACatalogStore) {
+    char dir[1024];
+    fresh_dir("catalog-then-named", dir, sizeof dir);
+    CatalogStore* s = nullptr;
+    KILN_REQUIRE(open_store(dir, &s).ok());
+    close_catalog_store(s);
+    LastCode lc;
+    DiagSink const sink{&LastCode::fn, &lc};
+    KILN_CHECK(bind_store_profile(StrView(dir), kCompatTarget, &sink).failed());
+    KILN_CHECK_EQ(lc.code, u32(kDiagStoreProfileMismatch));
 }

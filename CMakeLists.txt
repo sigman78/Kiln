@@ -174,6 +174,8 @@ if(KILN_BUILD_COOK)
         src/cook/provider.cpp
         src/cook/unit.h
         src/cook/unit.cpp
+        src/cook/catalog_store.h
+        src/cook/catalog_store.cpp
         include/kiln/cook/catalog.h
         src/cook/build_key.cpp
         include/kiln/cook/cli.h

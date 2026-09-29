@@ -120,6 +120,16 @@ namespace {
     return ensure_dir(path);
 }
 
+bool is_dir(char const* path) noexcept {
+#if defined(KILN_OS_WINDOWS)
+    DWORD const a = GetFileAttributesA(path);
+    return a != INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_DIRECTORY) != 0;
+#else
+    struct stat st{};
+    return ::stat(path, &st) == 0 && S_ISDIR(st.st_mode);
+#endif
+}
+
 bool has_ext(char const* name, char const* ext) noexcept {
     usize const n = std::strlen(name), e = std::strlen(ext);
     return n > e && std::strcmp(name + n - e, ext) == 0;
@@ -197,6 +207,12 @@ Status bind_store_profile(StrView storeDir, TargetProfile const& target, DiagSin
     if (!to_cstr(dir, sizeof dir, storeDir))
         return diagf(diag, make_status(Code::InvalidArgument), 0, Severity::Error, storeDir, "store",
                      "store directory path too long");
+    char catalogs[1100];
+    format(catalogs, sizeof catalogs, "%s/catalogs", dir);
+    if (is_dir(catalogs))
+        return diagf(diag, make_status(Code::InvalidArgument), kDiagStoreProfileMismatch, Severity::Error,
+                     storeDir, "store",
+                     "the store has the catalog layout; the named layout needs another directory");
     if (has_cooked_files(dir))
         return diagf(diag, make_status(Code::InvalidArgument), kDiagStoreProfileMismatch, Severity::Error,
                      storeDir, "store",

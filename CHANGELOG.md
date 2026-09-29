@@ -59,6 +59,11 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
   (binary search, no allocation), `write_catalog()` writes one, `catalog_file_path()` and
   `artifact_file_path()` name the files, `check_profile_name()`. Diagnostics K4201-K4209; fuzz
   target `kiln_fuzz_catalog_read`.
+- **Catalog store writing** (step 3, cook-internal for now): artifacts under
+  `artifacts/<2 hex>/<32 hex>.mesh|.ktx2`, written once (K3010 when a cook gives other bytes for an
+  existing key); the profile's catalog and input records (`inputs/<profile>.kin`) rewritten by a
+  temporary file and a rename; one writer per profile, an OS lock on `catalogs/<profile>.lock`
+  (K3009). The named layout refuses a catalog store and the reverse (K3008).
 
 ## [0.5.0] - 2026-09-29
 
