@@ -51,7 +51,7 @@ inline constexpr GLenum GL_TEXTURE_MAG_FILTER = 0x2800, GL_TEXTURE_MIN_FILTER = 
 inline constexpr GLenum GL_NEAREST = 0x2600, GL_LINEAR = 0x2601, GL_LINEAR_MIPMAP_LINEAR = 0x2703,
                         GL_REPEAT = 0x2901, GL_CLAMP_TO_EDGE = 0x812F;
 inline constexpr GLenum GL_UNPACK_ROW_LENGTH = 0x0CF2, GL_UNPACK_ALIGNMENT = 0x0CF5, GL_PACK_ALIGNMENT = 0x0D05;
-inline constexpr GLenum GL_PIXEL_UNPACK_BUFFER = 0x88EC;
+inline constexpr GLenum GL_PIXEL_UNPACK_BUFFER = 0x88EC, GL_SHADER_STORAGE_BUFFER = 0x90D2;
 inline constexpr GLbitfield GL_MAP_WRITE_BIT = 0x0002, GL_MAP_PERSISTENT_BIT = 0x0040,
                             GL_MAP_COHERENT_BIT = 0x0080;
 inline constexpr GLenum GL_SYNC_GPU_COMMANDS_COMPLETE = 0x9117, GL_ALREADY_SIGNALED = 0x911A,
@@ -137,6 +137,8 @@ inline constexpr GLenum GL_FRAMEBUFFER = 0x8D40, GL_READ_FRAMEBUFFER = 0x8CA8, G
     X(void, glUniform3f, (GLint location, GLfloat x, GLfloat y, GLfloat z))                                    \
     X(void, glUniform1f, (GLint location, GLfloat x))                                                          \
     X(void, glUniform1ui, (GLint location, GLuint x))                                                          \
+    X(void, glUniform1uiv, (GLint location, GLsizei count, GLuint const* value))                               \
+    X(void, glBindBufferBase, (GLenum target, GLuint index, GLuint buffer))                                    \
     X(void, glDrawElementsBaseVertex,                                                                          \
       (GLenum mode, GLsizei count, GLenum type, void const* indices, GLint baseVertex))                        \
     X(void, glDrawArrays, (GLenum mode, GLint first, GLsizei count))                                           \
@@ -155,14 +157,23 @@ inline constexpr GLenum GL_FRAMEBUFFER = 0x8D40, GL_READ_FRAMEBUFFER = 0x8CA8, G
        GLint dy1, GLbitfield mask, GLenum filter))
 // clang-format on
 
+// ARB_bindless_texture (not core): loaded by load_gl_bindless().
+#define KILN_GL_BINDLESS_FUNCTIONS(X)                                                                        \
+    X(GLuint64, glGetTextureSamplerHandleARB, (GLuint texture, GLuint sampler))                              \
+    X(void, glMakeTextureHandleResidentARB, (GLuint64 handle))                                               \
+    X(void, glMakeTextureHandleNonResidentARB, (GLuint64 handle))
+
 #define KILN_GL_DECLARE(ret, name, params)                                                                   \
     using PFN_##name = ret(KILN_GLAPI*) params;                                                              \
     extern PFN_##name name;
 KILN_GL_FUNCTIONS(KILN_GL_DECLARE)
+KILN_GL_BINDLESS_FUNCTIONS(KILN_GL_DECLARE)
 #undef KILN_GL_DECLARE
 
 /// Loads every function above for the current context. False (and logs the first missing one)
 /// if the context is older than 4.6 core.
 [[nodiscard]] bool load_gl() noexcept;
+/// Loads ARB_bindless_texture; false if the driver does not offer it.
+[[nodiscard]] bool load_gl_bindless() noexcept;
 
 } // namespace kiln::glx

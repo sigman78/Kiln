@@ -8,6 +8,11 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
 ## [Unreleased]
 
 ### Added
+- `kiln-gl-bindless` (`examples/gl/main_bindless.cpp`, CMake option `KILN_EXAMPLE_GL_BINDLESS`, ON in
+  the presets): `kiln-gl` with `ARB_bindless_texture`. The GL adapter gains a bindless mode
+  (`GlAdapterDesc::bindless`): `acquire` gives each texture a slot in a persistently mapped table
+  of resident handles, `publish` writes the real handle, and retired handles and slots wait for a
+  fence. The two GL examples share `gl_util` and render the same pixels.
 - `Adapter::flush` (optional): kiln calls it at the start of every `pump()` (so in every `wait()`
   loop) and in `create()`'s placeholder spin, on that thread. An adapter for an API that must be
   called on one thread (GL, sokol) does its GPU work there. `wait()` and the placeholder wait now

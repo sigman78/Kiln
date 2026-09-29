@@ -1,7 +1,7 @@
-// examples/gl/gl_adapter.cpp — kiln adapter over OpenGL 4.6 core.
-// Threads: begin_upload / commit_upload run on kiln workers and only touch memory under `mutex`.
-// Everything that calls GL (flush, is_upload_complete, destroy_deferred) runs on the GL thread,
-// which is also the pump thread.
+// examples/gl/gl_adapter.cpp — kiln adapter over OpenGL 4.6 core, bound or bindless.
+// Threads: begin_upload / commit_upload (kiln workers) and acquire (the requesting thread) only
+// touch memory under `mutex`. Everything that calls GL (flush, is_upload_complete, publish,
+// destroy_deferred) runs on the GL thread, which is also the pump thread.
 #include "gl_adapter.h"
 
 #include "gl_api.h"
@@ -9,6 +9,7 @@
 #include <kiln/alloc.h>
 #include <kiln/containers.h>
 #include <kiln/log.h>
+#include <kiln/placeholders.h>
 
 #include <mutex>
 
@@ -30,6 +31,15 @@ struct Object {
     u32 gen       = 1;
     bool used     = false;
     bool doomed   = false; ///< destroyed while its upload was in flight: delete when it retires
+    u64 handle    = 0;     ///< bindless: the resident texture handle, once published
+};
+
+/// Bindless: a slot or an object that in-flight frames may still use. Freed once `fence`, inserted
+/// by the next flush, signals.
+struct Retire {
+    bool slot    = false; ///< else an object index
+    u32 value    = 0;
+    GLsync fence = nullptr;
 };
 
 struct Upload {
@@ -99,6 +109,17 @@ struct GlAdapter {
     Vec<u32> committed; ///< upload indices waiting for flush, in commit order
     Vec<u32> flushing;  ///< flush's copy of `committed`
     Vec<u32> inFlight;  ///< flushed, fence not yet signaled
+
+    // Bindless only.
+    bool bindless      = false;
+    GLuint samplers[2] = {}; ///< [0] repeat, [1] clamp (cubes); a handle bakes in its sampler
+    GLuint table       = 0;  ///< SSBO of u64 handles, one per slot, persistently mapped
+    u64* tableMapped   = nullptr;
+    u32 maxSlots       = 0;
+    Vec<u32> freeSlots;
+    HashMap<AssetId, u32> assetSlots;
+    u64 placeholderHandles[kLastPlaceholderId + 1] = {};
+    Vec<Retire> retiring;
 };
 
 namespace {
@@ -148,6 +169,7 @@ void pop_done_spans(GlAdapter* a) noexcept {
 
 void release_object(GlAdapter* a, u32 index) noexcept {
     Object& o = a->objects[index];
+    if (o.handle) glMakeTextureHandleNonResidentARB(o.handle);
     if (o.name) {
         if (o.target) {
             glDeleteTextures(1, &o.name);
@@ -155,7 +177,7 @@ void release_object(GlAdapter* a, u32 index) noexcept {
             glDeleteBuffers(1, &o.name);
         }
     }
-    o = Object{0, 0, o.gen + 1, false, false};
+    o = Object{0, 0, o.gen + 1, false, false, 0};
     std::lock_guard<std::mutex> const lock(a->mutex);
     a->freeObjects.push_back(index);
 }
@@ -270,7 +292,10 @@ Status begin_upload(void* user, UploadDesc const& desc, UploadTarget* out) {
     out->rowPitchAlign = 1;
     out->token         = make_token(u, ui);
     ObjectKind const k = desc.kind == UploadKind::MeshPayload ? ObjectKind::Buffer : ObjectKind::Texture;
-    out->object        = GpuObject{.native = oi + 1, .slot = kInvalid, .kind = u32(k)};
+    u32 slot           = kInvalid;
+    if (a->bindless && desc.kind == UploadKind::TextureLevels)
+        if (u32 const* found = a->assetSlots.find(desc.id)) slot = *found;
+    out->object = GpuObject{.native = oi + 1, .slot = slot, .kind = u32(k)};
     return kOk;
 }
 
@@ -314,14 +339,110 @@ void destroy_deferred(void* user, GpuObject obj) {
         inFlight |= u.used && !u.done && u.object == index;
     if (inFlight)
         o.doomed = true;
+    else if (o.handle) // a resident handle must stay resident while earlier frames may sample it
+        a->retiring.push_back(Retire{.slot = false, .value = index, .fence = nullptr});
     else
         release_object(a, index);
+}
+
+// --- Bindless ------------------------------------------------------------------------------------
+
+/// Called on the requesting thread: a slot for the texture, showing the placeholder of its kind
+/// and shape until publish() writes the real handle. No GL call: the table is mapped memory.
+Status acquire(void* user, AssetId id, UploadKind kind, TextureKind texKind, TextureShape shape,
+               GpuObject* out) {
+    *out = GpuObject{};
+    if (kind != UploadKind::TextureLevels) return kOk; // meshes have no slot
+    auto* a = static_cast<GlAdapter*>(user);
+    std::lock_guard<std::mutex> const lock(a->mutex);
+    u32 slot = kInvalid;
+    if (u32 const* found = a->assetSlots.find(id)) {
+        slot = *found;
+    } else {
+        if (a->freeSlots.empty()) return make_status(Code::OutOfMemory);
+        slot = a->freeSlots.back();
+        a->freeSlots.pop_back();
+        a->assetSlots.insert(id, slot);
+    }
+    // create() waited for the placeholders (flush), so their handles exist.
+    u64 ph = a->placeholderHandles[placeholder_asset_id(texKind, shape)];
+    if (!ph) ph = a->placeholderHandles[placeholder_asset_id(TextureKind::BaseColor, shape)];
+    a->tableMapped[slot] = ph;
+    *out                 = GpuObject{.native = 0, .slot = slot, .kind = u32(ObjectKind::Texture)};
+    return kOk;
+}
+
+/// The resident handle of a finished texture, made on first use.
+u64 resident_handle(GlAdapter* a, GpuObject obj) noexcept {
+    if (obj.native == 0 || obj.native > a->objects.size() || obj.kind != u32(ObjectKind::Texture)) return 0;
+    Object& o = a->objects[obj.native - 1];
+    if (!o.handle && o.name) {
+        o.handle = glGetTextureSamplerHandleARB(o.name, o.target == GL_TEXTURE_CUBE_MAP ? a->samplers[1]
+                                                                                        : a->samplers[0]);
+        glMakeTextureHandleResidentARB(o.handle);
+    }
+    return o.handle;
+}
+
+/// On the pump thread: an asset became Ready, was reloaded, failed (the checker) or was unloaded.
+void publish(void* user, AssetId id, GpuObject obj, u32 /*version*/) {
+    auto* a = static_cast<GlAdapter*>(user);
+    if (id >= kFirstPlaceholderId && id <= kLastPlaceholderId) {
+        u64 const h = resident_handle(a, obj);
+        std::lock_guard<std::mutex> const lock(a->mutex);
+        a->placeholderHandles[id] = h;
+        return;
+    }
+    u64 const h = obj.is_null() ? 0 : resident_handle(a, obj);
+    std::lock_guard<std::mutex> const lock(a->mutex);
+    u32 const* found = a->assetSlots.find(id);
+    if (!found) return; // meshes, and textures whose acquire failed
+    u32 const slot = *found;
+    if (obj.is_null()) { // unload: earlier frames may still read the slot
+        a->assetSlots.erase(id);
+        a->retiring.push_back(Retire{.slot = true, .value = slot, .fence = nullptr});
+        return;
+    }
+    if (h) a->tableMapped[slot] = h;
+}
+
+/// Frees what earlier frames no longer use, and fences what was retired since the last flush.
+void flush_retiring(GlAdapter* a) noexcept {
+    GLsync fence = nullptr;
+    for (usize i = 0; i < a->retiring.size();) {
+        Retire& r = a->retiring[i];
+        if (!r.fence) {
+            if (!fence) fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+            r.fence = fence;
+            ++i;
+            continue;
+        }
+        GLenum const st = glClientWaitSync(r.fence, GL_SYNC_FLUSH_COMMANDS_BIT, 0);
+        if (st != GL_ALREADY_SIGNALED && st != GL_CONDITION_SATISFIED && st != GL_WAIT_FAILED) {
+            ++i;
+            continue;
+        }
+        GLsync const done = r.fence;
+        if (r.slot) {
+            std::lock_guard<std::mutex> const lock(a->mutex);
+            a->freeSlots.push_back(r.value);
+        } else {
+            release_object(a, r.value);
+        }
+        a->retiring[i] = a->retiring.back();
+        a->retiring.pop_back();
+        bool shared = false; // one fence covers a batch: delete it with its last entry
+        for (Retire const& other : a->retiring)
+            shared |= other.fence == done;
+        if (!shared) glDeleteSync(done);
+    }
 }
 
 /// The GL work of every committed upload, and the retirement of finished ones. kiln calls this at
 /// the start of each pump(), on the pump thread, which is the GL thread.
 void flush(void* user) {
     auto* a = static_cast<GlAdapter*>(user);
+    if (a->bindless) flush_retiring(a);
     // Retire first: frees ring space before this frame's begin_upload calls.
     for (u32 i = 0; i < a->inFlight.size();) {
         if (poll(a, a->inFlight[i])) {
@@ -396,15 +517,38 @@ Result<GlAdapter*> gl_adapter_create(GlAdapterDesc const& desc, Adapter* out) no
     a->committed.reserve(desc.maxUploads);
     a->flushing.reserve(desc.maxUploads);
     a->inFlight.reserve(desc.maxUploads);
+    if (desc.bindless) {
+        a->bindless = true;
+        a->maxSlots = desc.maxSlots;
+        glCreateSamplers(2, a->samplers);
+        for (GLuint s : a->samplers) {
+            glSamplerParameteri(s, GL_TEXTURE_MIN_FILTER, GLint(GL_LINEAR_MIPMAP_LINEAR));
+            glSamplerParameteri(s, GL_TEXTURE_MAG_FILTER, GLint(GL_LINEAR));
+            glSamplerParameterf(s, GL_TEXTURE_MAX_ANISOTROPY, 8.0f);
+        }
+        for (GLenum wrap : {GL_TEXTURE_WRAP_S, GL_TEXTURE_WRAP_T, GL_TEXTURE_WRAP_R})
+            glSamplerParameteri(a->samplers[1], wrap, GLint(GL_CLAMP_TO_EDGE));
+        // The global GL_TEXTURE_CUBE_MAP_SEAMLESS does not reach bindless handles on every driver;
+        // the per-sampler switch (ARB_seamless_cubemap_per_texture) does.
+        glSamplerParameteri(a->samplers[1], GL_TEXTURE_CUBE_MAP_SEAMLESS, GL_TRUE);
+        GLsizeiptr const bytes = GLsizeiptr(desc.maxSlots * sizeof(u64));
+        glCreateBuffers(1, &a->table);
+        glNamedBufferStorage(a->table, bytes, nullptr, flags);
+        a->tableMapped = static_cast<u64*>(glMapNamedBufferRange(a->table, 0, bytes, flags));
+        a->freeSlots.reserve(desc.maxSlots);
+        for (u32 i = desc.maxSlots; i-- > 0;)
+            a->freeSlots.push_back(i);
+        a->retiring.reserve(desc.maxSlots);
+    }
 
     *out = Adapter{
         .supports_format    = &supports_format,
         .copy_constraints   = &copy_constraints,
-        .acquire            = nullptr, // not bindless: the host asks gpu() for the object each frame
+        .acquire            = desc.bindless ? &acquire : nullptr, // bound: the host asks gpu() per draw
         .begin_upload       = &begin_upload,
         .commit_upload      = &commit_upload,
         .is_upload_complete = &is_upload_complete,
-        .publish            = nullptr, // nothing to rewrite: textures are bound per draw
+        .publish            = desc.bindless ? &publish : nullptr, // bound: nothing to rewrite
         .destroy_deferred   = &destroy_deferred,
         .flush              = &flush, // the GL work, on the pump thread
         .caps               = kCubeTextures | kArrayTextures | kMeshes,
@@ -418,8 +562,19 @@ void gl_adapter_destroy(GlAdapter* a) noexcept {
     if (!a) return;
     for (Upload& u : a->uploads)
         if (u.fence) glDeleteSync(u.fence);
+    for (usize i = 0; i < a->retiring.size(); ++i) { // a fence shared by a batch is deleted once
+        bool later = false;
+        for (usize j = i + 1; j < a->retiring.size(); ++j)
+            later |= a->retiring[j].fence == a->retiring[i].fence;
+        if (a->retiring[i].fence && !later) glDeleteSync(a->retiring[i].fence);
+    }
     for (u32 i = 0; i < a->objects.size(); ++i)
         if (a->objects[i].used) release_object(a, i);
+    if (a->bindless) {
+        glUnmapNamedBuffer(a->table);
+        glDeleteBuffers(1, &a->table);
+        glDeleteSamplers(2, a->samplers);
+    }
     glUnmapNamedBuffer(a->staging);
     glDeleteBuffers(1, &a->staging);
     delete_object(default_allocator(), a, Tag::Payload);
@@ -430,6 +585,8 @@ GlTexture gl_texture(GlAdapter const* a, GpuObject obj) noexcept {
     Object const& o = a->objects[obj.native - 1];
     return o.used && !o.doomed ? GlTexture{o.name, o.target} : GlTexture{};
 }
+
+unsigned gl_handle_table(GlAdapter const* a) noexcept { return a->table; }
 
 unsigned gl_buffer(GlAdapter const* a, GpuObject obj) noexcept {
     if (obj.native == 0 || obj.native > a->objects.size() || obj.kind != u32(ObjectKind::Buffer)) return 0;

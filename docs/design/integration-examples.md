@@ -1,7 +1,7 @@
 # Integration examples
 
 **Status:** Decided (owner, 2026-09-28): as proposed, all open points as proposed. Step 1 (`gl`)
-is implemented, and so is `Adapter::flush` (owner, 2026-09-28).
+and step 2 (`gl-bindless`) are implemented, and so is `Adapter::flush` (owner, 2026-09-28).
 **Decides:** Which small renderers show newcomers how to plug kiln in, what each one maps kiln's
 adapter onto, how their third-party code is fetched, and how the work feeds the API review.
 
@@ -86,6 +86,22 @@ What `gl` showed (step 1):
   fence; `is_upload_complete` polls the fence on the pump thread.
 - `wait()` was unusable for GL (it required `kSelfSubmitting`); it now accepts `flush`.
 
+What `gl-bindless` showed (step 2):
+
+- `acquire` runs on the requesting thread, where GL cannot be called. It works because the handle
+  table is persistently mapped memory and the placeholders are already resident: with `flush`,
+  `create()` waits for them. Before `flush`, a slot could have held a null handle.
+- `publish` gives an `AssetId`, so the adapter keeps an id-to-slot map under a mutex, exactly as the
+  Vulkan adapter does. kiln already knows the acquired object of every asset (friction log).
+- A resident handle may not be made non-resident while earlier frames can sample it, so bindless GL
+  needs deferred destruction after all; the adapter fences a batch of retired slots and textures in
+  `flush`, which runs once per frame.
+- The materials store slot numbers once, when the textures are requested; the only per-frame
+  `gpu()` call left is the mesh buffer.
+- GL quirk, not a kiln matter: on NVIDIA the global `GL_TEXTURE_CUBE_MAP_SEAMLESS` does not apply
+  to bindless handles. With the per-sampler switch set, `kiln-gl-bindless` renders the same pixels
+  as `kiln-gl`.
+
 ## Dependencies
 
 All are fetched with `FetchContent` at a pinned commit or release; nothing is vendored. Each example
@@ -113,7 +129,7 @@ adds what nobody predicted.
 ## Rollout
 
 1. *(done)* `examples/common/` and `gl`, with the host-side flush; then decide `Adapter::flush`.
-2. `gl-bindless`.
+2. *(done)* `gl-bindless`.
 3. `sokol`.
 4. `vk-basic`.
 5. `nga` (built on CI, run by the owner on a supported GPU).
