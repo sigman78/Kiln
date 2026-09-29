@@ -84,6 +84,12 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
   K5001, or K5019 when the profile has no catalog. The store poller (`HotReloadDesc::watchStore`)
   watches the catalog file and reloads the assets whose entry names another artifact.
   `store_layout()` and `store_profile()` give the context's choice.
+- `kiln-cook --watch [--timeout <s>]`: after cooking, keeps cooking the sources that change or
+  appear, twice a second, and writes the catalog once per round. With a read-only app that watches
+  the store (`HotReloadDesc::watchStore`, no cook provider), this is a dev loop with the cooker in
+  another process. A failed source is reported once and cooked again when it changes; the exit
+  code counts the sources still failing. Every `kiln-cook` run also writes the catalog at most once
+  a second while it cooks, so a watching app fills in during a long run.
 - **The cook provider on catalog stores** (step 5): `CookProvider::prepare`, called before every
   load of a file asset in the Catalog layout (hit or miss), names the asset's artifact or returns
   freshly cooked bytes. `install_provider` in that layout checks the context's profile (K3008),

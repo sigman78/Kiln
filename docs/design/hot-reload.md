@@ -25,6 +25,11 @@ reloads each loaded asset whose entry names another artifact (or that failed and
 now). The provider watches every input file its cooks recorded (sources, sidecars, a `.gltf`'s
 buffers), re-cooks the changed units of one poll round, and rewrites the catalog once.
 
+The cooker may also run in another process: `kiln-cook` (once, or `--watch` to keep cooking what
+changes) writes the store while a read-only app (no provider) watches the catalog. One writer per
+profile holds the lock, so an app with a disk-mode provider and `kiln-cook` do not share a store
+(K3009).
+
 ### Runtime
 
 - `ContextDesc::hotReload = { watchStore, pollMs }`. `watchStore` starts the store poller

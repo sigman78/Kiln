@@ -1033,6 +1033,41 @@ KILN_TEST(CatalogCli, LostCatalogOrArtifactCooksAgain) {
     KILN_CHECK(io_file_exists(StrView(path)));
 }
 
+// kiln-cook --watch next to a read-only app: edits and new sources reach the catalog it watches.
+KILN_TEST(CatalogCli, WatchCooksEditsAndNewSources) {
+    char store[1024], sources[1024], bin[1100], png[1100];
+    fresh_dir("catalog-cli-watch", store, sizeof store);
+    fresh_dir("catalog-cli-watch-src", sources, sizeof sources);
+    copy_sources(sources);
+    format(bin, sizeof bin, "%s/external_uri.bin", sources);
+    format(png, sizeof png, "%s/external_uri_albedo.png", sources);
+
+    int code = -1;
+    std::thread cook([&] {
+        char arg0[] = "kiln-cook", argO[] = "-o", argQ[] = "-q", argW[] = "--watch", argT[] = "--timeout",
+             argS[]  = "4";
+        char* argv[] = {arg0, sources, argO, store, argQ, argW, argT, argS};
+        code         = cook::cook_cli_main(8, argv, {});
+    });
+    Hash128 first;
+    for (int i = 0; i < 3000 && first.is_zero(); ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        first = catalog_key(store, AssetKind::Mesh, "external_uri.gltf"_sv);
+    }
+    edit_first_byte(bin, false);
+    char copy[1100];
+    format(copy, sizeof copy, "%s/second.png", sources);
+    std::error_code ec;
+    std::filesystem::copy_file(png, copy, ec);
+    cook.join();
+
+    KILN_CHECK_EQ(code, 0);
+    KILN_REQUIRE(!first.is_zero());
+    Hash128 const after = catalog_key(store, AssetKind::Mesh, "external_uri.gltf"_sv);
+    KILN_CHECK(!after.is_zero() && !(after == first));
+    KILN_CHECK(!catalog_key(store, AssetKind::Texture, "second.png"_sv).is_zero());
+}
+
 KILN_TEST(CatalogCli, LayoutsDoNotMix) {
     char store[1024], sources[1024];
     fresh_dir("catalog-cli-mix", store, sizeof store);

@@ -18,10 +18,12 @@
 #include "kiln/io.h"
 #include "kiln/log.h"
 
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <sys/stat.h>
+#include <thread>
 
 #if defined(KILN_OS_WINDOWS)
 #include <direct.h>
@@ -35,6 +37,11 @@ using namespace kiln;
 using namespace kiln::cook;
 
 namespace {
+
+/// Catalog layout: a run rewrites the catalog at most this often while it cooks.
+constexpr u32 kCommitIntervalMs = 1000;
+/// --watch: the pause between two scans of the sources.
+constexpr u32 kWatchPollMs = 500;
 
 /// `--root <name>=<dir>`: files under `dir` get names `name:<path in dir>`.
 struct NamedRoot {
@@ -51,6 +58,8 @@ struct Options {
     bool check              = false;
     char const* layout      = "catalog"; ///< StoreLayout: catalog or named
     bool verify             = false;     ///< catalog: compare input content, not size and time
+    bool watch              = false;     ///< catalog: keep cooking what changes until --timeout
+    u32 timeoutS            = 0;         ///< --watch: stop after this many seconds; 0 = never
     bool quiet              = false;
     bool verbose            = false;
     u32 threads             = 0; ///< cooking threads including the main one; 0 = auto, 1 = no pool
@@ -64,6 +73,11 @@ struct Options {
 };
 
 // Tool-local path and file helpers (they predate the kiln IO layer, kiln/io.h).
+
+bool file_exists(char const* path) {
+    struct stat st;
+    return ::stat(path, &st) == 0 && (st.st_mode & S_IFDIR) == 0;
+}
 
 bool is_dir(char const* path) {
     struct stat st;
@@ -220,12 +234,14 @@ void asset_name_of(Options const& o, char const* path, char const* root, char* o
 struct DiagState {
     bool quiet;
     bool verbose;
+    bool mute    = false; ///< --watch: a retry of a failure already reported
     u32 errors   = 0;
     u32 warnings = 0;
 };
 
 void diag_fn(void* user, Diagnostic const& d) {
     DiagState& s = *static_cast<DiagState*>(user);
+    if (s.mute) return;
     if (d.severity == Severity::Error) ++s.errors;
     if (d.severity == Severity::Warning) ++s.warnings;
     if (s.quiet && d.severity != Severity::Error) return;
@@ -239,6 +255,25 @@ void diag_fn(void* user, Diagnostic const& d) {
 // Cooking
 // ---------------------------------------------------------------------------
 
+struct FailedSource {
+    u64 stats  = 0;     ///< source_stats() when it failed
+    bool retry = false; ///< an IO failure (a file still being written): try every round, quietly
+};
+
+/// The size and time of a source and its sidecar, hashed: a failed source waits for a change.
+u64 source_stats(char const* path) {
+    Xxh64State h;
+    char side[1100];
+    for (StrView const p :
+         {StrView(path), StrView(side, format(side, sizeof side, "%s%.*s", path, KILN_SV(kSidecarExt)))}) {
+        IoStat st{};
+        h.update_value(u8(stat_file(p, &st).ok()));
+        h.update_value(st.size);
+        h.update_value(st.mtimeNs);
+    }
+    return h.digest();
+}
+
 struct Ctx {
     Options const& opt;
     DiagState& ds;
@@ -250,6 +285,9 @@ struct Ctx {
     CookPolicy policy     = {};
     CatalogStore* store   = nullptr; ///< the catalog layout's writer; null: named layout or --check
     u64 hostDigest        = 0;
+    bool rescan           = false; ///< a --watch round: quiet about sources that did not change
+    /// --watch: sources whose cook failed, by path hash: the stats they failed with.
+    HashMap<u64, FailedSource> failedSources{default_allocator(), Tag::General};
     u32 cooked = 0, skipped = 0, failed = 0;
 };
 
@@ -363,17 +401,92 @@ void cook_file(Ctx& c, char const* path, char const* root) {
         .statInputs      = c.store != nullptr,
     };
     if (c.store && record_is_current(c.store, d, c.hostDigest, c.opt.verify)) {
-        if (c.opt.verbose) std::printf("  %-48s up to date\n", assetPath);
+        if (c.opt.verbose && !c.rescan) std::printf("  %-48s up to date\n", assetPath);
         ++c.skipped;
         return;
     }
-    Status const st = cook_unit(d, &unit);
-    if (st.failed() && unit.inputs.empty()) std::fprintf(stderr, "kiln-cook: cannot read %s\n", path);
+    // --watch: a source that failed is cooked again when it changes, or every round after an IO
+    // failure, reporting only the first failure of one version.
+    u64 const pathHash      = hash_name(StrView(path));
+    u64 const stats         = c.opt.watch ? source_stats(path) : 0;
+    FailedSource const* was = c.failedSources.find(pathHash);
+    if (was && was->stats == stats && !was->retry) return;
+    c.ds.mute = was && was->stats == stats;
+
+    Status st = cook_unit(d, &unit);
+    if (st.failed() && unit.inputs.empty() && !c.ds.mute)
+        std::fprintf(stderr, "kiln-cook: cannot read %s\n", path);
     bool const ok = st.ok() && emit_unit(c, unit);
-    if (ok)
+    c.ds.mute     = false;
+    if (ok) {
         ++c.cooked;
-    else
-        ++c.failed;
+        c.failedSources.erase(pathHash);
+        // A long run publishes as it goes, so an app watching the store fills in meanwhile.
+        if (c.store) (void)commit_catalog(c.store, &c.sink, kCommitIntervalMs);
+        return;
+    }
+    ++c.failed;
+    if (st.ok()) st = unit.first_failure();
+    bool const retry = st.code == Code::IoError || st.code == Code::IoEof || st.code == Code::NotFound;
+    if (c.opt.watch) c.failedSources.insert(pathHash, FailedSource{stats, retry});
+}
+
+/// Cooks every source under the inputs (cook_file() skips those that are up to date).
+void cook_inputs(Ctx& c) {
+    for (char const* input : c.opt.inputs) {
+        char in[1024];
+        format(in, sizeof in, "%s", input);
+        normalize_slashes(in);
+        usize n = std::strlen(in);
+        while (n > 1 && in[n - 1] == '/')
+            in[--n] = '\0';
+
+        char root[1024];
+        if (c.opt.defaultRoot) {
+            format(root, sizeof root, "%s", c.opt.defaultRoot);
+            normalize_slashes(root);
+        } else if (is_dir(in)) {
+            format(root, sizeof root, "%s", in);
+        } else {
+            format(root, sizeof root, "%s", in);
+            if (char* slash = std::strrchr(root, '/'))
+                *slash = '\0';
+            else
+                root[0] = '\0';
+        }
+
+        if (is_dir(in)) {
+            FileList files;
+            scan_dir(in, files);
+            if (files.size() == 0 && !c.rescan) std::fprintf(stderr, "kiln-cook: no sources under %s\n", in);
+            for (usize i = 0; i < files.size(); ++i)
+                cook_file(c, files.at(i), root);
+        } else if (!c.rescan || file_exists(in)) {
+            cook_file(c, in, root);
+        }
+    }
+}
+
+/// --watch: cooks what changed or appeared, twice a second, until the timeout (or forever). Each
+/// round writes the catalog once, so an app with a store poller reloads the round together.
+void watch_inputs(Ctx& c) {
+    auto const start = std::chrono::steady_clock::now();
+    c.rescan         = true;
+    if (!c.opt.quiet) std::printf("watching the sources; Ctrl+C stops\n");
+    for (;;) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(kWatchPollMs));
+        if (c.opt.timeoutS &&
+            std::chrono::steady_clock::now() - start >= std::chrono::seconds(c.opt.timeoutS))
+            return;
+        u32 const cooked = c.cooked, failed = c.failed;
+        cook_inputs(c);
+        if (Status const st = commit_catalog(c.store, &c.sink); st.failed())
+            std::fprintf(stderr, "kiln-cook: cannot write the catalog (%s); retrying\n", code_name(st.code));
+        if (!c.opt.quiet && (c.cooked != cooked || c.failed != failed)) {
+            std::printf("watch: %u cooked, %u failed\n", c.cooked - cooked, c.failed - failed);
+            std::fflush(stdout);
+        }
+    }
 }
 
 bool add_input(void* user, char const* arg) {
@@ -443,6 +556,13 @@ int kiln::cook::cook_cli_main(int argc, char** argv, CookPolicy const& policy, u
          .help    = "catalog (default): artifacts and catalogs/<target>.kcat; named: <store>/<name>.<ext>",
          .str     = &o.layout,
          .choices = kLayouts},
+        {.name = "--watch",
+         .help = "catalog: after cooking, keep cooking sources that change or appear (Ctrl+C stops)",
+         .flag = &o.watch},
+        {.name   = "--timeout",
+         .arg    = "<s>",
+         .help   = "--watch: stop after this many seconds (default: never)",
+         .number = &o.timeoutS},
         {.name = "--verify",
          .help = "catalog: check sources by their content, not by size and time (CI, shipping)",
          .flag = &o.verify},
@@ -486,10 +606,12 @@ int kiln::cook::cook_cli_main(int argc, char** argv, CookPolicy const& policy, u
          .flag = &o.verbose},
     };
     cli::Spec const spec{
-        .program    = "kiln-cook",
-        .synopsis   = "<input>... [options]",
-        .options    = {opts, countof(opts)},
-        .footer     = "Exit codes: 0 all inputs cooked, 1 usage, 2 IO failure, 3 one or more cook errors.",
+        .program  = "kiln-cook",
+        .synopsis = "<input>... [options]",
+        .options  = {opts, countof(opts)},
+        .footer =
+            "Exit codes: 0 all inputs cooked, 1 usage, 2 IO failure, 3 one or more cook errors (--watch: "
+            "sources still failing at the end).",
         .positional = &add_input,
         .user       = &o,
     };
@@ -531,8 +653,12 @@ int kiln::cook::cook_cli_main(int argc, char** argv, CookPolicy const& policy, u
         return 2;
     }
     bool const catalog = std::strcmp(o.layout, "catalog") == 0;
-    if (o.verify && !catalog) {
-        std::fprintf(stderr, "kiln-cook: --verify needs the catalog layout\n");
+    if ((o.verify || o.watch) && !catalog) {
+        std::fprintf(stderr, "kiln-cook: --verify and --watch need the catalog layout\n");
+        return 1;
+    }
+    if (o.watch && o.check) {
+        std::fprintf(stderr, "kiln-cook: --watch writes the store; it does not go with --check\n");
         return 1;
     }
     if (!o.check && catalog) {
@@ -568,37 +694,15 @@ int kiln::cook::cook_cli_main(int argc, char** argv, CookPolicy const& policy, u
         }
     }
 
-    for (char const* input : o.inputs) {
-        char in[1024];
-        format(in, sizeof in, "%s", input);
-        normalize_slashes(in);
-        usize n = std::strlen(in);
-        while (n > 1 && in[n - 1] == '/')
-            in[--n] = '\0';
-
-        char root[1024];
-        if (o.defaultRoot) {
-            format(root, sizeof root, "%s", o.defaultRoot);
-            normalize_slashes(root);
-        } else if (is_dir(in)) {
-            format(root, sizeof root, "%s", in);
-        } else {
-            format(root, sizeof root, "%s", in);
-            if (char* slash = std::strrchr(root, '/'))
-                *slash = '\0';
-            else
-                root[0] = '\0';
-        }
-
-        if (is_dir(in)) {
-            FileList files;
-            scan_dir(in, files);
-            if (files.size() == 0) std::fprintf(stderr, "kiln-cook: no sources under %s\n", in);
-            for (usize i = 0; i < files.size(); ++i)
-                cook_file(c, files.at(i), root);
-        } else {
-            cook_file(c, in, root);
-        }
+    cook_inputs(c);
+    if (o.watch) {
+        if (!o.quiet)
+            std::printf("cook: %u cooked, %u up to date, %u failed, %u warning(s)\n", c.cooked, c.skipped,
+                        c.failed, ds.warnings);
+        if (Status const st = commit_catalog(c.store, &c.sink); st.failed())
+            std::fprintf(stderr, "kiln-cook: cannot write the catalog (%s); retrying\n", code_name(st.code));
+        std::fflush(stdout);
+        watch_inputs(c);
     }
     if (c.map) std::fclose(c.map);
     if (c.jobs) destroy_thread_pool(pool);
@@ -612,6 +716,12 @@ int kiln::cook::cook_cli_main(int argc, char** argv, CookPolicy const& policy, u
         }
     }
 
+    if (o.watch) {
+        // What counts at the end of a watch is what still fails, not what failed on the way.
+        u32 const failing = u32(c.failedSources.size());
+        if (!o.quiet) std::printf("watch: %u source(s) failing\n", failing);
+        return failing ? 3 : 0;
+    }
     if (!o.quiet)
         std::printf("%s: %u cooked, %u up to date, %u failed, %u warning(s)\n", o.check ? "check" : "cook",
                     c.cooked, c.skipped, c.failed, ds.warnings);
