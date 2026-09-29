@@ -1,8 +1,9 @@
 # Target profiles
 
-**Status:** Proposed (2026-09-29), not implemented. The owner asked for named profiles with a most
-compatible default, and for a strict rule: a client never re-cooks or overwrites a store cooked for
-another profile.
+**Status:** Decided (owner, 2026-09-29), not implemented. The owner asked for named profiles with
+a most compatible default, and for a strict rule: a client never re-cooks or overwrites a store
+cooked for another profile. Open points: a store without a descriptor is a mismatch; the runtime
+check fails `create()`, with an escape hatch; the full-BC profile stays `desktop`.
 **Decides:** What a target profile is, the built-in profiles and the default, how a store records
 its profile, what happens on a mismatch, and what replaces the per-adapter format sets and the
 cook-time fallback chain.
@@ -19,7 +20,7 @@ cook-time fallback chain.
   a `kiln-cook` run with another profile does not write to that store: it reports the mismatch and
   stops. Nothing is deleted, overwritten or re-cooked because of a profile.
 - The runtime checks once, when it opens a store, that the adapter samples every format of the
-  store's profile, instead of failing asset by asset (K5004).
+  store's profile. If not, `create()` fails, instead of each asset failing later (K5004).
 - The cooker never substitutes a format. A profile's table decides the format for each usage; an
   explicit `encoding` outside the profile is an error. This replaces the fallback chain.
 - The examples use the default profile and share one `example-store` again.
@@ -133,9 +134,15 @@ struct TargetProfile {
 ### 4. The runtime checks the adapter once
 
 - `create()` reads the store's descriptor, if any, and calls the adapter's `supports_format` for
-  each listed format. A format the adapter cannot sample is one K5018 error at `create()`, naming
-  the formats and the profile. `create()` still succeeds; each asset of such a format then fails as
-  today (K5004).
+  each listed format. A format the adapter cannot sample is one K5018 error naming the formats and
+  the profile, and `create()` fails with `Unsupported`: the host chose a profile its adapter cannot
+  take, which is a configuration error.
+- Escape hatch: `ContextDesc::allowUnsampledFormats` (default `false`) makes K5018 a warning and
+  `create()` succeeds; each asset of such a format then fails as today (K5004, Failed placeholder).
+  For tools and debugging.
+- The check uses the formats the profile allows, not the formats the store holds. A host whose
+  adapter lacks a format it never uses (BC6H on a GL driver without BPTC, with no HDR textures)
+  defines a profile without it, rather than disabling the check.
 - `unsampled_block_formats(adapter)` stays: it is the tool for this check and for a host that
   builds its own profile from an adapter.
 - A shipping build loads a pre-cooked store the same way, so a store cooked for the wrong device
@@ -183,9 +190,12 @@ struct TargetProfile {
 3. The runtime check at `create()` (K5018).
 4. Examples back on one `example-store` with the default profile.
 
-## Open points
+## Owner decisions (2026-09-29)
 
-1. Is a store with cooked files and no descriptor a mismatch (proposed), or adopted with a warning?
-2. Should the runtime's adapter check (section 4) fail `create()` instead of only reporting?
-3. Should `desktop` stay the name for full BC, or become `bc-full`, leaving `desktop` free for a
-   later profile that also allows ASTC on the few desktop GPUs that have it?
+1. A store with cooked files and no descriptor is a mismatch; the message says to delete it once.
+2. The runtime's adapter check fails `create()`. Only reporting would let the app run with holes
+   (each asset in an unsampled format fails on its own), and the one early error is easy to miss.
+   The downsides of failing are a false failure when the store never uses the missing format
+   (answered by a narrower host profile) and debugging on an adapter that cannot take the profile
+   (answered by `ContextDesc::allowUnsampledFormats`).
+3. The full-BC profile stays `desktop` for now.
