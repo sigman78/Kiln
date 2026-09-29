@@ -148,7 +148,8 @@ under K2002 when the texture cooker wraps them. Where a code is emitted with mor
 ### 3.3 K3000-3999 — Settings resolution
 
 Source: `kiln::cook::SettingsDiagCode` in `include/kiln/cook/settings.h`. Emitted by
-`resolve_texture()` and `resolve_mesh()` in `src/cook/settings.cpp`. Where a code is emitted with
+`resolve_texture()` and `resolve_mesh()` in `src/cook/settings.cpp`. K3008-K3010 are about the
+store: K3009 and K3010 are `kiln::cook::CatalogStoreDiagCode` in `include/kiln/cook/catalog.h`. Where a code is emitted with
 more than one `Status`/`Severity` pair, both are listed; which one applies depends on which
 check failed.
 
@@ -160,8 +161,10 @@ check failed.
 | K3004 | `kDiagSettingsEnumRange` | InvalidArgument | Error | An enum-typed settings field holds a value outside its valid range: texture `usage`/`colorSpace`, or mesh `profile`/`compression`. | Caller bug: the settings struct was built with a raw/unchecked enum value (e.g. from deserialization). Fix the caller. |
 | K3005 | `kDiagSidecarSyntax` | ParseError | Error | A `.kiln` sidecar holds text outside the supported TOML subset (arrays, inline tables, dotted or quoted keys, dates, multi-line strings, …), or a key or table is defined twice. `where` is `<file>:<line>`. | Fix the line; the subset is listed in `docs/design/settings.md`, "Sidecar files". |
 | K3006 | `kDiagSidecarKey` | InvalidArgument | Error | A `.kiln` sidecar key is unknown for the asset kind, its value has the wrong type or an unknown enum name, a number is out of range, or a key sits inside a table. `where` is `<file>:<line>`. | Use a key and value from the tables in `docs/design/settings.md`, "Sidecar files". |
-| K3008 | `kDiagStoreProfileMismatch` | InvalidArgument, ParseError | Error | The store was cooked for another target profile (its `kiln-store.txt` names another profile hash), has `.mesh` / `.ktx2` files but no `kiln-store.txt` (cooked before profiles), or its `kiln-store.txt` is malformed. `install_provider` (disk mode) and `kiln-cook` write nothing. | Use another store directory for this profile, or delete the store once (docs/design/target-profiles.md). |
 | K3007 | `kDiagPolicyRefused` | The status the policy returned | Error | The host's `CookPolicy` (`kiln/cook/settings.h`, resolution layer 6) refused the asset. The host's policy may emit its own diagnostic with the reason first. | Change the asset, or the policy's rule. |
+| K3008 | `kDiagStoreProfileMismatch` | InvalidArgument, ParseError | Error | The store was cooked for another target profile (its `kiln-store.txt` names another profile hash), has `.mesh` / `.ktx2` files but no `kiln-store.txt` (cooked before profiles), or its `kiln-store.txt` is malformed; or the layouts mix: a catalog writer found a `kiln-store.txt`, or the named layout found a `catalogs` directory. `install_provider` (disk mode) and `kiln-cook` write nothing. | Use another store directory for this profile, or delete the store once (docs/design/target-profiles.md). |
+| K3009 | `kDiagCatalogLocked` | Busy | Error | Another writer (a cook provider in disk mode, `kiln-cook`) holds `<store>/catalogs/<profile>.lock`. One process writes a profile's catalog at a time; the lock ends with its process. | Stop the other writer, or use another store. |
+| K3010 | `kDiagNondeterministicCook` | ValidationFailed | Error | A cook made other bytes for a build key whose artifact exists: the same inputs, settings and cooker gave another result. The artifact keeps its bytes; the asset's new outputs are not published. | A cooker bug (report it); or the artifact was edited by hand: delete it, then cook again. |
 
 ### 3.4 K4000-4099 — `.mesh` validation and decode
 

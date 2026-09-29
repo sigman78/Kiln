@@ -37,6 +37,13 @@ struct BuildKeyDesc {
 /// The same key means the same cooked bytes.
 [[nodiscard]] KILN_API Hash128 build_key(BuildKeyDesc const& d) noexcept;
 
+/// Diagnostics of catalog stores (K3009, K3010; the K3000 range of settings.h).
+enum CatalogStoreDiagCode : u32 {
+    kDiagCatalogLocked = 3009, ///< another writer holds the profile's catalog lock (Busy)
+    kDiagNondeterministicCook =
+        3010, ///< a cook made other bytes for an existing build key (ValidationFailed)
+};
+
 struct CatalogDesc {
     CatalogProfile profile;
     Span<CatalogEntry const> entries = {}; ///< any order
