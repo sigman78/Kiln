@@ -42,7 +42,7 @@ vec3 sky(vec3 d, float lod) { return textureLod(samplerCube(uHandles[uSlots[5]])
 void main() {
     vec3 base     = has(0) ? tex(0).rgb : vec3(0.8);
     vec3 n        = normalize(vNormal);
-    if (has(1)) n = perturb(n, vTangent, tex(1).xyz);
+    if (has(1)) n = perturb(n, vTangent, tex(1).xy);
     vec3 mr       = has(2) ? tex(2).rgb : vec3(1.0, 0.7, 0.0); // G rough, B metal
     float ao      = has(3) ? tex(3).r : 1.0;
     vec3 emissive = has(4) ? tex(4).rgb : vec3(0.0);

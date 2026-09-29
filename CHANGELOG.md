@@ -275,6 +275,17 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
   relative path, as the `UriResolver` already received for buffers.
 
 ### Changed
+- **Breaking (cook): the default target cooks block-compressed textures.** `TargetProfile::blockFamily`
+  defaults to `BC` (docs/design/bcn-encoding.md, step 5): color, UI and ORM become BC7, normals BC5,
+  masks BC4/BC5, HDR BC6H. `kiln-cook --block` defaults to `bc`.
+  - Every example adapter uploads BC (GL: `glCompressedTextureSubImage*`, BC1/BC3 only with S3TC;
+    sokol: no BC1; NoGraphicsAPI: no BC1 or BC4), and every example shader rebuilds a normal's Z
+    from X and Y, which works for BC5 and RGBA8 normal maps alike.
+  - The default target's hash changed, so every store key and cooked `cookHash` changed once.
+  - Migration: an adapter without BC support sets `TargetProfile::blockFamily = None` (or
+    `kiln-cook --block none`). Shaders that read a normal map's Z must rebuild it from X and Y, or
+    set `encoding = BC7` for normals. Delete existing stores once: a named-layout store file is
+    used while it exists and is not re-cooked for a target change (open-questions R9).
 - **Breaking (runtime, adapter):** `upload_status(user, token, Status* failure)`: with `Failed` the
   adapter writes why (for example `OutOfMemory` for a full pool, `Unsupported` for a resource it
   cannot make); the reason reaches K5004 / K5010 / K5009 and the Failed event instead of

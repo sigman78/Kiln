@@ -58,7 +58,15 @@ sg_pixel_format pixel_format(Format f) noexcept {
     case Format::R32_SFLOAT: return SG_PIXELFORMAT_R32F;
     case Format::R32G32_SFLOAT: return SG_PIXELFORMAT_RG32F;
     case Format::R32G32B32A32_SFLOAT: return SG_PIXELFORMAT_RGBA32F;
-    default: return SG_PIXELFORMAT_NONE; // RGB8 has no sokol format; BCn arrives with v0.6
+    case Format::BC3_UNORM: return SG_PIXELFORMAT_BC3_RGBA;
+    case Format::BC3_SRGB: return SG_PIXELFORMAT_BC3_SRGBA;
+    case Format::BC4_UNORM: return SG_PIXELFORMAT_BC4_R;
+    case Format::BC5_UNORM: return SG_PIXELFORMAT_BC5_RG;
+    case Format::BC6H_UFLOAT: return SG_PIXELFORMAT_BC6H_RGBUF;
+    case Format::BC7_UNORM: return SG_PIXELFORMAT_BC7_RGBA;
+    case Format::BC7_SRGB: return SG_PIXELFORMAT_BC7_SRGBA;
+    // RGB8 has no sokol format. Nor has BC1 RGB: as BC1_RGBA, its black texels would be transparent.
+    default: return SG_PIXELFORMAT_NONE;
     }
 }
 

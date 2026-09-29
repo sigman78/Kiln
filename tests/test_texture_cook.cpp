@@ -61,8 +61,11 @@ void write_sample(char const* name, Span<u8 const> bytes) {
     std::fclose(f);
 }
 
+/// These tests check the uncompressed texels; test_texture_bc.cpp covers the BC family.
+TargetProfile const kRaw{.blockFamily = BlockFamily::None};
+
 Result<CookedTexture> run_cook(Span<u8 const> bytes, TextureCookSettings const& s, DiagLog* log = nullptr,
-                               TargetProfile const& target = {}, JobSystem const* jobs = nullptr) {
+                               TargetProfile const& target = kRaw, JobSystem const* jobs = nullptr) {
     DiagSink sink = log ? log->sink() : DiagSink{};
     return cook_texture({.bytes = bytes, .assetPath = "test/tex", .sourcePath = "tex.png"}, s, target,
                         {.diag = &sink, .jobs = jobs});
@@ -298,7 +301,7 @@ KILN_TEST(texture_cook, max_size) {
     // The target cap applies too, and genMips=false keeps a single level.
     s.maxSize                = 0;
     s.genMips                = false;
-    TargetProfile const tiny = {.name = "tiny", .maxTextureSize = 8};
+    TargetProfile const tiny = {.name = "tiny", .blockFamily = BlockFamily::None, .maxTextureSize = 8};
     DiagLog log2;
     Result<CookedTexture> t = run_cook(f.span(), s, &log2, tiny);
     KILN_REQUIRE(t.ok());
@@ -362,7 +365,7 @@ KILN_TEST(texture_cook, ktx2_cube_and_array_passthrough) {
     KILN_REQUIRE(a.ok());
     KILN_CHECK(a->passthrough && a->desc.isArray && a->desc.layers == 7);
 
-    TargetProfile small;
+    TargetProfile small  = kRaw;
     small.maxArrayLayers = 4;
     DiagLog log;
     Result<CookedTexture> over = run_cook(array.span(), kColor, &log, small);
@@ -449,7 +452,7 @@ KILN_TEST(texture_cook, threads_byte_identical) {
     KILN_REQUIRE(pool.ok());
     for (TextureCookSettings const& s : kCases) {
         Result<CookedTexture> single   = run_cook(f.span(), s);
-        Result<CookedTexture> threaded = run_cook(f.span(), s, nullptr, {}, &*pool);
+        Result<CookedTexture> threaded = run_cook(f.span(), s, nullptr, kRaw, &*pool);
         KILN_REQUIRE(single.ok() && threaded.ok());
         KILN_CHECK(single->file.size() == threaded->file.size() &&
                    std::memcmp(single->file.data(), threaded->file.data(), single->file.size()) == 0);
@@ -551,7 +554,7 @@ KILN_TEST(texture_cook, strip_layout_errors) {
         TextureCookSettings s = kColor;
         s.shape               = c.shape;
         s.slices              = c.slices;
-        TargetProfile target;
+        TargetProfile target  = kRaw;
         target.maxArrayLayers = c.maxLayers;
         DiagLog log;
         Result<CookedTexture> r = run_cook(strip_png(c.w, c.h, c.count).span(), s, &log, target);

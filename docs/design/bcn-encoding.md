@@ -4,7 +4,8 @@
 BC7 for UI, byte-exact goldens first, Zstd and RDO last, ASTC with the mobile targets, and the
 plain C++ encoders `rgbcx` and `bc7enc` (from the spike's measurements), and for BC6H a C++ port
 of the ISPC Texture Compressor's encoder (no ISPC toolchain, no prebuilt objects). Rollout steps
-1–4 are implemented: the cooker writes BC1/3/4/5/6H/7.
+1–5 are implemented: the cooker writes BC1/3/4/5/6H/7, every example adapter uploads them, and
+`desktop` cooks BC by default. Zstd and RDO (step 6) are next.
 **Decides:** Which block-compressed formats the cooker writes for each texture usage and target,
 how the encoder libraries are chosen, the settings that control them, how block formats reach the
 adapters, and the order of the work. Zstd supercompression and RDO are a later step of the same
@@ -135,10 +136,9 @@ kiln's goldens are byte-exact on every compiler and OS in CI, so the encoders mu
   | BC7 (`bc7enc` uber level, linear weights, 64 partitions) | 0 | 2 | 4 |
   | BC6H (the ISPC Texture Compressor's profiles) | `veryfast` | `fast` | `basic` |
 
-`TargetProfile` gains `blockFamily`: `None`, `BC`, and later `ASTC` and `ETC2` (section 7). The
-built-in `desktop` target keeps `None` until step 5, when every example adapter uploads BC
-textures; `kiln-cook --block bc` and hosts set `BC` before that. With `None`, `Auto` means today's uncompressed formats, so a host whose
-adapter has no BC support still cooks. `encoding` names families too once ASTC exists (for example
+`TargetProfile` gains `blockFamily`: `None`, `BC` (the default, and so the built-in `desktop`
+target), and later `ASTC` and `ETC2` (section 7). With `None`, `Auto` means uncompressed formats, so
+a host whose adapter has no BC support still cooks (`kiln-cook --block none`). `encoding` names families too once ASTC exists (for example
 `ASTC_6x6`); an explicit encoding outside the target's family is clamped with K3003.
 
 `encoding = Auto` stays `Auto` after resolution: a mask's BC4 or BC5 depends on the source's
@@ -148,17 +148,22 @@ update that changes its output bumps `kCookerVersion`, so a change re-cooks.
 
 ### 5. Adapters and hosts
 
-The runtime is unchanged, but every example adapter and host needs work:
-- `supports_format` must say yes to the BC formats the device samples (Vulkan: format properties;
-  GL: `GL_EXT_texture_compression_s3tc` / BPTC / RGTC; sokol: `sg_query_pixelformat`;
-  NoGraphicsAPI: `supports_texture_format`).
-- Uploads: GL needs `glCompressedTextureSubImage2D/3D` instead of `glTextureSubImage*`; Vulkan's
-  and NoGraphicsAPI's copies already take block formats (row length in texels, a multiple of 4);
-  sokol takes compressed data as image content.
-- Shaders rebuild a BC5 normal's Z: `z = sqrt(saturate(1 - x² - y²))`. The host knows the format
-  from `texture_info()`. A host that cannot change its shaders sets `encoding = BC7` for normals.
-- The normal placeholder stays RGBA8; a shader that rebuilds Z from X and Y gets the same flat
-  normal from it.
+The runtime is unchanged. The example adapters (step 5, done 2026-09-29):
+
+| Adapter | BC formats | How |
+|---|---|---|
+| Vulkan (`kiln-viewer`, `kiln-vk-basic`) | all the device samples | unchanged: format properties, and copies already count in blocks |
+| GL (`kiln-gl`, `kiln-gl-bindless`) | BC4, BC5, BC6H, BC7 (core RGTC / BPTC); BC1, BC3 with `GL_EXT_texture_compression_s3tc` and `GL_EXT_texture_sRGB` | `glCompressedTextureSubImage2D/3D` |
+| sokol (`kiln-sokol`) | BC3, BC4, BC5, BC6H, BC7 | image content; no BC1: sokol has only BC1 RGBA, where BC1 RGB's black texels would be transparent |
+| NoGraphicsAPI (`kiln-nga`) | BC3, BC5, BC6H, BC7 | NoGraphicsAPI has no BC1 or BC4 |
+
+- Every example shader rebuilds a normal's Z from X and Y (`z = sqrt(max(1 - x² - y², 0))`), so a
+  BC5 normal map and an RGBA8 one both work; a host does not need to know which it got. A host
+  that cannot change its shaders sets `encoding = BC7` for normals.
+- The normal placeholder stays RGBA8; rebuilding Z from its X and Y gives the same flat normal.
+- The reference scene (WaterBottle under the HDR test sky) rendered with BC textures matches the
+  uncompressed frame at 51–53 dB PSNR on GL, GL bindless, sokol (D3D11) and Vulkan; its GPU
+  texture memory falls from 89.9 MB to 22.6 MB.
 
 A host that loads a BC texture on an adapter without BC support gets K5004 at metadata time, as
 for any unsupported format.
@@ -212,12 +217,13 @@ cross-cooking"), and this work leaves room for it:
 ## Consequences
 
 - Desktop textures shrink 4× (color, normal, ORM), 2× (masks) and 8× (HDR). Cook time grows:
-  BC7 at `Normal` quality costs seconds for a 4K texture; `Fast` stays interactive for
-  cook-on-miss.
-- Every example gains compressed uploads and Z reconstruction; `kiln-headless` and the null adapter
-  already accept every format.
-- Existing goldens and store keys do not change: BC goldens are new files, and uncompressed cooks
-  hash as before. The `desktop` switch to BC (step 5) re-cooks every texture once.
+  BC7 with `bc7enc` at `Normal` runs at about 3.5 MP/s per thread, so a 4K texture with mips
+  (22 MP) takes about 6 s on one thread and under 1 s on 8.
+- Every example gained compressed uploads and Z reconstruction; `kiln-headless` and the null
+  adapter already accepted every format.
+- The switch of the default target to BC changed its target hash, so every store key and the
+  `cookHash` of every cooked file changed once (the mesh goldens' header hashes too). A store in
+  the named layout is not re-cooked by that (open-questions R9): delete it once.
 - Two cook-side dependencies (bc7enc_rdo, and the BC6H port kiln maintains) and one test-only
   decoder (bcdec), entered in `dependencies.md` and `third_party/README.md`.
 
@@ -233,7 +239,8 @@ cross-cooking"), and this work leaves room for it:
    `--quality`.
 4. **BC6H** for `Hdr` (done 2026-09-29): the C++ port of the ISPC Texture Compressor's encoder.
 5. **Adapters and examples:** `supports_format`, compressed uploads (GL), BC5 normal Z in every
-   example shader, the reference frame re-checked; then `desktop` switches to `blockFamily = BC`.
+   example shader, the reference frame re-checked; then `desktop` switches to `blockFamily = BC`
+   (done 2026-09-29).
 6. **Zstd supercompression and RDO:** reader, loader, runtime decoder, settings.
 7. **Later, with the mobile targets (v0.9):** astcenc, ASTC block sizes per usage, the `ASTC`
    family in `TargetProfile`; ETC2 only if a target needs it.

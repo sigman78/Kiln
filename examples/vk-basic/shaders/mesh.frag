@@ -36,11 +36,13 @@ vec3 aces(vec3 x) { return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59
 vec3 cube_dir(vec3 d) { return vec3(d.x, d.y, -d.z); }
 bool has(uint binding) { return (draw.textures & (1u << binding)) != 0u; }
 
-vec3 perturb(vec3 n, vec4 tangent, vec3 texel) {
+// Z is rebuilt from X and Y, so a BC5 normal map (X and Y only) and an RGBA8 one both work.
+vec3 perturb(vec3 n, vec4 tangent, vec2 texel) {
     if (dot(tangent.xyz, tangent.xyz) == 0.0) return n;
-    vec3 t = normalize(tangent.xyz - n * dot(n, tangent.xyz));
-    vec3 b = cross(n, t) * tangent.w;
-    return normalize(mat3(t, b, n) * (texel * 2.0 - 1.0));
+    vec3 t  = normalize(tangent.xyz - n * dot(n, tangent.xyz));
+    vec3 b  = cross(n, t) * tangent.w;
+    vec2 xy = texel * 2.0 - 1.0;
+    return normalize(mat3(t, b, n) * vec3(xy, sqrt(max(1.0 - dot(xy, xy), 0.0))));
 }
 
 vec3 shade(vec3 base, vec3 n, vec3 v, float rough, float metal, float ao, vec3 ambient, vec3 env) {
@@ -57,7 +59,7 @@ vec3 shade(vec3 base, vec3 n, vec3 v, float rough, float metal, float ao, vec3 a
 void main() {
     vec3 base     = has(0u) ? texture(uBaseColor, vUv).rgb : vec3(0.8);
     vec3 n        = normalize(vNormal);
-    if (has(1u)) n = perturb(n, vTangent, texture(uNormalMap, vUv).xyz);
+    if (has(1u)) n = perturb(n, vTangent, texture(uNormalMap, vUv).xy);
     vec3 mr       = has(2u) ? texture(uMetalRough, vUv).rgb : vec3(1.0, 0.7, 0.0); // G rough, B metal
     float ao      = has(3u) ? texture(uOcclusion, vUv).r : 1.0;
     vec3 emissive = has(4u) ? texture(uEmissive, vUv).rgb : vec3(0.0);

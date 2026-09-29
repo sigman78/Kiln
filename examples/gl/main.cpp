@@ -42,7 +42,7 @@ bool has(uint unit) { return (uTextures & (1u << unit)) != 0u; }
 void main() {
     vec3 base     = has(0u) ? texture(uBaseColor, vUv).rgb : vec3(0.8);
     vec3 n        = normalize(vNormal);
-    if (has(1u)) n = perturb(n, vTangent, texture(uNormalMap, vUv).xyz);
+    if (has(1u)) n = perturb(n, vTangent, texture(uNormalMap, vUv).xy);
     vec3 mr       = has(2u) ? texture(uMetalRough, vUv).rgb : vec3(1.0, 0.7, 0.0); // G rough, B metal
     float ao      = has(3u) ? texture(uOcclusion, vUv).r : 1.0;
     vec3 emissive = has(4u) ? texture(uEmissive, vUv).rgb : vec3(0.0);

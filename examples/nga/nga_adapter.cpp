@@ -117,7 +117,13 @@ gpu::Format gpu_format(Format f) noexcept {
     case Format::R32_SFLOAT: return gpu::Format::r32_float;
     case Format::R32G32_SFLOAT: return gpu::Format::rg32_float;
     case Format::R32G32B32A32_SFLOAT: return gpu::Format::rgba32_float;
-    default: return gpu::Format::undefined; // SNORM has no NoGraphicsAPI format; BCn arrives with v0.6
+    case Format::BC3_UNORM: return gpu::Format::bc3_unorm;
+    case Format::BC3_SRGB: return gpu::Format::bc3_srgb;
+    case Format::BC5_UNORM: return gpu::Format::bc5_rg;
+    case Format::BC6H_UFLOAT: return gpu::Format::bc6h_ufloat;
+    case Format::BC7_UNORM: return gpu::Format::bc7_unorm;
+    case Format::BC7_SRGB: return gpu::Format::bc7_srgb;
+    default: return gpu::Format::undefined; // no SNORM, BC1 or BC4 in NoGraphicsAPI
     }
 }
 

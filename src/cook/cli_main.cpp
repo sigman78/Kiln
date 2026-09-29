@@ -52,7 +52,7 @@ struct Options {
     u32 threads             = 0; ///< cooking threads including the main one; 0 = auto, 1 = no pool
     char const* profile     = "default";
     char const* targetName  = "desktop";
-    char const* block       = "none";
+    char const* block       = "bc";
     char const* quality     = "normal";
     MeshCookSettings mesh;
     TextureCookSettings tex;
@@ -521,7 +521,7 @@ int kiln::cook::cook_cli_main(int argc, char** argv, CookPolicy const& policy) n
          .choices = kTargets},
         {.name    = "--block",
          .arg     = "<family>",
-         .help    = "block compression the target samples (default none)",
+         .help    = "block compression the target samples (default bc)",
          .str     = &o.block,
          .choices = kBlocks},
         {.name    = "--quality",

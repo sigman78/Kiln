@@ -82,8 +82,9 @@ void check_golden_ktx2(char const* name, Span<u8 const> got) {
                    name, got.size, want.size(), diffAt);
 }
 
+/// The uncompressed goldens predate block compression; the BC cases pass a BC target.
 Result<CookedTexture> run_cook(Span<u8 const> bytes, TextureCookSettings const& s,
-                               TargetProfile const& target = {}) {
+                               TargetProfile const& target = {.blockFamily = BlockFamily::None}) {
     return cook_texture({.bytes = bytes, .assetPath = "test/golden", .sourcePath = "golden.png"}, s, target);
 }
 

@@ -127,9 +127,9 @@ struct MeshCookSettings {
 enum class BlockFamily : u8 { None = 0, BC };
 
 struct TargetProfile {
-    StrView name            = "desktop";
-    BlockFamily blockFamily = BlockFamily::None; ///< BC for desktop once every example adapter samples it
-    u32 maxTextureSize      = 16384;
+    StrView name                   = "desktop";
+    BlockFamily blockFamily        = BlockFamily::BC;
+    u32 maxTextureSize             = 16384;
     VertexProfile maxVertexProfile = VertexProfile::Float; ///< highest profile the target accepts
     u32 maxArrayLayers             = 2048;                 ///< more layers is an error (K2004), not a clamp
 };

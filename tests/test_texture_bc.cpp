@@ -193,7 +193,7 @@ double level0_psnr(CookedTexture const& t, Span<u8 const> src, u32 w, u32 h, u32
 // ---------------------------------------------------------------------------
 
 KILN_TEST(TextureBc, ResolveEncoding) {
-    TargetProfile const none{};
+    TargetProfile const none{.blockFamily = BlockFamily::None};
     DiagLog log;
     DiagSink sink = log.sink();
 
@@ -268,7 +268,8 @@ KILN_TEST(TextureBc, HashAndSidecar) {
     TextureCookSettings q = base;
     q.quality             = EncodeQuality::High; // value 2: the tags keep the two apart
     KILN_CHECK(hash_settings(s) != h0 && hash_settings(q) != h0 && hash_settings(s) != hash_settings(q));
-    KILN_CHECK(hash_target(kBc) != hash_target(TargetProfile{}));
+    KILN_CHECK(hash_target(kBc) != hash_target(TargetProfile{.blockFamily = BlockFamily::None}));
+    KILN_CHECK(TargetProfile{}.blockFamily == BlockFamily::BC); // the desktop default
 
     TextureCookSettings t;
     KILN_REQUIRE(apply_sidecar("encoding = \"bc5\"\nquality = \"high\"\n", &t).ok());
@@ -411,7 +412,8 @@ KILN_TEST(TextureBc, ShapesAndThreads) {
 KILN_TEST(TextureBc, NoFamilyIsUncompressed) {
     Vec<u8> const rgba      = smooth_rgba(16, 16);
     Vec<u8> const png       = encode_png(16, 16, 6, rgba.span());
-    Result<CookedTexture> r = cook_bc(png.span(), {.usage = TextureUsage::Color}, nullptr, TargetProfile{});
+    Result<CookedTexture> r = cook_bc(png.span(), {.usage = TextureUsage::Color}, nullptr,
+                                      TargetProfile{.blockFamily = BlockFamily::None});
     KILN_REQUIRE(r.ok());
     KILN_CHECK(r->desc.format == Format::R8G8B8A8_SRGB && r->stats.encodeUs == 0);
 }
@@ -435,7 +437,8 @@ KILN_TEST(TextureBc, Hdr) {
     KILN_REQUIRE(bc.ok());
     KILN_CHECK(bc->desc.format == Format::BC6H_UFLOAT && bc->desc.levels == 6);
     write_sample("hdr", bc->file.span());
-    Result<CookedTexture> half = cook_bc(file.span(), {.usage = TextureUsage::Hdr}, nullptr, TargetProfile{});
+    Result<CookedTexture> half = cook_bc(file.span(), {.usage = TextureUsage::Hdr}, nullptr,
+                                         TargetProfile{.blockFamily = BlockFamily::None});
     KILN_REQUIRE(half.ok());
     KILN_CHECK(half->desc.format == Format::R16G16B16A16_SFLOAT);
 

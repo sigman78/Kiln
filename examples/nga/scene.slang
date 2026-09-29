@@ -31,12 +31,14 @@ float3 aces(float3 x) { return saturate((x * (2.51 * x + 0.03)) / (x * (2.43 * x
 // Cube maps use a left-handed frame; this world is right-handed (docs/design/texture-shapes.md).
 float3 cube_dir(float3 d) { return float3(d.x, d.y, -d.z); }
 
-float3 perturb(float3 n, float4 tangent, float3 texel)
+// Z is rebuilt from X and Y, so a BC5 normal map (X and Y only) and an RGBA8 one both work.
+float3 perturb(float3 n, float4 tangent, float2 texel)
 {
     if (dot(tangent.xyz, tangent.xyz) == 0.0) return n;
-    float3 t = normalize(tangent.xyz - n * dot(n, tangent.xyz));
-    float3 b = cross(n, t) * tangent.w;
-    return normalize(t * (texel.x * 2.0 - 1.0) + b * (texel.y * 2.0 - 1.0) + n * (texel.z * 2.0 - 1.0));
+    float3 t  = normalize(tangent.xyz - n * dot(n, tangent.xyz));
+    float3 b  = cross(n, t) * tangent.w;
+    float2 xy = texel * 2.0 - 1.0;
+    return normalize(t * xy.x + b * xy.y + n * sqrt(max(1.0 - dot(xy, xy), 0.0)));
 }
 
 float3 shade(float3 base, float3 n, float3 v, float rough, float metal, float ao, float3 ambient, float3 env)
@@ -102,7 +104,7 @@ float4 meshFragment(MeshVaryings i) : SV_Target0
 {
     float3 base     = mesh.tex_base_color != kNone ? tex(mesh.tex_base_color, i.uv).rgb : float3(0.8);
     float3 n        = normalize(i.normal);
-    if (mesh.tex_normal != kNone) n = perturb(n, i.tangent, tex(mesh.tex_normal, i.uv).xyz);
+    if (mesh.tex_normal != kNone) n = perturb(n, i.tangent, tex(mesh.tex_normal, i.uv).xy);
     float3 mr       = mesh.tex_metal_rough != kNone ? tex(mesh.tex_metal_rough, i.uv).rgb : float3(1.0, 0.7, 0.0);
     float ao        = mesh.tex_occlusion != kNone ? tex(mesh.tex_occlusion, i.uv).r : 1.0;
     float3 emissive = mesh.tex_emissive != kNone ? tex(mesh.tex_emissive, i.uv).rgb : float3(0.0);

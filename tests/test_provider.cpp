@@ -194,7 +194,11 @@ Vec<u8> test_png(u8 const (&rgba)[4 * 4 * 4]) {
     return kiln::test::png::encode({.width = 4, .height = 4, .colorType = 6, .depth = 8, .pixels = rgba});
 }
 
-cook::ProviderDesc const kWatchDesc{.storeMode = cook::StoreMode::Disk, .watchSources = true, .pollMs = 20};
+// Uncompressed, so a re-cooked PNG's texels compare directly with its pixels.
+cook::ProviderDesc const kWatchDesc{.storeMode    = cook::StoreMode::Disk,
+                                    .target       = {.blockFamily = cook::BlockFamily::None},
+                                    .watchSources = true,
+                                    .pollMs       = 20};
 
 } // namespace
 
@@ -446,9 +450,9 @@ KILN_TEST(Provider, StandaloneTextureUsageFromName) {
     TextureHandle const normal = request_texture(tc.ctx, "wall_n.png");
     KILN_REQUIRE_EQ(pump_until_settled(tc.ctx, color), State::Ready);
     KILN_REQUIRE_EQ(pump_until_settled(tc.ctx, normal), State::Ready);
-    KILN_CHECK(texture_info(tc.ctx, color).desc.format == Format::R8G8B8A8_SRGB);
+    KILN_CHECK(texture_info(tc.ctx, color).desc.format == Format::BC7_SRGB);
     Format const nf = texture_info(tc.ctx, normal).desc.format;
-    KILN_CHECK_MSG(nf != Format::R8G8B8A8_SRGB, "wall_n.png was cooked as sRGB color");
+    KILN_CHECK_MSG(nf == Format::BC5_UNORM, "wall_n.png was not cooked as a normal map");
 }
 
 // A sidecar beats the name rule: `wall_n.png` with `usage = "color"` in `wall_n.png.kiln` is sRGB.
@@ -483,7 +487,7 @@ KILN_TEST(Provider, SidecarSetsTextureUsage) {
 
     TextureHandle const wall = request_texture(tc.ctx, "wall_n.png");
     KILN_REQUIRE_EQ(pump_until_settled(tc.ctx, wall), State::Ready);
-    KILN_CHECK(texture_info(tc.ctx, wall).desc.format == Format::R8G8B8A8_SRGB);
+    KILN_CHECK(texture_info(tc.ctx, wall).desc.format == Format::BC7_SRGB);
     TextureHandle const bad = request_texture(tc.ctx, "broken.png");
     KILN_CHECK_EQ(pump_until_settled(tc.ctx, bad), State::Failed);
 }
@@ -935,7 +939,7 @@ KILN_TEST(Provider, CubeStripFromName) {
 }
 
 // A .hdr source cooks on miss to RGBA16F with no settings at all.
-KILN_TEST(Provider, HdrSourceCooksToRgba16f) {
+KILN_TEST(Provider, HdrSourceCooksToBc6h) {
     char root[1024], storeDir[1024];
     scratch_dir("provider_hdr_src", root, sizeof root);
     scratch_dir("provider_hdr_store", storeDir, sizeof storeDir);
@@ -958,5 +962,5 @@ KILN_TEST(Provider, HdrSourceCooksToRgba16f) {
         request_texture(tc.ctx, "sky_cube.hdr", RequestOptions{.textureShape = TextureShape::Cube});
     KILN_REQUIRE_EQ(pump_until_settled(tc.ctx, sky), State::Ready);
     TextureInfo const ti = texture_info(tc.ctx, sky);
-    KILN_CHECK(ti.desc.isCube && ti.desc.format == Format::R16G16B16A16_SFLOAT);
+    KILN_CHECK(ti.desc.isCube && ti.desc.format == Format::BC6H_UFLOAT);
 }

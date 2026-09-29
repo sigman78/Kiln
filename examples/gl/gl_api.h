@@ -43,6 +43,12 @@ inline constexpr GLenum GL_R8 = 0x8229, GL_R16 = 0x822A, GL_RG8 = 0x822B, GL_RG1
                         GL_RGBA16F = 0x881A, GL_RGBA32F = 0x8814, GL_R8_SNORM = 0x8F94,
                         GL_RG8_SNORM = 0x8F95, GL_RGBA8_SNORM = 0x8F97, GL_R16_SNORM = 0x8F98,
                         GL_RG16_SNORM = 0x8F99, GL_RGBA16_SNORM = 0x8F9B;
+inline constexpr GLenum GL_COMPRESSED_RED_RGTC1 = 0x8DBB, GL_COMPRESSED_RG_RGTC2 = 0x8DBD,
+                        GL_COMPRESSED_RGBA_BPTC_UNORM = 0x8E8C, GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM = 0x8E8D,
+                        GL_COMPRESSED_RGB_BPTC_UNSIGNED_FLOAT = 0x8E8F;
+inline constexpr GLenum GL_COMPRESSED_RGB_S3TC_DXT1_EXT = 0x83F0, GL_COMPRESSED_RGBA_S3TC_DXT5_EXT = 0x83F3,
+                        GL_COMPRESSED_SRGB_S3TC_DXT1_EXT = 0x8C4C, GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT5_EXT = 0x8C4F;
+inline constexpr GLenum GL_NUM_EXTENSIONS = 0x821D, GL_EXTENSIONS = 0x1F03;
 inline constexpr GLenum GL_DEPTH_COMPONENT24 = 0x81A6;
 inline constexpr GLenum GL_TEXTURE_2D = 0x0DE1, GL_TEXTURE_CUBE_MAP = 0x8513, GL_TEXTURE_2D_ARRAY = 0x8C1A;
 inline constexpr GLenum GL_TEXTURE_MAG_FILTER = 0x2800, GL_TEXTURE_MIN_FILTER = 0x2801,
@@ -102,6 +108,13 @@ inline constexpr GLenum GL_FRAMEBUFFER = 0x8D40, GL_READ_FRAMEBUFFER = 0x8CA8, G
     X(void, glTextureSubImage3D,                                                                               \
       (GLuint texture, GLint level, GLint x, GLint y, GLint z, GLsizei w, GLsizei h, GLsizei d, GLenum format, \
        GLenum type, void const* pixels))                                                                       \
+    X(void, glCompressedTextureSubImage2D,                                                                     \
+      (GLuint texture, GLint level, GLint x, GLint y, GLsizei w, GLsizei h, GLenum format, GLsizei size,       \
+       void const* data))                                                                                      \
+    X(void, glCompressedTextureSubImage3D,                                                                     \
+      (GLuint texture, GLint level, GLint x, GLint y, GLint z, GLsizei w, GLsizei h, GLsizei d, GLenum format, \
+       GLsizei size, void const* data))                                                                        \
+    X(GLubyte const*, glGetStringi, (GLenum name, GLuint index))                                               \
     X(void, glDeleteTextures, (GLsizei n, GLuint const* textures))                                             \
     X(void, glBindTextureUnit, (GLuint unit, GLuint texture))                                                  \
     X(void, glCreateSamplers, (GLsizei n, GLuint* samplers))                                                   \

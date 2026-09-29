@@ -50,10 +50,21 @@ struct Upload {
 
 struct TexFormat {
     GLenum internal = 0, format = 0, type = 0;
+    bool compressed = false; ///< uploaded with glCompressedTextureSubImage*
 };
 
-TexFormat tex_format(Format f) noexcept {
+/// BC4, BC5, BC6H and BC7 are core (RGTC, BPTC); BC1 and BC3 need S3TC, an extension.
+TexFormat tex_format(Format f, bool s3tc) noexcept {
     switch (f) {
+    case Format::BC4_UNORM: return {GL_COMPRESSED_RED_RGTC1, 0, 0, true};
+    case Format::BC5_UNORM: return {GL_COMPRESSED_RG_RGTC2, 0, 0, true};
+    case Format::BC6H_UFLOAT: return {GL_COMPRESSED_RGB_BPTC_UNSIGNED_FLOAT, 0, 0, true};
+    case Format::BC7_UNORM: return {GL_COMPRESSED_RGBA_BPTC_UNORM, 0, 0, true};
+    case Format::BC7_SRGB: return {GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM, 0, 0, true};
+    case Format::BC1_RGB_UNORM: return {s3tc ? GL_COMPRESSED_RGB_S3TC_DXT1_EXT : 0, 0, 0, true};
+    case Format::BC1_RGB_SRGB: return {s3tc ? GL_COMPRESSED_SRGB_S3TC_DXT1_EXT : 0, 0, 0, true};
+    case Format::BC3_UNORM: return {s3tc ? GL_COMPRESSED_RGBA_S3TC_DXT5_EXT : 0, 0, 0, true};
+    case Format::BC3_SRGB: return {s3tc ? GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT5_EXT : 0, 0, 0, true};
     case Format::R8_UNORM: return {GL_R8, GL_RED, GL_UNSIGNED_BYTE};
     case Format::R8_SNORM: return {GL_R8_SNORM, GL_RED, GL_BYTE};
     case Format::R8G8_UNORM: return {GL_RG8, GL_RG, GL_UNSIGNED_BYTE};
@@ -91,6 +102,8 @@ struct GlAdapter {
     ex::UploadPool<Upload> uploads;
     ex::CommitQueue commits; ///< committed uploads, waiting for flush
     Vec<u32> inFlight;       ///< flushed, fence not yet signaled
+
+    bool s3tc = false; ///< GL_EXT_texture_compression_s3tc and GL_EXT_texture_sRGB: BC1 and BC3
 
     // Bindless only.
     bool bindless      = false;
@@ -143,7 +156,7 @@ bool run_upload(GlAdapter* a, Upload& u) noexcept {
         return true;
     }
     TextureDesc const& t = u.tex;
-    TexFormat const f    = tex_format(t.format);
+    TexFormat const f    = tex_format(t.format, a->s3tc);
     o.target             = t.shape == TextureShape::Cube    ? GL_TEXTURE_CUBE_MAP
                            : t.shape == TextureShape::Array ? GL_TEXTURE_2D_ARRAY
                                                             : GL_TEXTURE_2D;
@@ -163,7 +176,14 @@ bool run_upload(GlAdapter* a, Upload& u) noexcept {
         GLsizei const lw = GLsizei(max(t.width >> i, 1u)), lh = GLsizei(max(t.height >> i, 1u));
         // The pixel pointer is an offset into the bound GL_PIXEL_UNPACK_BUFFER.
         void const* src = reinterpret_cast<void const*>(usize(u.offset + offsets[i]));
-        if (o.target == GL_TEXTURE_2D)
+        if (f.compressed) {
+            GLsizei const bytes = GLsizei(format_image_bytes(t.format, u32(lw), u32(lh)) * t.layers);
+            if (o.target == GL_TEXTURE_2D)
+                glCompressedTextureSubImage2D(o.name, GLint(i), 0, 0, lw, lh, f.internal, bytes, src);
+            else
+                glCompressedTextureSubImage3D(o.name, GLint(i), 0, 0, 0, lw, lh, GLsizei(t.layers),
+                                              f.internal, bytes, src);
+        } else if (o.target == GL_TEXTURE_2D)
             glTextureSubImage2D(o.name, GLint(i), 0, 0, lw, lh, f.format, f.type, src);
         else // cube faces and array layers are the z range of a 3D sub-image
             glTextureSubImage3D(o.name, GLint(i), 0, 0, 0, lw, lh, GLsizei(t.layers), f.format, f.type, src);
@@ -191,8 +211,19 @@ bool poll(GlAdapter* a, u32 index) noexcept {
 
 // --- Adapter callbacks ---------------------------------------------------------------------------
 
-bool supports_format(void*, Format f, FormatUsage usage) {
-    return usage == FormatUsage::VertexBuffer ? gl_vertex_format(f).size != 0 : tex_format(f).internal != 0;
+bool supports_format(void* user, Format f, FormatUsage usage) {
+    auto* a = static_cast<GlAdapter*>(user);
+    return usage == FormatUsage::VertexBuffer ? gl_vertex_format(f).size != 0
+                                              : tex_format(f, a->s3tc).internal != 0;
+}
+
+bool has_extension(char const* name) noexcept {
+    GLint count = 0;
+    glGetIntegerv(GL_NUM_EXTENSIONS, &count);
+    for (GLint i = 0; i < count; ++i)
+        if (std::strcmp(reinterpret_cast<char const*>(glGetStringi(GL_EXTENSIONS, GLuint(i))), name) == 0)
+            return true;
+    return false;
 }
 
 void copy_constraints(void*, CopyConstraints* out) {
@@ -387,7 +418,8 @@ Result<GlAdapter*> gl_adapter_create(GlAdapterDesc const& desc, Adapter* out) no
     Allocator const* const al = desc.alloc ? desc.alloc : default_allocator();
     auto* a                   = new_object<GlAdapter>(al, Tag::Payload);
     a->alloc                  = al;
-    a->ring                   = ex::StagingRing(al, desc.stagingBytes, desc.maxUploads);
+    a->s3tc = has_extension("GL_EXT_texture_compression_s3tc") && has_extension("GL_EXT_texture_sRGB");
+    a->ring = ex::StagingRing(al, desc.stagingBytes, desc.maxUploads);
     glCreateBuffers(1, &a->staging);
     GLbitfield const flags = GL_MAP_WRITE_BIT | GL_MAP_PERSISTENT_BIT | GL_MAP_COHERENT_BIT;
     glNamedBufferStorage(a->staging, GLsizeiptr(a->ring.size()), nullptr, flags);
