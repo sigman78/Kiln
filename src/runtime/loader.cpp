@@ -180,7 +180,7 @@ Status open_source(Context* ctx, Slot& s, Source& src, bool allowCook) noexcept 
     }
     char missed[1100];
     if (catalog && !s.jobKeyValid) {
-        if (ctx->catalogPresent)
+        if (s.jobCatalogPresent)
             format(missed, sizeof missed, "not in the catalog of profile '%s'", ctx->profile);
         else
             format(missed, sizeof missed, "the store has no catalog for profile '%s'", ctx->profile);
@@ -189,7 +189,7 @@ Status open_source(Context* ctx, Slot& s, Source& src, bool allowCook) noexcept 
             s.jobDiag          = kDiagStoreMiss;
             return s.jobStatus = make_status(Code::NotFound);
         }
-        return cook_on_miss(ctx, s, src, missed, ctx->catalogPresent ? kDiagStoreMiss : kDiagCatalogMissing);
+        return cook_on_miss(ctx, s, src, missed, s.jobCatalogPresent ? kDiagStoreMiss : kDiagCatalogMissing);
     }
 
     char file[1024];

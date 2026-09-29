@@ -93,7 +93,8 @@ void fail_slot(Context* ctx, Slot& s, u32 code, Status st) noexcept {
     s.reloading = false;
     s.state     = State::Failed;
     s.phase     = Phase::Done;
-    s.keyValid  = false;
+    s.key       = s.jobKey; // the job is done: its fields are the pump thread's again
+    s.keyValid  = s.jobKeyValid;
 
     (void)diagf(&ctx->diag, st, code, Severity::Error, path_of(s),
                 s.kind == AssetKind::Mesh ? "mesh" : "texture", "%s (%s)%s%s", failure_text(code),
@@ -144,6 +145,9 @@ void submit_stage(Context* ctx, Slot& s, Stage stage) noexcept {
             s.jobKey      = e.key;
             s.jobKeyValid = true;
         }
+        s.jobCatalogPresent = ctx->catalogPresent;
+        s.dispatchKey       = s.jobKey;
+        s.dispatchKeyValid  = s.jobKeyValid;
     }
     ++ctx->jobsOutstanding;
     ctx->jobsInFlight.fetch_add(1, std::memory_order_acq_rel);

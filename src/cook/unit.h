@@ -80,6 +80,11 @@ void unit_build_inputs(CookUnit const& unit, BuildInput* out) noexcept;
 /// still absent). With `rehash`, its content hash instead: every input is read.
 [[nodiscard]] bool recorded_inputs_unchanged(CookUnit const& rec, bool rehash = false) noexcept;
 
+/// The absolute form of `path` with `/` separators and no `.` or `..` (the file need not exist)
+/// into `out`; its length, or 0 when it cannot be made. Records store inputs this way, so the same
+/// file named from another directory or through another root compares equal.
+[[nodiscard]] usize canonical_path(StrView path, char* out, usize cap) noexcept;
+
 /// Size and modification time of a file, through the compat backend's stat when it has one.
 [[nodiscard]] Status stat_file(StrView path, IoStat* out) noexcept;
 
