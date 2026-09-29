@@ -1,8 +1,9 @@
-// kiln/cook/catalog.h — build keys of cooked artifacts (docs/design/store-catalog.md). kiln_cook only.
+// kiln/cook/catalog.h — build keys of cooked artifacts and the catalog writer
+// (docs/design/store-catalog.md). kiln_cook only.
 #pragma once
 
-#include "kiln/assets.h"
 #include "kiln/catalog.h"
+#include "kiln/containers.h"
 
 namespace kiln::cook {
 
@@ -35,5 +36,16 @@ struct BuildKeyDesc {
 /// XXH3-128 over a field-by-field serialization of `d`, kBuildKeySchema and kCookerVersion.
 /// The same key means the same cooked bytes.
 [[nodiscard]] KILN_API Hash128 build_key(BuildKeyDesc const& d) noexcept;
+
+struct CatalogDesc {
+    CatalogProfile profile;
+    Span<CatalogEntry const> entries = {}; ///< any order
+};
+
+/// Writes a catalog (format 0.1) into `out`, replacing its contents. The same entries in any order
+/// give the same bytes. InvalidArgument for a bad profile or asset name (K4205) or a name and kind
+/// given twice (K4207).
+[[nodiscard]] KILN_API Status write_catalog(CatalogDesc const& d, Vec<u8>* out,
+                                            DiagSink const* diag = nullptr) noexcept;
 
 } // namespace kiln::cook

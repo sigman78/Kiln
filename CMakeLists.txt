@@ -107,6 +107,7 @@ add_library(kiln_runtime STATIC
     src/formats/zstd_decode.cpp
     include/kiln/catalog.h
     src/formats/xxh3.cpp
+    src/formats/catalog_read.cpp
     include/kiln/assets.h
     src/runtime/runtime_internal.h
     src/runtime/context.cpp
@@ -149,6 +150,7 @@ if(KILN_BUILD_COOK)
         src/formats/mesh_write.cpp
         include/kiln/cook/ktx2_writer.h
         src/formats/ktx2_write.cpp
+        src/formats/catalog_write.cpp
         include/kiln/cook/settings.h
         src/cook/settings.cpp
         include/kiln/cook/sidecar.h

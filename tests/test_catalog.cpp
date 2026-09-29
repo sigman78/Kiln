@@ -1,7 +1,9 @@
-// tests/test_catalog.cpp — build keys and cook units (docs/design/store-catalog.md); cook-only.
+// tests/test_catalog.cpp — build keys, cook units and the catalog format
+// (docs/design/store-catalog.md); cook-only.
 #include "kiln_test.h"
 
 #include "../src/cook/unit.h"
+#include "../src/formats/formats_internal.h"
 #include "kiln/cook/catalog.h"
 #include "kiln/cook/cook.h"
 
@@ -144,4 +146,202 @@ KILN_TEST(CookUnit, EmbeddedImagesAreOutputs) {
         KILN_CHECK(!(o.key == unit.outputs[0].key));
         KILN_CHECK(unit.find(AssetKind::Texture, unit.name(o)) == &o);
     }
+}
+
+// ---------------------------------------------------------------------------
+// Catalog format 0.1
+// ---------------------------------------------------------------------------
+
+namespace {
+
+struct LastCode {
+    u32 code = 0;
+    static void fn(void* user, Diagnostic const& d) noexcept { static_cast<LastCode*>(user)->code = d.code; }
+};
+
+Hash128 key_of(char const* s) { return content_of(s); }
+
+/// Three entries, deliberately out of order; "b.glb" has a mesh and an embedded texture name.
+struct SampleEntries {
+    CatalogEntry e[4] = {
+        {"textures/rock.png", AssetKind::Texture, key_of("1"), key_of("c1"), 100},
+        {"b.glb",             AssetKind::Mesh,    key_of("2"), key_of("c2"), 200},
+        {"a.glb",             AssetKind::Mesh,    key_of("3"), key_of("c3"), 300},
+        {"b.glb#img",         AssetKind::Texture, key_of("4"), key_of("c4"), 400},
+    };
+};
+
+CatalogProfile const kProfile{.name = "compat", .hash = 0x1234, .blockFormats = 0x55};
+
+Vec<u8> write_sample(Span<CatalogEntry const> entries) {
+    Vec<u8> out(default_allocator(), Tag::Test);
+    KILN_CHECK(write_catalog({.profile = kProfile, .entries = entries}, &out).ok());
+    return out;
+}
+
+void reseal(Vec<u8>& b) {
+    Hash128 const h = fmt::xxh3_128_zeroed(Span<u8 const>(b.data(), b.size()), kCatalogChecksumOffset, 16);
+    std::memcpy(b.data() + kCatalogChecksumOffset, h.bytes, 16);
+}
+
+u32 open_code(Vec<u8> const& b) {
+    LastCode lc;
+    DiagSink const sink{&LastCode::fn, &lc};
+    return CatalogView::open(Span<u8 const>(b.data(), b.size()), &sink).ok() ? 0 : lc.code;
+}
+
+} // namespace
+
+KILN_TEST(Catalog, RoundTrip) {
+    SampleEntries s;
+    Vec<u8> const bytes = write_sample(s.e);
+    KILN_CHECK_EQ(bytes.size() % 8, usize(0));
+    Result<CatalogView> r = CatalogView::open(Span<u8 const>(bytes.data(), bytes.size()));
+    KILN_REQUIRE(r.ok());
+    CatalogView const& v = *r;
+    KILN_CHECK_EQ(v.size(), u64(4));
+    KILN_CHECK(v.profile().name == "compat"_sv);
+    KILN_CHECK_EQ(v.profile().hash, u64(0x1234));
+    KILN_CHECK_EQ(v.profile().blockFormats, u64(0x55));
+
+    // Sorted by name bytes.
+    KILN_CHECK(v.entry(0).name == "a.glb"_sv);
+    KILN_CHECK(v.entry(1).name == "b.glb"_sv);
+    KILN_CHECK(v.entry(2).name == "b.glb#img"_sv);
+    KILN_CHECK(v.entry(3).name == "textures/rock.png"_sv);
+
+    for (CatalogEntry const& want : s.e) {
+        CatalogEntry got;
+        KILN_REQUIRE(v.find(want.kind, want.name, &got));
+        KILN_CHECK(got.name == want.name && got.kind == want.kind);
+        KILN_CHECK(got.key == want.key && got.checksum == want.checksum);
+        KILN_CHECK_EQ(got.bytes, want.bytes);
+    }
+    CatalogEntry none;
+    KILN_CHECK(!v.find(AssetKind::Texture, "a.glb"_sv, &none)); // right name, wrong kind
+    KILN_CHECK(!v.find(AssetKind::Mesh, "c.glb"_sv, &none));
+}
+
+KILN_TEST(Catalog, SameEntriesSameBytes) {
+    SampleEntries s;
+    Vec<u8> const a               = write_sample(s.e);
+    CatalogEntry const reversed[] = {s.e[3], s.e[2], s.e[1], s.e[0]};
+    Vec<u8> const b               = write_sample(reversed);
+    KILN_REQUIRE_EQ(a.size(), b.size());
+    KILN_CHECK(std::memcmp(a.data(), b.data(), a.size()) == 0);
+}
+
+KILN_TEST(Catalog, Empty) {
+    Vec<u8> const bytes   = write_sample({});
+    Result<CatalogView> r = CatalogView::open(Span<u8 const>(bytes.data(), bytes.size()));
+    KILN_REQUIRE(r.ok());
+    KILN_CHECK_EQ(r->size(), u64(0));
+    CatalogEntry none;
+    KILN_CHECK(!r->find(AssetKind::Mesh, "a.glb"_sv, &none));
+}
+
+KILN_TEST(Catalog, WriterRejectsDuplicatesAndBadNames) {
+    SampleEntries s;
+    CatalogEntry const dup[] = {s.e[0], s.e[1], s.e[0]};
+    Vec<u8> out(default_allocator(), Tag::Test);
+    LastCode lc;
+    DiagSink const sink{&LastCode::fn, &lc};
+    KILN_CHECK(write_catalog({.profile = kProfile, .entries = dup}, &out, &sink).code ==
+               Code::InvalidArgument);
+    KILN_CHECK_EQ(lc.code, u32(kDiagCatalogDuplicate));
+    CatalogEntry bad[] = {s.e[0]};
+    bad[0].name        = "../up.png";
+    KILN_CHECK(write_catalog({.profile = kProfile, .entries = bad}, &out, &sink).failed());
+    KILN_CHECK_EQ(lc.code, u32(kDiagCatalogName));
+    KILN_CHECK(write_catalog({.profile = {.name = "Compat"}, .entries = {}}, &out, &sink).failed());
+}
+
+KILN_TEST(Catalog, ReaderRejectsEachDefect) {
+    SampleEntries s;
+    Vec<u8> const good = write_sample(s.e);
+    KILN_REQUIRE_EQ(open_code(good), u32(0));
+
+    Vec<u8> b(default_allocator(), Tag::Test);
+    auto const fresh = [&] {
+        b.clear();
+        b.append(good.span());
+    };
+
+    fresh();
+    b[0] = 'X';
+    KILN_CHECK_EQ(open_code(b), u32(kDiagCatalogMagic));
+    KILN_CHECK_EQ(open_code(Vec<u8>(default_allocator(), Tag::Test)), u32(kDiagCatalogMagic));
+
+    fresh();
+    b[6] = 2; // minor
+    KILN_CHECK_EQ(open_code(b), u32(kDiagCatalogVersion));
+    {
+        LastCode lc;
+        DiagSink const sink{&LastCode::fn, &lc};
+        KILN_CHECK(CatalogView::open(Span<u8 const>(b.data(), b.size()), &sink).status().code ==
+                   Code::VersionMismatch);
+    }
+
+    fresh();
+    b.resize(b.size() - 8); // truncated
+    KILN_CHECK_EQ(open_code(b), u32(kDiagCatalogSizes));
+    fresh();
+    write_unaligned<u64>(b.data() + 24, u64(1) << 40); // entry count
+    KILN_CHECK_EQ(open_code(b), u32(kDiagCatalogSizes));
+
+    fresh();
+    b[104] = 1; // reserved
+    KILN_CHECK_EQ(open_code(b), u32(kDiagCatalogReserved));
+
+    // Entry 0 ("a.glb") gets kind 3.
+    fresh();
+    write_unaligned<u16>(b.data() + kCatalogHeaderBytes + 8, u16(3));
+    KILN_CHECK_EQ(open_code(b), u32(kDiagCatalogName));
+
+    // Swap entries 0 and 1: out of order.
+    fresh();
+    u8 tmp[kCatalogEntryBytes];
+    u8* e0 = b.data() + kCatalogHeaderBytes;
+    std::memcpy(tmp, e0, kCatalogEntryBytes);
+    std::memcpy(e0, e0 + kCatalogEntryBytes, kCatalogEntryBytes);
+    std::memcpy(e0 + kCatalogEntryBytes, tmp, kCatalogEntryBytes);
+    reseal(b);
+    KILN_CHECK_EQ(open_code(b), u32(kDiagCatalogOrder));
+
+    // Entry 2 ("b.glb#img", texture) renamed to entry 1's name ("b.glb") and made a mesh.
+    fresh();
+    u8* e1 = b.data() + kCatalogHeaderBytes + kCatalogEntryBytes;
+    std::memcpy(e1 + kCatalogEntryBytes, e1, 12);
+    reseal(b);
+    KILN_CHECK_EQ(open_code(b), u32(kDiagCatalogDuplicate));
+
+    // An index record pointing at the wrong entry.
+    fresh();
+    u64 const index = read_unaligned<u64>(b.data() + 40);
+    u64 const e     = read_unaligned<u64>(b.data() + index + 8);
+    write_unaligned<u64>(b.data() + index + 8, (e + 1) % 4);
+    reseal(b);
+    KILN_CHECK_EQ(open_code(b), u32(kDiagCatalogIndex));
+
+    fresh();
+    b[kCatalogHeaderBytes + 20] ^= 1; // a key byte
+    KILN_CHECK_EQ(open_code(b), u32(kDiagCatalogChecksum));
+}
+
+KILN_TEST(Catalog, Paths) {
+    char out[256];
+    KILN_CHECK_EQ(catalog_file_path("store"_sv, "compat"_sv, out, sizeof out), usize(26));
+    KILN_CHECK(std::strcmp(out, "store/catalogs/compat.kcat") == 0);
+    Hash128 k;
+    for (u8 i = 0; i < 16; ++i)
+        k.bytes[i] = u8(0xa0 + i);
+    (void)artifact_file_path("store"_sv, AssetKind::Mesh, k, out, sizeof out);
+    KILN_CHECK(std::strcmp(out, "store/artifacts/a0/a0a1a2a3a4a5a6a7a8a9aaabacadaeaf.mesh") == 0);
+    (void)artifact_file_path("store"_sv, AssetKind::Texture, k, out, sizeof out);
+    KILN_CHECK(std::strcmp(out, "store/artifacts/a0/a0a1a2a3a4a5a6a7a8a9aaabacadaeaf.ktx2") == 0);
+    KILN_CHECK(check_profile_name("compat"_sv) == nullptr);
+    KILN_CHECK(check_profile_name("my-profile_2"_sv) == nullptr);
+    KILN_CHECK(check_profile_name(""_sv) != nullptr);
+    KILN_CHECK(check_profile_name("Compat"_sv) != nullptr);
+    KILN_CHECK(check_profile_name("a/b"_sv) != nullptr);
 }

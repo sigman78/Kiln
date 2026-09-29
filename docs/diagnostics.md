@@ -59,16 +59,18 @@ is dropped entirely and the sink prints just `<asset> <where>: <message> (<statu
 | K3000-3999 | Settings resolution (invalid combinations, unknown keys) | M2 | populated, see §3.3 |
 | K4000-4099 | `.mesh` validation and decode | M1 | populated, see §3.4 |
 | K4100-4199 | KTX2 validation | M1 | populated, see §3.5 |
-| K4200-4999 | Reserved for other cooked formats | — | unassigned |
+| K4200-4299 | Store catalog validation | v0.6 | populated, see §3.5a |
+| K4300-4999 | Reserved for other cooked formats | — | unassigned |
 | K5000-5999 | Runtime and store (store miss, cook-on-miss, load/validation failures, adapter rejections, registry limits, event overflow, `wait()` misuse, duplicate registration, placeholder failures) | M3 | populated, see §3.6 |
 | K6000-9999 | Unassigned | — | unassigned |
 
 K1000-1999, K2000-2999, K3000-3999, K4000-4099, K4100-4199 and K5000-5999 all have codes defined
 today, in `include/kiln/cook/cook.h` (`kiln::cook::GltfDiagCode`), `include/kiln/cook/image.h`
 (`kiln::cook::ImageDiagCode`), `include/kiln/cook/settings.h` (`kiln::cook::SettingsDiagCode`),
-`include/kiln/mesh.h` (`kiln::mesh::DiagCode`), `include/kiln/ktx2.h` (`kiln::ktx2::DiagCode`) and,
+`include/kiln/mesh.h` (`kiln::mesh::DiagCode`), `include/kiln/ktx2.h` (`kiln::ktx2::DiagCode`),
+`include/kiln/catalog.h` (`kiln::CatalogDiagCode`, K4201-4209) and,
 for K5000-5999, both `include/kiln/assets.h` (`kiln::RuntimeDiagCode`) and
-`include/kiln/cook/provider.h` (`kiln::cook::ProviderDiagCode`). K4200-4999 is still reserved by
+`include/kiln/cook/provider.h` (`kiln::cook::ProviderDiagCode`). K4300-4999 is still reserved by
 `docs/design/error-model.md` for work that has not landed yet; when it does, its codes are added
 to this file in the same change (see §4). `store_write()` (`src/cook/store.cpp`, cook-side store
 writer) predates K5000-5999 and still reports its failures with code `0` (no catalogue entry) —
@@ -220,6 +222,26 @@ validate; those are captured and folded into K5002/K5003 (§3.6).
 | K4110 | `kDiagKtxLevelDecode` | Corrupt | A Zstd level is not exactly one Zstd frame that decodes to `uncompressedByteLength` bytes: bad magic or data, a frame of another size, or bytes after the frame. From `Ktx2View::decode_level`; the runtime reports it inside K5003 (`kDiagAssetLoadFailed`), whose message carries the reason. | Corrupted file or a writer bug. Recook from source. |
 | K4108 | `kDiagKtxDfd` | Corrupt (Error), kOk (Warning) | Malformed data format descriptor: `dfdByteLength` too small, `dfdByteOffset` misaligned or overlapping the level index, `totalSize` field disagreeing with `dfdByteLength`, or a basic block size that does not fit (Corrupt/Error) — a DFD reaching past the supplied span is K4102 instead. Separately, a non-failing Warning is emitted when the DFD's `transferFunction` disagrees with the sRGB-ness implied by `vkFormat`; the reader trusts `vkFormat` and continues. | Error case: recook from source. Warning case: informational only; the cooker/writer that produced the DFD should be checked for sRGB-flag consistency, but the file loads fine. |
 | K4109 | `kDiagKtxKvd` | Corrupt | `kvdByteOffset`/`kvdByteLength` misaligned or overlapping the DFD or level index, or the key/value entries themselves are malformed — a KVD reaching past the supplied span is K4102 instead. | Corrupted file or a writer bug. Recook from source. |
+
+### 3.5a K4200-4299 — Store catalog validation
+
+Source: `kiln::CatalogDiagCode` in `include/kiln/catalog.h`. Emitted at `Severity::Error` by
+`CatalogView::open()` (`src/formats/catalog_read.cpp`), which checks a catalog in this order, and
+K4205/K4207 also by the cook's `write_catalog()` (InvalidArgument). The format is in
+`docs/design/store-catalog.md`. A catalog is written whole by the cook; every one of these means a
+damaged file or a writer bug: delete the catalog and cook the store again.
+
+| Code | Name | Status | Meaning |
+|---|---|---|---|
+| K4201 | `kDiagCatalogMagic` | Corrupt | Shorter than the header, or the magic is not `KCAT`. |
+| K4202 | `kDiagCatalogVersion` | VersionMismatch | Another major or minor format version. |
+| K4203 | `kDiagCatalogSizes` | Corrupt | The header size, total size, entry count or a section offset does not match the file: sections out of order, overlapping, misaligned, or past the end. |
+| K4204 | `kDiagCatalogReserved` | Corrupt | Flags, reserved fields or padding are not zero. |
+| K4205 | `kDiagCatalogName` | Corrupt, InvalidArgument | A name lies outside the string section or is not a valid asset name (or profile name), or an entry's kind is neither 1 (mesh) nor 2 (texture). |
+| K4206 | `kDiagCatalogOrder` | Corrupt | Entries are not sorted by name bytes, then kind. |
+| K4207 | `kDiagCatalogDuplicate` | Corrupt, InvalidArgument | Two entries have the same name and kind. |
+| K4208 | `kDiagCatalogIndex` | Corrupt | An index record names an entry out of range, carries another hash than its entry's name, or breaks the (hash, entry) order. |
+| K4209 | `kDiagCatalogChecksum` | Corrupt | The XXH3-128 checksum does not match the bytes. |
 
 ### 3.6 K5000-5999 — Runtime and store
 
