@@ -77,8 +77,8 @@ void unit_build_inputs(CookUnit const& unit, BuildInput* out) noexcept;
 [[nodiscard]] bool recorded_keys_match(UnitDesc const& d, CookUnit const& rec) noexcept;
 
 /// True if every recorded input still has its size and modification time (an absent sidecar is
-/// still absent).
-[[nodiscard]] bool recorded_inputs_unchanged(CookUnit const& rec) noexcept;
+/// still absent). With `rehash`, its content hash instead: every input is read.
+[[nodiscard]] bool recorded_inputs_unchanged(CookUnit const& rec, bool rehash = false) noexcept;
 
 /// Size and modification time of a file, through the compat backend's stat when it has one.
 [[nodiscard]] Status stat_file(StrView path, IoStat* out) noexcept;

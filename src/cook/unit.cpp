@@ -259,15 +259,25 @@ bool recorded_keys_match(UnitDesc const& d, CookUnit const& rec) noexcept {
     return true;
 }
 
-bool recorded_inputs_unchanged(CookUnit const& rec) noexcept {
+bool recorded_inputs_unchanged(CookUnit const& rec, bool rehash) noexcept {
+    Vec<u8> bytes(rec.inputs.allocator(), Tag::Cook);
     for (UnitInput const& in : rec.inputs) {
+        StrView const path = rec.str(in.pathOff, in.pathLen);
         IoStat now;
-        Status const st = stat_file(rec.str(in.pathOff, in.pathLen), &now);
+        Status const st = stat_file(path, &now);
         if (!in.present) {
             if (st.code != Code::NotFound) return false;
             continue;
         }
-        if (st.failed() || now.size != in.stat.size || now.mtimeNs != in.stat.mtimeNs) return false;
+        if (st.failed()) return false;
+        if (!rehash) {
+            if (now.size != in.stat.size || now.mtimeNs != in.stat.mtimeNs) return false;
+            continue;
+        }
+        bytes.clear();
+        if (io_read_file(compat_io_backend(), path, rec.inputs.allocator(), &bytes).failed() ||
+            !(xxh3_128(bytes.span()) == in.content))
+            return false;
     }
     return true;
 }

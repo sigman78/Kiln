@@ -6,6 +6,7 @@
 #include "../src/cook/unit.h"
 #include "../src/formats/formats_internal.h"
 #include "kiln/cook/catalog.h"
+#include "kiln/cook/cli.h"
 #include "kiln/cook/cook.h"
 #include "kiln/cook/provider.h"
 #include "kiln/null_adapter.h"
@@ -939,4 +940,66 @@ KILN_TEST(CatalogProvider, SourceEditsReachLoadedAssets) {
     KILN_CHECK_EQ(version(p.c.ctx, m), u32(2));
     Hash128 const after = catalog_key(store, AssetKind::Mesh, "external_uri.gltf"_sv);
     KILN_CHECK(!after.is_zero() && !(after == before));
+}
+
+// ---------------------------------------------------------------------------
+// kiln-cook on a catalog store
+// ---------------------------------------------------------------------------
+
+namespace {
+
+/// Runs kiln-cook on `sources` into `store` (the catalog layout), with one extra argument or none.
+int run_cook(char* sources, char* store, char const* extra = nullptr) {
+    char arg0[] = "kiln-cook", argO[] = "-o", argQ[] = "-q";
+    char extraArg[64] = {};
+    format(extraArg, sizeof extraArg, "%s", extra ? extra : "");
+    char* argv[] = {arg0, sources, argO, store, argQ, extraArg};
+    return cook::cook_cli_main(extra ? 6 : 5, argv, {});
+}
+
+} // namespace
+
+KILN_TEST(CatalogCli, CooksOnlyWhatChangedAndVerifies) {
+    char store[1024], sources[1024], bin[1100];
+    fresh_dir("catalog-cli-store", store, sizeof store);
+    fresh_dir("catalog-cli-src", sources, sizeof sources);
+    copy_sources(sources);
+    format(bin, sizeof bin, "%s/external_uri.bin", sources);
+
+    KILN_REQUIRE_EQ(run_cook(sources, store), 0);
+    Hash128 const mesh = catalog_key(store, AssetKind::Mesh, "external_uri.gltf"_sv);
+    Hash128 const tex  = catalog_key(store, AssetKind::Texture, "external_uri_albedo.png"_sv);
+    KILN_REQUIRE(!mesh.is_zero() && !tex.is_zero());
+    char path[1024];
+    (void)artifact_file_path(StrView(store), AssetKind::Mesh, mesh, path, sizeof path);
+    KILN_CHECK(io_file_exists(StrView(path)));
+
+    // Unchanged sources: nothing cooks. A buffer edited in place (same size and time) is seen
+    // only with --verify.
+    KILN_REQUIRE_EQ(run_cook(sources, store), 0);
+    edit_first_byte(bin, true);
+    KILN_REQUIRE_EQ(run_cook(sources, store), 0);
+    KILN_CHECK(catalog_key(store, AssetKind::Mesh, "external_uri.gltf"_sv) == mesh);
+    KILN_REQUIRE_EQ(run_cook(sources, store, "--verify"), 0);
+    KILN_CHECK(!(catalog_key(store, AssetKind::Mesh, "external_uri.gltf"_sv) == mesh));
+    KILN_CHECK(catalog_key(store, AssetKind::Texture, "external_uri_albedo.png"_sv) == tex);
+
+    // A provider uses what kiln-cook wrote without cooking: an edit it cannot see stays unseen.
+    Hash128 const verified = catalog_key(store, AssetKind::Mesh, "external_uri.gltf"_sv);
+    edit_first_byte(bin, true, 2);
+    ProviderContext p;
+    KILN_REQUIRE(p.init(store, sources, {}).ok());
+    MeshHandle const m = request_mesh(p.c.ctx, "external_uri.gltf"_sv);
+    KILN_REQUIRE(settle(p.c.ctx, m) == State::Ready);
+    KILN_CHECK(catalog_key(store, AssetKind::Mesh, "external_uri.gltf"_sv) == verified);
+}
+
+KILN_TEST(CatalogCli, LayoutsDoNotMix) {
+    char store[1024], sources[1024];
+    fresh_dir("catalog-cli-mix", store, sizeof store);
+    fresh_dir("catalog-cli-mix-src", sources, sizeof sources);
+    copy_sources(sources);
+    KILN_REQUIRE_EQ(run_cook(sources, store, "--layout=named"), 0);
+    KILN_CHECK_EQ(run_cook(sources, store), 2);             // a named store
+    KILN_CHECK_EQ(run_cook(sources, store, "--verify"), 2); // still a named store
 }

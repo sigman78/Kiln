@@ -230,8 +230,11 @@ void print_event(Context* ctx, Item* items, u32 count, Event const& e) {
 
 constexpr u32 kMaxRoots = 8;
 
+char const* const kLayouts[] = {"catalog", "named", nullptr};
+
 struct Options {
-    char const* store = "cooked";
+    char const* store  = "cooked";
+    char const* layout = "catalog";
     Root roots[kMaxRoots]; ///< --source and --root
     u32 rootCount    = 0;
     double slowMs    = 0;
@@ -279,6 +282,11 @@ int main(int argc, char** argv) {
     Options o;
     cli::Option const opts[] = {
         {.name = "--store", .arg = "<dir>", .help = "cooked store root (default: cooked)", .str = &o.store},
+        {.name    = "--layout",
+         .arg     = "<layout>",
+         .help    = "the store's layout: catalog (default) or named",
+         .str     = &o.layout,
+         .choices = kLayouts},
         {.name = "--source",
          .arg  = "<dir>",
          .help = "the default root; enables cook-on-miss (needs kiln_cook)",
@@ -342,12 +350,13 @@ int main(int argc, char** argv) {
     // 3. The context. Everything below runs on this thread, the pump thread.
     SlowIo slowIo;
     ContextDesc desc{
-        .diag      = DiagSink{&diag_to_stdout, nullptr},
-        .io        = slowIo.init(compat_io_backend(), o.slowMs, o.latencyMs),
-        .adapter   = &adapter,
-        .storeDir  = StrView(o.store),
-        .roots     = Span<Root const>(o.roots, o.rootCount),
-        .hotReload = {.watchStore = o.watch},
+        .diag        = DiagSink{&diag_to_stdout, nullptr},
+        .io          = slowIo.init(compat_io_backend(), o.slowMs, o.latencyMs),
+        .adapter     = &adapter,
+        .storeDir    = StrView(o.store),
+        .roots       = Span<Root const>(o.roots, o.rootCount),
+        .storeLayout = std::strcmp(o.layout, "named") == 0 ? StoreLayout::Named : StoreLayout::Catalog,
+        .hotReload   = {.watchStore = o.watch},
     };
     Result<Context*> c = create(desc);
     if (c.failed()) {

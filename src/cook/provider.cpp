@@ -445,22 +445,6 @@ Status cook_and_publish(Provider& p, UnitDesc d, DiagSink const* diag, CookUnit*
     return kOk;
 }
 
-/// True if the unit's record still describes it: the same source path, every input with its
-/// recorded size and time, and the host's settings giving the recorded keys.
-bool record_is_current(Provider& p, UnitDesc const& d) noexcept {
-    CookUnit rec(d.env.alloc);
-    u64 digest = 0;
-    if (!copy_input_record(p.store, d.name, &rec, &digest) || rec.inputs.empty()) return false;
-    UnitInput const& source = rec.inputs[0];
-    if (source.role != InputRole::Source || rec.str(source.pathOff, source.pathLen) != d.sourcePath)
-        return false;
-    if (!recorded_inputs_unchanged(rec)) return false;
-    if (digest == p.hostDigest) return true;
-    if (!recorded_keys_match(d, rec)) return false;
-    set_record_digest(p.store, d.name, p.hostDigest);
-    return true;
-}
-
 Status provider_prepare(void* user, AssetKind kind, StrView name, Allocator const* alloc, Vec<u8>* out,
                         Hash128* key, DiagSink const* diag) noexcept {
     auto* p = static_cast<Provider*>(user);
@@ -471,7 +455,7 @@ Status provider_prepare(void* user, AssetKind kind, StrView name, Allocator cons
     std::lock_guard<std::mutex> const lock(source_lock(*p, sourcePath));
     UnitDesc const d = unit_desc(*p, r.unitKind, r.owner, sourcePath, alloc, diag);
 
-    if (p->store && (is_fresh(p->store, r.owner) || record_is_current(*p, d))) {
+    if (p->store && (is_fresh(p->store, r.owner) || record_is_current(p->store, d, p->hostDigest, false))) {
         mark_fresh(p->store, r.owner);
         if (catalog_find(p->store, kind, name, key)) return kOk;
         // Fresh, but without this output (an image that failed): cook again and report why.

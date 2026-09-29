@@ -1,7 +1,8 @@
-// tools/kiln-info/main.cpp — dump a cooked .mesh or .ktx2 file. Options: README.md.
+// tools/kiln-info/main.cpp — dump a cooked .mesh or .ktx2 file, or a store catalog. Options: README.md.
 // Exit codes: 0 ok, 1 usage, 2 file could not be read, 3 open/validation failed, 4 --check failed.
 #include "cli.h"
 
+#include "kiln/catalog.h"
 #include "kiln/containers.h"
 #include "kiln/ktx2.h"
 #include "kiln/log.h"
@@ -305,6 +306,51 @@ int dump_ktx2(Span<u8 const> bytes, Options const& o, DiagSink const* diag) {
     return 0;
 }
 
+// catalog
+
+int dump_catalog(Span<u8 const> bytes, Options const& o, DiagSink const* diag) {
+    Result<CatalogView> r = CatalogView::open(bytes, diag, StrView(o.path));
+    if (r.failed()) {
+        std::fprintf(stderr, "%s: not a valid catalog (%s)\n", o.path, code_name(r.code()));
+        return 3;
+    }
+    CatalogView const& v    = *r;
+    CatalogProfile const pr = v.profile();
+    out("kiln catalog  %s\n", o.path);
+    out("  profile %.*s, hash %016llx, block formats %016llx, %llu entries\n", KILN_SV(pr.name),
+        static_cast<unsigned long long>(pr.hash), static_cast<unsigned long long>(pr.blockFormats),
+        static_cast<unsigned long long>(v.size()));
+    for (u64 i = 0; i < v.size(); ++i) {
+        CatalogEntry const e = v.entry(i);
+        char key[33];
+        hash128_hex(e.key, key);
+        out("  %-7s %s %10llu B  %.*s\n", e.kind == AssetKind::Mesh ? "mesh" : "texture", key,
+            static_cast<unsigned long long>(e.bytes), KILN_SV(e.name));
+    }
+    if (!o.check) return 0;
+
+    // The store is two directories up: <store>/catalogs/<profile>.kcat.
+    StrView store(o.path);
+    for (int up = 0; up < 2; ++up) {
+        usize const slash = store.rfind('/') != StrView::kNpos ? store.rfind('/') : store.rfind('\\');
+        store             = slash == StrView::kNpos ? StrView(".") : store.substr(0, slash);
+    }
+    Vec<u8> artifact(default_allocator(), Tag::Io);
+    for (u64 i = 0; i < v.size(); ++i) {
+        CatalogEntry const e = v.entry(i);
+        char path[1200];
+        (void)artifact_file_path(store, e.kind, e.key, path, sizeof path);
+        if (!read_file(path, artifact) || artifact.size() != e.bytes ||
+            !(xxh3_128(artifact.span()) == e.checksum)) {
+            std::fprintf(stderr, "%s: %.*s: the artifact %s is missing or has other bytes\n", o.path,
+                         KILN_SV(e.name), path);
+            return 4;
+        }
+    }
+    out("\ncheck: every artifact is present with its size and checksum\n");
+    return 0;
+}
+
 bool set_path(void* user, char const* arg) {
     auto* o = static_cast<Options*>(user);
     if (o->path) {
@@ -320,15 +366,15 @@ bool set_path(void* user, char const* arg) {
 int main(int argc, char** argv) {
     Options o;
     cli::Option const opts[] = {
-        {.name = "--blobs", .help = "print the full BLOB table (default: summary only)",                  .flag = &o.blobs},
+        {.name = "--blobs", .help = "print the full BLOB table (default: summary only)",    .flag = &o.blobs},
         {.name = "--check",
-         .help = ".mesh: decode the payload and verify checksums and indices; .ktx2: verify every level",
-         .flag = &o.check                                                                                                 },
-        {.name = "--quiet", .help = "errors only (the exit code still reports the result)",               .flag = &o.quiet},
+         .help = ".mesh: decode the payload and verify checksums and indices; .ktx2: verify every level; "
+                 "catalog: verify every artifact",                                          .flag = &o.check},
+        {.name = "--quiet", .help = "errors only (the exit code still reports the result)", .flag = &o.quiet},
     };
     cli::Spec const spec{
         .program  = "kiln-info",
-        .synopsis = "<file.mesh|file.ktx2> [options]",
+        .synopsis = "<file.mesh|file.ktx2|catalog.kcat> [options]",
         .options  = {opts, countof(opts)},
         .footer = "Exit codes: 0 ok, 1 usage, 2 file could not be read, 3 open/validation failed, 4 --check "
                   "failed.",
@@ -355,7 +401,9 @@ int main(int argc, char** argv) {
     if (span.size >= 4 && read_unaligned<u32>(span.data) == mesh::kMagic) return dump_mesh(span, o, &diag);
     if (span.size >= 12 && std::memcmp(span.data, ktx2::kIdentifier, 12) == 0)
         return dump_ktx2(span, o, &diag);
+    if (span.size >= 4 && read_unaligned<u32>(span.data) == kCatalogMagic)
+        return dump_catalog(span, o, &diag);
 
-    std::fprintf(stderr, "%s: unknown file type (not KMSH or KTX2)\n", o.path);
+    std::fprintf(stderr, "%s: unknown file type (not KMSH, KTX2 or KCAT)\n", o.path);
     return 3;
 }
