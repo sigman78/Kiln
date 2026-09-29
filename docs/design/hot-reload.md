@@ -19,6 +19,12 @@ Hot reload is two independent pollers joined by the store on disk:
 Neither poller knows about the other. Dependencies exist only on the cook side and only for the
 v0.5 relation: glb to its embedded textures.
 
+In the **Catalog layout** (`store-catalog.md`) artifacts never change, so the runtime watches the
+catalog file instead: when a new valid catalog appears, it swaps it in on the pump thread and
+reloads each loaded asset whose entry names another artifact (or that failed and has an entry
+now). The provider watches every input file its cooks recorded (sources, sidecars, a `.gltf`'s
+buffers), re-cooks the changed units of one poll round, and rewrites the catalog once.
+
 ### Runtime
 
 - `ContextDesc::hotReload = { watchStore, pollMs }`. `watchStore` starts the store poller

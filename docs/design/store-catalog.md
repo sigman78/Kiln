@@ -1,6 +1,7 @@
 # Cooked artifacts and a store catalog
 
-**Status:** Decided (owner, 2026-09-29), not implemented. The owner asked for hashed artifacts and a
+**Status:** Decided (owner, 2026-09-29); phase A implemented (branch `store-catalog`, choices made
+on the way in open-questions R11). The owner asked for hashed artifacts and a
 binary catalog with its own lookup index, then chose: XXH3-128 keys, no source re-hashing for
 freshness, one catalog per profile rewritten in place (not a new file per change), and a single
 writer. Phase A (below) is the last step of v0.6.
@@ -243,9 +244,8 @@ automatic migration: a named store is cooked again into a catalog store, and nev
 
 ## Open points
 
-1. Record format of `inputs/<profile>.kin` (binary or text). Correctness does not depend on it.
-2. The name and signature of the provider's prepare callback, and whether a request may accept an
-   unverified entry when the provider cannot resolve its sources (proposed: an explicit option,
-   off by default).
+1. ~~Record format of `inputs/<profile>.kin`~~: binary, with a checksum (R11).
+2. ~~The prepare callback~~: `CookProvider::prepare` (R11). Accepting an unverified entry when the
+   provider finds no source is still open; such an entry is not used for now.
 3. Whether `create()` should also accept a catalog file path directly (a shipping package that is
    not a store directory).

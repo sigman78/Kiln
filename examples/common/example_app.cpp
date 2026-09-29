@@ -108,10 +108,10 @@ int parse_options(char const* program, int argc, char** argv, Options* o) noexce
     o->roots[1]  = Root{StrView("sky"), StrView(kSkies)};
     o->rootCount = 2;
     o->offscreen = o->dump != nullptr;
-    char source[1024], cooked[1024];
+    // The cook provider checks every load against its source, so the source must be there.
+    char source[1024];
     format(source, sizeof source, "%s/%s", kKhronos, o->model);
-    format(cooked, sizeof cooked, "%s/%s.mesh", kStore, o->model);
-    if (!file_exists(source) && !file_exists(cooked)) {
+    if (!file_exists(source)) {
         std::fprintf(stderr,
                      "%s: the demo model %s is not downloaded yet (it is not in the repository).\n"
                      "Fetch it once with:  cmake --build --preset <your preset> --target viewer-assets\n"

@@ -54,6 +54,9 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
   diagnostic sink. `unsampled_block_formats(adapter)` (`kiln/adapter.h`) reads the set an adapter
   cannot sample.
 - Examples: every integration example cooks with the default profile into one `example-store`.
+- Examples: `example-store` and the viewer's stores are catalog stores (store-catalog phase A step 7):
+  the backends share the artifacts cooked by the first one to run. `kiln-viewer --layout named`
+  opens a named store such as `tests/golden`. Delete a build tree's old `example-store` once.
 - Examples: every renderer (the viewer, `kiln-gl`, `kiln-gl-bindless`, `kiln-sokol`,
   `kiln-vk-basic`, `kiln-nga`) shades with the `MaterialSlot` PBR factors: a texture times its
   factor, the factor alone without the texture (glTF's rules), so untextured materials get their
