@@ -12,11 +12,8 @@
 // stat). A reported entry is disarmed, so it is reported once until the next settle.
 // pump() (watch_drain) copies the hits out under the lock and requests the reloads
 // after releasing it; a hit whose slot generation changed meanwhile is dropped.
-//
-// Catalog layout: artifacts never change, so no slot is armed. The poller watches the catalog
-// file instead: on a new stat it reads and validates the file and, if its checksum differs from
-// the catalog in use, hands it to the pump thread under the mutex. watch_drain() swaps it in and
-// reloads every asset whose entry names another artifact.
+// Catalog layout: no slot is armed; the poller hands a new catalog over under the mutex
+// (docs/design/hot-reload.md).
 #include "runtime_internal.h"
 
 #if defined(KILN_HOT_RELOAD) && KILN_HOT_RELOAD
@@ -105,18 +102,19 @@ void poll_catalog(Context* ctx, Watch& w) noexcept {
     w.hasPending  = true;
 }
 
-/// A new catalog is in use: reload each asset whose entry now names another artifact, or that
-/// failed and has an entry now. An asset that left the catalog stays as it is.
+/// A new catalog is in use: reload each asset whose entry names another artifact than the one it
+/// loaded or tried. An asset that left the catalog stays as it is.
 void catalog_changed(Context* ctx) noexcept {
     for (u32 i = 0; i < ctx->maxAssets; ++i) {
         Slot& s = ctx->slots[i];
         if (!s.live || s.zombie || s.source != SourceKind::File) continue;
         CatalogEntry e;
         if (!ctx->catalog.find(s.kind, path_of(s), &e)) continue;
+        // A load in flight is compared by its dispatch key: its job owns jobKey until it completes.
         bool const settled = s.phase == Phase::Done;
-        bool const hasKey  = settled ? s.keyValid : s.jobKeyValid;
-        Hash128 const& key = settled ? s.key : s.jobKey;
-        if (hasKey ? key == e.key : !(settled && s.state == State::Failed)) continue;
+        bool const hasKey  = settled ? s.keyValid : s.dispatchKeyValid;
+        Hash128 const& key = settled ? s.key : s.dispatchKey;
+        if (hasKey && key == e.key) continue;
         reload_slot(ctx, s);
     }
 }

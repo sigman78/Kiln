@@ -302,6 +302,21 @@ KILN_TEST(Catalog, ReaderRejectsEachDefect) {
     write_unaligned<u64>(b.data() + 24, u64(1) << 40); // entry count
     KILN_CHECK_EQ(open_code(b), u32(kDiagCatalogSizes));
 
+    // Sections past the end: the offsets alone must not reach outside the file.
+    b.clear();
+    b.append(Span<u8 const>(good.data(), kCatalogHeaderBytes));
+    for (int i = 0; i < 8; ++i)
+        b.push_back(0);
+    write_unaligned<u64>(b.data() + 16, u64(b.size()));
+    write_unaligned<u64>(b.data() + 24, u64(1));
+    write_unaligned<u64>(b.data() + 32, u64(kCatalogHeaderBytes));
+    write_unaligned<u64>(b.data() + 40, u64(kCatalogHeaderBytes + kCatalogEntryBytes));
+    write_unaligned<u64>(b.data() + 48, u64(kCatalogHeaderBytes + kCatalogEntryBytes + kCatalogIndexBytes));
+    write_unaligned<u64>(b.data() + 56, ~u64(0) - 63);
+    write_unaligned<u32>(b.data() + 80, u32(0));
+    write_unaligned<u32>(b.data() + 84, u32(1));
+    KILN_CHECK_EQ(open_code(b), u32(kDiagCatalogSizes));
+
     fresh();
     b[104] = 1; // reserved
     KILN_CHECK_EQ(open_code(b), u32(kDiagCatalogReserved));
@@ -995,6 +1010,27 @@ KILN_TEST(CatalogCli, CooksOnlyWhatChangedAndVerifies) {
     MeshHandle const m = request_mesh(p.c.ctx, "external_uri.gltf"_sv);
     KILN_REQUIRE(settle(p.c.ctx, m) == State::Ready);
     KILN_CHECK(catalog_key(store, AssetKind::Mesh, "external_uri.gltf"_sv) == verified);
+}
+
+KILN_TEST(CatalogCli, LostCatalogOrArtifactCooksAgain) {
+    char store[1024], sources[1024], path[1100];
+    fresh_dir("catalog-cli-lost", store, sizeof store);
+    fresh_dir("catalog-cli-lost-src", sources, sizeof sources);
+    copy_sources(sources);
+    KILN_REQUIRE_EQ(run_cook(sources, store), 0);
+    Hash128 const mesh = catalog_key(store, AssetKind::Mesh, "external_uri.gltf"_sv);
+    KILN_REQUIRE(!mesh.is_zero());
+
+    // The input records survive a deleted catalog; they must not make the sources look done.
+    (void)catalog_file_path(StrView(store), "compat"_sv, path, sizeof path);
+    KILN_REQUIRE(std::remove(path) == 0);
+    KILN_REQUIRE_EQ(run_cook(sources, store), 0);
+    KILN_CHECK(catalog_key(store, AssetKind::Mesh, "external_uri.gltf"_sv) == mesh);
+
+    (void)artifact_file_path(StrView(store), AssetKind::Mesh, mesh, path, sizeof path);
+    KILN_REQUIRE(std::remove(path) == 0);
+    KILN_REQUIRE_EQ(run_cook(sources, store), 0);
+    KILN_CHECK(io_file_exists(StrView(path)));
 }
 
 KILN_TEST(CatalogCli, LayoutsDoNotMix) {

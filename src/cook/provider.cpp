@@ -1,16 +1,17 @@
 // src/cook/provider.cpp — cook-on-miss provider and its source poller (hot reload, see
 // docs/design/hot-reload.md). Threading: see docs/design/threading-and-io.md.
 //
-// provider_cook() runs on workers, concurrently. A published Provider's settings never
-// change; the only mutable state is the source record table (under recordMutex) and the
-// poller's stop flag. Only install/uninstall touch the registry.
+// provider_cook() and provider_prepare() run on workers, concurrently. A published Provider's
+// settings never change; the mutable state is the source record table (under recordMutex, Named
+// layout), the CatalogStore (its own mutexes, Catalog layout) and the poller's stop flag. Only
+// install/uninstall touch the registry.
 //
-// Locks. While the source poller runs, per-source work (stat and read the source, cook,
-// write the store, record) runs under one of kSourceLockStripes mutexes picked by the hash
-// of the source path, both for an on-miss cook and for a poller re-cook. So the poller
-// never re-cooks a source while an on-miss cook of the same source runs, and on-miss cooks
-// of different sources still run in parallel unless their paths share a stripe.
-// recordMutex is taken inside a stripe lock or on its own, never the other way round.
+// Locks. Per-source work (stat and read the source, cook, write the store, record) runs under
+// one of kSourceLockStripes mutexes picked by the hash of the source path: in the Named layout
+// while the source poller runs, in the Catalog layout always (a mesh and its images are often
+// requested together). So the poller never re-cooks a source while a request cooks it, and
+// different sources still cook in parallel unless their paths share a stripe. recordMutex and
+// the CatalogStore mutexes are taken inside a stripe lock or on their own, never the other way.
 #include "kiln/cook/provider.h"
 
 #include "catalog_store.h"
@@ -47,6 +48,8 @@ constexpr usize kMaxSources = 4096;
 /// Initial size of the record string pool. It may still grow: records hold offsets.
 constexpr usize kRecordStringBytes = kMaxSources * 96;
 constexpr usize kSourceLockStripes = 64;
+/// Catalog layout: a cook on miss rewrites the catalog at most this often.
+constexpr u32 kCommitIntervalMs = 1000;
 
 /// A source file and its `.kiln` sidecar, which is part of the source: editing, adding or
 /// removing it re-cooks. A missing sidecar reads as zeros.
@@ -439,8 +442,10 @@ Status cook_and_publish(Provider& p, UnitDesc d, DiagSink const* diag, CookUnit*
     KILN_TRY(cook_unit(d, unit));
     if (!p.store) return kOk;
     KILN_TRY(publish_unit(p.store, *unit, p.hostDigest, diag));
-    // The entry is in memory; a failed rewrite (a reader blocking the rename) is retried later.
-    if (Status const st = commit_catalog(p.store, diag); st.failed())
+    // The entry is in memory and `prepare` answers from it. Rewriting the catalog at most once a
+    // second keeps a first session's many misses from rewriting it per cook; the poller and
+    // release write the rest. A failed rewrite is retried later.
+    if (Status const st = commit_catalog(p.store, diag, kCommitIntervalMs); st.failed())
         KILN_WARN("cook", "cannot rewrite the catalog (%s); retrying later", code_name(st.code));
     return kOk;
 }

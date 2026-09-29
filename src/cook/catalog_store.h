@@ -29,8 +29,9 @@ void close_catalog_store(CatalogStore* s) noexcept;
 /// the first output fails, nothing changes and its Status is returned.
 [[nodiscard]] Status publish_unit(CatalogStore* s, CookUnit& unit, u64 hostDigest,
                                   DiagSink const* diag) noexcept;
-/// Rewrites the catalog and the input records (temporary file, then rename) if anything changed.
-[[nodiscard]] Status commit_catalog(CatalogStore* s, DiagSink const* diag) noexcept;
+/// Rewrites the catalog and the input records (temporary file, then rename) if anything changed
+/// and the last commit is at least `minIntervalMs` old. A failed write is tried again next time.
+[[nodiscard]] Status commit_catalog(CatalogStore* s, DiagSink const* diag, u32 minIntervalMs = 0) noexcept;
 
 /// The entry of `name` and `kind` in memory (views are not kept), or false.
 [[nodiscard]] bool catalog_find(CatalogStore* s, AssetKind kind, StrView name, Hash128* key) noexcept;
@@ -40,9 +41,9 @@ void close_catalog_store(CatalogStore* s) noexcept;
 /// Sets the host-settings digest of the unit `name`'s record (its keys were checked again).
 void set_record_digest(CatalogStore* s, StrView name, u64 hostDigest) noexcept;
 
-/// True if the unit `d.name`'s record still describes it: the same source path, every input
-/// unchanged (recorded_inputs_unchanged()), and `hostDigest` or, when the digest differs, the
-/// host's settings giving the recorded keys (the record then takes `hostDigest`).
+/// True if the unit `d.name`'s record still describes it: the same source path, every output with
+/// its entry and artifact, every input unchanged (recorded_inputs_unchanged()), and `hostDigest` or, when the
+/// digest differs, the host's settings giving the recorded keys (the record then takes `hostDigest`).
 [[nodiscard]] bool record_is_current(CatalogStore* s, UnitDesc const& d, u64 hostDigest,
                                      bool rehash) noexcept;
 

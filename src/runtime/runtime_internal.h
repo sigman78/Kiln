@@ -135,12 +135,15 @@ struct Slot {
     CookProvider provider; ///< snapshot at dispatch
     char path[kMaxPathLen] = {};
     u32 pathLen            = 0;
-    Hash128 jobKey;           ///< Catalog layout: the artifact to load, from the catalog at dispatch
-    bool jobKeyValid = false; ///< false: the name missed the catalog
+    Hash128 jobKey;                 ///< Catalog layout: the artifact to load, from the catalog at dispatch
+    bool jobKeyValid       = false; ///< false: the name missed the catalog
+    bool jobCatalogPresent = false; ///< Context::catalogPresent at dispatch
 
-    // --- the loaded content (pump thread) ------------------------------------------
-    Hash128 key;           ///< the build key of what `cur` came from (Catalog layout)
-    bool keyValid = false; ///< false: not from an artifact, or not loaded
+    // --- keys (pump thread) ---------------------------------------------------------
+    Hash128 dispatchKey; ///< jobKey as dispatch set it; the job may change jobKey
+    bool dispatchKeyValid = false;
+    Hash128 key;           ///< the build key `cur` came from, or that a failed load tried (Catalog layout)
+    bool keyValid = false; ///< false: no artifact (provider bytes, a miss) or not loaded
 
     // --- metadata (docs/design/hot-reload.md) ----------------------------------------
     // Queries answer from `cur` once Ready. The meta stage (worker) writes only `next`;

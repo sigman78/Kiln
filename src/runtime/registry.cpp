@@ -255,8 +255,9 @@ Slot* request_slot(Context* ctx, AssetKind kind, StrView path, RequestOptions co
     s.jobStatus     = kOk;
     s.jobStatValid  = false;
     s.jobKeyValid   = false;
-    s.keyValid      = false;
-    s.jobDiag       = 0;
+    s.dispatchKeyValid = false;
+    s.keyValid         = false;
+    s.jobDiag          = 0;
     s.capture.reset();
     std::memcpy(s.path, np.data, np.size);
     s.path[np.size] = '\0';

@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cerrno>
+#include <chrono>
 #include <mutex>
 
 #if defined(KILN_OS_WINDOWS)
@@ -165,6 +166,8 @@ struct Record {
 struct CatalogStore {
     Allocator const* alloc;
     std::mutex mutex;
+    std::mutex commitMutex; ///< taken before `mutex`, never after
+    std::chrono::steady_clock::time_point lastCommit;
     FileLock lock;
     Vec<char> storeDir; ///< NUL-terminated
     TargetProfile target;
@@ -430,7 +433,7 @@ Status publish_artifact(StrView storeDir, AssetKind kind, Hash128 const& key, Sp
     return store_write(StrView(path, slash), pathView.substr(slash + 1), bytes, diag, false);
 }
 
-Status load_catalog(CatalogStore& s, DiagSink const* diag) noexcept {
+Status load_catalog(CatalogStore& s, DiagSink const* diag, bool* stale) noexcept {
     char path[1024];
     if (catalog_file_path(s.dir(), s.profile(), path, sizeof path) >= sizeof path - 1)
         return make_status(Code::InvalidArgument);
@@ -439,14 +442,18 @@ Status load_catalog(CatalogStore& s, DiagSink const* diag) noexcept {
     KILN_TRY(io_read_file(compat_io_backend(), StrView(path), s.alloc, &bytes));
     Result<CatalogView> v = CatalogView::open(bytes.span(), diag, StrView(path));
     if (v.failed()) return v.status();
+    // Entries of another definition of the profile would sit under this one's header, and pass
+    // the runtime's format check without being checked: start empty (the artifacts stay).
+    if (v->profile().hash != s.targetHash) {
+        KILN_INFO("cook", "%s was cooked for another definition of profile '%.*s'; its entries are dropped",
+                  path, KILN_SV(s.profile()));
+        *stale = true;
+        return kOk;
+    }
     for (u64 i = 0; i < v->size(); ++i) {
         CatalogEntry const e = v->entry(i);
         s.put_entry(e.kind, e.name, e.key, e.checksum, e.bytes);
     }
-    if (v->profile().hash != s.targetHash)
-        KILN_INFO("cook",
-                  "%s was cooked for another definition of profile '%.*s'; its entries are checked again",
-                  path, KILN_SV(s.profile()));
     return kOk;
 }
 
@@ -508,8 +515,12 @@ Status open_catalog_store(CatalogStoreDesc const& d, CatalogStore** out) noexcep
                           st.code == Code::Busy ? "another process writes the catalog of profile '%.*s' (%s)"
                                                 : "cannot lock the catalog of profile '%.*s' (%s)",
                           KILN_SV(s->profile()), path));
-    if (Status const st = load_catalog(*s, d.diag); st.failed()) return fail(st);
-    load_records(*s);
+    bool stale = false;
+    if (Status const st = load_catalog(*s, d.diag, &stale); st.failed()) return fail(st);
+    if (stale)
+        s->dirty = true; // the next commit writes the empty catalog
+    else
+        load_records(*s);
     *out = s;
     return kOk;
 }
@@ -562,11 +573,11 @@ Status publish_unit(CatalogStore* s, CookUnit& unit, u64 hostDigest, DiagSink co
     for (usize i = 0; i < unit.outputs.size(); ++i) {
         UnitOutput const& o = unit.outputs[i];
         StrView const name  = unit.name(o);
-        if (o.status.failed()) {
+        // A failed output stays in the record without an entry, so the record is not current.
+        if (o.status.failed())
             s->remove_entry(o.kind, name);
-            continue;
-        }
-        s->put_entry(o.kind, name, o.key, checksums[i], o.bytes.size());
+        else
+            s->put_entry(o.kind, name, o.key, checksums[i], o.bytes.size());
         RecordOutput ro;
         ro.nameOff = next.add(name);
         ro.nameLen = u32(name.size);
@@ -579,30 +590,43 @@ Status publish_unit(CatalogStore* s, CookUnit& unit, u64 hostDigest, DiagSink co
     return kOk;
 }
 
-Status commit_catalog(CatalogStore* s, DiagSink const* diag) noexcept {
-    std::lock_guard<std::mutex> const lock(s->mutex);
-    if (!s->dirty) return kOk;
-
-    Vec<CatalogEntry> entries(s->alloc, Tag::Cook);
-    for (Entry const& e : s->entries)
-        if (e.live) entries.push_back({s->name_of(e), e.kind, e.key, e.checksum, e.bytes});
-    Vec<u8> bytes(s->alloc, Tag::Cook);
-    KILN_TRY(write_catalog(
-        {
-            .profile = {.name = s->profile(), .hash = s->targetHash, .blockFormats = s->target.blockFormats},
-            .entries = entries.span()
-    },
-        &bytes, diag));
+Status commit_catalog(CatalogStore* s, DiagSink const* diag, u32 minIntervalMs) noexcept {
+    // One commit at a time, so renames land in order; the store mutex is held only for the snapshot.
+    std::lock_guard<std::mutex> const commitLock(s->commitMutex);
+    auto const now = std::chrono::steady_clock::now();
+    Vec<u8> catalog(s->alloc, Tag::Cook);
+    Vec<u8> records(s->alloc, Tag::Cook);
+    {
+        std::lock_guard<std::mutex> const lock(s->mutex);
+        if (!s->dirty || now - s->lastCommit < std::chrono::milliseconds(minIntervalMs)) return kOk;
+        Vec<CatalogEntry> entries(s->alloc, Tag::Cook);
+        for (Entry const& e : s->entries)
+            if (e.live) entries.push_back({s->name_of(e), e.kind, e.key, e.checksum, e.bytes});
+        KILN_TRY(write_catalog(
+            {
+                .profile = {.name         = s->profile(),
+                            .hash         = s->targetHash,
+                            .blockFormats = s->target.blockFormats},
+                .entries = entries.span()
+        },
+            &catalog, diag));
+        encode_records(*s, records);
+        s->dirty      = false;
+        s->lastCommit = now;
+    }
     char path[1024];
     (void)catalog_file_path(s->dir(), s->profile(), path, sizeof path);
-    KILN_TRY(replace_file(path, bytes.span(), diag));
-
+    Status st = replace_file(path, catalog.span(), diag);
     // The records follow the catalog: a crash in between costs a re-check, never a wrong entry.
-    encode_records(*s, bytes);
-    format(path, sizeof path, "%.*s/inputs/%.*s.kin", KILN_SV(s->dir()), KILN_SV(s->profile()));
-    KILN_TRY(replace_file(path, bytes.span(), diag));
-    s->dirty = false;
-    return kOk;
+    if (st.ok()) {
+        format(path, sizeof path, "%.*s/inputs/%.*s.kin", KILN_SV(s->dir()), KILN_SV(s->profile()));
+        st = replace_file(path, records.span(), diag);
+    }
+    if (st.failed()) {
+        std::lock_guard<std::mutex> const lock(s->mutex);
+        s->dirty = true; // written next time
+    }
+    return st;
 }
 
 bool catalog_find(CatalogStore* s, AssetKind kind, StrView name, Hash128* key) noexcept {
@@ -645,8 +669,18 @@ bool record_is_current(CatalogStore* s, UnitDesc const& d, u64 hostDigest, bool 
     u64 digest = 0;
     if (!copy_input_record(s, d.name, &rec, &digest) || rec.inputs.empty()) return false;
     UnitInput const& source = rec.inputs[0];
-    if (source.role != InputRole::Source || rec.str(source.pathOff, source.pathLen) != d.sourcePath)
+    char canonical[1024];
+    usize const len          = canonical_path(d.sourcePath, canonical, sizeof canonical);
+    StrView const sourcePath = len ? StrView(canonical, len) : d.sourcePath;
+    if (source.role != InputRole::Source || rec.str(source.pathOff, source.pathLen) != sourcePath)
         return false;
+    // Every output needs its entry and its artifact: a deleted catalog or artifact cooks again.
+    for (UnitOutput const& o : rec.outputs) {
+        if (o.status.failed()) return false;
+        char path[1024];
+        usize const n = artifact_file_path(s->dir(), o.kind, o.key, path, sizeof path);
+        if (n >= sizeof path - 1 || !io_file_exists(StrView(path, n))) return false;
+    }
     if (!recorded_inputs_unchanged(rec, rehash)) return false;
     if (digest == hostDigest) return true;
     if (!recorded_keys_match(d, rec)) return false;

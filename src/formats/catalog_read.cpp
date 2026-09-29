@@ -60,9 +60,10 @@ Result<CatalogView> CatalogView::open(Span<u8 const> b, DiagSink const* diag, St
         KILN_CATALOG_FAIL(Code::Corrupt, kDiagCatalogSizes, "header or file size does not match (%llu bytes)",
                           static_cast<unsigned long long>(b.size));
     // Sections follow each other in order: entries, index, strings, then at most 7 bytes of padding.
-    u64 const maxCount = b.size / (kCatalogEntryBytes + kCatalogIndexBytes);
+    // b.size >= the header here, so no subtraction below wraps once `strings` is known to fit.
+    u64 const maxCount = (b.size - kCatalogHeaderBytes) / (kCatalogEntryBytes + kCatalogIndexBytes);
     if (count > maxCount || entries != kCatalogHeaderBytes || index != entries + count * kCatalogEntryBytes ||
-        strings != index + count * kCatalogIndexBytes || stringBytes > b.size - strings ||
+        strings != index + count * kCatalogIndexBytes || strings > b.size || stringBytes > b.size - strings ||
         b.size - strings - stringBytes > 7 || !is_aligned(b.size) || !is_aligned(index) ||
         !is_aligned(strings))
         KILN_CATALOG_FAIL(Code::Corrupt, kDiagCatalogSizes, "sections do not fit the file");
