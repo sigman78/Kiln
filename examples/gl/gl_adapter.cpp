@@ -5,6 +5,7 @@
 #include "gl_adapter.h"
 
 #include "gl_api.h"
+#include "staging_ring.h"
 
 #include <kiln/alloc.h>
 #include <kiln/containers.h>
@@ -49,12 +50,6 @@ struct Upload {
     GLsync fence = nullptr;
 };
 
-/// One allocation of the staging ring, in allocation order.
-struct Span {
-    u64 begin = 0, end = 0;
-    bool done = false;
-};
-
 struct TexFormat {
     GLenum internal = 0, format = 0, type = 0;
 };
@@ -90,14 +85,11 @@ struct GlAdapter {
     std::mutex mutex;
     GLuint staging = 0;
     u8* mapped     = nullptr;
-    u64 ringSize   = 0;
-    u64 head       = 0; ///< next free byte of the ring
+    ex::StagingRing ring; ///< reservations in `staging`, released when their fence signals
     Vec<Object> objects;
     Vec<u32> freeObjects;
     Vec<Upload> uploads;
     Vec<u32> freeUploads;
-    Vec<Span> spans; ///< circular FIFO of ring allocations
-    u32 spanFirst = 0, spanCount = 0;
     Vec<u32> committed; ///< upload indices waiting for flush, in commit order
     Vec<u32> flushing;  ///< flush's copy of `committed`
     Vec<u32> inFlight;  ///< flushed, fence not yet signaled
@@ -125,39 +117,6 @@ Upload* upload_of(GlAdapter* a, u64 token) noexcept {
     return u.used && u.gen == u32(token >> 32) ? &u : nullptr;
 }
 
-/// A contiguous range of `size` bytes in the ring, or false when it does not fit now.
-bool ring_alloc(GlAdapter* a, u64 size, u64* offset) noexcept {
-    if (a->spanCount == u32(a->spans.size())) return false;
-    if (a->spanCount == 0) a->head = 0;
-    u64 const tail     = a->spanCount ? a->spans[a->spanFirst].begin : 0;
-    u64 start          = align_up(a->head, kUploadAlign);
-    bool const wrapped = a->spanCount && a->head <= tail; // the free range is [head, tail)
-    if (wrapped) {
-        if (start + size > tail) return false;
-    } else if (start + size > a->ringSize) {
-        start = 0; // wrap: the free range is now [0, tail)
-        if (a->spanCount && size > tail) return false;
-        if (size > a->ringSize) return false;
-    }
-    *offset = start;
-    a->head = start + size;
-    return true;
-}
-
-u32 push_span(GlAdapter* a, u64 begin, u64 end) noexcept {
-    u32 const i = (a->spanFirst + a->spanCount) % u32(a->spans.size());
-    a->spans[i] = Span{begin, end, false};
-    ++a->spanCount;
-    return i;
-}
-
-void pop_done_spans(GlAdapter* a) noexcept {
-    while (a->spanCount && a->spans[a->spanFirst].done) {
-        a->spanFirst = (a->spanFirst + 1) % u32(a->spans.size());
-        --a->spanCount;
-    }
-}
-
 void release_object(GlAdapter* a, u32 index) noexcept {
     Object& o = a->objects[index];
     if (o.handle) glMakeTextureHandleNonResidentARB(o.handle);
@@ -173,7 +132,6 @@ void release_object(GlAdapter* a, u32 index) noexcept {
     a->freeObjects.push_back(index);
 }
 
-/// The GL side of one committed upload: create the object, copy from the staging buffer.
 /// True if the storage just allocated exists: GL reports running out of memory only as an error.
 bool storage_ok(Upload const& u) noexcept {
     bool ok = true;
@@ -238,8 +196,7 @@ bool poll(GlAdapter* a, u32 index) noexcept {
     u.fence = nullptr;
     u.done  = true;
     std::lock_guard<std::mutex> const lock(a->mutex);
-    a->spans[u.span].done = true;
-    pop_done_spans(a);
+    a->ring.release(u.span);
     return true;
 }
 
@@ -257,9 +214,9 @@ void copy_constraints(void*, CopyConstraints* out) {
 
 Status begin_upload(void* user, UploadDesc const& desc, UploadTarget* out) {
     auto* a = static_cast<GlAdapter*>(user);
-    if (desc.size > a->ringSize) {
+    if (!a->ring.can_fit(desc.size)) {
         KILN_ERROR("gl", "upload of %llu bytes exceeds the %llu-byte staging ring", ull(desc.size),
-                   ull(a->ringSize));
+                   ull(a->ring.size()));
         return make_status(Code::Unsupported); // can never fit: not Busy
     }
     if (desc.kind == UploadKind::TextureLevels &&
@@ -271,8 +228,9 @@ Status begin_upload(void* user, UploadDesc const& desc, UploadTarget* out) {
         return make_status(Code::OutOfMemory);
     }
     if (a->freeUploads.empty()) return make_status(Code::Busy);
-    u64 offset = 0;
-    if (!ring_alloc(a, max<u64>(desc.size, 1), &offset)) return make_status(Code::Busy);
+    ex::StagingRing::Reservation const r = a->ring.reserve(desc.size, kUploadAlign);
+    if (!r.ok()) return make_status(Code::Busy);
+    u64 const offset = r.offset;
 
     u32 const ui = a->freeUploads.back();
     a->freeUploads.pop_back();
@@ -288,7 +246,7 @@ Status begin_upload(void* user, UploadDesc const& desc, UploadTarget* out) {
     u.tex                                       = desc.texture ? *desc.texture : TextureDesc{};
     u.size                                      = desc.size;
     u.offset                                    = offset;
-    u.span                                      = push_span(a, offset, offset + max<u64>(desc.size, 1));
+    u.span                                      = r.id;
 
     out->dst           = a->mapped + offset;
     out->rowPitchAlign = 1;
@@ -415,12 +373,12 @@ GlVertexFormat gl_vertex_format(Format f) noexcept {
 Result<GlAdapter*> gl_adapter_create(GlAdapterDesc const& desc, Adapter* out) noexcept {
     if (!out || desc.stagingBytes == 0 || desc.maxObjects == 0 || desc.maxUploads == 0)
         return make_status(Code::InvalidArgument);
-    auto* a     = new_object<GlAdapter>(default_allocator(), Tag::Payload);
-    a->ringSize = desc.stagingBytes;
+    auto* a = new_object<GlAdapter>(default_allocator(), Tag::Payload);
+    a->ring = ex::StagingRing(default_allocator(), desc.stagingBytes, desc.maxUploads);
     glCreateBuffers(1, &a->staging);
     GLbitfield const flags = GL_MAP_WRITE_BIT | GL_MAP_PERSISTENT_BIT | GL_MAP_COHERENT_BIT;
-    glNamedBufferStorage(a->staging, GLsizeiptr(a->ringSize), nullptr, flags);
-    a->mapped = static_cast<u8*>(glMapNamedBufferRange(a->staging, 0, GLsizeiptr(a->ringSize), flags));
+    glNamedBufferStorage(a->staging, GLsizeiptr(a->ring.size()), nullptr, flags);
+    a->mapped = static_cast<u8*>(glMapNamedBufferRange(a->staging, 0, GLsizeiptr(a->ring.size()), flags));
     if (!a->mapped) {
         glDeleteBuffers(1, &a->staging);
         delete_object(default_allocator(), a, Tag::Payload);
@@ -428,7 +386,6 @@ Result<GlAdapter*> gl_adapter_create(GlAdapterDesc const& desc, Adapter* out) no
     }
     a->objects.resize(desc.maxObjects);
     a->uploads.resize(desc.maxUploads);
-    a->spans.resize(desc.maxUploads * 2);
     for (u32 i = desc.maxObjects; i-- > 0;)
         a->freeObjects.push_back(i);
     for (u32 i = desc.maxUploads; i-- > 0;)

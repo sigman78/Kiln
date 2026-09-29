@@ -195,3 +195,14 @@ rediscover them). The design and the mapping tables are in `design/integration-e
   creation (table row: upload failure).
 - nga: the offscreen color target had no barrier between frames, only the depth target; added.
 - sokol on macOS: `LANGUAGE OBJC` needs `enable_language(OBJC)` first.
+
+### Adapter review: shared helpers (2026-09-29)
+
+- `examples/adapter_support` holds CPU-only helpers for the example adapters, apart from the
+  GLFW-dependent `examples/common`. First: `ex::StagingRing` (reserve with alignment, release in
+  any order, space back in reservation order, `can_fit()` to tell Unsupported from Busy). `kiln-gl`
+  and `kiln-nga` dropped their identical copies (about 40 lines net each). The Vulkan adapter keeps its
+  timeline-value ring for now.
+- Still candidates: a generation-checked pool for upload tickets and a bounded committed-work
+  queue (GL, sokol, NGA), and an `Allocator` plus stats in every adapter desc. Promote any of them
+  into the library only after they prove themselves here.

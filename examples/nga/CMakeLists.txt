@@ -107,7 +107,7 @@ add_executable(kiln-nga main.cpp nga_adapter.h nga_adapter.cpp nga_root.h scene.
 set_source_files_properties(scene.slang sky.slang PROPERTIES HEADER_FILE_ONLY TRUE)
 kiln_apply_defaults(kiln-nga)
 target_compile_definitions(kiln-nga PRIVATE KILN_NGA_SHADER_DIR="${_spv_dir}")
-target_link_libraries(kiln-nga PRIVATE kiln_runtime kiln_example_common kiln_nga_lib)
+target_link_libraries(kiln-nga PRIVATE kiln_runtime kiln_example_common kiln_example_adapter_support kiln_nga_lib)
 if(TARGET kiln_cook)
     target_link_libraries(kiln-nga PRIVATE kiln_cook)
     target_compile_definitions(kiln-nga PRIVATE KILN_NGA_HAS_COOK=1)

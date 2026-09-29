@@ -4,6 +4,8 @@
 // host's frames to queue 0.
 #include "nga_adapter.h"
 
+#include "staging_ring.h"
+
 #include <kiln/alloc.h>
 #include <kiln/containers.h>
 #include <kiln/log.h>
@@ -97,11 +99,6 @@ struct Upload {
     u64 value         = 0; ///< timeline value of the submission that copies it
 };
 
-struct Span {
-    u64 begin = 0, end = 0;
-    bool done = false;
-};
-
 gpu::Format gpu_format(Format f) noexcept {
     switch (f) {
     case Format::R8_UNORM: return gpu::Format::r8_unorm;
@@ -129,9 +126,7 @@ struct NgaAdapter {
     std::mutex mutex;
 
     gpu::GpuHeap staging{};
-    u64 head = 0;
-    Vec<Span> spans; ///< circular FIFO of staging allocations
-    u32 spanFirst = 0, spanCount = 0;
+    ex::StagingRing ring; ///< reservations in `staging`, released when their copy completed
 
     gpu::GpuHeap meshHeap{};
     RangeAllocator meshRanges;
@@ -170,39 +165,6 @@ Upload* upload_of(NgaAdapter* a, u64 token) noexcept {
     return u.used && u.gen == u32(token >> 32) ? &u : nullptr;
 }
 
-/// A contiguous staging range, or false when it does not fit now (see examples/gl/gl_adapter.cpp).
-bool ring_alloc(NgaAdapter* a, u64 size, u64* offset) noexcept {
-    if (a->spanCount == u32(a->spans.size())) return false;
-    if (a->spanCount == 0) a->head = 0;
-    u64 const ringSize = a->staging.range.size;
-    u64 const tail     = a->spanCount ? a->spans[a->spanFirst].begin : 0;
-    u64 start          = align_up(a->head, kUploadAlign);
-    bool const wrapped = a->spanCount && a->head <= tail;
-    if (wrapped) {
-        if (start + size > tail) return false;
-    } else if (start + size > ringSize) {
-        start = 0;
-        if ((a->spanCount && size > tail) || size > ringSize) return false;
-    }
-    *offset = start;
-    a->head = start + size;
-    return true;
-}
-
-u32 push_span(NgaAdapter* a, u64 begin, u64 end) noexcept {
-    u32 const i = (a->spanFirst + a->spanCount) % u32(a->spans.size());
-    a->spans[i] = Span{begin, end, false};
-    ++a->spanCount;
-    return i;
-}
-
-void pop_done_spans(NgaAdapter* a) noexcept {
-    while (a->spanCount && a->spans[a->spanFirst].done) {
-        a->spanFirst = (a->spanFirst + 1) % u32(a->spans.size());
-        --a->spanCount;
-    }
-}
-
 void release_object(NgaAdapter* a, u32 index) noexcept {
     Object& o = a->objects[index];
     if (o.texture) gpu::destroy_texture(o.texture);
@@ -217,10 +179,7 @@ void release_object(NgaAdapter* a, u32 index) noexcept {
 void free_upload(NgaAdapter* a, u32 index) noexcept {
     std::lock_guard<std::mutex> const lock(a->mutex);
     Upload& u = a->uploads[index];
-    if (u.kind == UploadKind::TextureLevels) {
-        a->spans[u.span].done = true;
-        pop_done_spans(a);
-    }
+    if (u.kind == UploadKind::TextureLevels) a->ring.release(u.span);
     u.used = false;
     ++u.gen;
     a->freeUploads.push_back(index);
@@ -325,7 +284,7 @@ Status begin_upload(void* user, UploadDesc const& desc, UploadTarget* out) {
                       gpu_format(desc.texture->format) == gpu::Format::undefined))
         return make_status(Code::Unsupported);
     u64 const size = max<u64>(desc.size, 1);
-    u64 const room = isTexture ? a->staging.range.size : a->desc.meshBytes;
+    u64 const room = isTexture ? a->ring.size() : a->desc.meshBytes;
     if (size > room) { // can never fit: not Busy
         KILN_ERROR("nga", "upload of %llu bytes exceeds the %llu-byte %s",
                    static_cast<unsigned long long>(size), static_cast<unsigned long long>(room),
@@ -339,7 +298,12 @@ Status begin_upload(void* user, UploadDesc const& desc, UploadTarget* out) {
     }
     if (a->freeUploads.empty()) return make_status(Code::Busy);
     u64 offset = 0;
-    if (isTexture ? !ring_alloc(a, size, &offset) : !a->meshRanges.alloc(size, kUploadAlign, &offset))
+    ex::StagingRing::Reservation r;
+    if (isTexture) {
+        r      = a->ring.reserve(size, kUploadAlign);
+        offset = r.offset;
+    }
+    if (isTexture ? !r.ok() : !a->meshRanges.alloc(size, kUploadAlign, &offset))
         return make_status(Code::Busy);
 
     u32 const ui = a->freeUploads.back();
@@ -364,7 +328,7 @@ Status begin_upload(void* user, UploadDesc const& desc, UploadTarget* out) {
     u.size          = desc.size;
     u.stagingOffset = offset;
     u.value         = 0;
-    if (isTexture) u.span = push_span(a, offset, offset + size);
+    if (isTexture) u.span = r.id;
 
     out->dst           = (isTexture ? a->staging.range.cpu : a->meshHeap.range.cpu) + offset;
     out->rowPitchAlign = 1;
@@ -505,7 +469,7 @@ Result<NgaAdapter*> nga_adapter_create(NgaAdapterDesc const& desc, Adapter* out)
     a->textureRanges.init(desc.textureBytes);
     a->objects.resize(kMaxObjects);
     a->uploads.resize(kMaxUploads);
-    a->spans.resize(kMaxUploads * 2);
+    a->ring = ex::StagingRing(default_allocator(), a->staging.range.size, kMaxUploads);
     for (u32 i = kMaxObjects; i-- > 0;)
         a->freeObjects.push_back(i);
     for (u32 i = kMaxUploads; i-- > 0;)

@@ -36,6 +36,10 @@ if(KILN_BUILD_TESTS)
     endif()
 endif()
 
+# CPU-only helpers for the example adapters, built with every example set so their tests run in
+# the default CI.
+add_subdirectory(adapter_support)
+
 # The windowed examples share GLFW and examples/common (docs/design/integration-examples.md).
 if(KILN_BUILD_VIEWER OR KILN_EXAMPLE_GL OR KILN_EXAMPLE_GL_BINDLESS OR KILN_EXAMPLE_SOKOL OR KILN_EXAMPLE_VK_BASIC OR KILN_EXAMPLE_NGA)
     add_subdirectory(common)
