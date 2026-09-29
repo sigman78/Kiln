@@ -51,12 +51,13 @@ kiln-viewer --source path/to/models --store build/my-store Robot.glb
 kiln-viewer --source examples/assets/khronos --root gen=tests/corpus/gltf/generated \
     --store build/roots-store WaterBottle.glb gen:external_uri.gltf
 
-# a sky: a cube texture behind the scene, here a vertical strip of 6 faces (+X -X +Y -Y +Z -Z)
-kiln-viewer --source examples/assets/khronos --root sky=path/to/skies --sky sky:clouds_cube.png \
+# a sky: a cube texture behind the scene, a vertical strip of 6 faces (+X -X +Y -Y +Z -Z);
+# the committed test skies are in examples/assets/skies (see its README)
+kiln-viewer --source examples/assets/khronos --root sky=examples/assets/skies --sky sky:test_cube.png \
     --store build/demo-store WaterBottle.glb
 
 # an HDR sky (a Radiance .hdr strip): tonemapped with ACES automatically; -2 EV darkens it
-kiln-viewer --source examples/assets/khronos --root sky=path/to/skies --sky sky:sunset_cube.hdr \
+kiln-viewer --source examples/assets/khronos --root sky=examples/assets/skies --sky sky:hdr_cube.hdr \
     --exposure -2 --store build/demo-store WaterBottle.glb
 
 # hot reload: re-export Robot.glb and the view updates in about a second
