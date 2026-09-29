@@ -84,6 +84,7 @@ KILN_TEST(BuildKey, EveryFieldCounts) {
     KILN_CHECK(!(build_key(d) == ks));
 }
 
+#if KILN_MESH // these cook glTF sources; a KILN_MESH=OFF build cannot
 KILN_TEST(CookUnit, RecordsEveryInputFile) {
     char dir[1024], source[1024];
     format(dir, sizeof dir, "%s/../gltf/generated", kiln::test::corpus_dir());
@@ -158,6 +159,7 @@ KILN_TEST(CookUnit, EmbeddedImagesAreOutputs) {
     }
 }
 
+#endif
 // ---------------------------------------------------------------------------
 // Catalog format 0.1
 // ---------------------------------------------------------------------------
@@ -357,6 +359,7 @@ KILN_TEST(Catalog, Paths) {
     KILN_CHECK(check_profile_name("a/b"_sv) != nullptr);
 }
 
+#if KILN_MESH // these cook glTF sources; a KILN_MESH=OFF build cannot
 // ---------------------------------------------------------------------------
 // Catalog stores: artifacts, the lock, catalog and input records
 // ---------------------------------------------------------------------------
@@ -1003,3 +1006,5 @@ KILN_TEST(CatalogCli, LayoutsDoNotMix) {
     KILN_CHECK_EQ(run_cook(sources, store), 2);             // a named store
     KILN_CHECK_EQ(run_cook(sources, store, "--verify"), 2); // still a named store
 }
+
+#endif // KILN_MESH
