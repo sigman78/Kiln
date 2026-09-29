@@ -7,6 +7,7 @@
 #include <kiln/containers.h>
 #include <kiln/log.h>
 
+#include "commit_queue.h"
 #include "upload_pool.h"
 
 #include <mutex>
@@ -67,8 +68,7 @@ struct SokolAdapter {
     Vec<Object> objects;
     Vec<u32> freeObjects;
     ex::UploadPool<Upload> uploads;
-    Vec<u32> committed; ///< upload indices waiting for flush, in commit order
-    Vec<u32> flushing;  ///< flush's copy of `committed`
+    ex::CommitQueue commits; ///< committed uploads, waiting for flush
 };
 
 namespace {
@@ -200,11 +200,14 @@ Status begin_upload(void* user, UploadDesc const& desc, UploadTarget* out) {
 
 void commit_upload(void* user, u64 token) {
     auto* a = static_cast<SokolAdapter*>(user);
-    std::lock_guard<std::mutex> const lock(a->mutex);
-    u32 const i = a->uploads.index_of(token);
-    if (i == kInvalid) return;
-    a->uploads.advance(i, ex::UploadState::Committed);
-    a->committed.push_back(i);
+    u32 i   = kInvalid;
+    {
+        std::lock_guard<std::mutex> const lock(a->mutex);
+        i = a->uploads.index_of(token);
+        if (i == kInvalid) return;
+        a->uploads.advance(i, ex::UploadState::Committed);
+    }
+    a->commits.push(i);
 }
 
 /// sokol creates a resource at once and orders its use itself: an upload is done once flushed.
@@ -231,14 +234,7 @@ void destroy(void* user, GpuObject obj) {
 /// pump(), which the host calls from the sokol_app frame callback.
 void flush(void* user) {
     auto* a = static_cast<SokolAdapter*>(user);
-    {
-        std::lock_guard<std::mutex> const lock(a->mutex);
-        a->flushing.clear();
-        for (u32 i : a->committed)
-            a->flushing.push_back(i);
-        a->committed.clear();
-    }
-    for (u32 i : a->flushing) {
+    for (u32 i : a->commits.take()) {
         Upload& u     = a->uploads[i];
         bool const ok = make_object(a, u);
         free_bytes(u);
@@ -277,20 +273,19 @@ Result<SokolAdapter*> sokol_adapter_create(SokolAdapterDesc const& desc, Adapter
     a->uploads = ex::UploadPool<Upload>(default_allocator(), desc.maxUploads);
     for (u32 i = desc.maxObjects; i-- > 0;)
         a->freeObjects.push_back(i);
-    a->committed.reserve(desc.maxUploads);
-    a->flushing.reserve(desc.maxUploads);
-    *out = Adapter{
-        .supports_format  = &supports_format,
-        .copy_constraints = &copy_constraints,
-        .begin_upload     = &begin_upload,
-        .commit_upload    = &commit_upload,
-        .upload_status    = &upload_status,
-        .bind             = nullptr, // bindings are rebuilt per draw from gpu_object()
-        .destroy          = &destroy,
-        .flush            = &flush,
-        .caps             = kCubeTextures | kArrayTextures | kMeshes,
-        .reserved         = {},
-        .user             = a,
+    a->commits = ex::CommitQueue(default_allocator(), desc.maxUploads);
+    *out       = Adapter{
+              .supports_format  = &supports_format,
+              .copy_constraints = &copy_constraints,
+              .begin_upload     = &begin_upload,
+              .commit_upload    = &commit_upload,
+              .upload_status    = &upload_status,
+              .bind             = nullptr, // bindings are rebuilt per draw from gpu_object()
+              .destroy          = &destroy,
+              .flush            = &flush,
+              .caps             = kCubeTextures | kArrayTextures | kMeshes,
+              .reserved         = {},
+              .user             = a,
     };
     return a;
 }

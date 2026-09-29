@@ -4,6 +4,7 @@
 // pump thread.
 #include "gl_adapter.h"
 
+#include "commit_queue.h"
 #include "gl_api.h"
 #include "staging_ring.h"
 #include "upload_pool.h"
@@ -85,9 +86,8 @@ struct GlAdapter {
     Vec<Object> objects;
     Vec<u32> freeObjects;
     ex::UploadPool<Upload> uploads;
-    Vec<u32> committed; ///< upload indices waiting for flush, in commit order
-    Vec<u32> flushing;  ///< flush's copy of `committed`
-    Vec<u32> inFlight;  ///< flushed, fence not yet signaled
+    ex::CommitQueue commits; ///< committed uploads, waiting for flush
+    Vec<u32> inFlight;       ///< flushed, fence not yet signaled
 
     // Bindless only.
     bool bindless      = false;
@@ -240,11 +240,14 @@ Status begin_upload(void* user, UploadDesc const& desc, UploadTarget* out) {
 
 void commit_upload(void* user, u64 token) {
     auto* a = static_cast<GlAdapter*>(user);
-    std::lock_guard<std::mutex> const lock(a->mutex);
-    u32 const i = a->uploads.index_of(token);
-    if (i == kInvalid) return;
-    a->uploads.advance(i, ex::UploadState::Committed);
-    a->committed.push_back(i);
+    u32 i   = kInvalid;
+    {
+        std::lock_guard<std::mutex> const lock(a->mutex);
+        i = a->uploads.index_of(token);
+        if (i == kInvalid) return;
+        a->uploads.advance(i, ex::UploadState::Committed);
+    }
+    a->commits.push(i);
 }
 
 UploadStatus upload_status(void* user, u64 token) {
@@ -308,19 +311,13 @@ void flush(void* user) {
             ++i;
         }
     }
-    {
-        std::lock_guard<std::mutex> const lock(a->mutex);
-        a->flushing.clear();
-        for (u32 i : a->committed)
-            a->flushing.push_back(i);
-        a->committed.clear();
-    }
-    if (a->flushing.empty()) return;
+    Span<u32 const> const work = a->commits.take();
+    if (work.empty()) return;
     glBindBuffer(GL_PIXEL_UNPACK_BUFFER, a->staging);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
     glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
     usize const firstNew = a->inFlight.size();
-    for (u32 i : a->flushing) {
+    for (u32 i : work) {
         if (run_upload(a, a->uploads[i])) {
             a->uploads.advance(i, ex::UploadState::InFlight);
             a->inFlight.push_back(i);
@@ -371,8 +368,7 @@ Result<GlAdapter*> gl_adapter_create(GlAdapterDesc const& desc, Adapter* out) no
     a->uploads = ex::UploadPool<Upload>(default_allocator(), desc.maxUploads);
     for (u32 i = desc.maxObjects; i-- > 0;)
         a->freeObjects.push_back(i);
-    a->committed.reserve(desc.maxUploads);
-    a->flushing.reserve(desc.maxUploads);
+    a->commits = ex::CommitQueue(default_allocator(), desc.maxUploads);
     a->inFlight.reserve(desc.maxUploads);
     if (desc.bindless) {
         a->bindless = true;

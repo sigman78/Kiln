@@ -207,6 +207,9 @@ rediscover them). The design and the mapping tables are in `design/integration-e
   replaced up to five bools per adapter (GL's `committed` was written and never read), and
   `advance()` asserts each transition; tokens are generation-checked. `kiln-gl`, `kiln-sokol` and
   `kiln-nga` use it. Vulkan keeps its `ObjectState`, since its upload and object records are one.
-- Still candidates: a bounded committed-work queue (GL, sokol, NGA), and an `Allocator` plus stats
-  in every adapter desc. Promote any of them
+- Third: `ex::CommitQueue`, the handoff from `commit_upload` (workers) to `flush` (pump thread),
+  with its own lock: push from any thread, `take()` swaps two reserved buffers, so the GPU work
+  runs outside the lock and nothing allocates. `kiln-nga` pushes an index again to retry it.
+  Replaces the `committed` / `flushing` vector pairs in GL, sokol and NGA.
+- Still a candidate: an `Allocator` plus stats in every adapter desc. Promote any of them
   into the library only after they prove themselves here.

@@ -4,6 +4,7 @@
 // host's frames to queue 0.
 #include "nga_adapter.h"
 
+#include "commit_queue.h"
 #include "staging_ring.h"
 #include "upload_pool.h"
 
@@ -136,8 +137,7 @@ struct NgaAdapter {
     Vec<Object> objects;
     Vec<u32> freeObjects;
     ex::UploadPool<Upload> uploads;
-    Vec<u32> committed;
-    Vec<u32> flushing;
+    ex::CommitQueue commits; ///< committed uploads, waiting for flush
     Vec<u32> inFlight;
 
     gpu::TimelineSemaphore* timeline       = nullptr;
@@ -319,11 +319,14 @@ Status begin_upload(void* user, UploadDesc const& desc, UploadTarget* out) {
 
 void commit_upload(void* user, u64 token) {
     auto* a = static_cast<NgaAdapter*>(user);
-    std::lock_guard<std::mutex> const lock(a->mutex);
-    u32 const i = a->uploads.index_of(token);
-    if (i == kInvalid) return;
-    a->uploads.advance(i, ex::UploadState::Committed);
-    a->committed.push_back(i);
+    u32 i   = kInvalid;
+    {
+        std::lock_guard<std::mutex> const lock(a->mutex);
+        i = a->uploads.index_of(token);
+        if (i == kInvalid) return;
+        a->uploads.advance(i, ex::UploadState::Committed);
+    }
+    a->commits.push(i);
 }
 
 UploadStatus upload_status(void* user, u64 token) {
@@ -369,18 +372,10 @@ void flush(void* user) {
             ++i;
         }
     }
-    {
-        std::lock_guard<std::mutex> const lock(a->mutex);
-        a->flushing.clear();
-        for (u32 i : a->committed)
-            a->flushing.push_back(i);
-        a->committed.clear();
-    }
     gpu::CommandBuffer* cmd = nullptr;
     u64 const value         = a->lastValue + 1;
-    for (u32 n = 0; n < a->flushing.size(); ++n) {
-        u32 const i = a->flushing[n];
-        Upload& u   = a->uploads[i];
+    for (u32 const i : a->commits.take()) {
+        Upload& u = a->uploads[i];
         if (u.kind == UploadKind::MeshPayload) { // written in place by kiln; visible to later submissions
             a->uploads.advance(i, ex::UploadState::Complete);
             continue;
@@ -388,8 +383,7 @@ void flush(void* user) {
         if (!cmd) cmd = gpu::begin_commands(next_pool(a));
         Record const r = record_texture(a, cmd, u);
         if (r == Record::Retry) { // heap or descriptors full: try again next flush
-            std::lock_guard<std::mutex> const lock(a->mutex);
-            a->committed.push_back(i);
+            a->commits.push(i);
             continue;
         }
         if (r == Record::Failed) { // no GPU work: done at once
@@ -454,8 +448,7 @@ Result<NgaAdapter*> nga_adapter_create(NgaAdapterDesc const& desc, Adapter* out)
     for (u32 i = desc.maxDescriptors; i-- > 0;)
         a->freeDescriptors.push_back(i);
     a->slotDescriptor.resize(desc.maxSlots, kInvalid);
-    a->committed.reserve(kMaxUploads);
-    a->flushing.reserve(kMaxUploads);
+    a->commits = ex::CommitQueue(default_allocator(), kMaxUploads);
     a->inFlight.reserve(kMaxUploads);
 
     *out = Adapter{

@@ -12,9 +12,12 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
   adapters share, starting with `ex::StagingRing`, a FIFO allocator for upload staging memory
   whose ranges may be released in any order, and `ex::UploadPool<T>`, upload records with one
   `UploadState` each (Free, Writing, Committed, InFlight, Complete, Failed; transitions asserted)
-  and generation-checked tokens. `kiln-gl` and `kiln-nga` use both, `kiln-sokol` the pool, in
-  place of their copies of the same code and of per-upload `used` / `committed` / `flushed` /
-  `done` / `failed` flags; the tests (`kiln_adapter_support_tests`) run with the default CI.
+  and generation-checked tokens, and `ex::CommitQueue`, the bounded handoff of committed uploads
+  from kiln's workers to `flush` (push from any thread, `take()` everything in commit order, the
+  GPU work outside its lock). `kiln-gl` and `kiln-nga` use all three, `kiln-sokol` the pool and
+  the queue, in place of their copies of the same code, their per-upload `used` / `committed` /
+  `flushed` / `done` / `failed` flags and their `committed` / `flushing` vector pairs; the tests
+  (`kiln_adapter_support_tests`) run with the default CI.
 - Hardening: `checked_add` / `checked_mul` and the `NothrowStorable` concept (`core.h`);
   `alloc_array`, `Vec` and `HashMap` panic on size overflow instead of allocating short, and
   `alloc()` panics on an alignment that is not a power of two. CMake `KILN_SANITIZE` (e.g.
