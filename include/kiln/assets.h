@@ -58,10 +58,11 @@ struct RequestOptions {
     // reserved: range (partial loads, v0.8)
 };
 
-/// Where cooked files live. v0.5 has one layout, `store_file_path()` (what `kiln-cook` writes
-/// by default). The content hash is stored inside each file for invalidation; a hashed
-/// layout with an index file arrives in v0.6.
-enum class StoreLayout : u8 { Named = 0 };
+/// Where cooked files live (docs/design/store-catalog.md).
+enum class StoreLayout : u8 {
+    Named = 0, ///< a file per asset name (store_file_path()), used while it exists
+    Catalog,   ///< `catalogs/<profile>.kcat` maps names to immutable artifacts named by build key
+};
 
 /// Host-supplied placeholder pixels for one texture kind (RGBA8, tightly packed).
 struct PlaceholderDesc {
@@ -110,7 +111,9 @@ struct ContextDesc {
     StrView storeDir        = {}; ///< cooked store root (read-only for the runtime)
     Span<Root const> roots  = {}; ///< where the cook provider looks for sources (dev)
     StoreLayout storeLayout = StoreLayout::Named;
-    bool devPlaceholders    = KILN_DEBUG != 0; ///< Failed textures show the magenta checker
+    /// Catalog layout: the target profile whose catalog create() reads (check_profile_name()).
+    StrView profile      = "compat";
+    bool devPlaceholders = KILN_DEBUG != 0; ///< Failed textures show the magenta checker
     /// A store whose profile has formats the adapter cannot sample makes create() fail (K5018).
     /// True makes that a warning; each such asset then fails on its own. For tools and debugging.
     bool allowUnsampledFormats               = false;
@@ -361,6 +364,9 @@ struct ContextStats {
 };
 [[nodiscard]] KILN_API ContextStats stats(Context* ctx) noexcept;
 [[nodiscard]] KILN_API StrView store_dir(Context* ctx) noexcept;
+[[nodiscard]] KILN_API StoreLayout store_layout(Context* ctx) noexcept;
+/// ContextDesc::profile (an owned copy); empty in the Named layout.
+[[nodiscard]] KILN_API StrView store_profile(Context* ctx) noexcept;
 /// The roots from ContextDesc (owned copies).
 [[nodiscard]] KILN_API Span<Root const> roots(Context* ctx) noexcept;
 [[nodiscard]] KILN_API Allocator const* allocator(Context* ctx) noexcept;
@@ -393,6 +399,8 @@ enum RuntimeDiagCode : u32 {
     kDiagTextureShapeMismatch = 5017, ///< the cooked texture's shape is not the requested one
     kDiagStoreProfileUnsampled =
         5018, ///< the store's profile has formats the adapter cannot sample, or its kiln-store.txt is bad
+    kDiagCatalogMissing =
+        5019, ///< Catalog layout: a request missed and the profile has no catalog (NotFound)
 };
 
 } // namespace kiln

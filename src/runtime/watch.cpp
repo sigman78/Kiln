@@ -12,6 +12,11 @@
 // stat). A reported entry is disarmed, so it is reported once until the next settle.
 // pump() (watch_drain) copies the hits out under the lock and requests the reloads
 // after releasing it; a hit whose slot generation changed meanwhile is dropped.
+//
+// Catalog layout: artifacts never change, so no slot is armed. The poller watches the catalog
+// file instead: on a new stat it reads and validates the file and, if its checksum differs from
+// the catalog in use, hands it to the pump thread under the mutex. watch_drain() swaps it in and
+// reloads every asset whose entry names another artifact.
 #include "runtime_internal.h"
 
 #if defined(KILN_HOT_RELOAD) && KILN_HOT_RELOAD
@@ -48,6 +53,14 @@ struct Watch {
     WatchHit* drained   = nullptr; ///< maxAssets, pump thread only
     u32 pollMs          = 250;
     std::thread thread;
+
+    // Catalog layout.
+    IoStat catalogStat;            ///< poller thread only: the catalog file as last read
+    bool catalogStatValid = false; ///< poller thread only
+    Hash128 catalogSum;            ///< under mutex: checksum of the catalog in use (or pending)
+    Vec<u8> pending;               ///< under mutex: a new catalog for the pump thread
+    CatalogView pendingView;       ///< under mutex: views `pending`
+    bool hasPending = false;       ///< under mutex
 };
 
 namespace {
@@ -56,9 +69,66 @@ bool same_stat(IoStat const& a, IoStat const& b) noexcept {
     return a.size == b.size && a.mtimeNs == b.mtimeNs;
 }
 
+/// The checksum stored in a validated catalog.
+Hash128 checksum_of(Span<u8 const> catalog) noexcept {
+    Hash128 h;
+    std::memcpy(h.bytes, catalog.data + kCatalogChecksumOffset, sizeof h.bytes);
+    return h;
+}
+
+/// Reads the catalog again if its stat changed; a valid one with a new checksum becomes pending.
+void poll_catalog(Context* ctx, Watch& w) noexcept {
+    IoBackend const* io = ctx->io;
+    char path[1024];
+    usize const n = catalog_path(ctx, path, sizeof path);
+    if (n + 1 >= sizeof path) return;
+    IoStat now;
+    // Missing (not written yet, or a rename in progress): look again next round.
+    if (io->stat(io->user, StrView(path, n), &now).failed()) return;
+    if (w.catalogStatValid && same_stat(now, w.catalogStat)) return;
+    Vec<u8> bytes(ctx->alloc, Tag::Io);
+    if (io_read_file(io, StrView(path, n), ctx->alloc, &bytes).failed()) return;
+    w.catalogStat               = now;
+    w.catalogStatValid          = true;
+    Result<CatalogView> const v = CatalogView::open(bytes.span(), nullptr, StrView(path, n));
+    if (v.failed()) {
+        KILN_WARN("reload", "%s changed but is not a valid catalog (%s); keeping the one in use", path,
+                  code_name(v.status().code));
+        return;
+    }
+    Hash128 const sum = checksum_of(bytes.span());
+    std::lock_guard<std::mutex> lock(w.mutex);
+    if (sum == w.catalogSum) return;
+    w.catalogSum  = sum;
+    w.pending     = std::move(bytes); // the view's bytes stay where they are
+    w.pendingView = *v;
+    w.hasPending  = true;
+}
+
+/// A new catalog is in use: reload each asset whose entry now names another artifact, or that
+/// failed and has an entry now. An asset that left the catalog stays as it is.
+void catalog_changed(Context* ctx) noexcept {
+    for (u32 i = 0; i < ctx->maxAssets; ++i) {
+        Slot& s = ctx->slots[i];
+        if (!s.live || s.zombie || s.source != SourceKind::File) continue;
+        CatalogEntry e;
+        if (!ctx->catalog.find(s.kind, path_of(s), &e)) continue;
+        bool const settled = s.phase == Phase::Done;
+        bool const hasKey  = settled ? s.keyValid : s.jobKeyValid;
+        Hash128 const& key = settled ? s.key : s.jobKey;
+        if (hasKey ? key == e.key : !(settled && s.state == State::Failed)) continue;
+        reload_slot(ctx, s);
+    }
+}
+
 /// One round over every armed entry. Returns false when asked to stop.
 bool poll_round(Context* ctx, Watch& w) noexcept {
     IoBackend const* io = ctx->io;
+    if (ctx->layout == StoreLayout::Catalog) {
+        poll_catalog(ctx, w);
+        std::lock_guard<std::mutex> lock(w.mutex);
+        return !w.stop;
+    }
     WatchEntry e;
     char file[1024];
     for (u32 i = 0; i < ctx->maxAssets; ++i) {
@@ -120,6 +190,8 @@ void watch_start(Context* ctx, HotReloadDesc const& desc) noexcept {
     w->hits    = alloc_array<WatchHit>(a, ctx->maxAssets, Tag::Registry);
     w->drained = alloc_array<WatchHit>(a, ctx->maxAssets, Tag::Registry);
     w->pollMs  = max(desc.pollMs, 1u);
+    w->pending.init(a, Tag::Io);
+    if (ctx->catalogPresent) w->catalogSum = checksum_of(ctx->catalogBytes.span());
     // Set before any job runs and cleared only by watch_free() after the jobs drained:
     // workers read it (the meta stage records a stat only when watching).
     ctx->watch = w;
@@ -158,6 +230,7 @@ void watch_free(Context* ctx) noexcept {
     free_array(a, w->entries, ctx->maxAssets, Tag::Registry);
     free_array(a, w->hits, ctx->maxAssets, Tag::Registry);
     free_array(a, w->drained, ctx->maxAssets, Tag::Registry);
+    w->pending.release();
     delete_object(a, w, Tag::Registry);
     ctx->watch = nullptr;
 }
@@ -165,14 +238,24 @@ void watch_free(Context* ctx) noexcept {
 void watch_drain(Context* ctx) noexcept {
     Watch* w = ctx->watch;
     if (!w) return;
-    u32 n = 0;
+    u32 n           = 0;
+    bool newCatalog = false;
     {
         std::lock_guard<std::mutex> lock(w->mutex);
         n = w->hitCount;
         for (u32 i = 0; i < n; ++i)
             w->drained[i] = w->hits[i];
         w->hitCount = 0;
+        if (w->hasPending) {
+            ctx->catalogBytes   = std::move(w->pending);
+            ctx->catalog        = w->pendingView;
+            ctx->catalogPresent = true;
+            w->pending.init(ctx->alloc, Tag::Io);
+            w->hasPending = false;
+            newCatalog    = true;
+        }
     }
+    if (newCatalog) catalog_changed(ctx);
     for (u32 i = 0; i < n; ++i) {
         Slot& s = ctx->slots[w->drained[i].index];
         if (s.live && !s.zombie && s.generation == w->drained[i].generation) reload_slot(ctx, s);
@@ -181,7 +264,7 @@ void watch_drain(Context* ctx) noexcept {
 
 void watch_arm(Context* ctx, Slot const& s) noexcept {
     Watch* w = ctx->watch;
-    if (!w) return;
+    if (!w || ctx->layout == StoreLayout::Catalog) return;
     std::lock_guard<std::mutex> lock(w->mutex);
     WatchEntry& e = w->entries[s.index];
     if (e.generation != s.generation) { // another asset in this slot: forget the old stat

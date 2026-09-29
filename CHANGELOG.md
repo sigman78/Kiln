@@ -64,6 +64,13 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
   existing key); the profile's catalog and input records (`inputs/<profile>.kin`) rewritten by a
   temporary file and a rename; one writer per profile, an OS lock on `catalogs/<profile>.lock`
   (K3009). The named layout refuses a catalog store and the reverse (K3008).
+- **The runtime reads catalog stores** (step 4): `StoreLayout::Catalog` with `ContextDesc::profile`
+  (default `compat`). `create()` reads and validates `catalogs/<profile>.kcat` (a malformed one
+  fails with its K42xx) and checks the profile's formats against the adapter (K5018). A request
+  looks its name up at dispatch and loads the artifact; a miss goes to the cook provider, else
+  K5001, or K5019 when the profile has no catalog. The store poller (`HotReloadDesc::watchStore`)
+  watches the catalog file and reloads the assets whose entry names another artifact.
+  `store_layout()` and `store_profile()` give the context's choice.
 
 ## [0.5.0] - 2026-09-29
 
