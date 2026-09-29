@@ -98,14 +98,28 @@ bc7enc's entropy-reduction mode alone gives 11% on color for 1 dB, at no speed c
   KTX2 scheme. zstd already decodes faster than a disk reads, per core.
 - **Oodle** (Kraken, Mermaid, Selkie): the best ratio for its decode speed, but not free outside
   Unreal Engine.
-- **Basis Universal** (ETC1S, which KTX2 stores as BasisLZ, and UASTC): not measured, on purpose.
-  It is not lossless compression of an existing texture but a different, lossy codec: the cooker
-  re-encodes the texels into an intermediate format, and every load transcodes them to BC or
-  ASTC. ETC1S is small but looks worse than BC7 and takes seconds per 2048² texture; UASTC looks
-  good but is slower to encode and large without RDO and Zstd. None of this helps fast
-  iteration. It is the tool for "one file for every GPU" (mobile and web targets), and belongs
-  with the target work (`bcn-encoding.md` step 7). A measurement then would compare size, encode
-  time, PSNR against the source, and transcode speed with BC7 plus Zstd.
+- **Basis Universal** (v2.50): not lossless compression of an existing texture but its own
+  codecs. The cooker re-encodes the texels, and every load transcodes them to BC or ASTC.
+  Measured after the decision on level 0 of 11 of the textures above (4 color, 3 ORM, 4 normal),
+  transcoded to BC7 (BC5 for normals), against kiln's BC7/BC5 + Zstd 3 (3.4–3.8 bits per texel,
+  54.5 dB color, 66 dB ORM, 55 dB normal):
+
+  | Mode | Bits/texel (color) | PSNR color / ORM / normal | Encode | Transcode |
+  |---|---:|---|---:|---:|
+  | ETC1S (BasisLZ), quality 100 | 0.52 | 38 / 39 / 43 dB | 0.9 MP/s | 165 MP/s |
+  | UASTC + Zstd | 3.81 | 52 / 57 / 49 dB | 0.3 MP/s | 94 MP/s |
+  | UASTC, RDO quality 90, + Zstd | 2.83 | 47 / 54 / 45 dB | 0.1 MP/s | 90 MP/s |
+  | XUBC7 lossless, `bc7e_scalar` 4 | 2.78 | 55 / 69 / – dB | 0.4 MP/s | 76 MP/s |
+
+  - ETC1S is 7–9 times smaller but 12–27 dB worse: for web and mobile distribution only.
+  - UASTC without RDO is bigger and worse than BC7 + Zstd and 10 times slower to encode; with
+    RDO it trades 7–11 dB for 25–35%. Its value is one file for ASTC and BC GPUs.
+  - XUBC7 (supercompressed BC7) reaches kiln's quality with 19% fewer bytes on color and 11% on
+    ORM. But it encodes about 9 times slower than bc7enc (3.5 MP/s), transcodes about 15 times
+    slower than Zstd decodes (60 ms against 4 ms for a 2048² texture), needs a 1.7 MB transcoder in
+    the runtime, and has no BC5 path for normal maps.
+  - None of this helps fast iteration. Basis belongs with the mobile and web targets
+    (`bcn-encoding.md` step 7); XUBC7 is a candidate for a shipping build's size budget.
 - **A kiln filter scheme** (the pixel filters above, with a vendor scheme id from `0x10000`):
   31% smaller uncompressed stores, but only kiln could read the files. Deferred until disk
   space still hurts with Zstd alone.
