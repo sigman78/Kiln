@@ -249,7 +249,8 @@ int main(int argc, char** argv) {
     bool const discardOk = check_discard(adapter, vka);
 
     // 2. The context. create() uploads the placeholders through the adapter and waits for them.
-    ContextDesc const desc{.diag = diag, .adapter = &adapter, .storeDir = StrView(o.store)};
+    ContextDesc const desc{
+        .diag = diag, .adapter = &adapter, .storeDir = StrView(o.store), .storeLayout = StoreLayout::Named};
     Result<Context*> c = create(desc);
     if (c.failed()) {
         KILN_ERROR("smoke", "create: %s", code_name(c.code()));

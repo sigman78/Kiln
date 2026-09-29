@@ -105,8 +105,11 @@ struct TextureItem {
 
 constexpr u32 kMaxRoots = 8;
 
+char const* const kLayouts[] = {"catalog", "named", nullptr};
+
 struct Options {
-    char const* store = "cooked";
+    char const* store  = "cooked";
+    char const* layout = "catalog";
     Root roots[kMaxRoots]; ///< --source and --root
     u32 rootCount       = 0;
     char const* dump    = nullptr;
@@ -606,6 +609,11 @@ int main(int argc, char** argv) {
     Options o;
     cli::Option const opts[] = {
         {.name = "--store", .arg = "<dir>", .help = "cooked store root (default: cooked)", .str = &o.store},
+        {.name    = "--layout",
+         .arg     = "<layout>",
+         .help    = "the store's layout: catalog (default) or named",
+         .str     = &o.layout,
+         .choices = kLayouts},
         {.name = "--source",
          .arg  = "<dir>",
          .help = "the default root; enables cook-on-miss (needs kiln_cook)",
@@ -775,6 +783,7 @@ int main(int argc, char** argv) {
         .adapter       = &adapter,
         .storeDir      = StrView(o.store),
         .roots         = Span<Root const>(o.roots, o.rootCount),
+        .storeLayout   = std::strcmp(o.layout, "named") == 0 ? StoreLayout::Named : StoreLayout::Catalog,
         .hotReload     = {.watchStore = o.watch},
         .workerThreads = o.threads,
     });

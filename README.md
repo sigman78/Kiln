@@ -13,7 +13,7 @@ in.
 are listed in `CHANGELOG.md` with migration notes. Next: see the roadmap in `docs/HANDOFF.md`.
 
 ```
-source (glb, png, jpg, hdr, ktx2) --> cook (kiln_cook, in-process or kiln-cook CLI) --> store (<store>/<asset>.mesh|.ktx2)
+source (glb, png, jpg, hdr, ktx2) --> cook (kiln_cook, in-process or kiln-cook CLI) --> store (catalog + artifacts)
                                                                                      |
 renderer (Vulkan, sokol, bgfx, ...) <-- adapter <-- kiln_runtime: async load, pump() per frame, placeholders
 ```
@@ -95,13 +95,16 @@ have the contracts.
 
 All programs print their options with `--help`.
 
-- `kiln-cook <input>... -o <store>` cooks files or directories into a store. `--check` validates
+- `kiln-cook <input>... -o <store>` cooks files or directories into a store: artifacts named by
+  their build key and `catalogs/<target>.kcat` (docs/design/store-catalog.md). It cooks only the
+  sources whose inputs changed; `--verify` compares their content instead of size and time, and
+  `--layout named` writes `<store>/<name>.mesh|.ktx2` instead. `--check` validates
   only, `--target compat|desktop|uncompressed` picks the target profile (the block formats its
-  GPUs sample; a store holds one profile), `--quality` the BC encoder effort,
+  GPUs sample), `--quality` the BC encoder effort,
   `--zstd <level>` the texture supercompression (0 = off), `--threads <n>` sets the pool size and
   the per-cook thread budget, `--verbose` prints per-stage timings.
-- `kiln-info <file>` dumps a `.mesh` or `.ktx2`; `--check` decodes and verifies. Read-only, ships
-  with the runtime side.
+- `kiln-info <file>` dumps a `.mesh`, a `.ktx2` or a catalog; `--check` decodes and verifies (for a
+  catalog, every artifact). Read-only, ships with the runtime side.
 - `kiln-headless` (`examples/headless`) drives the runtime with the null adapter and logs every event;
   `--slow` and `--latency` simulate slow IO and cooking; `--watch` keeps it running to log hot reloads.
 - `kiln-viewer` (`examples/viewer`) draws cooked meshes through the example Vulkan 1.4 adapter:
