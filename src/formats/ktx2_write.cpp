@@ -278,11 +278,11 @@ Result<Vec<u8>> write(WriteDesc const& desc, Allocator const* alloc, DiagSink co
     }
 
     // Writes the level index for Zstd frames or plain levels; returns the file size.
-    auto const lay_out = [&](bool frames, LevelIndex* index) {
-        u64 const align = frames ? 1u : fmt::ktx2_level_align(info->bytesPerBlock);
+    auto const lay_out = [&](bool compressed, LevelIndex* index) {
+        u64 const align = compressed ? 1u : fmt::ktx2_level_align(info->bytesPerBlock);
         u64 pos         = u64(kvdOffset) + kvdLength;
         for (u32 i = levelCount; i-- > 0;) { // smallest level first, level 0 last
-            u64 const size                  = frames ? stored[i].size : desc.levels[i].size;
+            u64 const size                  = compressed ? stored[i].size : desc.levels[i].size;
             pos                             = round_up(pos, align);
             index[i].byteOffset             = pos;
             index[i].byteLength             = size;
