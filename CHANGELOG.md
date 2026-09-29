@@ -13,9 +13,10 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
     `BC4`, `BC5`, `BC6H`, `BC7`) and `quality` (`EncodeQuality`: `Fast`, `Normal`, `High`).
   - New `TargetProfile::blockFamily` (`BlockFamily`: `None`, `BC`).
   - With `BC`, `Auto` gives BC7 for color, UI and ORM, BC5 for normals, and BC4 or BC5 for 1- or
-    2-channel masks. Height, LUT and HDR stay uncompressed; BC6H is reserved (K3001).
+    2-channel masks, and BC6H (unsigned) for HDR. Height and LUT stay uncompressed.
   - Encoders: `rgbcx` (BC1/3/4/5) and `bc7enc` (BC7) from bc7enc_rdo, vendored in
-    `third_party/bc7enc_rdo/`. Block rows are encoded in parallel on the cook's job pool, with the
+    `third_party/bc7enc_rdo/`; for BC6H, a scalar C++ port of the ISPC Texture Compressor's
+    encoder (`third_party/ispc_bc6h/`), byte-identical to the ISPC original. Block rows are encoded in parallel on the cook's job pool, with the
     same bytes on any thread count.
   - K3002 for an encoding the usage cannot take; K3003 when a target without the BC family turns a
     BC encoding into `Uncompressed`. `CookSession::fastPreview` sets `Fast`.

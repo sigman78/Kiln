@@ -7,8 +7,9 @@
 #   - wuffs (Apache-2.0)  -- PNG/JPEG (+ WebP with KILN_WEBP) decode: vendored single-file release .c,
 #                            modules listed in wuffs/wuffs_modules.h
 #   - meshoptimizer (MIT) -- FetchContent, pinned to a commit hash
-#   - bc7enc_rdo (MIT or public domain) -- BC1/3/4/5 (rgbcx) and BC7 (bc7enc) encoders, and
-#                            decoders for the tests: vendored .cpp/.h
+#   - bc7enc_rdo (MIT or public domain) -- BC1/3/4/5 (rgbcx) and BC7 (bc7enc) encoders: vendored
+#   - ispc_bc6h (MIT)     -- BC6H encoder, a scalar C++ port of the ISPC Texture Compressor's
+#   - bcdec (MIT or public domain) -- BC1-BC7 decoder for kiln_tests only (kiln_bcdec)
 #
 # All of it is compiled into one static library, kiln_third_party_cook, which
 # kiln_cook links PRIVATE. None of this may reach kiln_runtime, the shipping
@@ -47,8 +48,9 @@ endif()
 # kiln_third_party_cook -- one static lib for the vendored C dependencies.
 # ---------------------------------------------------------------------------
 add_library(kiln_third_party_cook STATIC wuffs/wuffs_impl.c)
-set(_kiln_bc_sources bc7enc_rdo/rgbcx.cpp bc7enc_rdo/bc7enc.cpp bc7enc_rdo/bc7decomp.cpp)
+set(_kiln_bc_sources bc7enc_rdo/rgbcx.cpp bc7enc_rdo/bc7enc.cpp ispc_bc6h/ispc_bc6h.cpp)
 target_sources(kiln_third_party_cook PRIVATE ${_kiln_bc_sources})
+set_target_properties(kiln_third_party_cook PROPERTIES CXX_STANDARD 23 CXX_STANDARD_REQUIRED ON)
 # The smaller rgbcx table (120 KB instead of 300 KB compiled, same output quality). The macro
 # changes rgbcx.h, so every file that includes it must see it.
 target_compile_definitions(kiln_third_party_cook PUBLIC RGBCX_USE_SMALLER_TABLES=1)
@@ -100,7 +102,12 @@ target_include_directories(kiln_third_party_cook INTERFACE
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/wuffs>)
 # SYSTEM: the bc7enc_rdo headers trip kiln's gcc warning set (-Wdouble-promotion and others).
 target_include_directories(kiln_third_party_cook SYSTEM INTERFACE
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/bc7enc_rdo>)
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/bc7enc_rdo>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/ispc_bc6h>)
+
+# bcdec: header-only BC decoder the tests check the encoders' output with. Never linked into kiln.
+add_library(kiln_bcdec INTERFACE)
+target_include_directories(kiln_bcdec SYSTEM INTERFACE $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/bcdec>)
 if(KILN_MESH)
     target_include_directories(kiln_third_party_cook INTERFACE
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/cgltf>

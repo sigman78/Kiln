@@ -77,14 +77,12 @@ Result<TextureCookSettings> resolve_texture(TextureCookSettings const& overrides
         s.slices = 0;
     }
 
-    if (s.encoding == TextureEncoding::BC6H)
-        return diagf(diag, make_status(Code::Unsupported), kDiagSettingsUnsupported, Severity::Error, asset,
-                     "encoding", "BC6H is not implemented yet");
     if (!encoding_fits(s.encoding, s.usage))
         return diagf(diag, make_status(Code::InvalidArgument), kDiagSettingsInvalidCombo, Severity::Error,
                      asset, "encoding", "encoding %s cannot store usage %s",
                      texture_encoding_name(s.encoding), texture_usage_name(s.usage));
-    if ((s.encoding == TextureEncoding::BC4 || s.encoding == TextureEncoding::BC5) &&
+    if ((s.encoding == TextureEncoding::BC4 || s.encoding == TextureEncoding::BC5 ||
+         s.encoding == TextureEncoding::BC6H) &&
         s.colorSpace == ColorSpace::Srgb)
         return diagf(diag, make_status(Code::InvalidArgument), kDiagSettingsInvalidCombo, Severity::Error,
                      asset, "encoding", "encoding %s has no sRGB variant", texture_encoding_name(s.encoding));

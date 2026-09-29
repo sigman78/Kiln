@@ -94,7 +94,7 @@ Format block_format(TextureEncoding e, BlockFamily family, TextureUsage usage, u
         case TextureUsage::Orm: e = TextureEncoding::BC7; break;
         case TextureUsage::Normal: e = TextureEncoding::BC5; break;
         case TextureUsage::Mask: e = srcChannels == 2 ? TextureEncoding::BC5 : TextureEncoding::BC4; break;
-        case TextureUsage::Hdr:
+        case TextureUsage::Hdr: e = TextureEncoding::BC6H; break;
         case TextureUsage::Lut:
         case TextureUsage::Height: return Format::Undefined;
         }
@@ -104,10 +104,10 @@ Format block_format(TextureEncoding e, BlockFamily family, TextureUsage usage, u
     case TextureEncoding::BC3: return srgb ? Format::BC3_SRGB : Format::BC3_UNORM;
     case TextureEncoding::BC4: return Format::BC4_UNORM;
     case TextureEncoding::BC5: return Format::BC5_UNORM;
+    case TextureEncoding::BC6H: return Format::BC6H_UFLOAT;
     case TextureEncoding::BC7: return srgb ? Format::BC7_SRGB : Format::BC7_UNORM;
     case TextureEncoding::Auto:
-    case TextureEncoding::Uncompressed:
-    case TextureEncoding::BC6H: return Format::Undefined;
+    case TextureEncoding::Uncompressed: return Format::Undefined;
     }
     return Format::Undefined;
 }
@@ -216,12 +216,12 @@ Result<CookedTexture> cook_decoded(TextureSource const& src, TextureCookSettings
                     "usage hdr with a %u-bit source: values stay in 0..1", decoded.bitsPerChannel);
     // Only Color and Ui have sRGB block formats, as in the uncompressed plans.
     bool const srgb = cs == ColorSpace::Srgb && (usage == TextureUsage::Color || usage == TextureUsage::Ui);
-    Format const bc =
-        hdr ? Format::Undefined
-            : block_format(settings.encoding, target.blockFamily, usage, decoded.channels, srgb);
+    // The f32 plan of an HDR texture takes BC6H only; the 8-bit plans take every other block format.
+    Format bc = block_format(settings.encoding, target.blockFamily, usage, decoded.channels, srgb);
+    if (hdr != (bc == Format::BC6H_UFLOAT)) bc = Format::Undefined;
     Plan plan;
     if (hdr) {
-        plan.format   = Format::R16G16B16A16_SFLOAT;
+        plan.format   = bc != Format::Undefined ? bc : Format::R16G16B16A16_SFLOAT;
         plan.channels = 4;
         plan.bits     = 32;
     } else if (bc != Format::Undefined) {

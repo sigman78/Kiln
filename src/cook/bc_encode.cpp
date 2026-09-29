@@ -1,10 +1,13 @@
-// src/cook/bc_encode.cpp — BC1/3/4/5 with rgbcx and BC7 with bc7enc (third_party/bc7enc_rdo).
+// src/cook/bc_encode.cpp — BC1/3/4/5 with rgbcx and BC7 with bc7enc (third_party/bc7enc_rdo), BC6H
+// with the port of the ISPC Texture Compressor's encoder (third_party/ispc_bc6h).
 // Design: docs/design/bcn-encoding.md.
 #include "bc_encode.h"
 
 #include "parallel.h"
 
 #include "kiln/log.h"
+
+#include <cstring>
 
 #if defined(__clang__)
 #pragma clang diagnostic push
@@ -21,6 +24,7 @@
 #pragma warning(push, 0)
 #endif
 #include "bc7enc.h"
+#include "ispc_bc6h.h"
 #include "rgbcx.h"
 #if defined(__clang__)
 #pragma clang diagnostic pop
@@ -34,7 +38,7 @@ namespace kiln::cook {
 
 namespace {
 
-enum class Codec : u8 { BC1, BC3, BC4, BC5, BC7 };
+enum class Codec : u8 { BC1, BC3, BC4, BC5, BC6H, BC7 };
 
 /// The encoders' global tables, filled once. rgbcx::init must not run while another thread encodes.
 struct Encoders {
@@ -66,6 +70,7 @@ Codec codec_of(Format f) noexcept {
     case Format::BC3_SRGB: return Codec::BC3;
     case Format::BC4_UNORM: return Codec::BC4;
     case Format::BC5_UNORM: return Codec::BC5;
+    case Format::BC6H_UFLOAT: return Codec::BC6H;
     case Format::BC7_UNORM:
     case Format::BC7_SRGB: return Codec::BC7;
     default: KILN_PANIC("bc_encode: format %u is not a supported BC format", u32(f));
@@ -74,6 +79,9 @@ Codec codec_of(Format f) noexcept {
 
 /// rgbcx's BC1 and BC3 levels (0-18) per quality; the spike's measured points.
 constexpr u32 kRgbcxLevel[3] = {0, 10, 18};
+/// The original's profiles veryfast, fast and basic; slow and veryslow gain under 1 %.
+constexpr ispc_bc6h::Settings const* kBc6h[3] = {&ispc_bc6h::kVeryFast, &ispc_bc6h::kFast,
+                                                 &ispc_bc6h::kBasic};
 
 struct Job {
     Image const* img;
@@ -102,9 +110,36 @@ void gather(Image const& img, u32 bx, u32 by, u8 px[64]) noexcept {
     }
 }
 
+/// The 16 texels of block (bx, by) of an f32 RGBA image as RGB halves, edges repeated. Negative
+/// values become 0 (BC6H UFLOAT); float_to_half saturates and maps NaN to 0.
+void gather_half(Image const& img, u32 bx, u32 by, u16 px[48]) noexcept {
+    for (u32 y = 0; y < 4; ++y) {
+        u32 const sy = min(by * 4 + y, img.height - 1);
+        for (u32 x = 0; x < 4; ++x) {
+            u32 const sx = min(bx * 4 + x, img.width - 1);
+            u8 const* p  = img.pixels.data() + (usize(sy) * img.width + sx) * 16;
+            for (u32 c = 0; c < 3; ++c) {
+                f32 v;
+                std::memcpy(&v, p + c * 4, 4);
+                u16 const h             = float_to_half(v);
+                px[(y * 4 + x) * 3 + c] = (h & 0x8000u) ? u16(0) : h;
+            }
+        }
+    }
+}
+
 void encode_rows(void* user, u32 begin, u32 end) noexcept {
     Job const& j = *static_cast<Job const*>(user);
     u8 px[64];
+    if (j.codec == Codec::BC6H) {
+        u16 hx[48];
+        for (u32 by = begin; by < end; ++by)
+            for (u32 bx = 0; bx < j.blocksX; ++bx) {
+                gather_half(*j.img, bx, by, hx);
+                ispc_bc6h::encode_block(j.out + (usize(by) * j.blocksX + bx) * 16, hx, *kBc6h[j.quality]);
+            }
+        return;
+    }
     for (u32 by = begin; by < end; ++by)
         for (u32 bx = 0; bx < j.blocksX; ++bx) {
             gather(*j.img, bx, by, px);
@@ -131,6 +166,7 @@ void encode_rows(void* user, u32 begin, u32 end) noexcept {
                     rgbcx::encode_bc5(dst, px, 0, 1, 4);
                 break;
             case Codec::BC7: bc7enc_compress_block(dst, px, &j.enc->bc7[j.quality]); break;
+            case Codec::BC6H: break;
             }
         }
 }
@@ -139,9 +175,13 @@ void encode_rows(void* user, u32 begin, u32 end) noexcept {
 
 void bc_encode(Image const& img, Format format, EncodeQuality quality, Vec<u8>& out,
                JobBudget const& budget) noexcept {
-    KILN_VERIFY(img.bitsPerChannel == 8 && img.width > 0 && img.height > 0);
     Codec const codec = codec_of(format);
-    KILN_VERIFY(img.channels == 4 || (img.channels <= 2 && (codec == Codec::BC4 || codec == Codec::BC5)));
+    KILN_VERIFY(img.width > 0 && img.height > 0);
+    KILN_VERIFY(
+        codec == Codec::BC6H
+            ? img.bitsPerChannel == 32 && img.channels == 4
+            : img.bitsPerChannel == 8 &&
+                  (img.channels == 4 || (img.channels <= 2 && (codec == Codec::BC4 || codec == Codec::BC5))));
     u32 const blocksX = (img.width + 3) / 4, blocksY = (img.height + 3) / 4;
     u32 const bytes = codec == Codec::BC1 || codec == Codec::BC4 ? 8u : 16u;
     usize const at  = out.size();

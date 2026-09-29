@@ -168,6 +168,17 @@ KILN_TEST(TextureGolden, Bc5Normal16x8) {
     check_golden_ktx2("bc5_normal", r->file.span());
 }
 
+KILN_TEST(TextureGolden, Bc6hHdr8x8) {
+    u8 rgbe[8 * 8 * 4];
+    kiln::test::hdr::pattern(rgbe, 64, 12);
+    Vec<u8> f = kiln::test::hdr::encode_flat(8, 8, Span<u8 const>(rgbe, sizeof rgbe));
+    Result<CookedTexture> r =
+        run_cook(f.span(), {.usage = TextureUsage::Hdr}, {.blockFamily = BlockFamily::BC});
+    if (!KILN_CHECK_MSG(r.ok(), "cook failed")) return;
+    KILN_CHECK(r->desc.format == Format::BC6H_UFLOAT);
+    check_golden_ktx2("bc6h_hdr", r->file.span());
+}
+
 // BC1 and BC4 at High quality, the rgbcx paths the defaults do not take.
 KILN_TEST(TextureGolden, Bc1Bc4High8x8) {
     u8 rgba[8 * 8 * 4];

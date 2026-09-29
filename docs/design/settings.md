@@ -26,7 +26,7 @@ BC4, BC5, BC6H, BC7 }`, `EncodeQuality { Fast, Normal, High }`.
 | `flipGreen` | false | DirectX-style normal maps; `Normal` only |
 | `shape` | `Auto` | `Cube` and `Array` cut the source into a vertical strip of slices (`texture-shapes.md`). `Auto` stays `Auto` after resolution and means "from the source": a KTX2 source's own shape, else `Tex2D` |
 | `slices` | 0 | `Array` only: layers in the strip; 0 = square slices. Cleared with a K3002 warning for other shapes |
-| `encoding` | `Auto` | The stored format (`bcn-encoding.md`). `Auto` stays `Auto` after resolution: the usage table for the target's `blockFamily`, uncompressed without one. `BC1` drops alpha; `BC6H` is reserved (K3001) |
+| `encoding` | `Auto` | The stored format (`bcn-encoding.md`). `Auto` stays `Auto` after resolution: the usage table for the target's `blockFamily`, uncompressed without one. `BC1` drops alpha; `BC6H` is unsigned (`UFLOAT`) and for `Hdr` only |
 | `quality` | `Normal` | Encoder effort: `Fast`, `Normal`, `High`. Resolved to `Normal` when nothing is encoded; `fastPreview` sets `Fast` |
 
 Reserved: alphaMode, premultiply, dilation, supercompression, residentMips.
@@ -194,8 +194,7 @@ A sidecar is layer 4: its keys beat the host settings, and only the policy beats
 | enum field out of range | K3004 error |
 | `flipGreen` with a usage other than `Normal` | K3002 warning; cleared. `normalRenormalize` is cleared silently |
 | `maxSize` above the target cap | K3003 warning; clamped |
-| `encoding` that the usage cannot take (for example `BC4` for `Color`, any BC for `Lut` or `Hdr`), or `BC4` / `BC5` with `colorSpace = Srgb` | K3002 error |
-| `encoding = BC6H` | K3001 error, unsupported (rollout step 4 of `bcn-encoding.md`) |
+| `encoding` that the usage cannot take (for example `BC4` for `Color`, `BC6H` for anything but `Hdr`, any BC for `Lut`), or `BC4` / `BC5` / `BC6H` with `colorSpace = Srgb` | K3002 error |
 | a BC `encoding` on a target with `blockFamily = None` | K3003 warning; `Uncompressed` |
 | `genLods = true` | K3001 error, unsupported |
 | `compression` other than `None`, or `blobChunkSize != 0` | K3001 error, unsupported |

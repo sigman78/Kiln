@@ -1,11 +1,13 @@
 // tests/test_texture_bc.cpp — BC encoding in the texture cooker: settings, usage table, quality
-// floors (decoded with bc7enc_rdo's decoders), shapes and thread invariance; cook-only.
+// floors (decoded with bcdec, independent of the encoders), shapes and thread invariance; cook-only.
 // Outputs are written as <sample_dir>/cooked_bc_<case>.ktx2 for `ktx validate`.
+#include "hdr_writer.h"
 #include "kiln_test.h"
 #include "png_writer.h"
 
 #include "kiln/containers.h"
 #include "kiln/cook/cook.h"
+#include "kiln/cook/image.h"
 #include "kiln/cook/sidecar.h"
 #include "kiln/io.h"
 #include "kiln/ktx2.h"
@@ -28,8 +30,9 @@
 #elif defined(_MSC_VER)
 #pragma warning(push, 0)
 #endif
-#include "bc7decomp.h"
-#include "rgbcx.h"
+#define BCDEC_STATIC
+#define BCDEC_IMPLEMENTATION
+#include "bcdec.h"
 #if defined(__clang__)
 #pragma clang diagnostic pop
 #elif defined(__GNUC__)
@@ -132,22 +135,30 @@ bool decode_level0(ktx2::Ktx2View const& v, Vec<u8>& out) {
                                  ? 8
                                  : 16;
     if (data.size < usize(bw) * bh * blockBytes) return false;
-    u8 px[64];
+    u8 px[64], one[32];
     for (u32 by = 0; by < bh; ++by)
         for (u32 bx = 0; bx < bw; ++bx) {
             u8 const* b = data.data + (usize(by) * bw + bx) * blockBytes;
             std::memset(px, 0, sizeof px);
             switch (d.format) {
             case Format::BC1_RGB_UNORM:
-            case Format::BC1_RGB_SRGB: rgbcx::unpack_bc1(b, px); break;
+            case Format::BC1_RGB_SRGB: bcdec_bc1(b, px, 16); break;
             case Format::BC3_UNORM:
-            case Format::BC3_SRGB: rgbcx::unpack_bc3(b, px); break;
-            case Format::BC4_UNORM: rgbcx::unpack_bc4(b, px, 4); break;
-            case Format::BC5_UNORM: rgbcx::unpack_bc5(b, px, 0, 1, 4); break;
-            case Format::BC7_UNORM:
-            case Format::BC7_SRGB:
-                bc7decomp::unpack_bc7(b, reinterpret_cast<bc7decomp::color_rgba*>(px));
+            case Format::BC3_SRGB: bcdec_bc3(b, px, 16); break;
+            case Format::BC4_UNORM:
+                bcdec_bc4(b, one, 4);
+                for (u32 i = 0; i < 16; ++i)
+                    px[i * 4] = one[i];
                 break;
+            case Format::BC5_UNORM:
+                bcdec_bc5(b, one, 8);
+                for (u32 i = 0; i < 16; ++i) {
+                    px[i * 4]     = one[i * 2];
+                    px[i * 4 + 1] = one[i * 2 + 1];
+                }
+                break;
+            case Format::BC7_UNORM:
+            case Format::BC7_SRGB: bcdec_bc7(b, px, 16); break;
             default: return false;
             }
             for (u32 y = 0; y < 4; ++y)
@@ -215,9 +226,12 @@ KILN_TEST(TextureBc, ResolveEncoding) {
         u32 diag;
     };
     Bad const bad[] = {
-        {{.usage = TextureUsage::Hdr, .encoding = TextureEncoding::BC6H},
-         Code::Unsupported,
-         kDiagSettingsUnsupported },
+        {{.colorSpace = ColorSpace::Srgb, .usage = TextureUsage::Hdr, .encoding = TextureEncoding::BC6H},
+         Code::InvalidArgument,
+         kDiagSettingsInvalidCombo},
+        {{.usage = TextureUsage::Color, .encoding = TextureEncoding::BC6H},
+         Code::InvalidArgument,
+         kDiagSettingsInvalidCombo},
         {{.usage = TextureUsage::Color, .encoding = TextureEncoding::BC4},
          Code::InvalidArgument,
          kDiagSettingsInvalidCombo},
@@ -338,7 +352,7 @@ KILN_TEST(TextureBc, QualityFloors) {
     Case const cases[] = {
         {"bc7",        &color, false, 4, 38},
         {"bc7_fast",   &fast,  false, 4, 38},
-        {"bc1",        &bc1,   false, 3, 34},
+        {"bc1",        &bc1,   false, 3, 33},
         {"bc3",        &bc3,   false, 4, 34},
         {"bc5_normal", &nrm,   true,  2, 40},
         {"bc7_normal", &bc7n,  true,  3, 40},
@@ -400,4 +414,52 @@ KILN_TEST(TextureBc, NoFamilyIsUncompressed) {
     Result<CookedTexture> r = cook_bc(png.span(), {.usage = TextureUsage::Color}, nullptr, TargetProfile{});
     KILN_REQUIRE(r.ok());
     KILN_CHECK(r->desc.format == Format::R8G8B8A8_SRGB && r->stats.encodeUs == 0);
+}
+
+// HDR: BC6H UFLOAT against the RGBA16F cook of the same source, in log2 space.
+KILN_TEST(TextureBc, Hdr) {
+    constexpr u32 kW = 32, kH = 16;
+    Vec<u8> rgbe(default_allocator(), Tag::Test);
+    rgbe.resize(usize(kW) * kH * 4);
+    for (u32 y = 0; y < kH; ++y)
+        for (u32 x = 0; x < kW; ++x) {
+            u8* p = rgbe.data() + (usize(y) * kW + x) * 4;
+            p[0]  = u8(40 + x * 6);
+            p[1]  = u8(60 + y * 9);
+            p[2]  = u8(200 - x * 4);
+            p[3]  = u8(128 + y / 4); // one exponent per block row: 2^0 to 2^3
+        }
+    Vec<u8> const file = kiln::test::hdr::encode_flat(kW, kH, rgbe.span());
+
+    Result<CookedTexture> bc = cook_bc(file.span(), {.usage = TextureUsage::Hdr});
+    KILN_REQUIRE(bc.ok());
+    KILN_CHECK(bc->desc.format == Format::BC6H_UFLOAT && bc->desc.levels == 6);
+    write_sample("hdr", bc->file.span());
+    Result<CookedTexture> half = cook_bc(file.span(), {.usage = TextureUsage::Hdr}, nullptr, TargetProfile{});
+    KILN_REQUIRE(half.ok());
+    KILN_CHECK(half->desc.format == Format::R16G16B16A16_SFLOAT);
+
+    Result<ktx2::Ktx2View> vb = ktx2::Ktx2View::open(bc->file.span());
+    Result<ktx2::Ktx2View> vh = ktx2::Ktx2View::open(half->file.span());
+    KILN_REQUIRE(vb.ok() && vh.ok());
+    Span<u8 const> const blocks = vb->level_data(0);
+    Span<u8 const> const ref    = vh->level_data(0);
+    KILN_REQUIRE(blocks.size == usize(kW / 4) * (kH / 4) * 16 && ref.size == usize(kW) * kH * 8);
+    double sq = 0;
+    float px[48];
+    for (u32 by = 0; by < kH / 4; ++by)
+        for (u32 bx = 0; bx < kW / 4; ++bx) {
+            bcdec_bc6h_float(blocks.data + (usize(by) * (kW / 4) + bx) * 16, px, 12, 0);
+            for (u32 i = 0; i < 16; ++i)
+                for (u32 c = 0; c < 3; ++c) {
+                    u32 const x = bx * 4 + i % 4, y = by * 4 + i / 4;
+                    u16 h;
+                    std::memcpy(&h, ref.data + (usize(y) * kW + x) * 8 + c * 2, 2);
+                    double const e =
+                        std::log2(1.0 + double(px[i * 3 + c])) - std::log2(1.0 + double(half_to_float(h)));
+                    sq += e * e;
+                }
+        }
+    double const rmse = std::sqrt(sq / (kW * kH * 3));
+    KILN_CHECK_MSG(rmse < 0.02, "BC6H log2 RMSE %.4f", rmse);
 }

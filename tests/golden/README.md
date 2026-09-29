@@ -20,10 +20,10 @@ the same input with the same settings ever produce different bytes, a golden tes
   differently: `color_srgb` (sRGB, mips), `normal` (renormalized), `height16` (16-bit,
   mips). KTX2 pass-through has no cooker output to pin, so it isn't covered here.
 - `ktx2/bc*.ktx2` — the BC encoders on a target with `blockFamily = BC`: `bc7_color_srgb`,
-  `bc5_normal` (the default table), `bc1_high` and `bc4_mask_high` (explicit BC1, and `High`
-  quality). They pin the vendored encoders' bytes on every compiler and OS in CI.
+  `bc5_normal`, `bc6h_hdr` (the default table), `bc1_high` and `bc4_mask_high` (explicit BC1,
+  and `High` quality). They pin the vendored encoders' bytes on every compiler and OS in CI.
 
-Total size: 24 files, ~35 KB (the corpus itself is tiny by design — see
+Total size: 25 files, ~36 KB (the corpus itself is tiny by design — see
 `tests/corpus/gltf/generated/README.md`).
 
 ## Regenerating

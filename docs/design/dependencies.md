@@ -16,8 +16,10 @@ links it.
 | Mesh optimization | **meshoptimizer** | MIT | cook only, `KILN_MESH=ON` (decoder sources may later join `kiln_runtime`) | FetchContent, commit hash |
 | Tangents | **MikkTSpace** (reference `mikktspace.c/.h`) | zlib | cook only, `KILN_MESH=ON` | vendored in `third_party/mikktspace/` |
 | Zstd | deferred (v0.6) | BSD | runtime decoder-only build, cook encoder | FetchContent, commit hash |
-| BC1/3/4/5/7 encoders | **bc7enc_rdo**: `rgbcx`, `bc7enc` (and `bc7decomp` for tests) | MIT or public domain | cook only | vendored in `third_party/bc7enc_rdo/` |
-| BC6H, ASTC encoders | deferred (BC6H: v0.6; ASTC: v0.9) | to be chosen | cook only | to be chosen |
+| BC1/3/4/5/7 encoders | **bc7enc_rdo**: `rgbcx`, `bc7enc` | MIT or public domain | cook only | vendored in `third_party/bc7enc_rdo/` |
+| BC6H encoder | **ispc_bc6h**: kiln's scalar C++ port of the ISPC Texture Compressor's BC6H | MIT | cook only | ported from a pinned commit into `third_party/ispc_bc6h/` |
+| BC decoder for tests | **bcdec** | MIT or public domain | `kiln_tests` only | vendored header in `third_party/bcdec/` |
+| ASTC encoder | deferred (v0.9) | to be chosen | cook only | to be chosen |
 | Config parsing | deferred (v0.6), leaning TOML | to be chosen | cook only | to be chosen |
 | File watching | **own** polling watcher (M5) | n/a | runtime (dev builds, `KILN_HOT_RELOAD`) | in-tree |
 | Tests | **own** runner `tests/kiln_test.h` | n/a | tests | in-tree |
@@ -75,7 +77,12 @@ ships with codec `None` only, which needs no library.
   same output quality.
 - Compiled with FP contraction off (`-ffp-contract=off`; MSVC's default), because cooked textures
   are compared byte for byte on every compiler (`tests/golden/`).
-- `bc7decomp` is only linked into `kiln_tests`, which decodes BC7 output to check quality.
+- BC6H: the ISPC Texture Compressor's encoder, ported to plain C++ (`third_party/ispc_bc6h/`), so no
+  ISPC compiler or prebuilt objects are needed. The port gives byte-identical output to the ISPC
+  original (sse4 target) at about a third of its speed, and beat CMP_Core's BC6H (the other plain
+  C++ candidate) on speed by 5–100× and on quality. kiln maintains the port; the upstream
+  repository is archived.
+- `bcdec` decodes every BC format in `kiln_tests`, independent of the encoders it checks.
 
 ### Zstd (deferred, v0.6+)
 

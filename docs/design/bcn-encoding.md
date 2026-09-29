@@ -2,8 +2,9 @@
 
 **Status:** Decided (owner, 2026-09-29): the three measurement axes, `BC` as the desktop default,
 BC7 for UI, byte-exact goldens first, Zstd and RDO last, ASTC with the mobile targets, and the
-plain C++ encoders `rgbcx` and `bc7enc` (from the spike's measurements). Rollout steps 1–3 are
-implemented: the cooker writes BC1/3/4/5/7. BC6H's encoder is chosen with step 4.
+plain C++ encoders `rgbcx` and `bc7enc` (from the spike's measurements), and for BC6H a C++ port
+of the ISPC Texture Compressor's encoder (no ISPC toolchain, no prebuilt objects). Rollout steps
+1–4 are implemented: the cooker writes BC1/3/4/5/6H/7.
 **Decides:** Which block-compressed formats the cooker writes for each texture usage and target,
 how the encoder libraries are chosen, the settings that control them, how block formats reach the
 adapters, and the order of the work. Zstd supercompression and RDO are a later step of the same
@@ -15,8 +16,9 @@ The cooker learns to write **BC1, BC3, BC4, BC5, BC6H and BC7** into KTX2. Each 
 default format for the desktop target (color and ORM → BC7, normal → BC5, one-channel mask → BC4,
 HDR → BC6H). The encoders are picked on the Pareto front of **dependency size** against **encode
 speed and quality**, measured on the demo models' textures (section 2): bc7enc_rdo's `rgbcx` for
-BC1–5 and `bc7enc` for BC7; BC6H's encoder is chosen with step 4. A target names its **format family** (None, BC, later
-ASTC and ETC2), so mobile targets slot in without a settings change (section 7).
+BC1–5, `bc7enc` for BC7, and a C++ port of the ISPC Texture Compressor's BC6H. A target names its
+**format family** (None, BC, later ASTC and ETC2), so mobile targets slot in without a settings
+change (section 7).
 
 The runtime needs no new code for block formats: the reader, the upload layout and `texture_info`
 already work in blocks. The example adapters and their shaders need small changes (compressed
@@ -28,7 +30,7 @@ because they bring the runtime's first third-party dependency.
 - `Format` has BC1–BC7 (values 131–146) with their `FormatInfo` rows: 4×4 blocks, 8 or 16 bytes.
 - The KTX2 **reader** accepts block formats. The KTX2 **writer** writes BC1–BC7 with the same Data
   Format Descriptors as `ktx create` (step 1).
-- The cooker encodes BC1/3/4/5/7 (step 3); the sections below say how.
+- The cooker encodes BC1/3/4/5/6H/7 (steps 3 and 4); the sections below say how.
 - The reader rejects every supercompression scheme.
 - `texture_level_layout()` and the loader compute offsets, row pitches and row counts in blocks, so
   a BC texture already uploads through every adapter path that kiln drives.
@@ -95,8 +97,11 @@ Chosen (owner, 2026-09-29), from the spike's measurements:
 - **BC7: `bc7enc`** (47 KB, plain C++). `bc7e.ispc` gives about 1.5 dB more on color and 2.7 dB on
   ORM, at half the speed and with the ISPC compiler as a build tool; it stays an option for later,
   and switching changes every BC7 golden once.
-- **BC6H:** chosen with step 4, between CMP_Core's BC6H kernel (plain C++, slow) and the ISPC
-  Texture Compressor's (ISPC, much faster and better).
+- **BC6H: the ISPC Texture Compressor's encoder, ported to scalar C++** (owner, 2026-09-29: no
+  ISPC toolchain and no committed per-platform objects). The port is byte-identical to the ISPC
+  original (sse4 target) on every profile and runs at about a third of its speed: 17.5 MP/s at
+  `veryfast`, 2.0 at `fast`, 0.77 at `basic`, against CMP_Core's 0.14 MP/s, with a lower error
+  than CMP_Core at every profile.
 - They are vendored in `third_party/bc7enc_rdo/` and link into `kiln_cook` only. The shipping build
   gains nothing.
 
@@ -128,6 +133,7 @@ kiln's goldens are byte-exact on every compiler and OS in CI, so the encoders mu
   | BC3 | level 0 | level 10 | level 18, `encode_bc3_hq` |
   | BC4, BC5 | `encode_bc4` / `bc5` | `_hq` | `_hq` |
   | BC7 (`bc7enc` uber level, linear weights, 64 partitions) | 0 | 2 | 4 |
+  | BC6H (the ISPC Texture Compressor's profiles) | `veryfast` | `fast` | `basic` |
 
 `TargetProfile` gains `blockFamily`: `None`, `BC`, and later `ASTC` and `ETC2` (section 7). The
 built-in `desktop` target keeps `None` until step 5, when every example adapter uploads BC
@@ -192,13 +198,16 @@ cross-cooking"), and this work leaves room for it:
 ## Alternatives considered
 
 - **CMP_Core for everything:** one dependency instead of two, full BC7 modes. But it is dormant,
-  has no RDO, and its SIMD dispatch has to be kept off everywhere. Worth measuring in the spike.
+  has no RDO, and its SIMD dispatch has to be kept off everywhere. The spike measured it slower
+  and worse than the chosen encoders, BC6H included.
 - **`bc7e.ispc` from the start:** the best BC7 per second, but a build-time compiler download for
   every cook build. Better as an option once the pipeline stands.
 - **DirectXTex:** reference quality and maintained, but slow for BC6H/BC7, tied to DirectXMath, and
   officially Windows or GCC; too heavy for a cook library that also builds with clang on Linux.
-- **ISPC Texture Compressor:** fast and good, but archived in 2024 and ISPC-only.
-- **Writing our own encoders:** BC4 and BC5 are small, but BC6H and BC7 are large and subtle; no.
+- **ISPC Texture Compressor as ISPC:** fast and good, but archived in 2024, and it needs the ISPC
+  compiler or prebuilt objects per platform. Its BC6H encoder is used as a C++ port instead.
+- **Writing our own encoders from scratch:** BC4 and BC5 are small, but BC6H and BC7 are large and
+  subtle; no. Porting a proven encoder, checked byte for byte against the original, is different.
 
 ## Consequences
 
@@ -209,8 +218,8 @@ cross-cooking"), and this work leaves room for it:
   already accept every format.
 - Existing goldens and store keys do not change: BC goldens are new files, and uncompressed cooks
   hash as before. The `desktop` switch to BC (step 5) re-cooks every texture once.
-- One new cook-side dependency (bc7enc_rdo), entered in `dependencies.md` and
-  `third_party/README.md`; BC6H may add a second.
+- Two cook-side dependencies (bc7enc_rdo, and the BC6H port kiln maintains) and one test-only
+  decoder (bcdec), entered in `dependencies.md` and `third_party/README.md`.
 
 ## Rollout
 
@@ -222,7 +231,7 @@ cross-cooking"), and this work leaves room for it:
 3. **BC1/3/4/5/7 in the cooker** (done 2026-09-29). `encoding`, `quality`,
    `TargetProfile::blockFamily`, the usage table, parallel encoding, goldens, `kiln-cook --block` and
    `--quality`.
-4. **BC6H** for `Hdr`.
+4. **BC6H** for `Hdr` (done 2026-09-29): the C++ port of the ISPC Texture Compressor's encoder.
 5. **Adapters and examples:** `supports_format`, compressed uploads (GL), BC5 normal Z in every
    example shader, the reference frame re-checked; then `desktop` switches to `blockFamily = BC`.
 6. **Zstd supercompression and RDO:** reader, loader, runtime decoder, settings.
@@ -240,5 +249,5 @@ cross-cooking"), and this work leaves room for it:
 5. **Goldens:** the simple thing first (byte-exact); the PSNR fallback only if an encoder needs it.
 6. **Zstd and RDO:** last, as step 6.
 7. **ASTC:** with the mobile targets (v0.9).
-8. **Encoders:** plain C++, `rgbcx` and `bc7enc` (option A of the spike); BC6H is decided with
-   step 4.
+8. **Encoders:** plain C++, `rgbcx` and `bc7enc` (option A of the spike). BC6H: no ISPC toolchain
+   and no committed ISPC objects; a C++ port of the ISPC Texture Compressor's encoder.

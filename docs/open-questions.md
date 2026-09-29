@@ -95,7 +95,6 @@ Every item that a design note reserves for later. Nothing here is built in v0.5.
 | Deferred / LRU unload at refcount 0 | handles-and-states | memory reuse on churn | v0.6+ |
 | `Adapter::reserved[4]` | adapter | residency hooks (budget, eviction) | v0.8 |
 | `TextureDesc.firstLevel` | adapter | partial mip uploads | v0.8 |
-| BC6H encoder (`TextureEncoding::BC6H` is K3001; BC1/3/4/5/7 are cooked since v0.6) | bcn-encoding | HDR block compression | v0.6 |
 | ETC2/EAC and ASTC encoders (values 147-184 exist; the cooker emits none) | adapter | mobile targets | v0.9 |
 | `Adapter` `workerUploads` flag (or an `AdapterCaps` bit) | adapter | pump-thread-only adapters | if needed |
 | `AdapterCaps` bits 1..31 (only `kSelfSubmitting` defined) | adapter | new capability flags | as needed |

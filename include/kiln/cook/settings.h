@@ -22,7 +22,7 @@ enum class CookShape : u8 { Auto = 0, Tex2D, Cube, Array };
 
 /// The stored texel format (docs/design/bcn-encoding.md). Auto follows the usage table for the
 /// target's block family (none: uncompressed) and stays Auto after resolution, because a mask's
-/// BC4 or BC5 depends on the source's channel count. BC1 drops alpha. BC6H is reserved (K3001).
+/// BC4 or BC5 depends on the source's channel count. BC1 drops alpha; BC6H is unsigned (UFLOAT).
 enum class TextureEncoding : u8 { Auto = 0, Uncompressed, BC1, BC3, BC4, BC5, BC6H, BC7 };
 /// Encoder effort. Fast is for previews; High costs several times Normal for a small gain.
 enum class EncodeQuality : u8 { Fast = 0, Normal, High };
@@ -147,7 +147,7 @@ struct CookSession {
 
 enum SettingsDiagCode : u32 {
     kDiagSettingsUnsupported =
-        3001, ///< a reserved feature was requested (genLods, compression != None, blobChunkSize, BC6H)
+        3001, ///< a reserved feature was requested (genLods, compression != None, blobChunkSize)
     kDiagSettingsInvalidCombo = 3002,    ///< fields contradict each other or hold invalid values (e.g.
                                          ///< flipGreen with a non-Normal usage: Warning)
     kDiagSettingsClampedByTarget = 3003, ///< profile, size or encoding clamped by the target (Warning)
@@ -165,8 +165,8 @@ enum SettingsDiagCode : u32 {
 /// Resolve texture settings: an Auto usage from `hint`, an Auto color space from the usage,
 /// Normal-only flags cleared for other usages, target caps. Every Auto field except `shape` and
 /// `encoding` is concrete on return. An enum value out of range returns
-/// InvalidArgument (K3004); an encoding the usage cannot take, InvalidArgument (K3002); BC6H,
-/// Unsupported (K3001). An explicit BC encoding on a target without the BC family becomes
+/// InvalidArgument (K3004); an encoding the usage cannot take, InvalidArgument (K3002). An
+/// explicit BC encoding on a target without the BC family becomes
 /// Uncompressed (K3003). `session.fastPreview` sets `quality` to Fast.
 KILN_API Result<TextureCookSettings> resolve_texture(TextureCookSettings const& overrides, SlotHint hint,
                                                      TargetProfile const& target, CookSession const& session,
