@@ -1,0 +1,83 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">Kiln logo</title>
+  <desc id="desc">A dark industrial kiln with a glowing orange arched opening containing three stacked cubes.</desc>
+
+  <defs>
+    <linearGradient id="kilnGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#30353a"/>
+      <stop offset="100%" stop-color="#24292e"/>
+    </linearGradient>
+    <radialGradient id="fireGrad" cx="50%" cy="55%" r="70%">
+      <stop offset="0%" stop-color="#ffb22b"/>
+      <stop offset="60%" stop-color="#ff7a12"/>
+      <stop offset="100%" stop-color="#ff3d0a"/>
+    </radialGradient>
+    <linearGradient id="cubeTop" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#ffc15a"/>
+      <stop offset="100%" stop-color="#ff9a1a"/>
+    </linearGradient>
+    <linearGradient id="cubeSide" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#30363c"/>
+      <stop offset="100%" stop-color="#20252a"/>
+    </linearGradient>
+  </defs>
+
+  <!-- chimney cap -->
+  <rect x="416" y="150" width="192" height="52" rx="6" fill="url(#kilnGrad)"/>
+
+  <!-- kiln body -->
+  <path d="
+    M 416 220
+    L 608 220
+    L 720 325
+    L 720 574
+    L 752 596
+    L 752 658
+    Q 752 670 740 670
+    L 651 670
+    Q 643 670 640 662
+    L 628 632
+    L 396 632
+    L 384 662
+    Q 381 670 373 670
+    L 284 670
+    Q 272 670 272 658
+    L 272 596
+    L 304 574
+    L 304 325
+    Z" fill="url(#kilnGrad)"/>
+
+  <!-- arched opening -->
+  <path d="
+    M 360 603
+    L 360 460
+    C 360 370 426 300 512 300
+    C 598 300 664 370 664 460
+    L 664 603
+    Z"
+    fill="white"/>
+
+  <path d="
+    M 376 587
+    L 376 460
+    C 376 380 434 316 512 316
+    C 590 316 648 380 648 460
+    L 648 587
+    Z"
+    fill="url(#fireGrad)"/>
+
+  <!-- upper cube -->
+  <polygon points="512,395 555,417 512,439 469,417" fill="url(#cubeTop)"/>
+  <polygon points="469,417 512,439 512,493 469,471" fill="url(#cubeSide)"/>
+  <polygon points="555,417 512,439 512,493 555,471" fill="#252b30"/>
+
+  <!-- lower left cube -->
+  <polygon points="450,479 493,501 450,523 407,501" fill="url(#cubeTop)"/>
+  <polygon points="407,501 450,523 450,577 407,555" fill="url(#cubeSide)"/>
+  <polygon points="493,501 450,523 450,577 493,555" fill="#252b30"/>
+
+  <!-- lower right cube -->
+  <polygon points="574,479 617,501 574,523 531,501" fill="url(#cubeTop)"/>
+  <polygon points="531,501 574,523 574,577 531,555" fill="url(#cubeSide)"/>
+  <polygon points="617,501 574,523 574,577 617,555" fill="#252b30"/>
+</svg>
