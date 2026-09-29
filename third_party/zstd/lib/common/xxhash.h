@@ -11,7 +11,8 @@
 
 /* Local adaptations for Zstandard */
 
-#ifndef XXH_NO_XXH3
+/* kiln: KILN_XXH3 keeps XXH3 (src/formats/xxh3.cpp); zstd's own build is unchanged. */
+#if !defined(XXH_NO_XXH3) && !defined(KILN_XXH3)
 # define XXH_NO_XXH3
 #endif
 

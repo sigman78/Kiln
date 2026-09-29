@@ -4,6 +4,8 @@
 #include "kiln/cook/cli.h"
 
 #include "cli.h"
+#include "unit.h"
+
 #include "kiln/assets.h"
 #include "kiln/containers.h"
 #include "kiln/cook/cook.h"
@@ -60,22 +62,6 @@ struct Options {
 };
 
 // Tool-local path and file helpers (they predate the kiln IO layer, kiln/io.h).
-
-bool read_file(char const* path, Vec<u8>& out) {
-    std::FILE* f = std::fopen(path, "rb");
-    if (!f) return false;
-    std::fseek(f, 0, SEEK_END);
-    long n = std::ftell(f);
-    std::fseek(f, 0, SEEK_SET);
-    if (n < 0) {
-        std::fclose(f);
-        return false;
-    }
-    out.resize(usize(n));
-    usize got = n ? std::fread(out.data(), 1, usize(n), f) : 0;
-    std::fclose(f);
-    return got == usize(n);
-}
 
 bool is_dir(char const* path) {
     struct stat st;
@@ -261,27 +247,18 @@ struct Ctx {
     u32 maxThreads        = 0;       ///< CookEnv::maxThreads; 0 = no cap
     CookPolicy policy     = {};
     u32 cooked = 0, skipped = 0, failed = 0;
-    HashMap<u64, u8> doneTextures{default_allocator(), Tag::General}; ///< by asset path hash
 };
 
-Status resolve_uri_fn(void* user, StrView uri, Allocator const* alloc, Vec<u8>* out) {
-    char const* baseDir = static_cast<char const*>(user);
-    char path[1024];
-    format(path, sizeof path, "%s/%.*s", baseDir, KILN_SV(uri));
-    Vec<u8> bytes(alloc, Tag::Cook);
-    if (!read_file(path, bytes)) return make_status(Code::NotFound);
-    *out = std::move(bytes);
-    return kOk;
-}
-
-bool emit(Ctx& c, StrView assetPath, AssetKind kind, u64 key, Span<u8 const> bytes) {
+bool emit(Ctx& c, StrView assetPath, AssetKind kind, Hash128 const& key, Span<u8 const> bytes) {
     if (c.opt.check) return true;
     char const* ext = kind == AssetKind::Mesh ? "mesh" : "ktx2";
     char name[1200];
     char dir[1200];
+    char hex[33];
+    hash128_hex(key, hex);
     format(dir, sizeof dir, "%s", c.opt.store);
     if (c.opt.hashed) {
-        store_file_name(key, StrView(ext), name, sizeof name);
+        format(name, sizeof name, "%s.%s", hex, ext);
     } else {
         // Named layout (default, kiln/assets.h StoreLayout::Named).
         if (store_file_path(StrView(c.opt.store), kind, assetPath, dir, sizeof dir) >= sizeof dir - 1) {
@@ -298,9 +275,7 @@ bool emit(Ctx& c, StrView assetPath, AssetKind kind, u64 key, Span<u8 const> byt
         std::fprintf(stderr, "kiln-cook: cannot write %s/%s (%s)\n", dir, name, code_name(st.code));
         return false;
     }
-    if (c.map)
-        std::fprintf(c.map, "%.*s\t%s\t%016llx\n", KILN_SV(assetPath), name,
-                     static_cast<unsigned long long>(key));
+    if (c.map) std::fprintf(c.map, "%.*s\t%s\t%s\n", KILN_SV(assetPath), name, hex);
     if (!c.opt.quiet)
         std::printf("  %-48.*s -> %s (%llu B)\n", KILN_SV(assetPath), name,
                     static_cast<unsigned long long>(bytes.size));
@@ -324,89 +299,20 @@ void print_mesh_stats(CookStats const& s) {
                 double(s.totalUs) / 1000.0);
 }
 
-/// The resolution inputs of one asset; the sidecar text, if any, lives in `text`.
-struct Layers {
-    ResolveDesc desc;
-    Vec<u8> text{default_allocator(), Tag::Io};
-    char path[1100] = {};
-};
-
-/// Fills `l` for `assetPath`. With `readSidecar`, reads `<sourcePath>.kiln` when it exists.
-/// False if the sidecar cannot be read.
-bool prepare_layers(Ctx& c, StrView assetPath, StrView sourcePath, SlotHint slot, bool readSidecar,
-                    Layers& l) {
-    l.desc = ResolveDesc{
-        .asset     = {assetPath, sourcePath, slot},
-        .nameRules = kDefaultNameRules,
-        .policy    = c.policy,
-        .target    = c.opt.target,
-        .session   = c.session,
-        .diag      = &c.sink,
-    };
-    if (!readSidecar) return true;
-    usize const n = format(l.path, sizeof l.path, "%.*s%.*s", KILN_SV(sourcePath), KILN_SV(kSidecarExt));
-    if (!io_file_exists(StrView(l.path, n))) return true;
-    if (!read_file(l.path, l.text)) {
-        std::fprintf(stderr, "kiln-cook: cannot read %s\n", l.path);
-        return false;
-    }
-    l.desc.sidecar     = StrView(reinterpret_cast<char const*>(l.text.data()), l.text.size());
-    l.desc.sidecarPath = StrView(l.path, n);
-    return true;
-}
-
-bool cook_one_texture(Ctx& c, Span<u8 const> bytes, StrView assetPath, StrView sourcePath, SlotHint hint) {
-    u64 pathHash = hash_name(assetPath);
-    if (c.doneTextures.contains(pathHash)) return true;
-    c.doneTextures.insert(pathHash, 1);
-
-    // Only a file of its own has a sidecar; an embedded image has a slot instead.
-    Layers layers;
-    if (!prepare_layers(c, assetPath, sourcePath, hint, hint == SlotHint::None, layers)) return false;
-    Result<TextureCookSettings> rs = resolve_texture_layers(c.opt.tex, layers.desc);
-    if (rs.failed()) return false;
-    TextureSource src{};
-    src.bytes      = bytes;
-    src.assetPath  = assetPath;
-    src.sourcePath = sourcePath;
-    Result<CookedTexture> r =
-        cook_texture(src, *rs, c.opt.target, {.diag = &c.sink, .jobs = c.jobs, .maxThreads = c.maxThreads});
-    if (r.failed()) return false;
-    u64 key = store_key(r->sourceHash, hash_settings(*rs), hash_target(c.opt.target));
-    if (!emit(c, assetPath, AssetKind::Texture, key, r->file.span())) return false;
-    if (c.opt.verbose) print_texture_stats(r->stats);
-    return true;
-}
-
-bool cook_one_mesh(Ctx& c, Span<u8 const> bytes, StrView assetPath, char const* sourcePath) {
-    Layers layers;
-    if (!prepare_layers(c, assetPath, StrView(sourcePath), SlotHint::None, true, layers)) return false;
-    Result<MeshCookSettings> rs = resolve_mesh_layers(c.opt.mesh, layers.desc);
-    if (rs.failed()) return false;
-
-    char baseDir[1024];
-    format(baseDir, sizeof baseDir, "%s", sourcePath);
-    if (char* slash = std::strrchr(baseDir, '/'))
-        *slash = '\0';
-    else
-        std::strcpy(baseDir, ".");
-
-    MeshSource src{};
-    src.bytes      = bytes;
-    src.assetPath  = assetPath;
-    src.sourcePath = StrView(sourcePath);
-    src.resolver   = {&resolve_uri_fn, baseDir};
-    Result<CookedMesh> r =
-        cook_mesh(src, *rs, c.opt.target, {.diag = &c.sink, .jobs = c.jobs, .maxThreads = c.maxThreads});
-    if (r.failed()) return false;
-    u64 key = store_key(r->sourceHash, hash_settings(*rs), hash_target(c.opt.target));
-    if (!emit(c, assetPath, AssetKind::Mesh, key, r->file.span())) return false;
-    if (c.opt.verbose) print_mesh_stats(r->stats);
-
-    // Embedded images only; files the mesh references by URI are cooked as inputs of their own.
+/// Writes the outputs of `unit` that cooked; false if any failed.
+bool emit_unit(Ctx& c, CookUnit const& unit) {
     bool ok = true;
-    for (TextureRef const& t : r->textures)
-        ok &= cook_one_texture(c, t.embedded, t.assetPath, src.sourcePath, t.slot);
+    for (UnitOutput const& o : unit.outputs) {
+        if (o.status.failed() || !emit(c, unit.name(o), o.kind, o.key, o.bytes.span())) {
+            ok = false;
+            continue;
+        }
+        if (!c.opt.verbose) continue;
+        if (o.kind == AssetKind::Mesh)
+            print_mesh_stats(o.stats);
+        else
+            print_texture_stats(o.stats);
+    }
     return ok;
 }
 
@@ -426,19 +332,25 @@ void cook_file(Ctx& c, char const* path, char const* root) {
         return;
     }
 
-    Vec<u8> bytes(default_allocator(), Tag::Io);
-    if (!read_file(path, bytes)) {
-        std::fprintf(stderr, "kiln-cook: cannot read %s\n", path);
-        ++c.failed;
-        return;
-    }
     if (c.opt.verbose) std::printf("cooking %s (%s)\n", path, assetPath);
 
-    bool ok;
-    if (iequals(ext, "glb") || iequals(ext, "gltf"))
-        ok = cook_one_mesh(c, bytes.span(), StrView(assetPath), path);
-    else
-        ok = cook_one_texture(c, bytes.span(), StrView(assetPath), StrView(path), SlotHint::None);
+    bool const mesh = iequals(ext, "glb") || iequals(ext, "gltf");
+    CookUnit unit(default_allocator());
+    UnitDesc const d{
+        .kind            = mesh ? AssetKind::Mesh : AssetKind::Texture,
+        .name            = StrView(assetPath),
+        .sourcePath      = StrView(path),
+        .meshDefaults    = &c.opt.mesh,
+        .textureDefaults = &c.opt.tex,
+        .nameRules       = kDefaultNameRules,
+        .policy          = c.policy,
+        .target          = &c.opt.target,
+        .session         = c.session,
+        .env             = {.diag = &c.sink, .jobs = c.jobs, .maxThreads = c.maxThreads},
+    };
+    Status const st = cook_unit(d, &unit);
+    if (st.failed() && unit.inputs.empty()) std::fprintf(stderr, "kiln-cook: cannot read %s\n", path);
+    bool const ok = st.ok() && emit_unit(c, unit);
     if (ok)
         ++c.cooked;
     else

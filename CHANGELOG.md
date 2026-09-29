@@ -8,6 +8,8 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
 ## [Unreleased]
 
 ### Changed
+- `kiln-cook --hashed` names files by their 128-bit build key (32 hex digits); `--map` prints that
+  key instead of the 64-bit `store_key`.
 - **Breaking (cook): target profiles replace `blockFamily`.** `TargetProfile::blockFamily` and the
   `BlockFamily` enum are gone (`blockFormats` replaces them); the default target is `compat`, not
   `desktop`, so one-channel masks are BC5 instead of BC4 by default. `kiln-cook --block` is gone
@@ -48,6 +50,11 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
   authored color. `ex::material_factors()` and `vkx::material_uniforms()` pack them; the Vulkan
   examples read them from a material table in the frame uniforms (`DrawPush::material`), the others
   per draw. Scenes with all factors at 1 render as before (WaterBottle: identical pixels).
+- **Build keys** (store-catalog.md, Phase A step 1): `Hash128`, `xxh3_128()` and `hash128_hex()`
+  (`kiln/catalog.h`, from the xxhash zstd vendors); `build_key()` (`kiln/cook/catalog.h`) hashes
+  the cooker version, asset kind and name, target, resolved settings and the content of every
+  input file a cook read: the source, its sidecar (or its absence), a `.gltf`'s buffers. The cook
+  provider and `kiln-cook` share one cook path that records those inputs.
 
 ## [0.5.0] - 2026-09-29
 
