@@ -1,7 +1,8 @@
 # Block-compressed textures: BCn now, ASTC and ETC2 later
 
-**Status:** Proposed (2026-09-29), awaiting the owner's choices in "Open points". Nothing is
-implemented. The encoders are chosen from measurements (rollout step 2), not up front.
+**Status:** Decided (owner, 2026-09-29): the three measurement axes, `BC` as the desktop default,
+BC7 for UI, byte-exact goldens first, Zstd and RDO last, ASTC with the mobile targets. The encoders
+and the normal-map format follow from the spike's numbers (rollout step 2). Nothing is implemented.
 **Decides:** Which block-compressed formats the cooker writes for each texture usage and target,
 how the encoder libraries are chosen, the settings that control them, how block formats reach the
 adapters, and the order of the work. Zstd supercompression and RDO are a later step of the same
@@ -42,7 +43,7 @@ because they bring the runtime's first third-party dependency.
 | Usage | Today | With BCn | Size vs today |
 |---|---|---|---|
 | `Color`, `Ui` with alpha or without | RGBA8 (sRGB) | **BC7** (sRGB) | 1/4 |
-| `Normal` | RGBA8 | **BC5** (X, Y; the shader rebuilds Z) | 1/4 |
+| `Normal` | RGBA8 | **BC5** (X, Y; the shader rebuilds Z); BC7 if the spike says so | 1/4 |
 | `Orm` | RGBA8 | **BC7** (linear) | 1/4 |
 | `Mask`, 1 channel, 8-bit | R8 | **BC4** | 1/2 |
 | `Mask`, 2 channels | RG8 | **BC5** | 1/2 |
@@ -50,6 +51,11 @@ because they bring the runtime's first third-party dependency.
 | `Lut` | RGBA8 / R8 | unchanged (exact values) | — |
 | `Hdr` | RGBA16F | **BC6H** unsigned (`UFLOAT`) | 1/8 |
 
+- **Normals, BC5 or BC7:** both cost 1 byte per texel. BC5 codes X and Y as two independent BC4
+  channels, so each gets its own endpoints; BC7 shares its bits over three correlated channels, one
+  of which (Z) is redundant. BC5 is the usual choice for that reason, at the cost of one line of
+  shader code. The spike measures the angular error of both on kiln's normal maps and the default
+  follows it; either way the other stays available through `encoding`.
 - BC1 (4 bits per texel) and BC3 stay available through the `encoding` setting, for hosts that want
   size over quality. They are not a default: BC7 is the same size as BC3 and better for every
   usage above.
@@ -211,14 +217,13 @@ cross-cooking"), and this work leaves room for it:
 7. **Later, with the mobile targets (v0.9):** astcenc, ASTC block sizes per usage, the `ASTC`
    family in `TargetProfile`; ETC2 only if a target needs it.
 
-## Open points for the owner
+## Owner decisions (2026-09-29)
 
-1. **Encoders:** decided from the spike's table (step 2). Are the three axes and their weights right
-   (dependency cost against speed and quality)?
-2. **Default:** `blockFamily = BC` for the built-in `desktop` target? (Proposed: yes.)
-3. **Normals:** BC5 with Z rebuilt in the shader (proposed), or BC7 so shaders need no change?
-4. **UI textures:** BC7 like color (proposed), or uncompressed to keep text crisp?
-5. **Goldens:** byte-exact as today (proposed), with the PSNR fallback only for an encoder that
-   cannot be made deterministic?
-6. **Zstd and RDO:** step 6 of this work (proposed), or a separate note later?
-7. **ASTC:** with the mobile targets in v0.9 (proposed), or earlier?
+1. **Axes:** dependency cost against speed and quality, as proposed; the encoders are picked from
+   the spike's table.
+2. **Default:** `blockFamily = BC` for the built-in `desktop` target.
+3. **Normals:** measured in the spike (BC5 against BC7); BC5 unless the numbers say otherwise.
+4. **UI textures:** BC7, like color.
+5. **Goldens:** the simple thing first (byte-exact); the PSNR fallback only if an encoder needs it.
+6. **Zstd and RDO:** last, as step 6.
+7. **ASTC:** with the mobile targets (v0.9).
