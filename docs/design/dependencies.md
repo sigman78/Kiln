@@ -24,6 +24,8 @@ links it.
 | Example windows | **GLFW** 3.5.1 | zlib | windowed examples only (`examples/common`) | FetchContent, commit hash; X11 only on Linux |
 | sokol example | **sokol** headers (sokol_gfx, sokol_app, sokol_glue, sokol_log) | zlib | `kiln-sokol` only | FetchContent, commit hash |
 | sokol shaders | **sokol-shdc** prebuilt binary (sokol-tools-bin) | MIT | `kiln-sokol` build only | downloaded per host at a commit, checked by SHA-256 |
+| NoGraphicsAPI example | **NoGraphicsAPI** (one source file), **Vulkan-Loader** (built from source) | MIT; Apache-2.0 | `kiln-nga` only | FetchContent, commit hash |
+| NoGraphicsAPI shaders | **Slang** release (slangc) | Apache-2.0 with LLVM exception | `kiln-nga` build only | downloaded per host at a release, checked by SHA-256 |
 
 `kiln_runtime` has **zero** third-party dependencies in v0.5. Everything third-party is cook-only
 (through the helper target `kiln_third_party_cook`) or example-only. The `.mesh` blob decode loop
@@ -94,6 +96,16 @@ The headers are fetched; the implementation is one C file compiled without kiln'
 sokol-shdc is a native tool with no source build in CMake, so the prebuilt binary for the host is
 downloaded from sokol-tools-bin at a pinned commit and checked by hash (`examples/sokol/CMakeLists.txt`).
 The two are pinned together: the generated shader code must match the sokol_gfx it compiles against.
+
+### NoGraphicsAPI example: NoGraphicsAPI + Vulkan-Loader + Slang
+
+Decided with the integration examples (owner 2026-09-28): no SDK. NoGraphicsAPI's own CMake wants the
+SDK's Vulkan package and exports install targets, so kiln fetches its sources and compiles its one
+file itself. It links the Vulkan loader (kiln's other examples load entry points with volk), so the
+loader is built from source at the SDK tag that matches the fetched headers. Slang compiles the
+shaders; its release archive for the host is downloaded and checked by hash. SPIRV-Tools, which
+NoGraphicsAPI's examples use to validate shaders, is left out (decided in the note). All of this is
+behind `KILN_EXAMPLE_NGA`, OFF in every preset, and a CI job of its own builds it.
 
 ## Rules
 

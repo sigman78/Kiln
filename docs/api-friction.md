@@ -29,6 +29,10 @@ Rejected (with reason), Done (with version). The integration examples
 | 2026-09-28 | agent | host loop | sokol_app owns the main loop (callbacks); `pump()` and `wait()` assume the host owns it. | Measure in `sokol` | Rejected: `kiln-sokol` calls `create()` in the init callback and `pump()` in the frame callback; nothing needs `wait()` or a loop of its own |
 | 2026-09-28 | agent (`kiln-sokol`) | placeholders | sokol validates that every texture slot a shader declares is bound, so the host needs a texture for slots a material leaves empty. kiln holds a placeholder per kind and shape, but a host can reach one only through a handle (`gpu()` of a null handle gives the 2D base-color one; there is no cube one). The example makes its own white and black textures. `kiln-vk-basic` meets the same wall (every binding of a descriptor set written) and avoids it with `descriptorBindingPartiallyBound`, which a plainer Vulkan host may not want. | `placeholder_object(ctx, TextureKind, TextureShape)` returning the placeholder's `GpuObject` | Open |
 | 2026-09-28 | agent (`kiln-vk-basic`) | events | A host that caches GPU objects (descriptor sets) must know which events change what `gpu()` returns; the header did not say. | State it on `EventKind` | Done: `assets.h` (`EventKind`): Ready, Changed, Failed may change it; MetaReady does not |
+| 2026-09-28 | agent (`kiln-nga`) | bindless slots | The adapter contract says a bindless adapter "overwrites the slot it acquired", but NoGraphicsAPI (like any API without update-after-bind semantics) forbids rewriting a descriptor that in-flight frames may read. | Allow a slot to be an indirection the host resolves per frame; say so in `adapter.md` | Done: documented in `adapter.md`; `kiln-nga` keeps a CPU slot table |
+| 2026-09-28 | agent (`kiln-nga`) | frame boundary | Every adapter that frees GPU objects late needs to know when the host's frames finish, and each invents its own hook: `adapter_retire(completedFrame)` (Vulkan), fences set in `flush` (bindless GL), `nga_adapter_retire` (NoGraphicsAPI). kiln has no frame concept; `flush` runs per `pump()`, which is per frame only by habit. | An optional `Adapter::frame_completed(user, frame)` the host calls through kiln, or a frame counter in `PumpOptions` passed to `flush` | Open |
+| 2026-09-28 | agent (`kiln-nga`) | vertex formats | With vertex pulling the host's shaders, not the API, decide which vertex formats work, yet `supports_format(VertexBuffer)` is the adapter's answer; `kiln-nga`'s adapter hard-codes what its example shader decodes. | Let the host restrict vertex formats (e.g. a `ContextDesc` filter), or document that the adapter answers for the host's shaders | Open |
+| 2026-09-28 | agent (`kiln-nga`) | naming | kiln's free function `gpu(ctx, handle)` collides with NoGraphicsAPI's `namespace gpu` in any file with `using namespace kiln`; the host writes `kiln::gpu(...)`. Other APIs may use the name too. | Rename to `gpu_object()` (breaking, pre-1.0) or leave it and note the qualification | Open |
 | 2026-09-28 | agent (`kiln-sokol`) | index types | The `.mesh` format allows 8-bit indices; sokol (and D3D11, Metal, WebGPU) has none. The cooker never writes them, but a host cannot know that from the API. | State in `mesh-format-spec.md` / `mesh.h` that the cooker emits 16- or 32-bit indices only | Open |
 | 2026-09-28 | agent (`kiln-sokol`) | mesh payload | One payload buffer holds vertices and indices. sokol takes that (one buffer with both usages) everywhere but WebGL2, which needs separate buffers (`sg_features.separate_buffer_types`). | Nothing now; revisit with a WebGL/WebGPU target (two uploads, or index offset metadata the host can split on) | Predicted |
 | 2026-09-28 | agent (`kiln-sokol`) | upload memory | sokol creates immutable images from data it copies, so the adapter hands kiln CPU memory it allocates per upload and frees at flush: kiln decodes into it, sokol copies it again. | None needed: per-upload memory is the natural shape for such APIs; note it in `adapter.md` | Rejected as an API change: documented in `adapter.md` (`begin_upload`) |
@@ -117,4 +121,26 @@ rediscover them). The design and the mapping tables are in `design/integration-e
   set layout. The viewer's own frame is byte-identical after that change.
 - Against `kiln-gl`: 19.5% of pixels differ, 0.7% by more than 4 levels (hardware sRGB encode
   against the shader's; no anisotropic filtering here, 8x there).
+
+### `kiln-nga` (NoGraphicsAPI on Vulkan; built, not yet run)
+
+- Built on MSVC, clang-cl and the clang GNU driver on Windows (and Linux in CI); not run: the dev
+  machine's GPU lacks `VK_EXT_descriptor_heap`. It fails at `create_device` with a clear message.
+- Mesh payloads: `begin_upload` hands kiln CPU-visible GPU memory from a heap, so kiln writes the
+  payload where the shaders read it (no staging copy), and the upload is complete at `commit_upload`.
+  The first adapter to exercise that path of the contract.
+- The shaders pull vertices through GPU pointers (`stream0`/`stream1` in the root data) and read the
+  `.mesh` LOD records directly: stream offsets, strides and attribute offsets go into each draw's
+  root, and the index range is a `GpuRange` into the same payload. No vertex-input state at all.
+- Textures: staging ring, placement in a texture heap, `copy_memory_to_texture` per level (kiln's
+  `texture_level_layout` gives the ranges), a descriptor at a fresh index, all recorded in `flush`
+  and submitted on queue 0 with the adapter's own timeline semaphore.
+- Slots: the descriptor-rewrite rule forced the CPU slot table (table row); the host resolves the
+  six texture slots of a draw when it writes the root, which it rewrites every frame anyway.
+- `create()` and `pump()` must run on the thread that submits to queue 0 (the adapter's `flush`
+  submits there too): the same rule as GL and sokol, now for a Vulkan-based API.
+- Not kiln: NoGraphicsAPI's CMake needs the Vulkan SDK package and exports install targets, so the
+  example compiles its source file itself and builds the Vulkan loader from source; shaders need
+  Slang (a 63 MB download on Windows). The root layout was checked against Slang's reflection
+  (`-reflection-json`) before the C++ side was written.
 

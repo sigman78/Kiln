@@ -1,7 +1,8 @@
 # Integration examples
 
-**Status:** Decided (owner, 2026-09-28): as proposed, all open points as proposed. Steps 1 to 4
-(`gl`, `gl-bindless`, `sokol`, `vk-basic`) are implemented, and so is `Adapter::flush`.
+**Status:** Decided (owner, 2026-09-28): as proposed, all open points as proposed. All five steps
+(`gl`, `gl-bindless`, `sokol`, `vk-basic`, `nga`) are implemented, and so is `Adapter::flush`; `nga`
+is built but not yet run on a supported GPU.
 **Decides:** Which small renderers show newcomers how to plug kiln in, what each one maps kiln's
 adapter onto, how their third-party code is fetched, and how the work feeds the API review.
 
@@ -47,13 +48,13 @@ measures.
 
 | Adapter part | `vk-basic` | `gl` | `gl-bindless` | `sokol` | `nga` |
 |---|---|---|---|---|---|
-| `acquire` | null | null | a slot in the handle table, showing the placeholder | null | a heap index bound to the placeholder |
+| `acquire` | null | null | a slot in the handle table, showing the placeholder | null | a stable slot in a CPU table, pointing at the placeholder's descriptor |
 | `begin_upload` memory | staging ring | persistently mapped PBO | same as `gl` | CPU memory per upload | CPU-visible GPU heap (`gpu_heap`, ReBAR) |
-| `commit_upload` | submits a copy | queues | queues | queues | records and submits a copy (textures); nothing (meshes) |
-| GPU work | transfer queue | `flush`: `glTextureSubImage*`, then a fence | same as `gl` | `flush`: `sg_make_image` + view / `sg_make_buffer`; complete at once | copy queue, timeline semaphore |
-| `GpuObject` | `VkImage` / `VkBuffer` | the adapter's own table index | table index in `native`, handle slot in `slot` | the adapter's own table index | GPU address in `native`, heap index in `slot` |
-| After `publish` | rebuild that material's set | nothing; bound per draw | write the new handle | nothing; bound per draw | nothing |
-| `destroy_deferred` | by frames in flight | immediate | make non-resident, then delete | immediate | by timeline value |
+| `commit_upload` | submits a copy | queues | queues | queues | queues |
+| GPU work | transfer queue | `flush`: `glTextureSubImage*`, then a fence | same as `gl` | `flush`: `sg_make_image` + view / `sg_make_buffer`; complete at once | `flush`: texture creation and copies on queue 0, a timeline semaphore; meshes: none (written in place) |
+| `GpuObject` | `VkImage` / `VkBuffer` | the adapter's own table index | table index in `native`, handle slot in `slot` | the adapter's own table index | table index in `native` (a mesh's GPU address from `nga_mesh`), stable slot in `slot` |
+| After `publish` | rebuild that material's set | nothing; bound per draw | write the new handle | nothing; bound per draw | the slot points at another descriptor; the next root data picks it up |
+| `destroy_deferred` | by frames in flight | immediate | make non-resident, then delete | immediate | by frames the host reports (`nga_adapter_retire`) |
 
 `nga` is the one example where kiln writes mesh payloads straight into GPU memory, with no staging
 copy. The adapter interface allows it (`UploadTarget::dst` is "staging / ReBAR / scratch"), but
@@ -111,7 +112,7 @@ adds what nobody predicted.
 2. *(done)* `gl-bindless`.
 3. *(done)* `sokol`.
 4. *(done)* `vk-basic`.
-5. `nga` (built on CI, run by the owner on a supported GPU).
+5. *(done: built, not yet run)* `nga` (built on CI, run by the owner on a supported GPU).
 6. API review of the friction log; changes go to `CHANGELOG.md` with migration notes.
 
 ## Open points

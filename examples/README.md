@@ -24,6 +24,7 @@ The second run is fast: the models are cached and the store is already cooked.
 | `kiln-gl-bindless` | OpenGL 4.6 + `ARB_bindless_texture` | The same scene with bindless textures: each texture gets a slot in a table of resident handles at request time, and materials store slot numbers once. Renders the same pixels as `kiln-gl`. |
 | `kiln-sokol` | D3D11 (Windows), GL 4.3 (Linux) or Metal (macOS) | The same scene through sokol_gfx, with sokol_app owning the main loop: kiln's `create()`, `pump()` and `destroy()` live in the app callbacks. `--offscreen` shows the window until the scene settles (sokol_app has no hidden windows). |
 | `kiln-vk-basic` | Vulkan 1.4 driver | The same scene on Vulkan without bindless: a descriptor set per material and frame slot, rewritten when kiln's events say a texture's object changed. Shares the viewer's device, adapter (bindless off) and frame plumbing. |
+| `kiln-nga` | Vulkan 1.4 with `VK_EXT_descriptor_heap` (RTX 30+, RDNA 3+) | The same scene through NoGraphicsAPI: vertices pulled through GPU pointers from the payload kiln wrote in place, textures as descriptor heap indices. Only with `-DKILN_EXAMPLE_NGA=ON` (fetches NoGraphicsAPI, builds the Vulkan loader, downloads Slang). Headless on Linux (`--offscreen`). |
 | `kiln-vk-smoke` | Vulkan 1.4 driver | Checks that uploads complete in commit order, then loads assets through the adapter with no window and prints what the adapter did. |
 
 Every program prints its options with `--help`. Binaries land in `build/<preset>/examples/<name>/`.
@@ -86,7 +87,7 @@ kiln-gl --offscreen --dump gl.png --source examples/assets/khronos --root sky=ex
     --sky sky:hdr_cube.hdr --store build/gl-store WaterBottle.glb
 ```
 
-`kiln-gl-bindless`, `kiln-sokol` and `kiln-vk-basic` take the same options. `kiln-gl` and `kiln-gl-bindless` read only float vertex data: its provider cooks meshes with `VertexProfile::Float`, and a
+`kiln-gl-bindless`, `kiln-sokol`, `kiln-vk-basic` and `kiln-nga` take the same options. `kiln-gl` and `kiln-gl-bindless` read only float vertex data: its provider cooks meshes with `VertexProfile::Float`, and a
 store mesh in the quantized profile is rejected with a message.
 
 ## Headless recipes
@@ -120,6 +121,7 @@ every asset still reached Ready.
 - `gl/main.cpp` and `gl/main_bindless.cpp`: the GL integration examples, numbered step by step (compare
   the two to see what bindless changes); `gl/gl_adapter.cpp`: their adapter, bound or bindless;
   `gl/gl_util.cpp`: what the two share; `gl/gl_api.cpp`: a GL loader of about 75 functions over GLFW.
+- `nga/main.cpp`, `nga/nga_adapter.cpp`, `nga/scene.slang`: the NoGraphicsAPI example.
 - `vk-basic/main.cpp`: the non-bindless Vulkan example (compare `viewer/main.cpp` for bindless).
 - `sokol/main.cpp`: the sokol integration example; `sokol/sokol_adapter.cpp`: its adapter;
   `sokol/scene.glsl`: its shaders, compiled by sokol-shdc at build time.

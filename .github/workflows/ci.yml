@@ -116,6 +116,38 @@ jobs:
       - name: Test
         run: ctest --preset ${{ matrix.preset }}
 
+  # kiln-nga (docs/design/integration-examples.md): NoGraphicsAPI, a Vulkan loader built from source
+  # and a Slang download, so it has a job of its own instead of joining every preset. Build only:
+  # running it needs VK_EXT_descriptor_heap.
+  nga:
+    name: nga (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: windows-msvc, os: windows-latest, preset: win-msvc-debug }
+          - { name: linux-clang, os: ubuntu-24.04, preset: linux-clang-debug }
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
+
+      - uses: seanmiddleditch/gha-setup-ninja@v5
+
+      - name: Install Linux packages
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libxkbcommon-dev libgl-dev
+
+      - name: Configure
+        run: cmake --preset ${{ matrix.preset }} -DKILN_EXAMPLE_NGA=ON
+
+      - name: Build kiln-nga
+        run: cmake --build --preset ${{ matrix.preset }} --target kiln-nga
+
   # Texture-only cook (docs/design/texture-only.md): KILN_MESH=OFF builds without the glTF
   # importer and mesh cooker, and must not fetch meshoptimizer.
   texture-only:

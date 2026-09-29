@@ -8,6 +8,11 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
 ## [Unreleased]
 
 ### Added
+- `kiln-nga` (`examples/nga`, CMake option `KILN_EXAMPLE_NGA`, OFF everywhere, its own CI job): the
+  scene through NoGraphicsAPI. Mesh payloads are written by kiln straight into CPU-visible GPU
+  memory and read through GPU pointers; textures are descriptor heap indices behind a CPU slot table.
+  Fetches NoGraphicsAPI, builds the Vulkan loader from source (no SDK) and downloads Slang. Built,
+  not yet run: it needs `VK_EXT_descriptor_heap`.
 - `kiln-vk-basic` (`examples/vk-basic`, CMake option `KILN_EXAMPLE_VK_BASIC`, ON in the presets): the
   scene on Vulkan 1.4 without bindless, a descriptor set per material and frame slot rewritten on
   kiln's events. The viewer's Vulkan code is now the library `kiln_example_vk`: its adapter takes

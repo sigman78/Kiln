@@ -110,6 +110,11 @@ The adapter accepts `UploadKind::MeshPayload`. Without the bit, kiln never calls
 K5004. A texture-only adapter leaves it clear and can ignore `bufferOffsetAlign`
 (`texture-only.md`). The null adapter and the example Vulkan adapter set it.
 
+A slot need not be a descriptor. NoGraphicsAPI forbids rewriting a descriptor while earlier frames may
+read it, so `kiln-nga`'s adapter keeps a CPU table: `acquire` points a stable slot at the
+placeholder's descriptor, `publish` points it at the texture's own descriptor, and the host resolves
+slot to descriptor index when it writes each frame's root data. Materials still store the slot once.
+
 ### Two binding models
 
 The renderer picks one; `gpu(ctx, handle)` (an allocation-free table lookup) serves both.

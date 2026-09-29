@@ -34,6 +34,7 @@ option(KILN_EXAMPLE_GL            "Build the OpenGL 4.6 integration example (kil
 option(KILN_EXAMPLE_GL_BINDLESS   "Build the bindless OpenGL example (kiln-gl-bindless)" OFF)
 option(KILN_EXAMPLE_SOKOL         "Build the sokol_gfx example (kiln-sokol; fetches sokol and sokol-shdc)" OFF)
 option(KILN_EXAMPLE_VK_BASIC      "Build the non-bindless Vulkan example (kiln-vk-basic)" OFF)
+option(KILN_EXAMPLE_NGA           "Build the NoGraphicsAPI example (kiln-nga; fetches NoGraphicsAPI, the Vulkan loader, Slang)" OFF)
 option(KILN_WARNINGS_AS_ERRORS    "Treat warnings as errors"                         ${KILN_IS_TOP_LEVEL})
 option(KILN_INSTALL               "Generate install rules"                           ${KILN_IS_TOP_LEVEL})
 
