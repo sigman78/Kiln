@@ -20,8 +20,9 @@ struct FrameUniforms {
     f32 viewProj[16];
     f32 cameraPos[4];
     f32 lightDir[4]; ///< towards the light, xyz
+    f32 tonemap[4];  ///< x: exposure multiplier (2^EV), y: 0 none, 1 ACES
 };
-static_assert(sizeof(FrameUniforms) == 96);
+static_assert(sizeof(FrameUniforms) == 112);
 
 /// The shaders' push constant block `Draw` (std430 push constant layout).
 struct DrawPush {

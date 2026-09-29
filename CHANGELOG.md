@@ -8,6 +8,9 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
 ## [Unreleased]
 
 ### Added
+- `kiln-viewer --tonemap auto|none|aces` and `--exposure <ev>`: a display curve for HDR content.
+  `auto` (default) applies ACES only once an HDR (float) `--sky` has loaded, so LDR scenes render
+  unchanged. `FrameUniforms` gains `tonemap` (now 112 bytes); `mesh.frag` and `sky.frag` apply it.
 - HDR textures (`docs/design/hdr-textures.md`): Radiance `.hdr` sources through kiln's own decoder
   (`decode_hdr`, `is_hdr`; flat and run-length scanlines, standard orientation), usage `Hdr`
   cooking to `R16G16B16A16_SFLOAT` with f32 mips and `float_to_half` / `half_to_float`

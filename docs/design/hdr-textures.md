@@ -1,7 +1,7 @@
 # HDR textures
 
 **Status:** Decided (owner, 2026-09-28): `.hdr` sources, RGBA16F, a warning for integer sources,
-equirectangular to cube later. Rollout steps 1 to 3 are implemented.
+equirectangular to cube later. All four rollout steps are implemented.
 **Decides:** Which HDR source format kiln reads, which GPU format it cooks HDR textures to, and why
 OpenEXR sources and the packed HDR pixel formats are left out for now.
 
@@ -124,5 +124,6 @@ with RGBA16F as the default.
    all finite halves); a golden RGBA16F texture.
 3. *(done)* Resolution and cook: `.hdr` implies `Hdr` and Linear, `Hdr` cooks to RGBA16F, K2011;
    `.hdr` in the provider and `kiln-cook`; `ktx validate` on the output.
-4. Optional: viewer tonemapping, so HDR skies can be checked by eye.
+4. *(done)* Viewer tonemapping, so HDR skies can be checked by eye: `--tonemap auto|none|aces` and
+   `--exposure <ev>` (`viewer.md`).
 

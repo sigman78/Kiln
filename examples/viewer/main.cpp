@@ -108,20 +108,22 @@ constexpr u32 kMaxRoots = 8;
 struct Options {
     char const* store = "cooked";
     Root roots[kMaxRoots]; ///< --source and --root
-    u32 rootCount    = 0;
-    char const* dump = nullptr;
-    char const* sky  = nullptr; ///< a cube map drawn behind the scene
-    double atMs      = -1;      ///< offscreen --at: stop at the first frame at or after this time
-    u32 timeoutS     = 60;      ///< offscreen: give up waiting for the scene to settle
-    bool validate    = false;
-    bool offscreen   = false;
-    bool noFit       = false;
-    bool watch       = false;
-    u32 width        = 1280;
-    u32 height       = 720;
-    u32 budgetMiB    = 8;
-    u32 frames       = 0; ///< 0 = 60 offscreen, until closed in a window
-    u32 threads      = 0;
+    u32 rootCount       = 0;
+    char const* dump    = nullptr;
+    char const* sky     = nullptr; ///< a cube map drawn behind the scene
+    double atMs         = -1;      ///< offscreen --at: stop at the first frame at or after this time
+    u32 timeoutS        = 60;      ///< offscreen: give up waiting for the scene to settle
+    double exposure     = 0;       ///< EV: colors are scaled by 2^exposure before the tonemap
+    char const* tonemap = "auto";
+    bool validate       = false;
+    bool offscreen      = false;
+    bool noFit          = false;
+    bool watch          = false;
+    u32 width           = 1280;
+    u32 height          = 720;
+    u32 budgetMiB       = 8;
+    u32 frames          = 0; ///< 0 = 60 offscreen, until closed in a window
+    u32 threads         = 0;
     MeshItem meshes[kMaxMeshes];
     u32 meshCount = 0;
 };
@@ -456,9 +458,17 @@ bool scene_settled(Scene const& s) {
     return true;
 }
 
+char const* const kTonemaps[] = {"auto", "none", "aces", nullptr};
+
+/// True when `format` holds values above 1 (a float format).
+bool is_hdr_format(Format f) {
+    FormatInfo const* fi = format_info(f);
+    return fi && (fi->kind == FormatKind::SFloat || fi->kind == FormatKind::UFloat);
+}
+
 /// The frame uniforms, and the camera basis the sky shader turns into a ray per pixel.
-void write_uniforms(Scene const& s, Camera const& cam, VkExtent2D extent, vkx::FrameUniforms* u,
-                    vkx::SkyPush* sky) {
+void write_uniforms(Scene const& s, Camera const& cam, VkExtent2D extent, bool aces, f32 exposure,
+                    vkx::FrameUniforms* u, vkx::SkyPush* sky) {
     f32 const aspect = extent.height ? f32(extent.width) / f32(extent.height) : 1.0f;
     Vec3 const dir{std::cos(cam.elevation) * std::sin(cam.azimuth), std::sin(cam.elevation),
                    std::cos(cam.elevation) * std::cos(cam.azimuth)};
@@ -477,6 +487,10 @@ void write_uniforms(Scene const& s, Camera const& cam, VkExtent2D extent, vkx::F
     u->lightDir[1]   = light.y;
     u->lightDir[2]   = light.z;
     u->lightDir[3]   = 0.0f;
+    u->tonemap[0]    = exposure;
+    u->tonemap[1]    = aces ? 1.0f : 0.0f;
+    u->tonemap[2]    = 0.0f;
+    u->tonemap[3]    = 0.0f;
 
     // The same basis as look_at(); right and up span the view at distance 1.
     Vec3 const f    = vkx::normalize(s.center - eye);
@@ -628,6 +642,15 @@ int main(int argc, char** argv) {
          .arg    = "<s>",
          .help   = "offscreen: stop waiting for the scene to settle after <s> seconds (default: 60)",
          .number = &o.timeoutS},
+        {.name = "--exposure",
+         .arg  = "<ev>",
+         .help = "scale colors by 2^<ev> before the tonemap (default: 0)",
+         .real = &o.exposure},
+        {.name    = "--tonemap",
+         .arg     = "<mode>",
+         .help    = "auto (aces for an HDR sky, else none), none (clamp) or aces",
+         .str     = &o.tonemap,
+         .choices = kTonemaps},
         {.name = "--sky",
          .arg  = "<name>",
          .help = "a cube texture drawn behind the scene, e.g. sky_cube.png (a vertical strip of 6 faces)",
@@ -870,9 +893,15 @@ int main(int argc, char** argv) {
             if (app.window) glfwWaitEventsTimeout(0.05); // minimized or resizing
             continue;
         }
+        // auto: ACES once the sky has loaded as a float (HDR) texture; LDR scenes look as before.
+        bool aces = std::strcmp(o.tonemap, "aces") == 0;
+        if (std::strcmp(o.tonemap, "auto") == 0 && skyItem != kInvalid) {
+            TextureInfo const ti = texture_info(app.ctx, scene.textures[skyItem].handle);
+            aces                 = !ti.isPlaceholder && is_hdr_format(ti.desc.format);
+        }
         vkx::SkyPush sky{};
-        write_uniforms(scene, input.camera, vkx::renderer_extent(app.ren), vkx::renderer_uniforms(app.ren),
-                       &sky);
+        write_uniforms(scene, input.camera, vkx::renderer_extent(app.ren), aces, f32(std::exp2(o.exposure)),
+                       vkx::renderer_uniforms(app.ren), &sky);
         if (skyItem != kInvalid) {
             // The slot serves the cube placeholder until the real cube is published.
             sky.cubeSlot = gpu(app.ctx, scene.textures[skyItem].handle).slot;

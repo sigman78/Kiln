@@ -88,6 +88,12 @@ The library never sees a Vulkan header.
   example a vertical strip `sky_cube.png` (`texture-shapes.md`), and draws it behind the scene:
   a full-screen triangle whose fragment shader turns the camera basis into a ray per pixel. The
   cube placeholder shows until the cube is published.
+- **Tonemapping.** The target is an sRGB image, so the shaders output linear color and values
+  above 1 would clip. `--tonemap auto|none|aces` picks the display curve: `aces` is Narkowicz's
+  ACES fit, `none` only clamps, and `auto` (default) uses `aces` once the `--sky` texture has
+  loaded in a float (HDR) format, so LDR scenes look exactly as before. `--exposure <ev>` scales
+  every color by 2^ev first. Both are in the frame uniforms (`FrameUniforms::tonemap`). This is a
+  display aid for inspecting assets: no auto-exposure, no bloom, no HDR swapchain.
 - **Placement and camera.** Each boot model is scaled to bounding radius 1 and placed in a row 2.5
   units apart; `--no-fit` keeps native sizes. The camera orbits the union of the placed bounds and
   frames every model; mouse drag and wheel in the window, fixed in offscreen mode.
