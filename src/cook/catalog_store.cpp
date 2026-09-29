@@ -144,6 +144,7 @@ struct Record {
     u32 nameOff = 0, nameLen = 0;
     AssetKind kind = AssetKind::Mesh;
     bool live      = false;
+    bool fresh     = false; ///< checked or cooked by this process (not written)
     u64 hostDigest = 0;
     Vec<UnitInput> inputs; ///< strings into `strings`
     Vec<RecordOutput> outputs;
@@ -550,6 +551,7 @@ Status publish_unit(CatalogStore* s, CookUnit& unit, u64 hostDigest, DiagSink co
     next.nameLen    = u32(unitName.size);
     next.kind       = unit.outputs[0].kind;
     next.live       = true;
+    next.fresh      = true;
     next.hostDigest = hostDigest;
     for (UnitInput in : unit.inputs) {
         StrView const n = unit.str(in.nameOff, in.nameLen), p = unit.str(in.pathOff, in.pathLen);
@@ -636,6 +638,28 @@ bool copy_input_record(CatalogStore* s, StrView name, CookUnit* out, u64* hostDi
     }
     *hostDigest = r.hostDigest;
     return true;
+}
+
+bool is_fresh(CatalogStore* s, StrView name) noexcept {
+    std::lock_guard<std::mutex> const lock(s->mutex);
+    u32 const i = s->find_record(name);
+    return i != kInvalid && s->records[i].live && s->records[i].fresh;
+}
+
+void mark_fresh(CatalogStore* s, StrView name) noexcept {
+    std::lock_guard<std::mutex> const lock(s->mutex);
+    u32 const i = s->find_record(name);
+    if (i != kInvalid && s->records[i].live) s->records[i].fresh = true;
+}
+
+void fresh_units(CatalogStore* s, Vec<char>* out) noexcept {
+    std::lock_guard<std::mutex> const lock(s->mutex);
+    out->clear();
+    for (Record const& r : s->records) {
+        if (!r.live || !r.fresh) continue;
+        out->append(Span<char const>(r.name().data, r.name().size));
+        out->push_back('\0');
+    }
 }
 
 void set_record_digest(CatalogStore* s, StrView name, u64 hostDigest) noexcept {

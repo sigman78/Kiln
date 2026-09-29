@@ -188,6 +188,90 @@ void unit_build_inputs(CookUnit const& unit, BuildInput* out) noexcept {
     }
 }
 
+u64 host_digest(UnitDesc const& d, u32 policyVersion) noexcept {
+    Xxh64State h;
+    h.update_value(kCookerVersion);
+    h.update_value(hash_target(*d.target));
+    h.update_value(hash_settings(*d.meshDefaults));
+    h.update_value(hash_settings(*d.textureDefaults));
+    h.update_value(u32(d.nameRules.size));
+    for (NameRule const& r : d.nameRules) {
+        h.update_value(u32(r.suffix.size));
+        h.update(r.suffix);
+        h.update_value(u8(r.usage));
+        h.update_value(u8(r.shape));
+    }
+    h.update_value(u8(d.session.storeMode));
+    h.update_value(u8(d.session.fastPreview));
+    h.update_value(policyVersion);
+    return h.digest();
+}
+
+bool recorded_keys_match(UnitDesc const& d, CookUnit const& rec) noexcept {
+    Allocator const* alloc = d.env.alloc ? d.env.alloc : default_allocator();
+    Vec<u8> sidecar(alloc, Tag::Cook);
+    StrView sidecarPath;
+    for (UnitInput const& in : rec.inputs) {
+        if (in.role != InputRole::Sidecar || !in.present) continue;
+        sidecarPath = rec.str(in.pathOff, in.pathLen);
+        if (io_read_file(compat_io_backend(), sidecarPath, alloc, &sidecar).failed()) return false;
+    }
+    Vec<BuildInput> inputs(alloc, Tag::Cook);
+    inputs.resize(rec.inputs.size());
+    unit_build_inputs(rec, inputs.data());
+    u64 const targetHash = hash_target(*d.target);
+
+    for (usize i = 0; i < rec.outputs.size(); ++i) {
+        UnitOutput const& o = rec.outputs[i];
+        if (o.status.failed()) return false;
+        StrView const name = rec.name(o);
+        // Only a source of its own has a sidecar (the first output); embedded images have a slot.
+        bool const ownSidecar = i == 0;
+        ResolveDesc rd{
+            .asset     = {name, d.sourcePath, o.slot},
+            .nameRules = d.nameRules,
+            .policy    = d.policy,
+            .target    = *d.target,
+            .session   = d.session,
+            .diag      = nullptr,
+        };
+        if (ownSidecar && !sidecarPath.empty()) {
+            rd.sidecar     = StrView(reinterpret_cast<char const*>(sidecar.data()), sidecar.size());
+            rd.sidecarPath = sidecarPath;
+        }
+        u64 settingsHash = 0;
+        if (o.kind == AssetKind::Mesh) {
+            Result<MeshCookSettings> const r = resolve_mesh_layers(*d.meshDefaults, rd);
+            if (r.failed()) return false;
+            settingsHash = hash_settings(*r);
+        } else {
+            Result<TextureCookSettings> const r = resolve_texture_layers(*d.textureDefaults, rd);
+            if (r.failed()) return false;
+            settingsHash = hash_settings(*r);
+        }
+        Hash128 const key = build_key({.kind         = o.kind,
+                                       .name         = name,
+                                       .targetHash   = targetHash,
+                                       .settingsHash = settingsHash,
+                                       .inputs       = inputs.span()});
+        if (!(key == o.key)) return false;
+    }
+    return true;
+}
+
+bool recorded_inputs_unchanged(CookUnit const& rec) noexcept {
+    for (UnitInput const& in : rec.inputs) {
+        IoStat now;
+        Status const st = stat_file(rec.str(in.pathOff, in.pathLen), &now);
+        if (!in.present) {
+            if (st.code != Code::NotFound) return false;
+            continue;
+        }
+        if (st.failed() || now.size != in.stat.size || now.mtimeNs != in.stat.mtimeNs) return false;
+    }
+    return true;
+}
+
 Status cook_unit(UnitDesc const& d, CookUnit* out) noexcept {
     KILN_VERIFY(d.target && d.meshDefaults && d.textureDefaults);
     Allocator const* alloc = d.env.alloc ? d.env.alloc : default_allocator();

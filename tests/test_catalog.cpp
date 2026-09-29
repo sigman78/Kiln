@@ -7,8 +7,10 @@
 #include "../src/formats/formats_internal.h"
 #include "kiln/cook/catalog.h"
 #include "kiln/cook/cook.h"
+#include "kiln/cook/provider.h"
 #include "kiln/null_adapter.h"
 
+#include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <cstring>
@@ -290,7 +292,8 @@ KILN_TEST(Catalog, ReaderRejectsEachDefect) {
     }
 
     fresh();
-    b.resize(b.size() - 8); // truncated
+    for (int i = 0; i < 8; ++i) // truncated
+        b.pop_back();
     KILN_CHECK_EQ(open_code(b), u32(kDiagCatalogSizes));
     fresh();
     write_unaligned<u64>(b.data() + 24, u64(1) << 40); // entry count
@@ -747,4 +750,193 @@ KILN_TEST(CatalogRuntime, HotReloadFollowsTheCatalog) {
     KILN_CHECK_EQ(version(c.ctx, m), u32(2));
     KILN_CHECK(mesh_view(c.ctx, m)->header().gpuDataSize != gpuBytes);
     KILN_CHECK(state(c.ctx, later) == State::Ready); // failed before, in the catalog now
+}
+
+// ---------------------------------------------------------------------------
+// The cook provider on a catalog store
+// ---------------------------------------------------------------------------
+
+namespace {
+
+/// Counts the mesh resolutions: a cook or a key check calls the policy once per mesh.
+struct PolicyCount {
+    std::atomic<u32> meshes{0};
+    static Status mesh(void* user, CookAssetInfo const&, TargetProfile const&, MeshCookSettings*,
+                       DiagSink const*) noexcept {
+        ++static_cast<PolicyCount*>(user)->meshes;
+        return kOk;
+    }
+    CookPolicy policy() noexcept { return {.mesh = &mesh, .user = this}; }
+};
+
+/// A catalog context with a provider over the root `sources`.
+struct ProviderContext {
+    CatalogContext c;
+    Root root{};
+
+    Status init(char const* store, char const* sources, cook::ProviderDesc desc, bool hotReload = false) {
+        root                   = Root{{}, StrView(sources)};
+        Result<NullAdapter*> n = null_adapter_create({}, &c.adapter);
+        if (n.failed()) return n.status();
+        c.na = *n;
+        ContextDesc cd{};
+        cd.adapter           = &c.adapter;
+        cd.storeDir          = StrView(store);
+        cd.storeLayout       = StoreLayout::Catalog;
+        cd.roots             = Span<Root const>(&root, 1);
+        cd.diag              = {&FirstCode::fn, &c.diag};
+        cd.hotReload         = {.watchStore = hotReload, .pollMs = 5};
+        Result<Context*> ctx = create(cd);
+        if (ctx.failed()) return ctx.status();
+        c.ctx = *ctx;
+        return cook::install_provider(c.ctx, desc);
+    }
+};
+
+/// The key of `name` in the store's catalog on disk; zero if absent.
+Hash128 catalog_key(char const* store, AssetKind kind, StrView name) {
+    char path[1024];
+    (void)catalog_file_path(StrView(store), "compat"_sv, path, sizeof path);
+    Vec<u8> bytes(default_allocator(), Tag::Test);
+    if (!read_file(path, bytes)) return {};
+    Result<CatalogView> v = CatalogView::open(bytes.span());
+    CatalogEntry e;
+    return v.ok() && v->find(kind, name, &e) ? e.key : Hash128{};
+}
+
+/// Copies the external_uri glTF, its buffer and image into `dir`.
+void copy_sources(char const* dir) {
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+    char from[1024];
+    format(from, sizeof from, "%s/../gltf/generated", kiln::test::corpus_dir());
+    for (char const* f : {"external_uri.gltf", "external_uri.bin", "external_uri_albedo.png"})
+        std::filesystem::copy_file(std::filesystem::path(from) / f, std::filesystem::path(dir) / f,
+                                   std::filesystem::copy_options::overwrite_existing, ec);
+}
+
+/// Flips the first byte of `path`, keeping its size; with `keepTime`, also its modification time.
+void edit_first_byte(char const* path, bool keepTime, int bit = 1) {
+    std::error_code ec;
+    auto const time = std::filesystem::last_write_time(path, ec);
+    std::FILE* f    = std::fopen(path, "r+b");
+    KILN_REQUIRE(f != nullptr);
+    int const c = std::fgetc(f);
+    std::fseek(f, 0, SEEK_SET);
+    std::fputc(c ^ bit, f);
+    std::fclose(f);
+    if (keepTime)
+        std::filesystem::last_write_time(path, time, ec);
+    else
+        std::filesystem::last_write_time(path, time + std::chrono::seconds(2), ec);
+}
+
+} // namespace
+
+KILN_TEST(CatalogProvider, ChecksOncePerSessionAndCooksOnlyWhatChanged) {
+    char store[1024], sources[1024], bin[1100];
+    fresh_dir("catalog-prov-store", store, sizeof store);
+    fresh_dir("catalog-prov-src", sources, sizeof sources);
+    copy_sources(sources);
+    format(bin, sizeof bin, "%s/external_uri.bin", sources);
+    PolicyCount count;
+    cook::ProviderDesc desc{.policy = count.policy()};
+
+    // Session 1: a miss cooks and publishes.
+    {
+        ProviderContext p;
+        KILN_REQUIRE(p.init(store, sources, desc).ok());
+        MeshHandle const m = request_mesh(p.c.ctx, "external_uri.gltf"_sv);
+        KILN_REQUIRE(settle(p.c.ctx, m) == State::Ready);
+        KILN_CHECK(count.meshes.load() > 0u);
+    }
+    Hash128 const k1 = catalog_key(store, AssetKind::Mesh, "external_uri.gltf"_sv);
+    KILN_REQUIRE(!k1.is_zero());
+
+    // Session 2: nothing changed; the size-and-time check passes without a cook.
+    count.meshes = 0;
+    {
+        ProviderContext p;
+        KILN_REQUIRE(p.init(store, sources, desc).ok());
+        MeshHandle const m = request_mesh(p.c.ctx, "external_uri.gltf"_sv);
+        KILN_REQUIRE(settle(p.c.ctx, m) == State::Ready);
+        KILN_CHECK_EQ(count.meshes.load(), 0u);
+    }
+
+    // Session 3: the buffer changes but keeps its size and time: not seen (the accepted cost). A new
+    // policy version only re-checks the keys from the recorded hashes.
+    edit_first_byte(bin, true);
+    desc.policyVersion = 1;
+    {
+        ProviderContext p;
+        KILN_REQUIRE(p.init(store, sources, desc).ok());
+        MeshHandle const m = request_mesh(p.c.ctx, "external_uri.gltf"_sv);
+        KILN_REQUIRE(settle(p.c.ctx, m) == State::Ready);
+        KILN_CHECK_EQ(count.meshes.load(), 1u); // one resolution, no cook
+    }
+    KILN_CHECK(catalog_key(store, AssetKind::Mesh, "external_uri.gltf"_sv) == k1);
+
+    // Session 4: the buffer's time moves: a re-cook with the new content.
+    edit_first_byte(bin, false, 2);
+    count.meshes = 0;
+    {
+        ProviderContext p;
+        KILN_REQUIRE(p.init(store, sources, desc).ok());
+        MeshHandle const m = request_mesh(p.c.ctx, "external_uri.gltf"_sv);
+        KILN_REQUIRE(settle(p.c.ctx, m) == State::Ready);
+        KILN_CHECK(count.meshes.load() > 0u);
+    }
+    Hash128 const k4 = catalog_key(store, AssetKind::Mesh, "external_uri.gltf"_sv);
+    KILN_CHECK(!k4.is_zero() && !(k4 == k1));
+}
+
+KILN_TEST(CatalogProvider, ProfileAndLock) {
+    char store[1024], sources[1024];
+    fresh_dir("catalog-prov-lock", store, sizeof store);
+    fresh_dir("catalog-prov-lock-src", sources, sizeof sources);
+    copy_sources(sources);
+
+    ProviderContext wrongProfile;
+    KILN_CHECK(wrongProfile.init(store, sources, {.target = cook::kDesktopTarget}).code ==
+               Code::InvalidArgument);
+    KILN_CHECK_EQ(wrongProfile.c.diag.code, u32(kDiagStoreProfileMismatch));
+
+    ProviderContext first;
+    KILN_REQUIRE(first.init(store, sources, {}).ok());
+    ProviderContext second;
+    KILN_CHECK(second.init(store, sources, {}).code == Code::Busy);
+    KILN_CHECK_EQ(second.c.diag.code, u32(kDiagCatalogLocked));
+
+    // Memory mode writes nothing and takes no lock.
+    ProviderContext memory;
+    KILN_REQUIRE(memory.init(store, sources, {.storeMode = cook::StoreMode::Memory}).ok());
+    MeshHandle const m = request_mesh(memory.c.ctx, "external_uri.gltf"_sv);
+    KILN_CHECK(settle(memory.c.ctx, m) == State::Ready);
+}
+
+KILN_TEST(CatalogProvider, SourceEditsReachLoadedAssets) {
+    char store[1024], sources[1024], bin[1100];
+    fresh_dir("catalog-prov-hot", store, sizeof store);
+    fresh_dir("catalog-prov-hot-src", sources, sizeof sources);
+    copy_sources(sources);
+    format(bin, sizeof bin, "%s/external_uri.bin", sources);
+
+    ProviderContext p;
+    KILN_REQUIRE(p.init(store, sources, {.watchSources = true, .pollMs = 5}, true).ok());
+    MeshHandle const m = request_mesh(p.c.ctx, "external_uri.gltf"_sv);
+    KILN_REQUIRE(settle(p.c.ctx, m) == State::Ready);
+    Hash128 const before = catalog_key(store, AssetKind::Mesh, "external_uri.gltf"_sv);
+
+    edit_first_byte(bin, false);
+    bool changed = false;
+    for (int i = 0; i < 5000 && !changed; ++i) {
+        (void)pump(p.c.ctx, {});
+        for (Event const& e : events(p.c.ctx))
+            if (e.kind == EventKind::Changed && e.handle == m.bits()) changed = true;
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    KILN_CHECK(changed);
+    KILN_CHECK_EQ(version(p.c.ctx, m), u32(2));
+    Hash128 const after = catalog_key(store, AssetKind::Mesh, "external_uri.gltf"_sv);
+    KILN_CHECK(!after.is_zero() && !(after == before));
 }

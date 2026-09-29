@@ -21,6 +21,9 @@ struct ProviderDesc {
     /// Copied at install; empty means such textures are cooked as Color.
     Span<NameRule const> nameRules = kDefaultNameRules;
     bool fastPreview               = false;
+    /// Catalog layout: the version of the host's `policy`. A policy is code, so the provider cannot
+    /// see it change: bump this when it does, and every entry's key is checked again.
+    u32 policyVersion = 0;
     /// Dev builds: poll the source files of cooked assets and re-cook them into the store when
     /// they change (docs/design/hot-reload.md). The runtime's store poller then reloads them.
     bool watchSources = false;
@@ -34,6 +37,10 @@ struct ProviderDesc {
 /// it; the host requests them by name. Returns InvalidArgument if the context has no roots.
 /// With StoreMode::Disk the store must be empty or cooked for `desc.target`'s profile
 /// (bind_store_profile); otherwise it returns InvalidArgument (K3008) and writes nothing.
+/// In the Catalog layout the context's profile must be `desc.target`'s (K3008). The provider then
+/// installs CookProvider::prepare: each asset is checked once per session by the size and time of
+/// its recorded inputs, and cooked again when they changed. In Disk mode it writes the profile's
+/// catalog and holds its lock until it is released (K3009 for a second writer).
 /// Call install_provider and uninstall_provider on the pump thread. destroy(ctx) frees a provider
 /// that is still installed, so uninstall_provider is needed only to remove it earlier.
 KILN_API Status install_provider(Context* ctx, ProviderDesc const& desc) noexcept;

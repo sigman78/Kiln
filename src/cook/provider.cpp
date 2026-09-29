@@ -13,6 +13,7 @@
 // recordMutex is taken inside a stripe lock or on its own, never the other way round.
 #include "kiln/cook/provider.h"
 
+#include "catalog_store.h"
 #include "unit.h"
 
 #include "kiln/cook/cook.h"
@@ -86,6 +87,10 @@ struct Provider {
     Allocator const* alloc = nullptr;
     JobSystem const* jobs  = nullptr; ///< the context's pool; provider_cook runs on one of its workers
     Context* ctx           = nullptr; ///< the registry key
+
+    // Catalog layout, Disk mode: the profile's catalog writer (it holds the lock).
+    CatalogStore* store = nullptr;
+    u64 hostDigest      = 0; ///< host_digest() of desc
 
     // Source records (Disk mode), under recordMutex. They never shrink, so indices are stable.
     std::mutex recordMutex;
@@ -392,9 +397,16 @@ Status cook_on_miss(Provider& p, AssetKind unitKind, StrView unitName, StrView s
     return s;
 }
 
-Status provider_cook(void* user, AssetKind kind, StrView name, Allocator const* alloc, Vec<u8>* out,
-                     DiagSink const* diag) noexcept {
-    auto* p                    = static_cast<Provider*>(user);
+/// A request, resolved to the source whose cook makes it (the unit).
+struct UnitRequest {
+    StrView owner;                        ///< the unit's name: `name` without `#<image>`
+    AssetKind unitKind = AssetKind::Mesh; ///< Mesh: a glb/gltf source; Texture: an image of its own
+    FoundSource src;
+    [[nodiscard]] StrView source_path() const noexcept { return {src.path, src.len}; }
+};
+
+Status resolve_request(Provider const& p, AssetKind kind, StrView name, UnitRequest* out,
+                       DiagSink const* diag) noexcept {
     AssetNameParts const parts = split_asset_name(name);
     bool const embedded        = !parts.sub.empty();
     bool const kindOk          = kind == AssetKind::Mesh ? !embedded && is_model(parts.path)
@@ -403,14 +415,75 @@ Status provider_cook(void* user, AssetKind kind, StrView name, Allocator const* 
         return diagf(diag, make_status(Code::InvalidArgument), kDiagSourceKind, Severity::Error, name,
                      "request", "the extension does not name a %s source",
                      kind == AssetKind::Mesh ? "mesh" : "texture");
-
     // "<mesh>#<image>": an image embedded in that mesh's source.
-    StrView const owner = embedded ? name.substr(0, name.size - parts.sub.size - 1) : name;
-    FoundSource src;
-    KILN_TRY(find_source(*p, owner, src, diag));
-    StrView const sourcePath(src.path, src.len);
-    AssetKind const unitKind = kind == AssetKind::Texture && !embedded ? AssetKind::Texture : AssetKind::Mesh;
-    return cook_on_miss(*p, unitKind, owner, sourcePath, kind, name, alloc, out, diag);
+    out->owner    = embedded ? name.substr(0, name.size - parts.sub.size - 1) : name;
+    out->unitKind = kind == AssetKind::Texture && !embedded ? AssetKind::Texture : AssetKind::Mesh;
+    return find_source(p, out->owner, out->src, diag);
+}
+
+Status provider_cook(void* user, AssetKind kind, StrView name, Allocator const* alloc, Vec<u8>* out,
+                     DiagSink const* diag) noexcept {
+    auto* p = static_cast<Provider*>(user);
+    UnitRequest r;
+    KILN_TRY(resolve_request(*p, kind, name, &r, diag));
+    return cook_on_miss(*p, r.unitKind, r.owner, r.source_path(), kind, name, alloc, out, diag);
+}
+
+// ---------------------------------------------------------------------------
+// Catalog layout: prepare
+// ---------------------------------------------------------------------------
+
+/// Cooks a unit and, with a store, publishes it and rewrites the catalog. `unit` keeps the outputs.
+Status cook_and_publish(Provider& p, UnitDesc d, DiagSink const* diag, CookUnit* unit) noexcept {
+    d.statInputs = true;
+    KILN_TRY(cook_unit(d, unit));
+    if (!p.store) return kOk;
+    KILN_TRY(publish_unit(p.store, *unit, p.hostDigest, diag));
+    // The entry is in memory; a failed rewrite (a reader blocking the rename) is retried later.
+    if (Status const st = commit_catalog(p.store, diag); st.failed())
+        KILN_WARN("cook", "cannot rewrite the catalog (%s); retrying later", code_name(st.code));
+    return kOk;
+}
+
+/// True if the unit's record still describes it: the same source path, every input with its
+/// recorded size and time, and the host's settings giving the recorded keys.
+bool record_is_current(Provider& p, UnitDesc const& d) noexcept {
+    CookUnit rec(d.env.alloc);
+    u64 digest = 0;
+    if (!copy_input_record(p.store, d.name, &rec, &digest) || rec.inputs.empty()) return false;
+    UnitInput const& source = rec.inputs[0];
+    if (source.role != InputRole::Source || rec.str(source.pathOff, source.pathLen) != d.sourcePath)
+        return false;
+    if (!recorded_inputs_unchanged(rec)) return false;
+    if (digest == p.hostDigest) return true;
+    if (!recorded_keys_match(d, rec)) return false;
+    set_record_digest(p.store, d.name, p.hostDigest);
+    return true;
+}
+
+Status provider_prepare(void* user, AssetKind kind, StrView name, Allocator const* alloc, Vec<u8>* out,
+                        Hash128* key, DiagSink const* diag) noexcept {
+    auto* p = static_cast<Provider*>(user);
+    UnitRequest r;
+    KILN_TRY(resolve_request(*p, kind, name, &r, diag));
+    StrView const sourcePath = r.source_path();
+    // One check or cook per source at a time: a mesh and its images often arrive together.
+    std::lock_guard<std::mutex> const lock(source_lock(*p, sourcePath));
+    UnitDesc const d = unit_desc(*p, r.unitKind, r.owner, sourcePath, alloc, diag);
+
+    if (p->store && (is_fresh(p->store, r.owner) || record_is_current(*p, d))) {
+        mark_fresh(p->store, r.owner);
+        if (catalog_find(p->store, kind, name, key)) return kOk;
+        // Fresh, but without this output (an image that failed): cook again and report why.
+    }
+    CookUnit unit(alloc);
+    KILN_TRY(cook_and_publish(*p, d, diag, &unit));
+    UnitOutput* o = unit.find(kind, name);
+    if (!o) return make_status(Code::NotFound);
+    if (o->status.failed()) return o->status;
+    *key = p->store ? o->key : Hash128{};
+    *out = std::move(o->bytes);
+    return kOk;
 }
 
 // ---------------------------------------------------------------------------
@@ -473,15 +546,88 @@ void recook_source(Provider& p, u32 idx, SourceRecord const& rec, Vec<char> cons
     r.retryFailed = retry;
 }
 
+/// A unit whose last re-cook failed, by name hash: `inputs` digests the input stats it failed on.
+struct FailedUnit {
+    u64 inputs = 0;
+    bool retry = false; ///< an IO failure: retry every round
+};
+
+/// The size and time (or absence) of every recorded input, as they are now.
+u64 inputs_digest(CookUnit const& rec) noexcept {
+    Xxh64State h;
+    for (UnitInput const& in : rec.inputs) {
+        IoStat now{};
+        h.update_value(u8(stat_file(rec.str(in.pathOff, in.pathLen), &now).ok()));
+        h.update_value(now.size);
+        h.update_value(now.mtimeNs);
+    }
+    return h.digest();
+}
+
+/// Catalog layout: re-cooks every fresh unit whose inputs changed, then rewrites the catalog once.
+/// False when asked to stop.
+bool poll_catalog_round(Provider* p, Vec<char>& units, HashMap<u64, FailedUnit>& failed) noexcept {
+    fresh_units(p->store, &units);
+    CookUnit rec(p->alloc);
+    for (usize at = 0; at < units.size();) {
+        if (p->stopping.load()) return false;
+        StrView const name(units.data() + at, std::strlen(units.data() + at));
+        at += name.size + 1;
+        u64 digest = 0;
+        if (!copy_input_record(p->store, name, &rec, &digest) || rec.outputs.empty() || rec.inputs.empty() ||
+            recorded_inputs_unchanged(rec))
+            continue;
+        u64 const now          = inputs_digest(rec);
+        FailedUnit const* last = failed.find(hash_name(name));
+        if (last && !last->retry && last->inputs == now) continue;
+
+        StrView const sourcePath = rec.str(rec.inputs[0].pathOff, rec.inputs[0].pathLen);
+        std::lock_guard<std::mutex> const lock(source_lock(*p, sourcePath));
+        LogDiag logDiag;
+        logDiag.quiet = last && last->inputs == now;
+        DiagSink const sink{&LogDiag::fn, &logDiag};
+        CookUnit unit(p->alloc);
+        UnitDesc d   = unit_desc(*p, rec.outputs[0].kind, name, sourcePath, p->alloc, &sink);
+        d.statInputs = true;
+        Status s     = cook_unit(d, &unit);
+        if (s.ok()) s = publish_unit(p->store, unit, p->hostDigest, &sink);
+        if (s.ok()) {
+            failed.erase(hash_name(name));
+            if (Status const images = unit.first_failure(); images.failed())
+                KILN_ERROR("cook", "re-cooked %.*s, but an embedded image failed (%s)", KILN_SV(name),
+                           code_name(images.code));
+            else
+                KILN_INFO("cook", "re-cooked %.*s", KILN_SV(name));
+            continue;
+        }
+        // The record keeps its stats, so the unit still reads as changed. An IO failure (a
+        // source still being written) retries every round; a cook failure waits for the next edit.
+        bool const retry = s.code == Code::IoError || s.code == Code::IoEof || s.code == Code::NotFound;
+        if (!logDiag.quiet)
+            KILN_ERROR("cook", "re-cook of %.*s failed (%s); the catalog keeps the previous entry, %s",
+                       KILN_SV(name), code_name(s.code), retry ? "retrying" : "waiting for the next change");
+        failed.insert(hash_name(name), FailedUnit{now, retry});
+    }
+    // Once per round: this round's re-cooks and any records whose keys were checked again.
+    if (Status const st = commit_catalog(p->store, nullptr); st.failed())
+        KILN_WARN("cook", "cannot rewrite the catalog (%s); retrying", code_name(st.code));
+    return true;
+}
+
 void poller_main(Provider* p) noexcept {
     Vec<SourceRecord> snap(p->alloc, Tag::Cook);
     Vec<char> snapStrings(p->alloc, Tag::Cook);
+    HashMap<u64, FailedUnit> failed(p->alloc, Tag::Cook);
     auto const period = std::chrono::milliseconds(p->desc.pollMs > 0 ? p->desc.pollMs : 1u);
 
     for (;;) {
         {
             std::unique_lock<std::mutex> lock(p->pollMutex);
             if (p->pollWake.wait_for(lock, period, [p] { return p->stopping.load(); })) return;
+        }
+        if (p->store) {
+            if (!poll_catalog_round(p, snapStrings, failed)) return;
+            continue;
         }
         {
             std::lock_guard<std::mutex> const lock(p->recordMutex);
@@ -572,6 +718,11 @@ void provider_release(void* user) noexcept {
         if (Provider** found = registry().find(p->ctx); found && *found == p) registry().erase(p->ctx);
     }
     stop_poller(p); // joined before anything it reads is freed
+    if (p->store) {
+        if (Status const st = commit_catalog(p->store, nullptr); st.failed())
+            KILN_WARN("cook", "cannot rewrite the catalog (%s)", code_name(st.code));
+        close_catalog_store(p->store);
+    }
     delete_object(p->alloc, p, Tag::Cook);
 }
 
@@ -645,8 +796,29 @@ Status install_provider(Context* ctx, ProviderDesc const& desc) noexcept {
         return rm.status();
     }
 
-    // A store holds files of one profile (docs/design/target-profiles.md).
-    if (effective.storeMode == StoreMode::Disk) {
+    bool const catalog = store_layout(ctx) == StoreLayout::Catalog;
+    if (catalog) {
+        StrView const profile = store_profile(ctx);
+        if (profile != effective.target.name) {
+            delete_object(alloc, p, Tag::Cook);
+            return diagf(diag_sink(ctx), make_status(Code::InvalidArgument), kDiagStoreProfileMismatch,
+                         Severity::Error, profile, "install",
+                         "the context reads the catalog of profile '%.*s'; the provider cooks for '%.*s'",
+                         KILN_SV(profile), KILN_SV(effective.target.name));
+        }
+        p->hostDigest =
+            host_digest(unit_desc(*p, AssetKind::Mesh, {}, {}, alloc, nullptr), effective.policyVersion);
+        if (effective.storeMode == StoreMode::Disk) {
+            Status const opened = open_catalog_store(
+                {.storeDir = p->storeDir, .target = &p->desc.target, .alloc = alloc, .diag = diag_sink(ctx)},
+                &p->store);
+            if (opened.failed()) {
+                delete_object(alloc, p, Tag::Cook);
+                return opened;
+            }
+        }
+    } else if (effective.storeMode == StoreMode::Disk) {
+        // A store holds files of one profile (docs/design/target-profiles.md).
         Status const bound = bind_store_profile(p->storeDir, effective.target, diag_sink(ctx));
         if (bound.failed()) {
             delete_object(alloc, p, Tag::Cook);
@@ -654,7 +826,7 @@ Status install_provider(Context* ctx, ProviderDesc const& desc) noexcept {
         }
     }
 
-    if (effective.storeMode == StoreMode::Disk) {
+    if (effective.storeMode == StoreMode::Disk && !catalog) {
         p->records.reserve(kMaxSources);
         p->emitted.reserve(kMaxSources);
         p->strings.reserve(kRecordStringBytes);
@@ -678,9 +850,12 @@ Status install_provider(Context* ctx, ProviderDesc const& desc) noexcept {
     }
 
     CookProvider provider{};
-    provider.cook    = &provider_cook;
     provider.user    = p;
     provider.release = &provider_release;
+    if (catalog)
+        provider.prepare = &provider_prepare;
+    else
+        provider.cook = &provider_cook;
     set_cook_provider(ctx, provider);
     return kOk;
 }

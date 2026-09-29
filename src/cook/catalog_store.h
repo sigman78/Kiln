@@ -40,4 +40,18 @@ void close_catalog_store(CatalogStore* s) noexcept;
 /// Sets the host-settings digest of the unit `name`'s record (its keys were checked again).
 void set_record_digest(CatalogStore* s, StrView name, u64 hostDigest) noexcept;
 
+/// Session state, never written: a unit is fresh once this process checked its inputs or cooked
+/// it (publish_unit() marks it). The source poller watches the fresh units.
+[[nodiscard]] bool is_fresh(CatalogStore* s, StrView name) noexcept;
+void mark_fresh(CatalogStore* s, StrView name) noexcept;
+/// The names of the fresh units, NUL-separated, into `out` (replaced).
+void fresh_units(CatalogStore* s, Vec<char>* out) noexcept;
+
+/// Session state, never written: a unit is fresh once this process checked its inputs or cooked
+/// it (publish_unit() marks it). The source poller watches the fresh units.
+[[nodiscard]] bool is_fresh(CatalogStore* s, StrView name) noexcept;
+void mark_fresh(CatalogStore* s, StrView name) noexcept;
+/// The names of the fresh units, NUL-separated, into `out` (replaced).
+void fresh_units(CatalogStore* s, Vec<char>* out) noexcept;
+
 } // namespace kiln::cook
