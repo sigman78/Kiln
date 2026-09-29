@@ -97,7 +97,9 @@ endif()
 # kiln_runtime (which never links this target at all) or to kiln_cook's own
 # installed/consumer-facing INTERFACE.
 target_include_directories(kiln_third_party_cook INTERFACE
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/wuffs>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/wuffs>)
+# SYSTEM: the bc7enc_rdo headers trip kiln's gcc warning set (-Wdouble-promotion and others).
+target_include_directories(kiln_third_party_cook SYSTEM INTERFACE
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/bc7enc_rdo>)
 if(KILN_MESH)
     target_include_directories(kiln_third_party_cook INTERFACE
