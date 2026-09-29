@@ -23,6 +23,7 @@ The notes follow HANDOFF v2 and mesh-format-spec draft v0.3 (magic `KMSH`, names
 | [hot-reload.md](hot-reload.md) | M5: store poller in the runtime, source poller in the cook provider, reload swap through a `next` metadata set, `request_reload`, `IoBackend::stat` |
 | [texture-shapes.md](texture-shapes.md) | Cube maps and arrays from one strip image (`shape`, `slices`, name hints), KTX2 pass-through, the shape at the adapter boundary and in `RequestOptions` |
 | [hdr-textures.md](hdr-textures.md) | Draft: Radiance `.hdr` sources with a kiln-owned decoder, RGBA16F output, the float image path; why not OpenEXR or the packed HDR formats yet |
+| [integration-examples.md](integration-examples.md) | Proposed: small renderers per API (GL, bindless GL, sokol, basic and bindless Vulkan, NoGraphicsAPI), how each maps the adapter, the float vertex baseline, `Adapter::flush` |
 | [texture-only.md](texture-only.md) | Decided: `KILN_MESH=OFF` drops the glTF importer, mesh cooker and their dependencies; the `kMeshes` adapter capability; why the runtime keeps its mesh code for now |
 | [asset-model-next.md](asset-model-next.md) | Draft, experimental: scope cut back to one source file per cooked asset (kiln never follows a reference), project boundaries, roots, asset identity (`root:path.ext#sub`) |
 | [viewer.md](viewer.md) | The example Vulkan 1.4 adapter (transfer queue, timeline semaphore, bindless slots, deferred destroy) and viewer, its dependencies and offscreen mode |
