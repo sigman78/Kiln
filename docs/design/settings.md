@@ -235,6 +235,11 @@ key      = hash_combine(hash_combine(hash_combine(sourceHash, settingsHash), tar
   the top-level directory `@m/`), and invalidates by the stored hashes (R4). The hashed layout (16 lowercase
   hex digits of `key` plus the extension) is `kiln-cook --hashed`; it returns as the default with
   the index file in v0.6.
+- **Store stamp** (open-questions R9): the cook provider keeps `<store>/kiln-store.stamp`, a hash of
+  the cooker version, `hash_target`, the default settings' hashes, the name rules, `fastPreview`
+  and `ProviderDesc::policyVersion`. At `install_provider` (Disk mode) a missing or different
+  stamp deletes every cooked file in the store, so they re-cook on demand. A per-asset input (a
+  source or its sidecar) changing is the source poller's job, not the stamp's.
 
 ## Rationale
 

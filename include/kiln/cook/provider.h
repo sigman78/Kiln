@@ -21,13 +21,18 @@ struct ProviderDesc {
     /// Copied at install; empty means such textures are cooked as Color.
     Span<NameRule const> nameRules = kDefaultNameRules;
     bool fastPreview               = false;
+    /// Bump when `policy` starts making other choices: it is part of the store stamp, and a
+    /// function cannot be hashed.
+    u64 policyVersion = 0;
     /// Dev builds: poll the source files of cooked assets and re-cook them into the store when
     /// they change (docs/design/hot-reload.md). The runtime's store poller then reloads them.
     bool watchSources = false;
     u32 pollMs        = 250;
 };
 
-/// Register the provider. The source of `root:path` is `<dir of root>/path`; the extension
+/// Register the provider. With StoreMode::Disk, a changed or missing store stamp first deletes the
+/// store's cooked files, so they re-cook (docs/design/settings.md, "Store stamp").
+/// The source of `root:path` is `<dir of root>/path`; the extension
 /// gives the kind: `.glb` `.gltf` a mesh; `.png` `.jpg` `.jpeg` `.webp` `.hdr` `.ktx2` a texture.
 /// A texture named `<mesh>#<image>` is an embedded image: the provider cooks `<mesh>`, which
 /// writes all of its embedded images. Images a mesh references by URI are not cooked with

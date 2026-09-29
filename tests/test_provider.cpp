@@ -964,3 +964,81 @@ KILN_TEST(Provider, HdrSourceCooksToBc6h) {
     TextureInfo const ti = texture_info(tc.ctx, sky);
     KILN_CHECK(ti.desc.isCube && ti.desc.format == Format::BC6H_UFLOAT);
 }
+
+// ---------------------------------------------------------------------------
+// Store stamp: a changed cooker, target or default settings deletes the cooked files
+// ---------------------------------------------------------------------------
+
+namespace {
+
+void put_bytes(char const* dir, char const* rel) {
+    char path[1100];
+    format(path, sizeof path, "%s/%s", dir, rel);
+    u8 const bytes[4] = {1, 2, 3, 4};
+    replace_file(path, Span<u8 const>(bytes, sizeof bytes));
+}
+
+bool has(char const* dir, char const* rel) {
+    char path[1100];
+    format(path, sizeof path, "%s/%s", dir, rel);
+    return file_exists(path);
+}
+
+/// Installs a Disk provider with `desc` on a fresh context over `store` and `root`, then removes it.
+void install_once(char const* store, char const* root, cook::ProviderDesc desc) {
+    Root const roots[] = {
+        {{}, StrView(root)}
+    };
+    TestContext tc;
+    if (!tc.init(StrView(store), Span<Root const>(roots, 1))) return;
+    desc.storeMode = cook::StoreMode::Disk;
+    KILN_REQUIRE(cook::install_provider(tc.ctx, desc).ok());
+}
+
+} // namespace
+
+KILN_TEST(Provider, StoreStampDeletesStaleCookedFiles) {
+    char root[1024], store[1024], sub[1100];
+    scratch_dir("provider_stamp_src", root, sizeof root);
+    scratch_dir("provider_stamp_store", store, sizeof store);
+    make_dir(root);
+    make_dir(store);
+    format(sub, sizeof sub, "%s/props", store);
+    make_dir(sub);
+
+    // A store from before stamps: its cooked files go, anything else stays.
+    put_bytes(store, "old.ktx2");
+    put_bytes(store, "props/old.glb.mesh");
+    put_bytes(store, "notes.txt");
+    install_once(store, root, {});
+    KILN_CHECK(!has(store, "old.ktx2") && !has(store, "props/old.glb.mesh"));
+    KILN_CHECK(has(store, "notes.txt") && has(store, "kiln-store.stamp"));
+
+    // Same stamp: nothing is deleted.
+    put_bytes(store, "kept.ktx2");
+    install_once(store, root, {});
+    KILN_CHECK(has(store, "kept.ktx2"));
+
+    // Another target, then another policy version: deleted each time.
+    install_once(store, root, {.target = {.blockFamily = cook::BlockFamily::None}});
+    KILN_CHECK(!has(store, "kept.ktx2"));
+    put_bytes(store, "kept.ktx2");
+    install_once(store, root, {.target = {.blockFamily = cook::BlockFamily::None}});
+    KILN_CHECK(has(store, "kept.ktx2"));
+    install_once(store, root, {.target = {.blockFamily = cook::BlockFamily::None}, .policyVersion = 2});
+    KILN_CHECK(!has(store, "kept.ktx2"));
+}
+
+// A store that holds a source root is never wiped: its .ktx2 files may be sources.
+KILN_TEST(Provider, StoreStampKeepsStoreHoldingARoot) {
+    char store[1024], root[1100];
+    scratch_dir("provider_stamp_nested", store, sizeof store);
+    make_dir(store);
+    format(root, sizeof root, "%s/src", store);
+    make_dir(root);
+    put_bytes(store, "src/sky.ktx2");
+    put_bytes(store, "cooked.ktx2");
+    install_once(store, root, {});
+    KILN_CHECK(has(store, "src/sky.ktx2") && has(store, "cooked.ktx2"));
+    KILN_CHECK(!has(store, "kiln-store.stamp"));
+}
