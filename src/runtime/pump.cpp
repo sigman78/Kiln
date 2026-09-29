@@ -371,6 +371,7 @@ void bind_pump_thread(Context* ctx) noexcept {
 
 PumpStats pump_impl(Context* ctx, PumpOptions const& opt, bool keepEvents) noexcept {
     ++ctx->pumpIndex;
+    if (ctx->adapter.flush) ctx->adapter.flush(ctx->adapter.user);
     ctx->cur = {};
     if (!keepEvents) ctx->eventCount = 0;
     ctx->droppedWarned = false;
@@ -401,9 +402,10 @@ Span<Event const> events(Context* ctx) noexcept {
 
 GroupStatus wait(Context* ctx, Group g, WaitOptions const& opt) noexcept {
     if (!ctx) return {};
-    if ((ctx->adapter.caps & kSelfSubmitting) == 0)
-        KILN_PANIC("K5007 wait(): the adapter lacks kSelfSubmitting, so uploads cannot complete without the "
-                   "host recording frames; keep calling pump() and poll progress() instead");
+    if ((ctx->adapter.caps & kSelfSubmitting) == 0 && !ctx->adapter.flush)
+        KILN_PANIC("K5007 wait(): the adapter has neither kSelfSubmitting nor flush, so uploads cannot "
+                   "complete without the host recording frames; keep calling pump() and poll progress() "
+                   "instead");
     if (ctx->pumpBound && ctx->pumpThread != std::this_thread::get_id())
         KILN_PANIC("K5007 wait() called off the pump thread (the thread that first called pump() or wait())");
     bind_pump_thread(ctx);

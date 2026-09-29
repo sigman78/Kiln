@@ -107,9 +107,9 @@ struct ContextDesc {
 };
 
 /// Create a context. Fails with InvalidArgument (K5013) if a root name is invalid or used
-/// twice. Placeholders are uploaded through the adapter here; with a
-/// self-submitting adapter create() waits for them, otherwise gpu() returns a null
-/// object until the first pump() sees them complete.
+/// twice. Placeholders are uploaded through the adapter here; with a self-submitting
+/// adapter or one with Adapter::flush, create() waits for them, otherwise gpu() returns a
+/// null object until the first pump() sees them complete.
 [[nodiscard]] KILN_API Result<Context*> create(ContextDesc const& desc) noexcept;
 /// Releases every asset (destroy_deferred for each GpuObject), stops the built-in
 /// pool, frees everything. Outstanding handles become stale.
@@ -255,7 +255,8 @@ KILN_API void release(Context* ctx, Group g) noexcept; ///< frees the group reco
 [[nodiscard]] KILN_API GroupStatus progress(Context* ctx, Group g) noexcept;
 /// Loops pump() and a short sleep until every member is Ready or Failed, or the timeout
 /// expires (returns partial status). Raises members to High priority. Panics, never
-/// hangs, when called off the pump thread or when the adapter lacks kSelfSubmitting.
+/// hangs, when called off the pump thread or when the adapter has neither kSelfSubmitting
+/// nor Adapter::flush.
 [[nodiscard]] KILN_API GroupStatus wait(Context* ctx, Group g, WaitOptions const& opt = {}) noexcept;
 
 // ---------------------------------------------------------------------------
@@ -329,10 +330,10 @@ enum RuntimeDiagCode : u32 {
     kDiagCookOnMissFailed = 5002, ///< provider returned an error (its own K1-K3 diagnostics precede this)
     kDiagAssetLoadFailed  = 5003, ///< IO or validation failure while loading (status from the reader)
     kDiagAdapterRejected =
-        5004, ///< begin_upload failed with something other than Busy, or unsupported format
-    kDiagRegistryFull         = 5005, ///< maxAssets / maxGroups reached
-    kDiagEventsDropped        = 5006, ///< event ring overflowed (Warning)
-    kDiagWaitMisuse           = 5007, ///< wait() off the pump thread or without kSelfSubmitting (panics)
+        5004,                  ///< begin_upload failed with something other than Busy, or unsupported format
+    kDiagRegistryFull  = 5005, ///< maxAssets / maxGroups reached
+    kDiagEventsDropped = 5006, ///< event ring overflowed (Warning)
+    kDiagWaitMisuse    = 5007, ///< wait() off the pump thread, or without kSelfSubmitting or flush (panics)
     kDiagDuplicateRegister    = 5008, ///< register_* for an already known path
     kDiagPlaceholderFailed    = 5009, ///< placeholder upload rejected at create()
     kDiagReloadFailed         = 5010, ///< a reload failed; the previous version stays (Error)

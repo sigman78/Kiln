@@ -450,23 +450,16 @@ usize store_path(Context const* ctx, AssetKind kind, StrView path, char* out, us
 
 u64 texture_layout(ktx2::TextureDesc const& d, u64 pitchAlign, u64 offsetAlign, u64* outOffset,
                    u64* outPitch) noexcept {
-    FormatInfo const* fi = format_info(d.format);
-    if (!fi) return 0;
-    pitchAlign  = max<u64>(pitchAlign, 1);
-    offsetAlign = max<u64>(offsetAlign, 1);
-    u64 cur     = 0;
-    for (u32 i = 0; i < d.levels; ++i) {
-        u32 const w     = max(d.width >> i, 1u);
-        u32 const h     = max(d.height >> i, 1u);
-        u32 const z     = max(d.depth >> i, 1u);
-        u64 const pitch = align_up(format_row_bytes(d.format, w), pitchAlign);
-        u64 const rows  = (u64(h) + fi->blockHeight - 1) / fi->blockHeight * z * d.layers * d.faces;
-        cur             = align_up(cur, offsetAlign);
-        outOffset[i]    = cur;
-        outPitch[i]     = pitch;
-        cur += pitch * rows;
-    }
-    return cur;
+    TextureDesc const t{.format     = d.format,
+                        .width      = d.width,
+                        .height     = d.height,
+                        .depth      = d.depth,
+                        .layers     = d.layers * d.faces,
+                        .levels     = d.levels,
+                        .shape      = TextureShape::Tex2D,
+                        .firstLevel = 0};
+    CopyConstraints const c{.optimalRowPitchAlign = pitchAlign, .optimalOffsetAlign = offsetAlign};
+    return texture_level_layout(t, c, outOffset, outPitch);
 }
 
 void run_job(void* arg) noexcept {
@@ -482,3 +475,28 @@ void run_job(void* arg) noexcept {
 }
 
 } // namespace kiln::rt
+
+namespace kiln {
+
+u64 texture_level_layout(TextureDesc const& t, CopyConstraints const& c, u64* offsets,
+                         u64* pitches) noexcept {
+    FormatInfo const* fi = format_info(t.format);
+    if (!fi) return 0;
+    u64 const pitchAlign  = max<u64>(c.optimalRowPitchAlign, 1);
+    u64 const offsetAlign = max<u64>(c.optimalOffsetAlign, 1);
+    u64 cur               = 0;
+    for (u32 i = 0; i < t.levels; ++i) {
+        u32 const w     = max(t.width >> i, 1u);
+        u32 const h     = max(t.height >> i, 1u);
+        u32 const z     = max(t.depth >> i, 1u);
+        u64 const pitch = align_up(format_row_bytes(t.format, w), pitchAlign);
+        u64 const rows  = (u64(h) + fi->blockHeight - 1) / fi->blockHeight * z * t.layers;
+        cur             = align_up(cur, offsetAlign);
+        if (offsets) offsets[i] = cur;
+        if (pitches) pitches[i] = pitch;
+        cur += pitch * rows;
+    }
+    return cur;
+}
+
+} // namespace kiln

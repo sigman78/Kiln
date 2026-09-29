@@ -50,6 +50,9 @@ Formats the v0.5 cooker writes:
 - `native == 0` and `slot == kInvalid` is **null** (`is_null()`); `kind` does not matter.
 - A slot-only object (`native == 0`, valid `slot`) is legal: a bindless adapter returns it from
   `acquire()` before the real image exists.
+- The object may name something that does not exist yet. `begin_upload` runs on a worker thread,
+  where a GL or sokol adapter cannot create its texture; it returns an index into its own table in
+  `native` and creates the real object in `flush` (`kiln-gl` does this).
 
 ### Adapter calls
 
@@ -66,7 +69,8 @@ and `publish`, a null `reserved[4]` and no unknown `caps` bits; `create()` rejec
 | `commit_upload` | kiln has finished writing `dst`. Always called after a successful `begin_upload`, even when the load then fails. The renderer records and submits the copy (itself if `kSelfSubmitting`, else with its next frame). |
 | `is_upload_complete` | Polled in `pump()` (and in `create()`'s placeholder spin). When true, the asset becomes `Ready` in the same pump. |
 | `publish` | Called during `pump()` when an asset becomes `Ready` (or, from M5, a hot reload swaps its payload). `version` is the **content version** (`handles-and-states.md`), not the handle generation. A bindless adapter overwrites the slot it acquired for `id`. At unload and at `destroy()` kiln calls `publish(id, null, version)`, and a bindless adapter frees the slot after its frames in flight. |
-| `destroy_deferred` | kiln no longer references the object. The renderer frees it after its frames in flight. |
+| `destroy_deferred` | kiln no longer references the object. The renderer frees it after its frames in flight; an API that keeps objects alive for issued commands (GL, sokol) may free it at once. The object's upload may still be in flight when an asset is unloaded: kiln then never polls that token again, and the adapter retires the upload itself (frees its staging space when the GPU is done). |
+| `flush` | Optional. Called at the start of every `pump()` (so in every `wait()` loop) and in `create()`'s placeholder spin, on that thread. An adapter whose API must be called on the graphics context's thread (GL, sokol) does its GPU work here: create the objects, record the copies, insert fences. |
 | `caps` | Constant for the life of the context. Unknown bits must be 0. |
 
 HANDOFF names the last `publish` parameter `generation`. kiln names it `version` to make clear it
@@ -79,9 +83,18 @@ An adapter sets `kSelfSubmitting` only if both hold:
 1. `commit_upload` **submits the copy by itself** (for example on a dedicated transfer queue).
 2. `is_upload_complete` **makes progress without the host recording a frame**.
 
-`wait()` panics without it (K5007), and `create()` spins on the placeholder uploads only when it is
-set. An adapter that submits uploads inside the frame's command buffers must not set it. Its hosts
-call `pump()` every frame and show `progress()`.
+`wait()` panics without it or `flush` (K5007), and `create()` spins on the placeholder uploads only
+when one of them is set. An adapter that submits uploads inside the frame's command buffers must
+not set it. Its hosts call `pump()` every frame and show `progress()`.
+
+### `flush`
+
+For APIs whose calls must run on one thread. `begin_upload` and `commit_upload` run on kiln workers,
+so such an adapter only writes memory and queues there; `flush` does the rest on the pump thread,
+and `is_upload_complete` polls the result (a GL fence, for example). The host calls `create()` and
+`pump()` on the thread that owns the graphics context, which is where hosts call them anyway.
+With `flush` set, `wait()` works and `create()` waits for the placeholders, as with
+`kSelfSubmitting`. An upload committed during one `pump()` is flushed at the start of the next.
 
 ### `kCubeTextures`, `kArrayTextures`
 
@@ -139,8 +152,9 @@ The renderer picks one; `gpu(ctx, handle)` (an allocation-free table lookup) ser
 **Texture layout.** kiln writes levels (and layers; a cube's 6 faces count as layers, in the order
 +X, −X, +Y, −Y, +Z, −Z, and `TextureDesc::shape` is `Cube`) in ascending level
 order, each level starting at `optimalOffsetAlign`, rows padded to `optimalRowPitchAlign`.
-`texture_info()` returns the per-level offsets and row pitches, so the renderer builds its copy
-regions without recomputing anything. If `UploadTarget::rowPitchAlign` does not divide the planned
+`texture_level_layout(TextureDesc, CopyConstraints, offsets, pitches)` computes the same offsets
+and row pitches from what `begin_upload` receives, so an adapter builds its copy regions without
+copying kiln's rule; `texture_info()` returns them too, once the metadata is loaded. If `UploadTarget::rowPitchAlign` does not divide the planned
 pitches, the texture fails with K5004 (R5e).
 
 **Mesh layout.** kiln writes the **decoded** payload: `payloadDecodedSize` bytes, base aligned to
@@ -174,7 +188,7 @@ Part of `kiln_runtime` (`null_adapter.h`, `src/runtime/null_adapter.cpp`), used 
 | `supports_format` | the pump thread |
 | `acquire` | the thread calling `request()` |
 | `begin_upload`, `commit_upload` | **kiln worker threads** (and the thread calling `create()` for placeholders), so a worker decodes straight into staging memory; must be thread-safe |
-| `is_upload_complete` | the pump thread (`pump()`, `wait()`), and the thread calling `create()` |
+| `is_upload_complete`, `flush` | the pump thread (`pump()`, `wait()`), and the thread calling `create()` |
 | `publish`, `destroy_deferred` | the pump thread, and the threads calling `create()` / `destroy()` |
 
 Alternative, not taken: every call on the pump thread. The decode would go to a kiln-owned buffer

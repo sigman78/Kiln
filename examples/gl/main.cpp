@@ -592,10 +592,8 @@ int main(int argc, char** argv) {
     double const startMs = ex::ms_since_start();
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
-        // 5a. The GL work kiln's workers queued since the last frame. This is the host-side
-        //     form of the proposed Adapter::flush; it must run on this thread, before pump().
-        gl_adapter_flush(s.gla);
-        // 5b. kiln hands out upload memory, polls completions, publishes, emits events.
+        // 5a. kiln runs the adapter's flush (the GL work its workers queued), hands out upload
+        //     memory, polls completions, publishes and emits events. This is the GL thread.
         (void)pump(ctx);
         for (Event const& e : events(ctx))
             handle_event(s, e);
@@ -608,7 +606,7 @@ int main(int argc, char** argv) {
         ex::View const vw   = ex::orbit_view(camera, Vec3{}, 1.0f, kFovY, aspect);
         Mat4 const viewProj = ex::perspective_gl(kFovY, aspect, vw.nearZ, vw.farZ) * vw.view;
 
-        // 5c. Draw: the sky, then the model; every texture is whatever gpu() returns now.
+        // 5b. Draw: the sky, then the model; every texture is whatever gpu() returns now.
         glBindFramebuffer(GL_DRAW_FRAMEBUFFER, target.fbo);
         glViewport(0, 0, fw, fh);
         glClearColor(0.15f, 0.16f, 0.19f, 1.0f);

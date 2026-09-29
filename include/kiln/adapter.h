@@ -27,7 +27,7 @@ enum class TextureShape : u8 { Tex2D = 0, Cube, Array, Count };
 
 enum AdapterCaps : u32 {
     /// commit_upload submits to a queue by itself and is_upload_complete makes progress
-    /// without the host recording a frame. Required by wait().
+    /// without the host recording a frame. wait() needs this bit or Adapter::flush.
     kSelfSubmitting = 1u << 0,
     /// The adapter accepts TextureShape::Cube / Array. Without the bit, kiln uploads no
     /// placeholder of that shape and a request for it fails (K5004).
@@ -108,12 +108,24 @@ struct Adapter {
     /// During pump(), when an asset becomes Ready or a hot reload swaps its payload.
     /// `version` is the content version. A null `obj` frees the asset's slot at unload.
     void (*publish)(void* user, AssetId id, GpuObject obj, u32 version) = nullptr;
-    /// The renderer delays destruction by its frames in flight.
+    /// The renderer delays destruction by its frames in flight. The object's upload may still be
+    /// in flight: kiln then never polls that token again, and the adapter retires it itself.
     void (*destroy_deferred)(void* user, GpuObject obj) = nullptr;
-    u32 caps                                            = 0;  ///< AdapterCaps
-    void* reserved[4]                                   = {}; ///< residency hooks (v0.8); must be null
-    void* user                                          = nullptr;
+    /// Optional. Called at the start of every pump() (so in every wait() loop too) and while
+    /// create() waits for the placeholders, on that thread. An adapter whose GPU work must run
+    /// on the graphics context's thread does it here; the host then calls pump() on that thread.
+    void (*flush)(void* user) = nullptr;
+    u32 caps                  = 0;  ///< AdapterCaps
+    void* reserved[4]         = {}; ///< residency hooks (v0.8); must be null
+    void* user                = nullptr;
 };
+
+/// Byte offset and row pitch of each level inside a texture upload, as kiln writes it for these
+/// copy constraints: levels ascending, each starting at optimalOffsetAlign, rows padded to
+/// optimalRowPitchAlign, the layers (cube faces) of a level one after another. `offsets` and
+/// `pitches` receive `t.levels` entries each; either may be null. Returns the upload size.
+[[nodiscard]] KILN_API u64 texture_level_layout(TextureDesc const& t, CopyConstraints const& c, u64* offsets,
+                                                u64* pitches) noexcept;
 
 /// True if every required entry point is set and the reserved tail is null.
 [[nodiscard]] constexpr bool adapter_is_valid(Adapter const& a) noexcept {

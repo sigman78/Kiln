@@ -36,6 +36,11 @@ Volumes (3D textures) and cube arrays are out of scope. The KTX2 reader rejects 
   `N = height / width`, and `height` must divide evenly.
 - An invalid layout is the new error **K2010** (`kDiagImageSliceLayout`): the strip does not divide
   into the slices, or a cube's faces are not square.
+- **Handedness.** kiln keeps the faces as authored. The cube-map convention of KTX2, Vulkan, GL and
+  D3D selects faces in a left-handed frame. A renderer with a right-handed world (+Y up, looking
+  down −Z, as glTF) samples a sky or an environment map with Z negated:
+  `texture(cube, vec3(d.x, d.y, -d.z))`. Without the flip the sky appears mirrored left to right.
+  `kiln-viewer` and `kiln-gl` both flip.
 
 **About "progressive":** PNG decodes top to bottom, so a later change can decode and convert one
 slice at a time and keep less than the whole image in memory. That helps the cook. It does not
@@ -82,8 +87,7 @@ New fields in `TextureCookSettings` (texture settings schema 2):
   folded count (6 for a cube).
 - **The adapter declares the shapes it takes:** `AdapterCaps::kCubeTextures`, `kArrayTextures`.
   Without the bit, kiln uploads no placeholder of that shape and a request for it fails with K5004.
-  The null adapter sets both; the example Vulkan adapter sets neither until it can bind cube and
-  array views.
+  The null adapter and the example Vulkan and GL adapters set both.
 - **A request says the shape it expects.** `RequestOptions::textureShape` (default `Tex2D`) works
   like `textureKind`: the first request wins, and `acquire()` receives it. `acquire()` runs at
   request time, before the metadata, and a bindless slot of cube type cannot hold a 2D placeholder.

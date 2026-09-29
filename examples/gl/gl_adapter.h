@@ -1,6 +1,6 @@
 // examples/gl/gl_adapter.h — a kiln adapter over OpenGL 4.6 core, with textures bound per draw
 // (docs/design/integration-examples.md). GL calls run only on the context's thread: kiln workers
-// write into a persistently mapped staging buffer and queue; gl_adapter_flush() does the GL work.
+// write into a persistently mapped staging buffer and queue; Adapter::flush does the GL work.
 #pragma once
 
 #include <kiln/adapter.h>
@@ -15,15 +15,11 @@ struct GlAdapterDesc {
     u32 maxUploads   = 256;       ///< uploads between begin_upload and completion
 };
 
-/// Creates the adapter and fills `out`. Call on the thread that owns the GL context.
+/// Creates the adapter and fills `out`. Call on the thread that owns the GL context; call create()
+/// and pump() on that thread too, since kiln runs Adapter::flush there.
 [[nodiscard]] Result<GlAdapter*> gl_adapter_create(GlAdapterDesc const& desc, Adapter* out) noexcept;
 /// After destroy(ctx), on the GL thread.
 void gl_adapter_destroy(GlAdapter* a) noexcept;
-
-/// Runs the GL work of every committed upload (texture and buffer creation, copies from the
-/// staging ring) and retires the uploads whose fence has signaled. Call on the GL thread before
-/// each pump().
-void gl_adapter_flush(GlAdapter* a) noexcept;
 
 struct GlTexture {
     unsigned name   = 0; ///< 0 = not created yet

@@ -100,8 +100,11 @@ namespace {
 constexpr u64 kRowPitchAlign     = 1;
 constexpr u64 kOffsetAlign       = 16;
 constexpr u64 kBufferOffsetAlign = 256;
-constexpr u32 kMaxLevels         = 32;
-constexpr u32 kMaxSubmitBatch    = 16;
+constexpr CopyConstraints kCopyConstraints{.optimalRowPitchAlign = kRowPitchAlign,
+                                           .optimalOffsetAlign   = kOffsetAlign,
+                                           .bufferOffsetAlign    = kBufferOffsetAlign};
+constexpr u32 kMaxLevels      = 32;
+constexpr u32 kMaxSubmitBatch = 16;
 
 enum class ObjectState : u8 {
     Free,      ///< on the free list
@@ -486,26 +489,6 @@ Status create_image(VkAdapter* a, Object& o, TextureDesc const& t) noexcept {
     return kOk;
 }
 
-/// Level offsets and row pitches exactly as src/runtime/loader.cpp (texture_layout) computes
-/// them with this adapter's copy constraints; cube faces arrive folded into `layers`.
-u64 texture_layout(TextureDesc const& t, u64* offsets, u64* pitches) noexcept {
-    FormatInfo const* fi = format_info(t.format);
-    if (!fi) return 0;
-    u64 cur = 0;
-    for (u32 i = 0; i < t.levels; ++i) {
-        u32 const w     = max(t.width >> i, 1u);
-        u32 const h     = max(t.height >> i, 1u);
-        u32 const z     = max(t.depth >> i, 1u);
-        u64 const pitch = align_up(format_row_bytes(t.format, w), kRowPitchAlign);
-        u64 const rows  = (u64(h) + fi->blockHeight - 1) / fi->blockHeight * z * t.layers;
-        cur             = align_up(cur, kOffsetAlign);
-        offsets[i]      = cur;
-        pitches[i]      = pitch;
-        cur += pitch * rows;
-    }
-    return cur;
-}
-
 /// Binding 0 holds 2D views, 1 cube views, 2 array views; a slot index is shared by all three.
 void write_slot(VkAdapter* a, u32 slot, VkImageView view, TextureShape shape) noexcept {
     VkDescriptorImageInfo image{};
@@ -528,7 +511,7 @@ void record_texture(VkAdapter* a, VkCommandBuffer cmd, Object const& o) noexcept
     FormatInfo const* fi = format_info(t.format);
     u64 offsets[kMaxLevels];
     u64 pitches[kMaxLevels];
-    texture_layout(t, offsets, pitches);
+    (void)texture_level_layout(t, kCopyConstraints, offsets, pitches);
 
     VkImageSubresourceRange const all{VK_IMAGE_ASPECT_COLOR_BIT, 0, t.levels, 0, t.layers};
     VkImageMemoryBarrier2 toDst{};
@@ -688,7 +671,8 @@ Status vk_begin_upload(void* user, UploadDesc const& desc, UploadTarget* out) no
                              (t.shape == TextureShape::Cube && t.layers == 6 && t.width == t.height) ||
                              (t.shape == TextureShape::Tex2D && t.layers == 1);
         if (!shapeOk || t.levels == 0 || t.levels > kMaxLevels || t.layers == 0 ||
-            (t.depth > 1 && t.layers > 1) || texture_layout(t, offsets, pitches) > desc.size) {
+            (t.depth > 1 && t.layers > 1) ||
+            texture_level_layout(t, kCopyConstraints, offsets, pitches) > desc.size) {
             KILN_WARN("vk-adapter", "texture %016llx: unsupported shape or layout",
                       static_cast<unsigned long long>(desc.id));
             return make_status(Code::Unsupported);

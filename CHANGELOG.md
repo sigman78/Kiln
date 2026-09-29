@@ -8,6 +8,15 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
 ## [Unreleased]
 
 ### Added
+- `Adapter::flush` (optional): kiln calls it at the start of every `pump()` (so in every `wait()`
+  loop) and in `create()`'s placeholder spin, on that thread. An adapter for an API that must be
+  called on one thread (GL, sokol) does its GPU work there. `wait()` and the placeholder wait now
+  accept `kSelfSubmitting` or `flush`. The field sits between `destroy_deferred` and `caps`: code
+  that fills `Adapter` with designated initializers keeps compiling; code that relies on aggregate
+  order without designators must add it.
+- `texture_level_layout(TextureDesc, CopyConstraints, offsets, pitches)` in `kiln/adapter.h`: the
+  level offsets and row pitches kiln writes into a texture upload, so an adapter no longer copies
+  the rule. The example Vulkan and GL adapters use it.
 - `kiln-gl` (`examples/gl`, CMake option `KILN_EXAMPLE_GL`, ON in the presets): the first
   integration example (`docs/design/integration-examples.md`). One model and a cube sky through
   OpenGL 4.6 core with textures bound per draw; its adapter writes uploads into a persistently mapped

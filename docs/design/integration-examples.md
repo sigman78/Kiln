@@ -1,7 +1,7 @@
 # Integration examples
 
 **Status:** Decided (owner, 2026-09-28): as proposed, all open points as proposed. Step 1 (`gl`)
-is implemented; `Adapter::flush` awaits the decision below.
+is implemented, and so is `Adapter::flush` (owner, 2026-09-28).
 **Decides:** Which small renderers show newcomers how to plug kiln in, what each one maps kiln's
 adapter onto, how their third-party code is fetched, and how the work feeds the API review.
 
@@ -75,17 +75,16 @@ Proposal:
 - A Vulkan adapter that records uploads into the frame's command buffer can use `flush` the same
   way.
 
-The `gl` example is built first to confirm the shape before the API changes. Until then it calls
-its own flush from the host loop.
+The `gl` example was built first to confirm the shape before the API changed. It first called its
+own flush from the host loop; now kiln calls `Adapter::flush`.
 
 What `gl` showed (step 1):
 
-- The host-side `gl_adapter_flush()` before `pump()` is the only line a GL host needs beyond a
-  Vulkan host. Forgetting it stalls every upload silently: a strong reason to move it into kiln.
+- The host-side `gl_adapter_flush()` before `pump()` was the only line a GL host needed beyond a
+  Vulkan host, and forgetting it stalled every upload silently. `Adapter::flush` removed it.
 - Uploads complete one to two frames after they are committed: the flush issues the copies and a
-  fence; `is_upload_complete` polls the fence on the pump thread. Calling `flush` at the start of
-  `pump()` keeps that.
-- `wait()` stays unusable for GL until `flush` exists (it requires `kSelfSubmitting`).
+  fence; `is_upload_complete` polls the fence on the pump thread.
+- `wait()` was unusable for GL (it required `kSelfSubmitting`); it now accepts `flush`.
 
 ## Dependencies
 

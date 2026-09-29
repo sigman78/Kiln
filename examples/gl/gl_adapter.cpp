@@ -160,21 +160,6 @@ void release_object(GlAdapter* a, u32 index) noexcept {
     a->freeObjects.push_back(index);
 }
 
-/// Level offsets exactly as kiln lays them out for this adapter's copy constraints (row pitch
-/// align 1, offset align kOffsetAlign); cube faces arrive as layers.
-void level_offsets(TextureDesc const& t, u64* offsets) noexcept {
-    FormatInfo const* fi = format_info(t.format);
-    u64 cur              = 0;
-    for (u32 i = 0; i < t.levels; ++i) {
-        u32 const h    = max(t.height >> i, 1u);
-        u32 const z    = max(t.depth >> i, 1u);
-        u64 const rows = (u64(h) + fi->blockHeight - 1) / fi->blockHeight * z * t.layers;
-        cur            = align_up(cur, kOffsetAlign);
-        offsets[i]     = cur;
-        cur += format_row_bytes(t.format, max(t.width >> i, 1u)) * rows;
-    }
-}
-
 /// The GL side of one committed upload: create the object, copy from the staging buffer.
 void run_upload(GlAdapter* a, Upload& u) noexcept {
     Object& o = a->objects[u.object];
@@ -197,7 +182,10 @@ void run_upload(GlAdapter* a, Upload& u) noexcept {
     else
         glTextureStorage2D(o.name, levels, f.internal, w, h); // a cube's storage is 2D per face
     u64 offsets[kMaxLevels];
-    level_offsets(t, offsets);
+    CopyConstraints const cc{.optimalRowPitchAlign = 1,
+                             .optimalOffsetAlign   = kOffsetAlign,
+                             .bufferOffsetAlign    = kUploadAlign}; // as copy_constraints reports
+    (void)texture_level_layout(t, cc, offsets, nullptr);
     for (u32 i = 0; i < t.levels; ++i) {
         GLsizei const lw = GLsizei(max(t.width >> i, 1u)), lh = GLsizei(max(t.height >> i, 1u));
         // The pixel pointer is an offset into the bound GL_PIXEL_UNPACK_BUFFER.
@@ -330,6 +318,43 @@ void destroy_deferred(void* user, GpuObject obj) {
         release_object(a, index);
 }
 
+/// The GL work of every committed upload, and the retirement of finished ones. kiln calls this at
+/// the start of each pump(), on the pump thread, which is the GL thread.
+void flush(void* user) {
+    auto* a = static_cast<GlAdapter*>(user);
+    // Retire first: frees ring space before this frame's begin_upload calls.
+    for (u32 i = 0; i < a->inFlight.size();) {
+        if (poll(a, a->inFlight[i])) {
+            a->inFlight[i] = a->inFlight.back();
+            a->inFlight.pop_back();
+        } else {
+            ++i;
+        }
+    }
+    {
+        std::lock_guard<std::mutex> const lock(a->mutex);
+        a->flushing.clear();
+        for (u32 i : a->committed)
+            a->flushing.push_back(i);
+        a->committed.clear();
+    }
+    if (a->flushing.empty()) return;
+    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, a->staging);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+    for (u32 i : a->flushing)
+        run_upload(a, a->uploads[i]);
+    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+    GLsync const fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+    for (u32 n = 0; n < a->flushing.size(); ++n) {
+        Upload& u = a->uploads[a->flushing[n]];
+        // One fence per upload: each is deleted when its upload retires.
+        u.fence   = n == 0 ? fence : glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+        u.flushed = true;
+        a->inFlight.push_back(a->flushing[n]);
+    }
+}
+
 } // namespace
 
 GlVertexFormat gl_vertex_format(Format f) noexcept {
@@ -381,7 +406,8 @@ Result<GlAdapter*> gl_adapter_create(GlAdapterDesc const& desc, Adapter* out) no
         .is_upload_complete = &is_upload_complete,
         .publish            = nullptr, // nothing to rewrite: textures are bound per draw
         .destroy_deferred   = &destroy_deferred,
-        .caps               = kCubeTextures | kArrayTextures | kMeshes, // no kSelfSubmitting: see flush
+        .flush              = &flush, // the GL work, on the pump thread
+        .caps               = kCubeTextures | kArrayTextures | kMeshes,
         .reserved           = {},
         .user               = a,
     };
@@ -397,40 +423,6 @@ void gl_adapter_destroy(GlAdapter* a) noexcept {
     glUnmapNamedBuffer(a->staging);
     glDeleteBuffers(1, &a->staging);
     delete_object(default_allocator(), a, Tag::Payload);
-}
-
-void gl_adapter_flush(GlAdapter* a) noexcept {
-    // Retire first: frees ring space before this frame's begin_upload calls.
-    for (u32 i = 0; i < a->inFlight.size();) {
-        if (poll(a, a->inFlight[i])) {
-            a->inFlight[i] = a->inFlight.back();
-            a->inFlight.pop_back();
-        } else {
-            ++i;
-        }
-    }
-    {
-        std::lock_guard<std::mutex> const lock(a->mutex);
-        a->flushing.clear();
-        for (u32 i : a->committed)
-            a->flushing.push_back(i);
-        a->committed.clear();
-    }
-    if (a->flushing.empty()) return;
-    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, a->staging);
-    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-    glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
-    for (u32 i : a->flushing)
-        run_upload(a, a->uploads[i]);
-    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
-    GLsync const fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
-    for (u32 n = 0; n < a->flushing.size(); ++n) {
-        Upload& u = a->uploads[a->flushing[n]];
-        // One fence per upload: each is deleted when its upload retires.
-        u.fence   = n == 0 ? fence : glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
-        u.flushed = true;
-        a->inFlight.push_back(a->flushing[n]);
-    }
 }
 
 GlTexture gl_texture(GlAdapter const* a, GpuObject obj) noexcept {

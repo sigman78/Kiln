@@ -1480,3 +1480,84 @@ KILN_TEST(Runtime, AdapterWithoutMeshes) {
     KILN_CHECK_EQ(null_adapter_stats(rt.na).beginUploads, placeholders);
     release(rt.ctx, mesh);
 }
+
+// texture_level_layout: levels at the offset alignment, rows padded, layers inside a level; and it
+// matches the layout kiln used for a loaded texture.
+KILN_TEST(Runtime, TextureLevelLayout) {
+    TextureDesc const cube{.format     = Format::R8G8B8A8_UNORM,
+                           .width      = 8,
+                           .height     = 8,
+                           .depth      = 1,
+                           .layers     = 6,
+                           .levels     = 3,
+                           .shape      = TextureShape::Cube,
+                           .firstLevel = 0};
+    CopyConstraints const cc{
+        .optimalRowPitchAlign = 256, .optimalOffsetAlign = 512, .bufferOffsetAlign = 256};
+    u64 offsets[3], pitches[3];
+    KILN_CHECK_EQ(texture_level_layout(cube, cc, offsets, pitches),
+                  u64(256 * 8 * 6 + 256 * 4 * 6 + 256 * 2 * 6));
+    KILN_CHECK_EQ(offsets[0], u64(0));
+    KILN_CHECK_EQ(offsets[1], u64(256 * 8 * 6));
+    KILN_CHECK_EQ(offsets[2], u64(256 * 8 * 6 + 256 * 4 * 6));
+    KILN_CHECK_EQ(pitches[2], u64(256));
+    KILN_CHECK_EQ(texture_level_layout(cube, cc, nullptr, nullptr), u64(21504));
+
+    Rt rt;
+    if (!rt.init(NullAdapterDesc{.rowPitchAlign = 64, .offsetAlign = 128})) return;
+    TextureHandle const t = request_texture(rt.ctx, "ktx2/normal");
+    KILN_REQUIRE(rt.pump_until([&] { return is_ready(rt.ctx, t); }));
+    TextureInfo const ti = texture_info(rt.ctx, t);
+    TextureDesc const d{.format     = ti.desc.format,
+                        .width      = ti.desc.width,
+                        .height     = ti.desc.height,
+                        .depth      = ti.desc.depth,
+                        .layers     = ti.desc.layers * ti.desc.faces,
+                        .levels     = ti.desc.levels,
+                        .shape      = TextureShape::Tex2D,
+                        .firstLevel = 0};
+    CopyConstraints c{};
+    rt.adapter.copy_constraints(rt.adapter.user, &c);
+    u64 mine[16], myPitches[16];
+    KILN_REQUIRE(d.levels <= 16 && ti.levelOffsets.size == d.levels);
+    (void)texture_level_layout(d, c, mine, myPitches);
+    for (u32 i = 0; i < d.levels; ++i) {
+        KILN_CHECK_EQ(mine[i], ti.levelOffsets[i]);
+        KILN_CHECK_EQ(myPitches[i], ti.levelRowPitches[i]);
+    }
+    release(rt.ctx, t);
+}
+
+namespace {
+u32 g_flushes = 0;
+void count_flush(void*) { ++g_flushes; }
+} // namespace
+
+// An adapter with flush but without kSelfSubmitting: create() waits for the placeholders through
+// flush, pump() calls it every time, and wait() works.
+KILN_TEST(Runtime, AdapterFlush) {
+    Rt rt;
+    Result<NullAdapter*> a = null_adapter_create({}, &rt.adapter);
+    KILN_REQUIRE(a.ok());
+    rt.na = *a;
+    rt.adapter.caps &= ~u32(kSelfSubmitting);
+    rt.adapter.flush = &count_flush;
+    g_flushes        = 0;
+    Result<Context*> c =
+        create(ContextDesc{.diag = rt.diags.sink(), .adapter = &rt.adapter, .storeDir = test::golden_dir()});
+    KILN_REQUIRE(c.ok());
+    rt.ctx = *c;
+    KILN_CHECK(g_flushes >= 1);
+    u32 const afterCreate = g_flushes;
+    (void)pump(rt.ctx);
+    KILN_CHECK_EQ(g_flushes, afterCreate + 1);
+
+    Group const g        = group(rt.ctx);
+    MeshHandle const m   = request_mesh(rt.ctx, "mesh/Box", RequestOptions{.group = g});
+    GroupStatus const st = wait(rt.ctx, g, WaitOptions{.timeoutMs = 10000});
+    KILN_CHECK(st.settled());
+    KILN_CHECK_EQ(st.ready, 1u);
+    KILN_CHECK(g_flushes > afterCreate + 1);
+    release(rt.ctx, m);
+    release(rt.ctx, g);
+}

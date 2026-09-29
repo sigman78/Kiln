@@ -131,9 +131,10 @@ Status upload_placeholders(Context* ctx, ContextDesc const& desc) noexcept {
                                         shape, img.format, img.width, img.height, img.pixels));
         }
     }
-    if (ctx->adapter.caps & kSelfSubmitting) {
+    if ((ctx->adapter.caps & kSelfSubmitting) || ctx->adapter.flush) {
         auto const deadline = Clock::now() + std::chrono::seconds(10);
         for (;;) {
+            if (ctx->adapter.flush) ctx->adapter.flush(ctx->adapter.user);
             poll_placeholders(ctx);
             bool pending = false;
             for (Placeholder const& p : ctx->ph)
@@ -142,7 +143,7 @@ Status upload_placeholders(Context* ctx, ContextDesc const& desc) noexcept {
             if (Clock::now() >= deadline)
                 KILN_PANIC(
                     "K5009 create(): placeholder uploads did not complete within 10 s although the adapter "
-                    "sets kSelfSubmitting");
+                    "sets kSelfSubmitting or flush");
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
     }
