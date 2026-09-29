@@ -116,6 +116,31 @@ jobs:
       - name: Test
         run: ctest --preset ${{ matrix.preset }}
 
+  # Texture-only cook (docs/design/texture-only.md): KILN_MESH=OFF builds without the glTF
+  # importer and mesh cooker, and must not fetch meshoptimizer.
+  texture-only:
+    name: texture-only (clang, linux-clang-debug)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Ninja
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libxkbcommon-dev libgl-dev
+
+      - name: Configure
+        run: cmake --preset linux-clang-debug -DKILN_MESH=OFF
+
+      - name: No mesh dependencies fetched
+        run: test ! -e build/linux-clang-debug/_deps/meshoptimizer-src
+
+      - name: Build
+        run: cmake --build --preset linux-clang-debug
+
+      - name: Test
+        run: ctest --preset linux-clang-debug
+
   # Read-only shipping contract (docs/design/shipping-split.md): build with
   # KILN_BUILD_COOK=OFF, run the reader-only tests, install, then build and run a
   # consumer that uses find_package(kiln) with kiln::runtime only.

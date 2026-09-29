@@ -1459,3 +1459,24 @@ KILN_TEST(Runtime, AdapterWithoutShapeCaps) {
     KILN_CHECK(rt.diags.has(kDiagAdapterRejected));
     release(rt.ctx, cube);
 }
+
+// A texture-only adapter (no kMeshes) is never asked to acquire or upload a mesh, and a
+// requested or registered mesh fails as adapter-rejected (docs/design/texture-only.md).
+KILN_TEST(Runtime, AdapterWithoutMeshes) {
+    Rt rt;
+    Result<NullAdapter*> a = null_adapter_create({.bindless = false}, &rt.adapter);
+    KILN_REQUIRE(a.ok());
+    rt.na = *a;
+    rt.adapter.caps &= ~u32(kMeshes);
+    Result<Context*> c =
+        create(ContextDesc{.diag = rt.diags.sink(), .adapter = &rt.adapter, .storeDir = test::golden_dir()});
+    KILN_REQUIRE(c.ok());
+    rt.ctx                 = *c;
+    u32 const placeholders = null_adapter_stats(rt.na).beginUploads;
+
+    MeshHandle const mesh = request_mesh(rt.ctx, "mesh/Box");
+    KILN_REQUIRE(rt.pump_until([&] { return state(rt.ctx, mesh) == State::Failed; }));
+    KILN_CHECK(rt.diags.has(kDiagAdapterRejected));
+    KILN_CHECK_EQ(null_adapter_stats(rt.na).beginUploads, placeholders);
+    release(rt.ctx, mesh);
+}

@@ -15,6 +15,7 @@
 #include <cerrno>
 #include <chrono>
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
 #include <system_error>
 #include <thread>
@@ -57,12 +58,16 @@ void gltf_generated_dir(char* out, usize cap) {
 }
 
 struct DiagCapture {
-    u32 firstCode = 0;
-    int count     = 0;
+    u32 firstCode      = 0;
+    int count          = 0;
+    char firstMsg[256] = {};
 
     static void fn(void* user, Diagnostic const& d) noexcept {
         auto* self = static_cast<DiagCapture*>(user);
-        if (self->firstCode == 0) self->firstCode = d.code;
+        if (self->firstCode == 0) {
+            self->firstCode = d.code;
+            format(self->firstMsg, sizeof self->firstMsg, "%.*s", KILN_SV(d.message));
+        }
         ++self->count;
     }
     DiagSink sink() noexcept { return DiagSink{&fn, this}; }
@@ -170,7 +175,7 @@ bool wait_for_change(char const* path, Vec<u8> const& old, Vec<u8>& out, int ms 
 }
 
 /// Waits up to `ms` for `path` to exist.
-bool wait_for_file(char const* path, int ms = 3000) {
+[[maybe_unused]] bool wait_for_file(char const* path, int ms = 3000) {
     for (int waited = 0; waited < ms; waited += 10) {
         if (file_exists(path)) return true;
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
@@ -204,6 +209,7 @@ KILN_TEST(Provider, NoMountsIsInvalidArgument) {
     KILN_CHECK_EQ(st.code, Code::InvalidArgument);
 }
 
+#if KILN_MESH
 // Disk mode writes the Named store layout; a second context without a provider loads those files.
 KILN_TEST(Provider, DiskModeCooksAndWritesNamedStoreFiles) {
     char storeDir[1024];
@@ -325,6 +331,40 @@ KILN_TEST(Provider, MemoryModeNeverWritesTheStore) {
     store_path(storeDir, "cube_basic.glb.mesh", meshPath, sizeof meshPath);
     KILN_CHECK_MSG(!file_exists(meshPath), "Memory mode must not write %s", meshPath);
 }
+#else
+// KILN_MESH=OFF: a model source, and a texture embedded in one, fail with K5002 carrying the
+// cooker's K1021; nothing is written.
+KILN_TEST(Provider, MeshCookNotBuilt) {
+    char storeDir[1024], gltfDir[1024];
+    scratch_dir("provider_mesh_off_store", storeDir, sizeof storeDir);
+    gltf_generated_dir(gltfDir, sizeof gltfDir);
+
+    Root const roots[] = {
+        {{}, StrView(gltfDir)}
+    };
+    DiagCapture diags;
+    TestContext tc;
+    if (!tc.init(StrView(storeDir), Span<Root const>(roots, 1), diags.sink())) return;
+    KILN_REQUIRE(cook::install_provider(tc.ctx, cook::ProviderDesc{.storeMode = cook::StoreMode::Disk}).ok());
+
+    MeshHandle const mesh = request_mesh(tc.ctx, "cube_basic.glb");
+    KILN_REQUIRE(mesh);
+    KILN_CHECK_EQ(pump_until_settled(tc.ctx, mesh), State::Failed);
+    KILN_CHECK_EQ(diags.firstCode, u32(kDiagCookOnMissFailed));
+    KILN_CHECK_MSG(std::strstr(diags.firstMsg, "K1021") != nullptr, "message: %s", diags.firstMsg);
+
+    diags                   = {};
+    TextureHandle const tex = request_texture(tc.ctx, "pbr_textures.glb#hull_albedo");
+    KILN_REQUIRE(tex);
+    KILN_CHECK_EQ(pump_until_settled(tc.ctx, tex), State::Failed);
+    KILN_CHECK_EQ(diags.firstCode, u32(kDiagCookOnMissFailed));
+    KILN_CHECK_MSG(std::strstr(diags.firstMsg, "K1021") != nullptr, "message: %s", diags.firstMsg);
+
+    char meshPath[1024];
+    store_path(storeDir, "cube_basic.glb.mesh", meshPath, sizeof meshPath);
+    KILN_CHECK(!file_exists(meshPath));
+}
+#endif
 
 // Missing source: the asset Fails with a K5001 store-miss diagnostic.
 KILN_TEST(Provider, MissingSourceFailsWithStoreMiss) {
@@ -529,6 +569,7 @@ KILN_TEST(Provider, SourcePollerRecooksPng) {
     KILN_CHECK(std::memcmp(l0.data, second, sizeof second) == 0);
 }
 
+#if KILN_MESH
 // A glb re-cook rewrites the mesh and the textures it embeds; for a glb without textures, only the mesh.
 KILN_TEST(Provider, SourcePollerRecooksGlbAndTextures) {
     char root[1024], storeDir[1024], khronos[1024];
@@ -578,6 +619,7 @@ KILN_TEST(Provider, SourcePollerRecooksGlbAndTextures) {
     KILN_CHECK(same_bytes(again, texturedMesh));
     KILN_CHECK_MSG(texBack, "the re-cook did not rewrite %s", texFile);
 }
+#endif
 
 // After uninstall_provider the poller is gone: a changed source rewrites nothing.
 KILN_TEST(Provider, SourcePollerStopsOnUninstall) {
@@ -805,6 +847,34 @@ KILN_TEST(Provider, CliMainAppliesThePolicy) {
     KILN_REQUIRE(v2.ok());
     KILN_CHECK(v2->desc().levels > 1u);
 }
+
+#if !KILN_MESH
+// KILN_MESH=OFF: kiln-cook still cooks the textures it is given, fails the glb, and exits 3.
+KILN_TEST(Provider, CliMainWithoutMeshCook) {
+    char root[1024], storeDir[1024], khronos[1024];
+    scratch_dir("cli_mesh_off_src", root, sizeof root);
+    scratch_dir("cli_mesh_off_store", storeDir, sizeof storeDir);
+    gltf_khronos_dir(khronos, sizeof khronos);
+    make_dir(root);
+
+    u8 rgba[4 * 4 * 4];
+    test_pixels(rgba, 9);
+    char png[1100], glb[1100];
+    format(png, sizeof png, "%s/tex.png", root);
+    format(glb, sizeof glb, "%s/Box.glb", khronos);
+    replace_file(png, test_png(rgba).span());
+
+    char arg0[] = "kiln-cook", argO[] = "-o", argQ[] = "-q";
+    char* argv[] = {arg0, glb, png, argO, storeDir, argQ};
+    KILN_CHECK_EQ(cook::cook_cli_main(6, argv), 3);
+
+    char storeFile[1100];
+    format(storeFile, sizeof storeFile, "%s/tex.png.ktx2", storeDir);
+    KILN_CHECK_MSG(file_exists(storeFile), "kiln-cook did not write %s", storeFile);
+    format(storeFile, sizeof storeFile, "%s/Box.glb.mesh", storeDir);
+    KILN_CHECK(!file_exists(storeFile));
+}
+#endif
 
 // A cube KTX2 cooks on miss and loads as a cube when the request expects one.
 KILN_TEST(Provider, CubeKtx2CooksAndLoads) {

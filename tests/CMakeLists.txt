@@ -54,10 +54,17 @@ if(TARGET kiln_cook)
     target_sources(kiln_tests PRIVATE test_mesh.cpp test_ktx2.cpp test_ktx2_corpus_rt.cpp
                                        test_settings.cpp test_sidecar.cpp test_store.cpp
                                        png_writer.h hdr_writer.h image_fixtures.h test_image.cpp
-                                       test_texture_cook.cpp test_hdr.cpp
-                                       test_mesh_cook.cpp test_mesh_golden.cpp test_texture_golden.cpp
+                                       test_texture_cook.cpp test_hdr.cpp test_texture_golden.cpp
                                        test_provider.cpp test_parallel.cpp)
     target_link_libraries(kiln_tests PRIVATE kiln_cook)
+    # KILN_MESH=OFF (docs/design/texture-only.md): the mesh cooker tests leave the build, and
+    # the mixed test files switch their mesh cases for checks that meshes fail with K1021.
+    if(KILN_MESH)
+        target_sources(kiln_tests PRIVATE test_mesh_cook.cpp test_mesh_golden.cpp)
+        target_compile_definitions(kiln_tests PRIVATE KILN_MESH=1)
+    else()
+        target_compile_definitions(kiln_tests PRIVATE KILN_MESH=0)
+    endif()
 
     add_test(NAME kiln_tests COMMAND kiln_tests ${KILN_TEST_ARGS})
     set_tests_properties(kiln_tests PROPERTIES FIXTURES_SETUP kiln_samples)

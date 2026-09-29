@@ -72,6 +72,8 @@ One preset per compiler/OS pair, all Release:
 
 `KILN_BUILD_EXAMPLES` and `KILN_BUILD_VIEWER` are ON in every preset, so the shipping presets also
 build `kiln-headless`, `kiln-viewer` and `kiln-vk-smoke` without the cook side.
+`KILN_MESH` only shapes `kiln_cook`, so a shipping build ignores it; a texture-only runtime is an
+adapter without `kMeshes` (`texture-only.md`).
 
 The CI job `shipping` builds `linux-gcc-shipping` and `win-msvc-shipping`, then:
 

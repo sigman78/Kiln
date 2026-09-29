@@ -33,7 +33,10 @@ enum AdapterCaps : u32 {
     /// placeholder of that shape and a request for it fails (K5004).
     kCubeTextures  = 1u << 1,
     kArrayTextures = 1u << 2,
-    // bits 3..31 reserved, must be 0
+    /// The adapter accepts UploadKind::MeshPayload. Without the bit, kiln never acquires or
+    /// uploads a mesh, and a mesh request fails (K5004).
+    kMeshes = 1u << 3,
+    // bits 4..31 reserved, must be 0
 };
 
 struct CopyConstraints {
@@ -116,7 +119,7 @@ struct Adapter {
 [[nodiscard]] constexpr bool adapter_is_valid(Adapter const& a) noexcept {
     return a.supports_format && a.copy_constraints && a.begin_upload && a.commit_upload &&
            a.is_upload_complete && a.destroy_deferred && !a.reserved[0] && !a.reserved[1] && !a.reserved[2] &&
-           !a.reserved[3] && (a.caps & ~u32(kSelfSubmitting | kCubeTextures | kArrayTextures)) == 0;
+           !a.reserved[3] && (a.caps & ~u32(kSelfSubmitting | kCubeTextures | kArrayTextures | kMeshes)) == 0;
 }
 
 } // namespace kiln

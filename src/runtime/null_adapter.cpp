@@ -202,7 +202,7 @@ Result<NullAdapter*> null_adapter_create(NullAdapterDesc const& desc, Adapter* o
     out->is_upload_complete = &null_is_upload_complete;
     out->publish            = &null_publish;
     out->destroy_deferred   = &null_destroy_deferred;
-    out->caps               = kSelfSubmitting | kCubeTextures | kArrayTextures;
+    out->caps               = kSelfSubmitting | kCubeTextures | kArrayTextures | kMeshes;
     out->user               = na;
 
     KILN_ASSERT(adapter_is_valid(*out));

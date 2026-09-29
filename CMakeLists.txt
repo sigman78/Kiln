@@ -26,6 +26,7 @@ option(KILN_BUILD_COOK            "Build kiln_cook (cooker library)"            
 option(KILN_BUILD_TOOLS           "Build kiln-cook / kiln-info CLI tools"            ON)
 option(KILN_HOT_RELOAD            "Compile hot-reload support into kiln_runtime"     ON)
 option(KILN_WEBP                  "Decode WebP texture sources in kiln_cook"         OFF)
+option(KILN_MESH                  "Cook meshes in kiln_cook (glTF import, cgltf, MikkTSpace, meshoptimizer)" ON)
 option(KILN_BUILD_TESTS           "Build unit tests"                                 ${KILN_IS_TOP_LEVEL})
 option(KILN_BUILD_EXAMPLES        "Build examples (null adapter, ...)"               OFF)
 option(KILN_BUILD_VIEWER          "Build the Vulkan example viewer (headers fetched; no SDK)" OFF)
@@ -132,8 +133,6 @@ if(KILN_BUILD_COOK)
         src/cook/hdr_decode.cpp
         src/cook/texture_cook.cpp
         src/cook/cook_internal.h
-        src/cook/gltf_import.cpp
-        src/cook/mesh_cook.cpp
         include/kiln/cook/provider.h
         src/cook/provider.cpp
         include/kiln/cook/cli.h
@@ -148,6 +147,12 @@ set_target_properties(kiln_cook PROPERTIES EXPORT_NAME cook)
     target_link_libraries(kiln_cook PRIVATE $<BUILD_INTERFACE:kiln_cli>)
     if(KILN_WEBP)
         target_compile_definitions(kiln_cook PRIVATE KILN_WEBP=1)
+    endif()
+    # KILN_MESH=OFF: cook_mesh is a stub that reports K1021 (docs/design/texture-only.md).
+    if(KILN_MESH)
+        target_sources(kiln_cook PRIVATE src/cook/gltf_import.cpp src/cook/mesh_cook.cpp)
+    else()
+        target_sources(kiln_cook PRIVATE src/cook/mesh_cook_off.cpp)
     endif()
 endif()
 

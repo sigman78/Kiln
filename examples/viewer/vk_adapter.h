@@ -21,7 +21,8 @@ struct AdapterDesc {
 
 struct VkAdapter;
 
-/// Fills `out` (kSelfSubmitting, kCubeTextures, kArrayTextures, bindless). `out` must outlive its users.
+/// Fills `out` (kSelfSubmitting, kCubeTextures, kArrayTextures, kMeshes, bindless). `out` must outlive its
+/// users.
 [[nodiscard]] Result<VkAdapter*> adapter_create(AdapterDesc const& desc, Adapter* out) noexcept;
 /// Waits for the transfer queue to go idle, then frees everything, including deferred objects.
 void adapter_destroy(VkAdapter* a) noexcept;

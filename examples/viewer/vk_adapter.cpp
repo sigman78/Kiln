@@ -1000,7 +1000,7 @@ Result<VkAdapter*> adapter_create(AdapterDesc const& desc, Adapter* out) noexcep
     out->is_upload_complete = &vk_is_upload_complete;
     out->publish            = &vk_publish;
     out->destroy_deferred   = &vk_destroy_deferred;
-    out->caps               = kSelfSubmitting | kCubeTextures | kArrayTextures;
+    out->caps               = kSelfSubmitting | kCubeTextures | kArrayTextures | kMeshes;
     out->user               = a;
     KILN_ASSERT(adapter_is_valid(*out));
     return a;

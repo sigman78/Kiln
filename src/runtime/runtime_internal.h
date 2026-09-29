@@ -262,6 +262,11 @@ void boost_group(Context* ctx, Group g) noexcept;
     if (shape == TextureShape::Array) return (ctx->adapter.caps & kArrayTextures) != 0;
     return shape == TextureShape::Tex2D;
 }
+/// False if the adapter's caps rule out this request: a mesh without kMeshes, or a shape.
+[[nodiscard]] inline bool caps_allow(Context const* ctx, AssetKind kind, TextureShape shape) noexcept {
+    if (kind == AssetKind::Mesh) return (ctx->adapter.caps & kMeshes) != 0;
+    return shape_supported(ctx, shape);
+}
 /// The shape of a KTX2 texture; Count for one kiln does not load (a volume or a cube array).
 [[nodiscard]] inline TextureShape shape_of(ktx2::TextureDesc const& d) noexcept {
     if (d.depth > 1 || (d.isCube && d.isArray)) return TextureShape::Count;

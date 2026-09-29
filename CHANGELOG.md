@@ -8,6 +8,15 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
 ## [Unreleased]
 
 ### Added
+- Texture-only builds (`docs/design/texture-only.md`): CMake option `KILN_MESH` (default ON). With
+  OFF, `kiln_cook` builds without the glTF importer and mesh cooker, and cgltf, MikkTSpace and
+  meshoptimizer are neither fetched nor built. `cook_mesh` stays declared and fails with
+  `Unsupported` and the new K1021; `kiln-cook` still cooks the other inputs. The `viewer-demo`
+  target and the glb-based CTests need `KILN_MESH=ON`.
+- `AdapterCaps::kMeshes`: the adapter accepts mesh payloads. Without it kiln never acquires or
+  uploads a mesh, and a mesh request fails with K5004. **Break:** an adapter that loads meshes must
+  now set the bit. Migration: add `kMeshes` to `Adapter::caps` (the null adapter and the example
+  Vulkan adapter do).
 - `kiln-viewer --tonemap auto|none|aces` and `--exposure <ev>`: a display curve for HDR content.
   `auto` (default) applies ACES only once an HDR (float) `--sky` has loaded, so LDR scenes render
   unchanged. `FrameUniforms` gains `tonemap` (now 112 bytes); `mesh.frag` and `sky.frag` apply it.

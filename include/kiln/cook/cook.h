@@ -52,6 +52,7 @@ enum GltfDiagCode : u32 {
                                     ///< asset name (ValidationFailed)
     kDiagGltfUriOutsideRoot = 1020, ///< an external URI is absolute, leaves the root or gives an invalid
                                     ///< asset name (ValidationFailed)
+    kDiagMeshCookNotBuilt = 1021,   ///< kiln_cook built with KILN_MESH=OFF: no mesh cooking (Unsupported)
 };
 
 // ---------------------------------------------------------------------------
@@ -140,7 +141,7 @@ struct CookedMesh {
 
 /// Cook a glTF/GLB into a .mesh. `settings` must be resolved (resolve_mesh).
 /// Failure: Status per error-model.md, one or more K1xxx diagnostics. Warnings and
-/// infos never fail the cook.
+/// infos never fail the cook. In a KILN_MESH=OFF build it always fails: Unsupported, K1021.
 KILN_API Result<CookedMesh> cook_mesh(MeshSource const& src, MeshCookSettings const& settings,
                                       TargetProfile const& target, CookEnv const& env = {}) noexcept;
 

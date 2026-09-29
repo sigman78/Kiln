@@ -9,12 +9,12 @@ links it.
 
 | Concern | Choice | License | Scope | Pinning |
 |---|---|---|---|---|
-| glTF parsing | **cgltf** | MIT | cook only | vendored in `third_party/cgltf/` |
+| glTF parsing | **cgltf** | MIT | cook only, `KILN_MESH=ON` | vendored in `third_party/cgltf/` |
 | PNG, JPEG, WebP decode | **wuffs** (WebP only with `KILN_WEBP=ON`) | Apache-2.0 | cook only | vendored single release `.c` file in `third_party/wuffs/` |
 | KTX2 read | **own** minimal reader | n/a | runtime | in-tree `src/formats/` |
 | KTX2 write | **own** minimal writer (raw formats only) | n/a | cook only | in-tree `src/formats/` |
-| Mesh optimization | **meshoptimizer** | MIT | cook only (decoder sources may later join `kiln_runtime`) | FetchContent, commit hash |
-| Tangents | **MikkTSpace** (reference `mikktspace.c/.h`) | zlib | cook only | vendored in `third_party/mikktspace/` |
+| Mesh optimization | **meshoptimizer** | MIT | cook only, `KILN_MESH=ON` (decoder sources may later join `kiln_runtime`) | FetchContent, commit hash |
+| Tangents | **MikkTSpace** (reference `mikktspace.c/.h`) | zlib | cook only, `KILN_MESH=ON` | vendored in `third_party/mikktspace/` |
 | Zstd | deferred (v0.6) | BSD | runtime decoder-only build, cook encoder | FetchContent, commit hash |
 | BCn / ASTC encoders | deferred (v0.6) | to be chosen | cook only | to be chosen |
 | Config parsing | deferred (v0.6), leaning TOML | to be chosen | cook only | to be chosen |

@@ -348,7 +348,9 @@ void dispatch_meta(Context* ctx) noexcept {
             queue_remove(ctx, s);
             if (s.preFail.failed()) {
                 s.capture.reset();
-                format(s.capture.msg, sizeof s.capture.msg, "acquire() failed");
+                format(s.capture.msg, sizeof s.capture.msg, "%s",
+                       caps_allow(ctx, s.kind, s.texShape) ? "acquire() failed"
+                                                           : "the adapter's caps do not allow this asset");
                 s.capture.set = true;
                 fail_slot(ctx, s, kDiagAdapterRejected, s.preFail);
                 continue;

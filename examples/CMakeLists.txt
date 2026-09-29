@@ -18,7 +18,7 @@ if(KILN_BUILD_TESTS)
 
     # Cook-on-miss from two source roots into an empty store: the default root and a named
     # root `gen:`, whose files land under `<store>/@gen/`. kiln-info then checks that file.
-    if(TARGET kiln_cook)
+    if(TARGET kiln_cook AND KILN_MESH)
         set(_store ${CMAKE_BINARY_DIR}/example-roots-store)
         add_test(NAME example_headless_roots_clean COMMAND ${CMAKE_COMMAND} -E rm -rf ${_store})
         set_tests_properties(example_headless_roots_clean PROPERTIES FIXTURES_SETUP headless_roots)

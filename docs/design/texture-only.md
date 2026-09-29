@@ -1,6 +1,7 @@
 # Texture-only builds
 
-**Status:** Proposed (2026-09-28).
+**Status:** Decided (owner, 2026-09-28): as proposed, all open points as proposed. All three
+rollout steps are implemented.
 **Decides:** How a host uses kiln as a texture cooker and loader only: what a CMake option removes
 from the cook side, how an adapter says it takes no meshes, and why the runtime keeps its mesh code.
 
@@ -10,7 +11,8 @@ from the cook side, how an adapter says it takes no meshes, and why the runtime 
   glTF importer and the mesh cooker, and the build does not fetch or compile cgltf, MikkTSpace or
   meshoptimizer.
 - The public API does not change. `cook_mesh` stays declared and returns `Unsupported` with the
-  new diagnostic **K2012** ("mesh cooking not built").
+  new diagnostic **K1021** ("mesh cooking not built"; the note first proposed K2012, but
+  K2xxx is the image range).
 - A new adapter capability bit, **`kMeshes`**. An adapter without it never gets a mesh upload, and
   a mesh request fails at the call.
 - The runtime has no mesh switch. Its mesh code has no third-party dependency. The question
@@ -37,7 +39,7 @@ it validates a `.mesh` blob table; it decodes nothing.
 - `third_party/CMakeLists.txt` then builds only wuffs: no `FetchContent` of meshoptimizer, no cgltf,
   no MikkTSpace.
 - `gltf_import.cpp` and `mesh_cook.cpp` drop out of `kiln_cook`. A small `mesh_cook_off.cpp`
-  defines `cook_mesh`, which reports K2012 and returns `Unsupported`.
+  defines `cook_mesh`, which reports K1021 and returns `Unsupported`.
 - These stay in every build, because they need no dependency and keep code and data portable:
   - `mesh_write.cpp` (tests and hosts write `.mesh` files with it);
   - `MeshCookSettings`, `ProviderDesc::meshDefaults`, the `[mesh]` keys of a `.kiln` sidecar;
@@ -48,9 +50,9 @@ it validates a `.mesh` blob table; it decodes nothing.
 
 | Input | Result |
 |---|---|
-| `request_mesh` of a `.glb` / `.gltf` with cook-on-miss | the provider reports K2012; the asset becomes Failed |
+| `request_mesh` of a `.glb` / `.gltf` with cook-on-miss | the asset becomes Failed with K5002, whose message carries K1021 |
 | a texture embedded in a model (`chair.glb#wood`) | the same: only the glTF importer can read it |
-| `kiln-cook` given a `.glb` / `.gltf` | K2012 for that input; the other inputs still cook; exit code 1 |
+| `kiln-cook` given a `.glb` / `.gltf` | K1021 for that input; the other inputs still cook; exit code 3 (a failed cook) |
 | a `.mesh` file already in the store | loads normally (the runtime is unchanged) |
 
 ### 3. `kMeshes` at the adapter boundary
@@ -81,31 +83,35 @@ it validates a `.mesh` blob table; it decodes nothing.
   guard their mesh cases with the `KILN_MESH` definition. A missing corpus is still an error, not
   a skip.
 - New tests:
-  - with `OFF`: a glb request and a `glb#image` request fail with K2012; `kiln-cook` on a glb
-    reports K2012 and exits 1;
+  - with `OFF`: a glb request and a `glb#image` request fail with K1021 (`Provider.MeshCookNotBuilt`);
+    `kiln-cook` on a glb reports K1021 and exits 3 (`Provider.CliMainWithoutMeshCook`);
   - with both: an adapter without `kMeshes` gets no mesh upload, and `request_mesh` fails with
-    K5004.
-- The glb-based CTests (`example_headless_roots*`) and the viewer demo targets need
-  `KILN_MESH=ON`. `kiln-viewer` requires it; `kiln-headless` builds either way.
-- CI gains one job: `linux-clang-debug` with `-DKILN_MESH=OFF`, warnings as errors. It also checks
-  that the build tree has no `_deps/meshoptimizer-src`, so a stray fetch fails the job.
+    K5004 (`Runtime.AdapterWithoutMeshes`).
+- The glb-based CTests (`example_headless_roots*`) and the `viewer-demo` target need
+  `KILN_MESH=ON`. `kiln-viewer` and `kiln-headless` build either way: they still load `.mesh`
+  files from a store.
+- CI gains one job, `texture-only`: `linux-clang-debug` with `-DKILN_MESH=OFF`, warnings as
+  errors. It also checks that the build tree has no `_deps/meshoptimizer-src`, so a stray fetch
+  fails the job.
 
 ## Diagnostics
 
 | Code | Severity | Meaning |
 |---|---|---|
-| K2012 | Error | Mesh cooking is not built (`KILN_MESH=OFF`): a model source or a texture embedded in one |
+| K1021 | Error | Mesh cooking is not built (`KILN_MESH=OFF`): a model source or a texture embedded in one |
 
 ## Rollout
 
-1. The `KILN_MESH` option, the third-party split, `mesh_cook_off.cpp`, K2012, and the provider
+1. *(done)* The `KILN_MESH` option, the third-party split, `mesh_cook_off.cpp`, K1021, and the provider
    and `kiln-cook` paths, with their tests.
-2. `kMeshes`: the runtime checks, both example adapters and the null adapter, the tests, and the
+2. *(done)* `kMeshes`: the runtime checks, both example adapters and the null adapter, the tests, and the
    CHANGELOG migration note.
-3. The CI job, and updates to `dependencies.md`, `shipping-split.md` and the build options in the
+3. *(done)* The CI job, and updates to `dependencies.md`, `shipping-split.md` and the build options in the
    top-level README.
 
 ## Open points
+
+All four were decided as proposed (owner, 2026-09-28).
 
 1. **The bit's direction.** A positive `kMeshes` breaks every existing adapter until it sets the
    bit. An inverse `kNoMeshes` breaks nothing but reads against the other caps. Proposed:
@@ -114,6 +120,6 @@ it validates a `.mesh` blob table; it decodes nothing.
    host code builds against both configurations without `#if`. The alternative, a link error, finds
    the problem earlier but forces hosts to mirror the option.
 3. **A query.** Should `kiln_cook` expose `bool cook_has_meshes() noexcept` for tools and hosts
-   that want to hide mesh options? Proposed: not now; K2012 is enough.
+   that want to hide mesh options? Proposed: not now; K1021 is enough.
 4. **The option name.** `KILN_MESH` matches `KILN_WEBP`. `KILN_MESH_COOK` is more exact, but the
    runtime question in section 4 may later want its own name anyway.

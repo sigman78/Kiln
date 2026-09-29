@@ -87,8 +87,14 @@ call `pump()` every frame and show `progress()`.
 The adapter accepts textures of `TextureShape::Cube` or `Array` (`texture-shapes.md`). kiln then
 uploads the placeholders of that shape at `create()`, and `TextureDesc::shape` tells the adapter
 which image view to create. Without the bit, kiln sends no texture of that shape: a request for it
-fails with K5004. The example Vulkan adapter sets neither bit yet: its bindless array holds 2D
-views only.
+fails with K5004. The example Vulkan adapter sets both: one bindless binding per shape.
+
+### `kMeshes`
+
+The adapter accepts `UploadKind::MeshPayload`. Without the bit, kiln never calls `acquire` or
+`begin_upload` for a mesh, and `request_mesh` / `register_mesh` give a handle that fails with
+K5004. A texture-only adapter leaves it clear and can ignore `bufferOffsetAlign`
+(`texture-only.md`). The null adapter and the example Vulkan adapter set it.
 
 ### Two binding models
 

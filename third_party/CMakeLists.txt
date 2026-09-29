@@ -1,6 +1,7 @@
 # third_party/CMakeLists.txt
 #
-# Cook-only third-party dependencies (docs/design/dependencies.md, M2):
+# Cook-only third-party dependencies (docs/design/dependencies.md, M2). With KILN_MESH=OFF only
+# wuffs is built (docs/design/texture-only.md):
 #   - cgltf (MIT)         -- glTF import: vendored header, one-line .c TU
 #   - MikkTSpace (zlib)   -- reference tangent-space generation: vendored .c/.h
 #   - wuffs (Apache-2.0)  -- PNG/JPEG (+ WebP with KILN_WEBP) decode: vendored single-file release .c,
@@ -26,25 +27,27 @@ set(FETCHCONTENT_UPDATES_DISCONNECTED ON CACHE BOOL "" FORCE)
 # meshoptimizer -- pinned to the commit the v1.3 tag resolves to (never a
 # floating branch or bare tag; see docs/design/dependencies.md rules).
 # ---------------------------------------------------------------------------
-set(MESHOPT_BUILD_DEMO OFF CACHE BOOL "" FORCE)
-set(MESHOPT_BUILD_GLTFPACK OFF CACHE BOOL "" FORCE)
-set(MESHOPT_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
-set(MESHOPT_INSTALL OFF CACHE BOOL "" FORCE)
+# KILN_MESH=OFF (a texture-only cook) fetches nothing: meshoptimizer is used by mesh_cook.cpp only.
+if(KILN_MESH)
+    set(MESHOPT_BUILD_DEMO OFF CACHE BOOL "" FORCE)
+    set(MESHOPT_BUILD_GLTFPACK OFF CACHE BOOL "" FORCE)
+    set(MESHOPT_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+    set(MESHOPT_INSTALL OFF CACHE BOOL "" FORCE)
 
-FetchContent_Declare(meshoptimizer
-    GIT_REPOSITORY https://github.com/zeux/meshoptimizer.git
-    GIT_TAG 9e1f07b159d3cb777f1c67ed31fc11fd117986f4 # v1.3
-)
-FetchContent_MakeAvailable(meshoptimizer)
+    FetchContent_Declare(meshoptimizer
+        GIT_REPOSITORY https://github.com/zeux/meshoptimizer.git
+        GIT_TAG 9e1f07b159d3cb777f1c67ed31fc11fd117986f4 # v1.3
+    )
+    FetchContent_MakeAvailable(meshoptimizer)
+endif()
 
 # ---------------------------------------------------------------------------
 # kiln_third_party_cook -- one static lib for the vendored C dependencies.
 # ---------------------------------------------------------------------------
-add_library(kiln_third_party_cook STATIC
-    cgltf/cgltf.c
-    mikktspace/mikktspace.c
-    wuffs/wuffs_impl.c
-)
+add_library(kiln_third_party_cook STATIC wuffs/wuffs_impl.c)
+if(KILN_MESH)
+    target_sources(kiln_third_party_cook PRIVATE cgltf/cgltf.c mikktspace/mikktspace.c)
+endif()
 
 # Third-party code is compiled quietly, never with kiln's own warning set
 # (cmake/kiln_warnings.cmake, kiln_apply_warnings/kiln_apply_defaults are
@@ -74,15 +77,19 @@ endif()
 # kiln_runtime (which never links this target at all) or to kiln_cook's own
 # installed/consumer-facing INTERFACE.
 target_include_directories(kiln_third_party_cook INTERFACE
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/cgltf>
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/mikktspace>
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/wuffs>
-)
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/wuffs>)
+if(KILN_MESH)
+    target_include_directories(kiln_third_party_cook INTERFACE
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/cgltf>
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/mikktspace>)
+endif()
 
 # meshoptimizer is linked PUBLIC so kiln_cook picks it up transitively through
 # kiln_third_party_cook (kiln_cook's own link to kiln_third_party_cook is
 # PRIVATE, so this still does not escape kiln_cook's own build).
-target_link_libraries(kiln_third_party_cook PUBLIC meshoptimizer)
+if(KILN_MESH)
+    target_link_libraries(kiln_third_party_cook PUBLIC meshoptimizer)
+endif()
 
 # ---------------------------------------------------------------------------
 # Install / export.
@@ -103,7 +110,11 @@ target_link_libraries(kiln_third_party_cook PUBLIC meshoptimizer)
 # installed kiln::cook consumer's include path.
 # ---------------------------------------------------------------------------
 if(KILN_INSTALL)
-    install(TARGETS kiln_third_party_cook meshoptimizer
+    set(_kiln_tp_targets kiln_third_party_cook)
+    if(KILN_MESH)
+        list(APPEND _kiln_tp_targets meshoptimizer)
+    endif()
+    install(TARGETS ${_kiln_tp_targets}
         EXPORT kilnCookTargets
         COMPONENT cook
         ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}

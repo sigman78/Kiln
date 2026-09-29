@@ -266,8 +266,8 @@ Slot* request_slot(Context* ctx, AssetKind kind, StrView path, RequestOptions co
     }
     map.insert(id, s.index); // reserved to maxAssets at create: never rehashes
 
-    if (!shape_supported(ctx, s.texShape)) {
-        s.preFail = make_status(Code::Unsupported); // the adapter lacks kCubeTextures / kArrayTextures
+    if (!caps_allow(ctx, kind, s.texShape)) {
+        s.preFail = make_status(Code::Unsupported);
     } else if (ctx->adapter.acquire) {
         UploadKind const uk = kind == AssetKind::Mesh ? UploadKind::MeshPayload : UploadKind::TextureLevels;
         Status const st = ctx->adapter.acquire(ctx->adapter.user, id, uk, s.texKind, s.texShape, &s.acquired);
