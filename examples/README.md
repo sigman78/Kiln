@@ -29,6 +29,17 @@ The second run is fast: the models are cached and the store is already cooked.
 
 Every program prints its options with `--help`. Binaries land in `build/<preset>/examples/<name>/`.
 
+## Planned example: `kiln-gl-minimal` (not implemented)
+
+A small introductory OpenGL adapter with serial loading on the GL context thread: an inline
+`JobSystem`, CPU scratch per upload, and ordinary GL texture/buffer uploads in `commit_upload`.
+The example would load a pre-cooked mesh and 2D textures before rendering, with no adapter queues,
+mutexes, staging rings, or bindless bookkeeping. Loading blocks the calling thread; kiln still
+advances asset states through `pump()` / `wait()`.
+
+This is a design proposal only: there is no source directory, executable, or CMake option yet.
+See [the proposed adapter and scope](../docs/design/integration-examples.md#planned-minimal-synchronous-gl-example).
+
 ## Viewer recipes
 
 ```sh

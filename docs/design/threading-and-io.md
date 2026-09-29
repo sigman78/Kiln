@@ -1,5 +1,9 @@
 # Threading and IO
 
+Proposed extension: [Asynchronous cooked-asset reads](async-read-path.md) describes explicit
+submission/completion and resumable loading. The blocking backend described here remains the
+current implementation and the compatibility interface for tools and cooking.
+
 **Status:** Proposed (awaiting owner sign-off). Implemented in M3: `include/kiln/io.h`,
 `src/io/`, `src/runtime/` (thread rules at the top of `runtime_internal.h`), and for the cooker
 `src/cook/parallel.cpp` (`cook-kernels.md`). Details are recorded as R5a-R5l in

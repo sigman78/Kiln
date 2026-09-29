@@ -60,6 +60,58 @@ measures.
 copy. The adapter interface allows it (`UploadTarget::dst` is "staging / ReBAR / scratch"), but
 nothing exercises it yet.
 
+## Planned minimal synchronous GL example
+
+**Status:** Planned, not implemented (2026-09-29). Proposed executable name: `kiln-gl-minimal`.
+No source directory, executable target, or CMake option exists yet. This introductory example is
+separate from the reference-scene baseline above.
+
+Purpose: show the smallest useful renderer adapter before introducing the asynchronous upload
+machinery in `kiln-gl`.
+
+### Execution and scope
+
+- Run kiln jobs inline with a host `JobSystem` whose `submit` immediately invokes the job, and
+  set `ContextDesc::maxIoJobs = 1`. All loading and adapter calls run serially on the GL context
+  thread; call `create()`, `pump()` / `wait()`, and `destroy()` on that thread.
+- Use the synchronous file backend and pre-cooked assets. Loading blocks the calling thread.
+- Load one mesh and ordinary 2D textures before the render loop. Request/load the mesh, inspect
+  its material bindings, then request/load the referenced textures. Keep resources until shutdown.
+- Use float vertex attributes and a small documented set of texture formats. No cook-on-miss,
+  hot reload, cube sky, bindless handles, or streaming demonstration in the initial example.
+- Reuse the window and GL loader where useful; keep the adapter's lifecycle visible in the example.
+
+An inline executor does not bypass kiln's state machine or make `request_*()` immediately return
+a Ready asset. `pump()` consumes internal completions and publishes states/events; `wait()` is the
+simple way to finish each loading phase before drawing. Kiln's internal completion queue remains;
+the adapter itself needs no work queue, locks, staging ring, or parallel upload machinery.
+
+### Proposed adapter
+
+| Callback | Minimal behavior |
+|---|---|
+| `supports_format` | Accept only the formats the example can upload and draw |
+| `copy_constraints` | Request tightly packed texture rows and levels |
+| `begin_upload` | Allocate CPU scratch and a small resource record; return scratch as `dst` and the record's identity as the object/token |
+| `commit_upload` | Create/fill the GL texture or buffer from client memory, record success/failure, and release scratch |
+| `upload_status` | Report the recorded terminal result, retaining the resource record until destruction |
+| `destroy` | Delete any created GL resource and free the record, including partially created failed objects |
+| `bind`, `flush` | Null |
+
+Set `kSelfSubmitting`: uploads need no later host frame submission to become usable. Advertise
+only the shapes and mesh support actually implemented. Begin/commit and destruction must also
+handle kiln's built-in placeholders and abandoned uploads under the normal adapter contract.
+
+Use ordinary client-memory uploads with `GL_PIXEL_UNPACK_BUFFER` unbound and explicit pixel-store
+settings. Subsequent draws in the same GL context are ordered after the uploads. No upload fences
+or `glFinish()` are needed for that usage. "Synchronous" describes CPU loading and adapter calls;
+it does not mean the GPU has become idle. Completion means safe for subsequent same-context use.
+See the [OpenGL execution model](https://registry.khronos.org/OpenGL/specs/gl/glspec46.core.pdf).
+
+Before implementation is considered complete, verify inline job execution with a focused runtime
+test and exercise successful loading, an upload failure, and cleanup. No new public execution-mode
+flag is proposed; support through the existing `JobSystem` must be verified rather than assumed.
+
 ## Proposed API change: `Adapter::flush`
 
 GL and sokol calls must run on the thread that owns the context. `begin_upload` and

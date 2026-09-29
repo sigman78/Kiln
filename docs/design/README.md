@@ -14,10 +14,12 @@ The notes follow HANDOFF v2 and mesh-format-spec draft v0.3 (magic `KMSH`, names
 | [dependencies.md](dependencies.md) | Third-party libraries, their scope and pinning, and dependency rules |
 | [error-model.md](error-model.md) | `Status`, `Result<T>`, diagnostics, diagnostic code ranges, panic policy |
 | [handles-and-states.md](handles-and-states.md) | Handles, `AssetId`, states and transitions (incl. `MetaReady`), hot reload, requests, events, placeholders, load groups |
+| [readiness-sets.md](readiness-sets.md) | Proposed: aggregate readiness signals for required texture sets or mesh/material dependencies, overlapping membership, sealing, ownership, and reload behavior |
 | [adapter.md](adapter.md) | `Format` enum, the renderer adapter interface (`bind`, `destroy`, `caps`), `GpuObject`, binding models, threading contract |
 | [adapter-frames-slots.md](adapter-frames-slots.md) | The host reports frames (`PumpOptions`); kiln releases objects after them, finishes abandoned uploads, and numbers bindless slots (`bind` / `destroy` replace `acquire` / `publish` / `destroy_deferred`). Decided 2026-09-28 |
 | [settings.md](settings.md) | v0.5 cook settings structs, resolution layers, settings hashing and store key |
 | [threading-and-io.md](threading-and-io.md) | std threading in `.cpp` files, `JobSystem`, `IoBackend`, `pump()` as the only surface |
+| [async-read-path.md](async-read-path.md) | Proposed: completion-based loading of existing cooked assets, IOCP/io_uring backends, ownership and budgets; cooking and cache writes remain outside the optimization scope |
 | [shipping-split.md](shipping-split.md) | The read-only shipping contract: the `kiln_runtime` / `kiln_cook` boundary, the `include/kiln/cook/` header split, install components, shipping presets and the shipping CI job |
 | [mesh-cook.md](mesh-cook.md) | The glTF to `.mesh` cooker stage order and its determinism rules |
 | [cook-kernels.md](cook-kernels.md) | Kernel contract for the cooker's hot paths, SIMD rules, row and item splitting, `CookEnv`, rollout order |
