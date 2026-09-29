@@ -105,7 +105,7 @@ file itself. It links the Vulkan loader (kiln's other examples load entry points
 loader is built from source at the SDK tag that matches the fetched headers. Slang compiles the
 shaders; its release archive for the host is downloaded and checked by hash. SPIRV-Tools, which
 NoGraphicsAPI's examples use to validate shaders, is left out (decided in the note). All of this is
-behind `KILN_EXAMPLE_NGA`, OFF in every preset, and a CI job of its own builds it.
+behind `KILN_EXAMPLE_NGA`, OFF in every preset, and the manual `extended` workflow builds it.
 
 ## Rules
 

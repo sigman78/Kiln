@@ -52,6 +52,9 @@ if(KILN_SANITIZE OR KILN_FUZZ)
     endif()
     if(KILN_FUZZ)
         add_compile_options(-fsanitize=fuzzer-no-link)
+        if(WIN32) # LLVM's Windows libFuzzer is built against the static C runtime
+            set(CMAKE_MSVC_RUNTIME_LIBRARY MultiThreaded)
+        endif()
     endif()
 endif()
 

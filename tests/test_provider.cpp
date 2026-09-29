@@ -101,6 +101,7 @@ struct TestContext {
     }
 
     ~TestContext() noexcept {
+        if (ctx) cook::uninstall_provider(ctx); // the host's job before destroy(); a no-op without one
         if (ctx) destroy(ctx);
         if (na) null_adapter_destroy(na);
     }

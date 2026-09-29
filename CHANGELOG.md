@@ -12,8 +12,8 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
   `alloc_array`, `Vec` and `HashMap` panic on size overflow instead of allocating short, and
   `alloc()` panics on an alignment that is not a power of two. CMake `KILN_SANITIZE` (e.g.
   `address,undefined`, clang or gcc) and `KILN_FUZZ` (libFuzzer targets in `fuzz/` for the `.mesh`
-  and KTX2 readers and the `.hdr` decoder); CI runs the tests under ASan and UBSan, and each fuzz
-  target for 60 s.
+  and KTX2 readers and the `.hdr` decoder, run locally); the manual `extended` workflow runs the
+  tests under ASan and UBSan.
 - `placeholder_object(ctx, kind, shape)`: the placeholder `GpuObject` of a texture kind and shape,
   for hosts that must bind something where a material has no texture. `kiln-sokol` and
   `kiln-vk-basic` use it (the latter no longer needs `descriptorBindingPartiallyBound`).
@@ -236,6 +236,10 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
   relative path, as the `UriResolver` already received for buffers.
 
 ### Changed
+- CI: every push builds the library, the tools, `kiln-headless` and the tests on the platform
+  matrix, plus the shipping contract. The GPU examples, `kiln-nga`, the texture-only build,
+  sanitizers and the compile-time report moved to `.github/workflows/extended.yml`, run by hand
+  (Actions > extended > Run workflow), each group behind a checkbox. Fuzzing is not in CI.
 - **Breaking (core):** `Status` and `Result<T>` are `[[nodiscard]]` types, so every ignored one
   warns (write `(void)` where discarding is intended, as for `diagf`). `Result`, `Vec`,
   `FixedArray` and `HashMap` require `NothrowStorable` element types: copy, move and destruction

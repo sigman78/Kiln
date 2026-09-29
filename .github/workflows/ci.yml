@@ -9,6 +9,13 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Every push: the library, the tools, kiln-headless and the tests on the platform matrix. The GPU
+# examples, sanitizers and other long checks are in extended.yml, run by hand.
+env:
+  PLAIN: >-
+    -DKILN_BUILD_VIEWER=OFF -DKILN_EXAMPLE_GL=OFF -DKILN_EXAMPLE_GL_BINDLESS=OFF
+    -DKILN_EXAMPLE_SOKOL=OFF -DKILN_EXAMPLE_VK_BASIC=OFF -DKILN_EXAMPLE_NGA=OFF
+
 jobs:
   windows-msvc:
     name: windows-msvc (${{ matrix.config.name }})
@@ -36,7 +43,7 @@ jobs:
           & "$PWD/ktxtools/bin/ktx.exe" --version
 
       - name: Configure
-        run: cmake --preset ${{ matrix.config.preset }} ${{ matrix.config.extra }}
+        run: cmake --preset ${{ matrix.config.preset }} ${{ matrix.config.extra }} ${{ env.PLAIN }}
 
       - name: Build
         run: cmake --build --preset ${{ matrix.config.preset }}
@@ -72,7 +79,7 @@ jobs:
           & "$PWD/ktxtools/bin/ktx.exe" --version
 
       - name: Configure
-        run: cmake --preset ${{ matrix.config.preset }}
+        run: cmake --preset ${{ matrix.config.preset }} ${{ env.PLAIN }}
 
       - name: Build
         run: cmake --build --preset ${{ matrix.config.preset }}
@@ -97,7 +104,7 @@ jobs:
       - name: Install Ninja
         run: |
           sudo apt-get update
-          sudo apt-get install -y ninja-build libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libxkbcommon-dev libgl-dev
+          sudo apt-get install -y ninja-build
 
       - name: Install KTX tools (ktx validate for writer output)
         run: |
@@ -108,138 +115,13 @@ jobs:
           ktx --version
 
       - name: Configure
-        run: cmake --preset ${{ matrix.preset }} ${{ matrix.extra }}
+        run: cmake --preset ${{ matrix.preset }} ${{ matrix.extra }} ${{ env.PLAIN }}
 
       - name: Build
         run: cmake --build --preset ${{ matrix.preset }}
 
       - name: Test
         run: ctest --preset ${{ matrix.preset }}
-
-  # kiln-nga (docs/design/integration-examples.md): NoGraphicsAPI, a Vulkan loader built from source
-  # and a Slang download, so it has a job of its own instead of joining every preset. Build only:
-  # running it needs VK_EXT_descriptor_heap.
-  nga:
-    name: nga (${{ matrix.name }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { name: windows-msvc, os: windows-latest, preset: win-msvc-debug }
-          - { name: linux-clang, os: ubuntu-24.04, preset: linux-clang-debug }
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: ilammy/msvc-dev-cmd@v1
-        if: runner.os == 'Windows'
-
-      - uses: seanmiddleditch/gha-setup-ninja@v5
-
-      - name: Install Linux packages
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libxkbcommon-dev libgl-dev
-
-      - name: Configure
-        run: cmake --preset ${{ matrix.preset }} -DKILN_EXAMPLE_NGA=ON
-
-      - name: Build kiln-nga
-        run: cmake --build --preset ${{ matrix.preset }} --target kiln-nga
-
-  # Texture-only cook (docs/design/texture-only.md): KILN_MESH=OFF builds without the glTF
-  # importer and mesh cooker, and must not fetch meshoptimizer.
-  texture-only:
-    name: texture-only (clang, linux-clang-debug)
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Ninja
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ninja-build libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libxkbcommon-dev libgl-dev
-
-      - name: Configure
-        run: cmake --preset linux-clang-debug -DKILN_MESH=OFF
-
-      - name: No mesh dependencies fetched
-        run: test ! -e build/linux-clang-debug/_deps/meshoptimizer-src
-
-      - name: Build
-        run: cmake --build --preset linux-clang-debug
-
-      - name: Test
-        run: ctest --preset linux-clang-debug
-
-  # The unit tests under ASan (with LeakSanitizer) and UBSan. The only exemptions are in
-  # third_party/CMakeLists.txt, for vendored C.
-  sanitizers:
-    name: sanitizers (clang, address + undefined)
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Ninja
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ninja-build libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libxkbcommon-dev libgl-dev
-
-      - name: Install KTX tools (ktx validate for writer output)
-        run: |
-          u=https://github.com/KhronosGroup/KTX-Software/releases/download/v4.4.2/KTX-Software-4.4.2-Linux-x86_64.deb
-          curl -sSL -o ktx.deb "$u"
-          echo "b7d4a0833a5aff570f01f56413e40ea8db291212  ktx.deb" | sha1sum -c -
-          sudo apt-get install -y ./ktx.deb
-
-      - name: Configure
-        run: cmake --preset linux-clang-debug -DKILN_SANITIZE=address,undefined
-
-      - name: Build
-        run: cmake --build --preset linux-clang-debug
-
-      - name: Test
-        env:
-          UBSAN_OPTIONS: print_stacktrace=1
-        run: ctest --preset linux-clang-debug --output-on-failure
-
-  # libFuzzer over the parsers of untrusted bytes (fuzz/), 60 s each, seeded from the goldens and
-  # the test skies. A crash uploads its input.
-  fuzz:
-    name: fuzz (clang, libFuzzer)
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Ninja
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ninja-build
-
-      - name: Configure
-        run: >
-          cmake -S . -B build/fuzz -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo
-          -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_C_COMPILER=clang -DKILN_FUZZ=ON
-          -DKILN_SANITIZE=address,undefined -DKILN_BUILD_TESTS=OFF -DKILN_BUILD_TOOLS=OFF
-
-      - name: Build
-        run: cmake --build build/fuzz --target kiln_fuzz_mesh_read kiln_fuzz_ktx2_read kiln_fuzz_hdr_decode
-
-      - name: Fuzz
-        run: |
-          mkdir -p corpus/mesh corpus/ktx2 corpus/hdr artifacts
-          opts="-max_total_time=60 -rss_limit_mb=4096 -artifact_prefix=artifacts/"
-          build/fuzz/fuzz/kiln_fuzz_mesh_read $opts corpus/mesh tests/golden/mesh
-          build/fuzz/fuzz/kiln_fuzz_ktx2_read $opts corpus/ktx2 tests/golden/ktx2
-          build/fuzz/fuzz/kiln_fuzz_hdr_decode $opts corpus/hdr examples/assets/skies
-
-      - name: Upload crashing inputs
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: fuzz-artifacts
-          path: artifacts/
 
   # Read-only shipping contract (docs/design/shipping-split.md): build with
   # KILN_BUILD_COOK=OFF, run the reader-only tests, install, then build and run a
@@ -266,10 +148,10 @@ jobs:
         name: Install Ninja
         run: |
           sudo apt-get update
-          sudo apt-get install -y ninja-build libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libxkbcommon-dev libgl-dev
+          sudo apt-get install -y ninja-build
 
       - name: Configure
-        run: cmake --preset ${{ matrix.preset }}
+        run: cmake --preset ${{ matrix.preset }} ${{ env.PLAIN }}
 
       - name: Build
         run: cmake --build --preset ${{ matrix.preset }}
@@ -296,29 +178,3 @@ jobs:
           cmake --build build/consumer
           if [ "$RUNNER_OS" = "Windows" ]; then ./build/consumer/shipping_consumer.exe; else ./build/consumer/shipping_consumer; fi
 
-  compile-time:
-    name: compile-time
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Ninja
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ninja-build libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libxkbcommon-dev libgl-dev
-
-      - name: Configure
-        run: cmake --preset linux-clang-release
-
-      - name: Full rebuild timing
-        run: |
-          START=$(date +%s.%N)
-          cmake --build --preset linux-clang-release
-          END=$(date +%s.%N)
-          ELAPSED=$(echo "$END - $START" | bc)
-          {
-            echo "## Compile-time report"
-            echo ""
-            echo "Full rebuild (\`linux-clang-release\`): **${ELAPSED}s**"
-          } >> "$GITHUB_STEP_SUMMARY"
-          # TODO: flag >20% regression against baseline
