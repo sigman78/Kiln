@@ -22,7 +22,7 @@ static_assert(sizeof(VertexLayout) == 160);
 static_assert(sizeof(MeshPart) == 112);
 static_assert(sizeof(MeshLod) == 48);
 static_assert(sizeof(Submesh) == 48);
-static_assert(sizeof(MaterialSlot) == 32);
+static_assert(sizeof(MaterialSlot) == 80);
 static_assert(sizeof(TextureBinding) == 16);
 static_assert(sizeof(Mount) == 48);
 static_assert(sizeof(PayloadBlob) == 32);

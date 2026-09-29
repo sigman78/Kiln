@@ -43,6 +43,13 @@ struct MaterialDesc {
     u32 textureCount    = 0;
     AlphaMode alphaMode = AlphaMode::Opaque;
     f32 alphaCutoff     = 0.5f;
+    // The factors of MaterialSlot, with glTF's defaults.
+    f32 baseColorFactor[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+    f32 emissiveFactor[3]  = {0.0f, 0.0f, 0.0f};
+    f32 metallicFactor     = 1.0f;
+    f32 roughnessFactor    = 1.0f;
+    f32 normalScale        = 1.0f;
+    f32 occlusionStrength  = 1.0f;
 };
 
 struct TextureBindingDesc {

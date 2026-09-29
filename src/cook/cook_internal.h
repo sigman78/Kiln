@@ -80,6 +80,12 @@ struct ImportMaterial {
     bool doubleSided          = false;
     mesh::AlphaMode alphaMode = mesh::AlphaMode::Opaque;
     f32 alphaCutoff           = 0.5f;
+    f32 baseColorFactor[4]    = {1.0f, 1.0f, 1.0f, 1.0f};
+    f32 emissiveFactor[3]     = {0.0f, 0.0f, 0.0f}; ///< emissive strength folded in
+    f32 metallicFactor        = 1.0f;
+    f32 roughnessFactor       = 1.0f;
+    f32 normalScale           = 1.0f;
+    f32 occlusionStrength     = 1.0f;
     ImportTexture slots[kSlotCount]; ///< indexed by mesh::TextureSlot
 };
 

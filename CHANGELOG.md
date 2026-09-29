@@ -7,6 +7,16 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
 
 ## [Unreleased]
 
+### Changed
+- **Breaking (format, cook): `.mesh` 0.5, materials carry their PBR factors.** `MaterialSlot` grows
+  from 32 to 80 bytes: `baseColorFactor[4]`, `emissiveFactor[3]` (`KHR_materials_emissive_strength`
+  folded in), `metallicFactor`, `roughnessFactor`, `normalScale`, `occlusionStrength` (glTF's
+  defaults when the source has none), then a reserved `u32`. Materials that differ only in factors
+  are no longer merged. `kCookerVersion` is 5; `kiln-info` prints the factors.
+  - Migration: a 0.4 `.mesh` fails with `VersionMismatch` (K4002); delete existing stores so they
+    re-cook (a named store file is used while it exists, open-questions R9). Renderers that read
+    `MaterialSlot` get the factors from the same record.
+
 ### Added
 - **Cook: block formats per target.** `TargetProfile::excludedBlockFormats` (a `block_format_bit()`
   set, `kiln/formats.h`) names block formats a target cannot sample; the cooker falls back along a

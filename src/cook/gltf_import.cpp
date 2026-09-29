@@ -1043,6 +1043,18 @@ void read_materials(Ctx& c, Vec<ImportMaterial>& out) noexcept {
                                                                   : mesh::AlphaMode::Opaque;
         im.alphaCutoff = m.alpha_cutoff;
         if (m.has_pbr_metallic_roughness) {
+            for (u32 k = 0; k < 4; ++k)
+                im.baseColorFactor[k] = m.pbr_metallic_roughness.base_color_factor[k];
+            im.metallicFactor  = m.pbr_metallic_roughness.metallic_factor;
+            im.roughnessFactor = m.pbr_metallic_roughness.roughness_factor;
+        }
+        f32 const emissiveStrength = m.has_emissive_strength ? m.emissive_strength.emissive_strength : 1.0f;
+        for (u32 k = 0; k < 3; ++k)
+            im.emissiveFactor[k] = m.emissive_factor[k] * emissiveStrength;
+        // cgltf leaves a view's scale 0 without a texture; glTF's default is 1.
+        if (m.normal_texture.texture) im.normalScale = m.normal_texture.scale;
+        if (m.occlusion_texture.texture) im.occlusionStrength = m.occlusion_texture.scale;
+        if (m.has_pbr_metallic_roughness) {
             read_texture_view(c, m.pbr_metallic_roughness.base_color_texture,
                               im.slots[u32(mesh::TextureSlot::BaseColor)]);
             read_texture_view(c, m.pbr_metallic_roughness.metallic_roughness_texture,

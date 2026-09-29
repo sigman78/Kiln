@@ -666,6 +666,17 @@ KILN_TEST(MeshCook, CorpusMultiMaterial) {
     KILN_CHECK_EQ(v.materials()[2].alphaMode, u8(mesh::AlphaMode::Mask));
     KILN_CHECK_EQ(v.materials()[0].nameHash, hash_name("metal"));
     KILN_CHECK_EQ(c.diags.count_of(cook::kDiagGltfMaterialRenamed, Severity::Info), 2);
+    // PBR factors as authored; glTF defaults for what the source leaves out.
+    mesh::MaterialSlot const& metal = v.materials()[0];
+    mesh::MaterialSlot const& glass = v.materials()[1];
+    KILN_CHECK(metal.baseColorFactor[0] == 0.5f && metal.baseColorFactor[2] == 0.55f &&
+               metal.baseColorFactor[3] == 1.0f);
+    KILN_CHECK(metal.metallicFactor == 1.0f && metal.roughnessFactor == 0.3f);
+    KILN_CHECK(glass.baseColorFactor[3] == 0.3f && glass.metallicFactor == 0.0f &&
+               glass.roughnessFactor == 0.05f);
+    KILN_CHECK(metal.emissiveFactor[0] == 0.0f && metal.normalScale == 1.0f &&
+               metal.occlusionStrength == 1.0f);
+    KILN_CHECK_EQ(metal._reserved, 0u);
     mesh::MeshLod const& lod = v.lods()[0];
     KILN_REQUIRE_EQ(lod.submeshCount, 4u);
     KILN_CHECK_EQ(v.submeshes()[lod.submeshFirst + 2].material, 2u);

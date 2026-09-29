@@ -156,6 +156,12 @@ int dump_mesh(Span<u8 const> bytes, Options const& o, DiagSink const* diag) {
         out("  [%u] \"%.*s\"  hash %016llx  %s cutoff %g  flags 0x%x\n", i, KILN_SV(v.str(m.nameStr)),
             static_cast<unsigned long long>(m.nameHash), mesh::alpha_mode_name(mesh::AlphaMode(m.alphaMode)),
             f64(m.alphaCutoff), m.flags);
+        out("      baseColor %g %g %g %g  metallic %g  roughness %g  emissive %g %g %g  normalScale %g  "
+            "occlusion %g\n",
+            f64(m.baseColorFactor[0]), f64(m.baseColorFactor[1]), f64(m.baseColorFactor[2]),
+            f64(m.baseColorFactor[3]), f64(m.metallicFactor), f64(m.roughnessFactor),
+            f64(m.emissiveFactor[0]), f64(m.emissiveFactor[1]), f64(m.emissiveFactor[2]), f64(m.normalScale),
+            f64(m.occlusionStrength));
         for (u32 t = 0; t < m.textureCount; ++t) {
             mesh::TextureBinding const& tb = v.textures()[m.textureFirst + t];
             if (tb.flags & mesh::kTextureExternal)

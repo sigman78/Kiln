@@ -1,6 +1,6 @@
 # kiln `.mesh` — Cooked Runtime Mesh Format
 
-**Status:** draft v0.4 · **Target:** Vulkan 1.4, C++23, little-endian only
+**Status:** draft v0.5 · **Target:** Vulkan 1.4, C++23, little-endian only
 **Produced by:** `kiln-cook` from glTF 2.0 sources (`.glb`, or `.gltf` with external or data-URI buffers and images). **Never** hand-authored, never edited.
 
 The format originated as Orbital's `.mesh` (magic `OMSH`); kiln adopts it under its own magic and namespace, and no `OMSH` files need to be read.
@@ -10,6 +10,8 @@ The format originated as Orbital's `.mesh` (magic `OMSH`); kiln adopts it under 
 > - The header grows to 80 bytes and records both encoded and decoded payload sizes.
 > - Draw-facing offsets (`MeshLod`) now refer to the **decoded** payload.
 > - The v0.5 cooker emits uncompressed blobs only, and loaders must support at least codec `None`.
+
+> **v0.5 changes:** `MaterialSlot` carries the glTF metallic-roughness factors (§5.7) and grows from 32 to 80 bytes: `baseColorFactor[4]`, `emissiveFactor[3]` (with `KHR_materials_emissive_strength` folded in), `metallicFactor`, `roughnessFactor`, `normalScale`, `occlusionStrength` and a reserved `u32` (0). `kVersionMinor` is 5.
 
 > **v0.4 changes:** `TextureBinding.flags` bit1 `External` (§5.7): the binding names an image the source references by URI, which the cooker does not cook. Embedded images are named `<mesh asset name>#<image name>`, where the mesh asset name includes its extension (e.g. `meshes/ship.glb#hull_albedo`). `kVersionMinor` is 4.
 
@@ -120,7 +122,7 @@ constexpr uint32_t fourcc(char a, char b, char c, char d) {
 
 constexpr uint32_t kMagic        = fourcc('K','M','S','H');
 constexpr uint16_t kVersionMajor = 0;   // mismatch = VersionMismatch
-constexpr uint16_t kVersionMinor = 4;   // 0.x: exact match required; from 1.0: additive, loader tolerates newer
+constexpr uint16_t kVersionMinor = 5;   // 0.x: exact match required; from 1.0: additive, loader tolerates newer
 constexpr uint32_t kInvalid      = 0xFFFFFFFFu;
 constexpr uint32_t kMaxStreams   = 4;
 constexpr uint32_t kMaxAttribs   = 12;
@@ -190,7 +192,7 @@ static_assert(sizeof(SectionEntry) == 32);
 | `PART` | n | `MeshPart` | ✔ | Named parts, hierarchy, dequantization |
 | `LODS` | n | `MeshLod` | ✔ | Vertex/index ranges per part LOD |
 | `SUBM` | n | `Submesh` | ✔ | Index range + material per LOD |
-| `MATL` | n | `MaterialSlot` | ✔ | Material names (engine remaps) |
+| `MATL` | n | `MaterialSlot` | ✔ | Material names (engine remaps), alpha mode, PBR factors |
 | `MTEX` | n | `TextureBinding` | | Texture + UV-set mappings per material |
 | `MNTS` | n | `Mount` | | Named mount slots |
 | `BLOB` | n | `PayloadBlob` | ✔ | Encoded file range → decoded payload range, codec, filter (required also with `kPayloadRaw`) |
@@ -335,12 +337,12 @@ static_assert(sizeof(Submesh) == 48);
 
 ### 5.7 `MATL` / `MTEX` — materials and texture mappings
 
-The engine remaps materials **by name** (`nameHash`) through its material library. The texture bindings record what the source asset authored, so the library can use them as defaults or override them.
+The engine remaps materials **by name** (`nameHash`) through its material library. The texture bindings and the factors record what the source asset authored, so the library can use them as defaults or override them. A renderer without a material library draws with them directly: without them, an untextured material has no color.
 
 ```cpp
 enum class AlphaMode : uint8_t { Opaque = 0, Mask = 1, Blend = 2 };
 
-struct MaterialSlot {               // 32 bytes
+struct MaterialSlot {               // 80 bytes
     uint32_t nameStr;
     uint32_t flags;                 // bit0: uses vertex color, bit1: double-sided
     uint64_t nameHash;              // key into engine material library
@@ -349,8 +351,16 @@ struct MaterialSlot {               // 32 bytes
     uint8_t  alphaMode;             // AlphaMode (from source; library may override)
     uint8_t  _pad[3];
     float    alphaCutoff;
+    // glTF metallic-roughness factors, linear, with glTF's defaults when the source has none:
+    float    baseColorFactor[4];    // [1 1 1 1]; multiplies the BaseColor texture and vertex color
+    float    emissiveFactor[3];     // [0 0 0]; times KHR_materials_emissive_strength (may exceed 1)
+    float    metallicFactor;        // [1]; multiplies the MetalRough texture's B
+    float    roughnessFactor;       // [1]; multiplies the MetalRough texture's G
+    float    normalScale;           // [1]; scales the Normal texture's X and Y
+    float    occlusionStrength;     // [1]; lerp(1, occlusion, strength)
+    uint32_t _reserved;             // 0
 };
-static_assert(sizeof(MaterialSlot) == 32);
+static_assert(sizeof(MaterialSlot) == 80);
 
 enum class TextureSlot : uint8_t {
     BaseColor = 0, Normal = 1, MetalRough = 2, Occlusion = 3, Emissive = 4,

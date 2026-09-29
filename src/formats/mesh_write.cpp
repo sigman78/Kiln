@@ -343,6 +343,12 @@ Result<Vec<u8>> write(WriteDesc const& desc, WriteOptions const& opt, Allocator 
         r.textureCount        = m.textureCount;
         r.alphaMode           = u8(m.alphaMode);
         r.alphaCutoff         = m.alphaCutoff;
+        std::memcpy(r.baseColorFactor, m.baseColorFactor, sizeof r.baseColorFactor);
+        std::memcpy(r.emissiveFactor, m.emissiveFactor, sizeof r.emissiveFactor);
+        r.metallicFactor    = m.metallicFactor;
+        r.roughnessFactor   = m.roughnessFactor;
+        r.normalScale       = m.normalScale;
+        r.occlusionStrength = m.occlusionStrength;
     }
 
     Vec<TextureBinding> texRecs(alloc, Tag::Cook);

@@ -684,8 +684,14 @@ u32 texture_ref(Cook& k, u32 image, mesh::TextureSlot slot, StrView where) {
 [[nodiscard]] bool same_material(Cook const& k, mesh::MaterialDesc const& a, mesh::MaterialDesc const& b,
                                  Span<mesh::TextureBindingDesc const> bBind) noexcept {
     if (a.flags != b.flags || a.alphaMode != b.alphaMode || a.alphaCutoff != b.alphaCutoff ||
-        a.textureCount != bBind.size)
+        a.textureCount != bBind.size || a.metallicFactor != b.metallicFactor ||
+        a.roughnessFactor != b.roughnessFactor || a.normalScale != b.normalScale ||
+        a.occlusionStrength != b.occlusionStrength)
         return false;
+    for (u32 i = 0; i < 4; ++i)
+        if (a.baseColorFactor[i] != b.baseColorFactor[i] ||
+            (i < 3 && a.emissiveFactor[i] != b.emissiveFactor[i]))
+            return false;
     for (u32 i = 0; i < a.textureCount; ++i) {
         mesh::TextureBindingDesc const& x = k.bindings[a.textureFirst + i];
         mesh::TextureBindingDesc const& y = bBind[i];
@@ -723,6 +729,12 @@ u32 material_for(Cook& k, u32 key) {
                    (k.vertexColor[key] ? u32(mesh::kMaterialVertexColor) : 0u);
         md.alphaMode   = im.alphaMode;
         md.alphaCutoff = im.alphaCutoff;
+        std::memcpy(md.baseColorFactor, im.baseColorFactor, sizeof md.baseColorFactor);
+        std::memcpy(md.emissiveFactor, im.emissiveFactor, sizeof md.emissiveFactor);
+        md.metallicFactor    = im.metallicFactor;
+        md.roughnessFactor   = im.roughnessFactor;
+        md.normalScale       = im.normalScale;
+        md.occlusionStrength = im.occlusionStrength;
         for (u32 s = 0; s < kSlotCount; ++s) {
             ImportTexture const& t = im.slots[s];
             if (!t.present) continue;

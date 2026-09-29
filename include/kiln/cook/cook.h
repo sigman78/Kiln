@@ -17,7 +17,8 @@ namespace kiln::cook {
 
 /// Bump when cooked output changes for identical input and settings. Part of every store key.
 inline constexpr u32 kCookerVersion =
-    4; // 4: Zstd kept only when it saves kZstdMinSaving of a texture file
+    5; // 5: .mesh 0.5, MaterialSlot carries the PBR factors
+       // 4: Zstd kept only when it saves kZstdMinSaving of a texture file
        // 3: .mesh 0.4; embedded images named "<mesh>#<name>", external images as kTextureExternal
        // 2: KTX2 outputs carry kiln.sourceHash / kiln.cookHash key/value entries
 

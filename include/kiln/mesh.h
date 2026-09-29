@@ -15,7 +15,7 @@ namespace kiln::mesh {
 
 inline constexpr u32 kMagic            = fourcc('K', 'M', 'S', 'H');
 inline constexpr u16 kVersionMajor     = 0; ///< mismatch = VersionMismatch
-inline constexpr u16 kVersionMinor     = 4; ///< 0.x: exact match required; from 1.0: additive
+inline constexpr u16 kVersionMinor     = 5; ///< 0.x: exact match required; from 1.0: additive
 inline constexpr u32 kMaxStreams       = 4;
 inline constexpr u32 kMaxAttribs       = 12;
 inline constexpr u32 kPayloadBaseAlign = 256; ///< minimum payloadAlignment / gpuDataOffset alignment
@@ -167,6 +167,7 @@ enum MaterialFlags : u32 {
     kMaterialDoubleSided = 1u << 1,
 };
 
+/// The factors are glTF's metallic-roughness model (defaults in brackets), in linear space.
 struct MaterialSlot {
     u32 nameStr;
     u32 flags;        ///< MaterialFlags
@@ -176,8 +177,15 @@ struct MaterialSlot {
     u8 alphaMode; ///< AlphaMode
     u8 _pad[3];
     f32 alphaCutoff;
+    f32 baseColorFactor[4]; ///< RGBA [1 1 1 1]; multiplies the BaseColor texture and vertex color
+    f32 emissiveFactor[3];  ///< RGB [0 0 0]; KHR_materials_emissive_strength folded in, so it may exceed 1
+    f32 metallicFactor;     ///< [1]; multiplies the MetalRough texture's B
+    f32 roughnessFactor;    ///< [1]; multiplies the MetalRough texture's G
+    f32 normalScale;        ///< [1]; scales the Normal texture's X and Y
+    f32 occlusionStrength;  ///< [1]; lerp(1, occlusion, strength)
+    u32 _reserved;          ///< 0
 };
-static_assert(sizeof(MaterialSlot) == 32);
+static_assert(sizeof(MaterialSlot) == 80);
 
 enum class TextureSlot : u8 {
     BaseColor  = 0,
