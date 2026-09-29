@@ -3,6 +3,7 @@
 // Outputs are written as <sample_dir>/cooked_bc_<case>.ktx2 for `ktx validate`.
 #include "hdr_writer.h"
 #include "kiln_test.h"
+#include "ktx2_corpus.h" // texels
 #include "png_writer.h"
 
 #include "kiln/containers.h"
@@ -127,7 +128,8 @@ void write_sample(char const* name, Span<u8 const> bytes) {
 /// Decodes level 0 of a BC file to RGBA8 (BC4: R; BC5: R, G).
 bool decode_level0(ktx2::Ktx2View const& v, Vec<u8>& out) {
     ktx2::TextureDesc const d = v.desc();
-    Span<u8 const> const data = v.level_data(0);
+    Vec<u8> const texels      = kiln::test::corpus::texels(v, 0);
+    Span<u8 const> const data = texels.span();
     u32 const bw = (d.width + 3) / 4, bh = (d.height + 3) / 4;
     out.resize(usize(bw) * 4 * bh * 4 * 4);
     usize const blockBytes = (d.format == Format::BC1_RGB_UNORM || d.format == Format::BC1_RGB_SRGB ||
@@ -378,9 +380,9 @@ KILN_TEST(TextureBc, ShapesAndThreads) {
                r->desc.levels == 3);
     Result<ktx2::Ktx2View> v = ktx2::Ktx2View::open(r->file.span());
     KILN_REQUIRE(v.ok());
-    KILN_CHECK_EQ(v->level_data(0).size, usize(2 * 2 * 16));
-    KILN_CHECK_EQ(v->level_data(1).size, usize(16));
-    KILN_CHECK_EQ(v->level_data(2).size, usize(16));
+    KILN_CHECK_EQ(v->levels()[0].uncompressedByteLength, u64(2 * 2 * 16));
+    KILN_CHECK_EQ(v->levels()[1].uncompressedByteLength, u64(16));
+    KILN_CHECK_EQ(v->levels()[2].uncompressedByteLength, u64(16));
     write_sample("npot", r->file.span());
 
     Vec<u8> const strip = smooth_rgba(16, 96);
@@ -391,7 +393,7 @@ KILN_TEST(TextureBc, ShapesAndThreads) {
     KILN_CHECK(cube->desc.isCube && cube->desc.format == Format::BC5_UNORM && cube->desc.levels == 5);
     Result<ktx2::Ktx2View> cv = ktx2::Ktx2View::open(cube->file.span());
     KILN_REQUIRE(cv.ok());
-    KILN_CHECK_EQ(cv->level_data(0).size, usize(4 * 4 * 16 * 6));
+    KILN_CHECK_EQ(cv->levels()[0].uncompressedByteLength, u64(4 * 4 * 16 * 6));
     write_sample("cube", cube->file.span());
 
     Vec<u8> const big      = smooth_rgba(256, 128);
@@ -445,8 +447,10 @@ KILN_TEST(TextureBc, Hdr) {
     Result<ktx2::Ktx2View> vb = ktx2::Ktx2View::open(bc->file.span());
     Result<ktx2::Ktx2View> vh = ktx2::Ktx2View::open(half->file.span());
     KILN_REQUIRE(vb.ok() && vh.ok());
-    Span<u8 const> const blocks = vb->level_data(0);
-    Span<u8 const> const ref    = vh->level_data(0);
+    Vec<u8> const tb            = kiln::test::corpus::texels(*vb, 0);
+    Vec<u8> const th            = kiln::test::corpus::texels(*vh, 0);
+    Span<u8 const> const blocks = tb.span();
+    Span<u8 const> const ref    = th.span();
     KILN_REQUIRE(blocks.size == usize(kW / 4) * (kH / 4) * 16 && ref.size == usize(kW) * kH * 8);
     double sq = 0;
     float px[48];

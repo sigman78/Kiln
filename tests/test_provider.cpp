@@ -4,6 +4,7 @@
 #include "hdr_writer.h"
 #include "image_fixtures.h"
 #include "kiln_test.h"
+#include "ktx2_corpus.h" // texels
 #include "png_writer.h"
 
 #include "kiln/assets.h"
@@ -569,7 +570,8 @@ KILN_TEST(Provider, SourcePollerRecooksPng) {
 
     Result<ktx2::Ktx2View> v = ktx2::Ktx2View::open(after.span());
     KILN_REQUIRE(v.ok());
-    Span<u8 const> l0 = v->level_data(0);
+    Vec<u8> const t0  = kiln::test::corpus::texels(*v, 0);
+    Span<u8 const> l0 = t0.span();
     KILN_REQUIRE_EQ(l0.size, sizeof second);
     KILN_CHECK(std::memcmp(l0.data, second, sizeof second) == 0);
 }

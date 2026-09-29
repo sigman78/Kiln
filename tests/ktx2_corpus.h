@@ -50,6 +50,16 @@ inline bool read_file(char const* path, Vec<u8>& out) noexcept {
     return ok;
 }
 
+/// The texels of `level`: its stored bytes, decoded when the file is Zstd-supercompressed.
+/// Empty when they do not decode.
+inline Vec<u8> texels(ktx2::Ktx2View const& v, u32 level) noexcept {
+    Vec<u8> out(default_allocator(), Tag::Test);
+    if (level >= v.levels().size) return out;
+    out.resize(usize(v.levels()[level].uncompressedByteLength));
+    if (v.decode_level(level, out.span()).failed()) out.resize(0);
+    return out;
+}
+
 inline bool parse_u32(StrView s, u32& out) noexcept {
     if (s.empty() || s.size > 10) return false;
     u64 v = 0;

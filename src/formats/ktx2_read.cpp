@@ -1,4 +1,4 @@
-// KTX2 reader: validates the header, level index, DFD and KVD.
+// KTX2 reader: validates the header, level index, DFD and KVD; decodes Zstd levels.
 #include "kiln/ktx2.h"
 
 #include "formats_internal.h"
@@ -98,13 +98,15 @@ Result<Ktx2View> Ktx2View::open(Span<u8 const> bytes, DiagSink const* diag, StrV
     std::memcpy(&v.header_, bytes.data, sizeof(Header));
     Header const& h = v.header_;
 
-    if (h.supercompressionScheme != u32(Supercompression::None))
+    bool const zstd = h.supercompressionScheme == u32(Supercompression::Zstd);
+    if (h.supercompressionScheme != u32(Supercompression::None) && !zstd)
         return fail(diag, asset, Code::Unsupported, kDiagKtxSupercompression, "header",
-                    "supercompression scheme %llu is not supported", h.supercompressionScheme);
+                    "supercompression scheme %llu is not supported (only None and Zstd are)",
+                    h.supercompressionScheme);
     if (h.sgdByteLength != 0)
         return fail(diag, asset, Code::Corrupt, kDiagKtxSupercompression, "header",
-                    "supercompression global data (%llu bytes) without a supercompression scheme",
-                    h.sgdByteLength);
+                    "supercompression global data (%llu bytes) with scheme %llu, which has none",
+                    h.sgdByteLength, h.supercompressionScheme);
 
     Format const format = static_cast<Format>(h.vkFormat);
     v.info_             = kiln::format_info(format);
@@ -214,22 +216,26 @@ Result<Ktx2View> Ktx2View::open(Span<u8 const> bytes, DiagSink const* diag, StrV
 
     // --- Level ranges ------------------------------------------------------------------
     u64 const metaEnd = metadata_size(h);
-    u32 const align   = fmt::ktx2_level_align(info.bytesPerBlock);
+    u32 const align   = zstd ? 1u : fmt::ktx2_level_align(info.bytesPerBlock);
     for (u32 i = 0; i < levelCount; ++i) {
         LevelIndex const& li = v.levels_[i];
-        if (li.byteLength != li.uncompressedByteLength)
+        if (!zstd && li.byteLength != li.uncompressedByteLength)
             return fail(diag, asset, Code::Corrupt, kDiagKtxLevelIndex, "levelIndex",
                         "level byteLength %llu != uncompressedByteLength %llu", li.byteLength,
                         li.uncompressedByteLength);
+        if (zstd && li.byteLength == 0)
+            return fail(diag, asset, Code::Corrupt, kDiagKtxLevelIndex, "levelIndex",
+                        "level %llu has no Zstd frame (byteLength 0)", i);
         u64 expected = 0;
         if (!image_bytes(info, v.level_width(i), v.level_height(i), v.level_depth(i), expected) ||
             !mul_ok(expected, u64(v.desc_.faces) * v.desc_.layers, expected))
             return fail(diag, asset, Code::Corrupt, kDiagKtxDimensions, "levelIndex",
                         "level %llu size overflows (%llu faces x layers)", i,
                         u64(v.desc_.faces) * v.desc_.layers);
-        if (li.byteLength != expected)
+        if (li.uncompressedByteLength != expected)
             return fail(diag, asset, Code::Corrupt, kDiagKtxLevelIndex, "levelIndex",
-                        "level byteLength %llu, dimensions need %llu", li.byteLength, expected);
+                        "level uncompressedByteLength %llu, dimensions need %llu", li.uncompressedByteLength,
+                        expected);
         if (li.byteOffset % align != 0)
             return fail(diag, asset, Code::Corrupt, kDiagKtxLevelIndex, "levelIndex",
                         "level byteOffset %llu is not aligned to %llu", li.byteOffset, align);
@@ -258,6 +264,30 @@ Span<u8 const> Ktx2View::level_data(u32 level) const noexcept {
     LevelIndex const& li = levels_[level];
     if (li.byteOffset > bytes_.size || li.byteLength > bytes_.size - li.byteOffset) return {};
     return bytes_.subspan(usize(li.byteOffset), usize(li.byteLength));
+}
+
+Status Ktx2View::decode_level(u32 level, Span<u8> out, Allocator const* alloc, DiagSink const* diag,
+                              StrView asset) const noexcept {
+    if (level >= desc_.levels)
+        return fail(diag, asset, Code::InvalidArgument, kDiagKtxLevelIndex, "levelIndex",
+                    "level %llu does not exist (%llu levels)", level, desc_.levels);
+    LevelIndex const& li        = levels_[level];
+    Span<u8 const> const stored = level_data(level);
+    if (stored.empty())
+        return fail(diag, asset, Code::InvalidArgument, kDiagKtxLevelIndex, "levelIndex",
+                    "level %llu data is not in the span", level);
+    if (out.size != li.uncompressedByteLength)
+        return fail(diag, asset, Code::InvalidArgument, kDiagKtxLevelIndex, "levelIndex",
+                    "the output holds %llu bytes, the level %llu", out.size, li.uncompressedByteLength);
+    if (!supercompressed()) {
+        std::memcpy(out.data, stored.data, stored.size);
+        return kOk;
+    }
+    fmt::ZstdDecoder dec(alloc);
+    if (!dec.decode(stored, out))
+        return diagf(diag, make_status(Code::Corrupt), kDiagKtxLevelDecode, Severity::Error, asset,
+                     "levelIndex", "level %u does not decode: %s", level, dec.error());
+    return kOk;
 }
 
 bool Ktx2View::has_all_level_data() const noexcept {

@@ -40,11 +40,13 @@ Result<TextureCookSettings> resolve_texture(TextureCookSettings const& overrides
                                             DiagSink const* diag, StrView asset) noexcept {
     if (u8(overrides.usage) > u8(TextureUsage::Height) || u8(overrides.colorSpace) > u8(ColorSpace::Linear) ||
         u8(overrides.shape) > u8(CookShape::Array) || u8(overrides.encoding) > u8(TextureEncoding::BC7) ||
-        u8(overrides.quality) > u8(EncodeQuality::High) || u8(target.blockFamily) > u8(BlockFamily::BC)) {
+        u8(overrides.quality) > u8(EncodeQuality::High) ||
+        u8(overrides.supercompression) > u8(Supercompression::Zstd) ||
+        u8(target.blockFamily) > u8(BlockFamily::BC)) {
         return diagf(diag, make_status(Code::InvalidArgument), kDiagSettingsEnumRange, Severity::Error, asset,
                      "texture",
-                     "usage, colorSpace, shape, encoding, quality or the target's blockFamily holds a value "
-                     "outside its enum range");
+                     "usage, colorSpace, shape, encoding, quality, supercompression or the target's "
+                     "blockFamily holds a value outside its enum range");
     }
 
     TextureCookSettings s = overrides;
@@ -97,6 +99,16 @@ Result<TextureCookSettings> resolve_texture(TextureCookSettings const& overrides
         s.quality = EncodeQuality::Normal;
     else if (session.fastPreview)
         s.quality = EncodeQuality::Fast;
+
+    if (s.zstdLevel > kMaxZstdLevel)
+        return diagf(diag, make_status(Code::InvalidArgument), kDiagSettingsInvalidCombo, Severity::Error,
+                     asset, "zstdLevel", "zstdLevel %u is above %u", s.zstdLevel, kMaxZstdLevel);
+    if (s.supercompression == Supercompression::None)
+        s.zstdLevel = 0;
+    else if (session.fastPreview)
+        s.zstdLevel = kPreviewZstdLevel;
+    else if (s.zstdLevel == 0)
+        s.zstdLevel = kDefaultZstdLevel;
 
     return s;
 }
@@ -260,6 +272,10 @@ u64 hash_settings(TextureCookSettings const& s) noexcept {
     // fields stay valid.
     if (s.encoding != TextureEncoding::Auto) h.update_value(u16(0x100u | u8(s.encoding)));
     if (s.quality != EncodeQuality::Normal) h.update_value(u16(0x200u | u8(s.quality)));
+    if (s.supercompression != Supercompression::None) {
+        h.update_value(u16(0x300u | u8(s.supercompression)));
+        h.update_value(u16(0x400u | s.zstdLevel));
+    }
     return h.digest();
 }
 
@@ -369,6 +385,14 @@ char const* encode_quality_name(EncodeQuality q) noexcept {
     case EncodeQuality::Fast: return "fast";
     case EncodeQuality::Normal: return "normal";
     case EncodeQuality::High: return "high";
+    }
+    return "?";
+}
+
+char const* supercompression_name(Supercompression s) noexcept {
+    switch (s) {
+    case Supercompression::None: return "none";
+    case Supercompression::Zstd: return "zstd";
     }
     return "?";
 }

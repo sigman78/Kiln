@@ -199,12 +199,24 @@ KILN_TEST(Ktx2, ErrorTypeSize) {
 
 KILN_TEST(Ktx2, ErrorSupercompression) {
     u32 const offsets[] = {148};
-    Vec<u8> f           = hand_built(1, 1, 1, offsets, 152);
-    put_u32(f, 44, 2);
-    DiagCapture cap;
-    DiagSink sink = cap.sink();
-    KILN_CHECK_EQ(ev(Ktx2View::open(f.span(), &sink).code()), ev(Code::Unsupported));
-    KILN_CHECK_EQ(cap.code, u32(kDiagKtxSupercompression));
+    for (u32 scheme : {1u, 3u, 4u}) { // BasisLZ, Zlib, unknown
+        Vec<u8> f = hand_built(1, 1, 1, offsets, 152);
+        put_u32(f, 44, scheme);
+        DiagCapture cap;
+        DiagSink sink = cap.sink();
+        KILN_CHECK_EQ(ev(Ktx2View::open(f.span(), &sink).code()), ev(Code::Unsupported));
+        KILN_CHECK_EQ(cap.code, u32(kDiagKtxSupercompression));
+    }
+    {
+        // Zstd has no global data.
+        Vec<u8> f = hand_built(1, 1, 1, offsets, 152);
+        put_u32(f, 44, 2);
+        put_u32(f, 72, 4); // sgdByteLength
+        DiagCapture cap;
+        DiagSink sink = cap.sink();
+        KILN_CHECK_EQ(ev(Ktx2View::open(f.span(), &sink).code()), ev(Code::Corrupt));
+        KILN_CHECK_EQ(cap.code, u32(kDiagKtxSupercompression));
+    }
     KILN_CHECK(StrView(supercompression_name(Supercompression::Zstd)) == "Zstd");
 }
 
@@ -284,5 +296,100 @@ KILN_TEST(Ktx2, ErrorLevelIndex) {
         DiagSink sink = cap.sink();
         KILN_CHECK_EQ(ev(Ktx2View::open(f.span(), &sink).code()), ev(Code::Corrupt));
         KILN_CHECK_EQ(cap.code, u32(kDiagKtxLevelIndex));
+    }
+}
+
+namespace {
+
+/// A 1x1 RGBA8 file whose one level is the Zstd frame `frame` (hand-built: a raw block, so the
+/// reader tests do not depend on the encoder), stored at `offset`.
+Vec<u8> zstd_file(Span<u8 const> frame, u32 offset = 148, u64 uncompressed = 4) {
+    u32 const offsets[] = {offset};
+    Vec<u8> f           = hand_built(1, 1, 1, offsets, u32(offset + frame.size));
+    put_u32(f, 44, 2); // Zstd
+    put_u64(f, level_field(0, 1), frame.size);
+    put_u64(f, level_field(0, 2), uncompressed);
+    std::memcpy(f.data() + offset, frame.data, frame.size);
+    return f;
+}
+
+// Magic, frame header (single segment, 1-byte content size 4), last raw block of 4 bytes, data.
+constexpr u8 kFrame[] = {0x28, 0xB5, 0x2F, 0xFD, 0x20, 0x04, 0x21, 0x00, 0x00, 10, 20, 30, 40};
+
+} // namespace
+
+KILN_TEST(Ktx2, ZstdHandBuiltDecodes) {
+    // Zstd levels need no alignment: offset 149.
+    Vec<u8> const f    = zstd_file(kFrame, 149);
+    Result<Ktx2View> r = Ktx2View::open(f.span());
+    KILN_REQUIRE(r.ok());
+    KILN_CHECK(r->supercompressed());
+    KILN_CHECK_EQ(r->level_data(0).size, sizeof kFrame);
+    u8 px[4] = {};
+    KILN_REQUIRE(r->decode_level(0, Span<u8>(px, 4)).ok());
+    KILN_CHECK(px[0] == 10 && px[1] == 20 && px[2] == 30 && px[3] == 40);
+}
+
+KILN_TEST(Ktx2, ZstdLevelIndexChecks) {
+    {
+        Vec<u8> const f = zstd_file(kFrame, 148, 5); // a 1x1 RGBA8 level is 4 bytes
+        DiagCapture cap;
+        DiagSink sink = cap.sink();
+        KILN_CHECK_EQ(ev(Ktx2View::open(f.span(), &sink).code()), ev(Code::Corrupt));
+        KILN_CHECK_EQ(cap.code, u32(kDiagKtxLevelIndex));
+    }
+    {
+        Vec<u8> f = zstd_file(kFrame);
+        put_u64(f, level_field(0, 1), 0);
+        DiagCapture cap;
+        DiagSink sink = cap.sink();
+        KILN_CHECK_EQ(ev(Ktx2View::open(f.span(), &sink).code()), ev(Code::Corrupt));
+        KILN_CHECK_EQ(cap.code, u32(kDiagKtxLevelIndex));
+    }
+}
+
+KILN_TEST(Ktx2, ZstdDecodeErrors) {
+    auto const decode = [](Vec<u8> const& f, u32* code) {
+        Result<Ktx2View> r = Ktx2View::open(f.span());
+        if (!r.ok()) return Code::Unknown;
+        u8 px[4] = {};
+        DiagCapture cap;
+        DiagSink sink   = cap.sink();
+        Status const st = r->decode_level(0, Span<u8>(px, 4), nullptr, &sink);
+        *code           = cap.code;
+        return st.code;
+    };
+    u32 code = 0;
+    {
+        u8 bad[sizeof kFrame];
+        std::memcpy(bad, kFrame, sizeof bad);
+        bad[0] = 0; // not a Zstd frame
+        KILN_CHECK_EQ(ev(decode(zstd_file(bad), &code)), ev(Code::Corrupt));
+        KILN_CHECK_EQ(code, u32(kDiagKtxLevelDecode));
+    }
+    {
+        // A frame of 3 bytes for a level of 4.
+        u8 const shortFrame[] = {0x28, 0xB5, 0x2F, 0xFD, 0x20, 0x03, 0x19, 0x00, 0x00, 1, 2, 3};
+        KILN_CHECK_EQ(ev(decode(zstd_file(shortFrame), &code)), ev(Code::Corrupt));
+        KILN_CHECK_EQ(code, u32(kDiagKtxLevelDecode));
+    }
+    {
+        // A byte after the frame.
+        u8 trailing[sizeof kFrame + 1] = {};
+        std::memcpy(trailing, kFrame, sizeof kFrame);
+        KILN_CHECK_EQ(ev(decode(zstd_file(trailing), &code)), ev(Code::Corrupt));
+        KILN_CHECK_EQ(code, u32(kDiagKtxLevelDecode));
+    }
+    {
+        Vec<u8> const f    = zstd_file(kFrame);
+        Result<Ktx2View> r = Ktx2View::open(f.span());
+        KILN_REQUIRE(r.ok());
+        u8 px[5] = {};
+        KILN_CHECK_EQ(ev(r->decode_level(0, Span<u8>(px, 5)).code), ev(Code::InvalidArgument));
+        KILN_CHECK_EQ(ev(r->decode_level(1, Span<u8>(px, 4)).code), ev(Code::InvalidArgument));
+        // A metadata-only open has no level data to decode.
+        Result<Ktx2View> prefix = Ktx2View::open(f.span().subspan(0, 148));
+        KILN_REQUIRE(prefix.ok());
+        KILN_CHECK_EQ(ev(prefix->decode_level(0, Span<u8>(px, 4)).code), ev(Code::InvalidArgument));
     }
 }

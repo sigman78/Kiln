@@ -5,7 +5,8 @@ BC7 for UI, byte-exact goldens first, Zstd and RDO last, ASTC with the mobile ta
 plain C++ encoders `rgbcx` and `bc7enc` (from the spike's measurements), and for BC6H a C++ port
 of the ISPC Texture Compressor's encoder (no ISPC toolchain, no prebuilt objects). Rollout steps
 1–5 are implemented: the cooker writes BC1/3/4/5/6H/7, every example adapter uploads them, and
-`desktop` cooks BC by default. Zstd and RDO (step 6) are next.
+`desktop` cooks BC by default. Step 6 is half done: Zstd supercompression is on by default (owner,
+2026-09-29); RDO is deferred.
 **Decides:** Which block-compressed formats the cooker writes for each texture usage and target,
 how the encoder libraries are chosen, the settings that control them, how block formats reach the
 adapters, and the order of the work. Zstd supercompression and RDO are a later step of the same
@@ -32,7 +33,7 @@ because they bring the runtime's first third-party dependency.
 - The KTX2 **reader** accepts block formats. The KTX2 **writer** writes BC1–BC7 with the same Data
   Format Descriptors as `ktx create` (step 1).
 - The cooker encodes BC1/3/4/5/6H/7 (steps 3 and 4); the sections below say how.
-- The reader rejects every supercompression scheme.
+- The reader rejected every supercompression scheme (before step 6; it now reads Zstd).
 - `texture_level_layout()` and the loader compute offsets, row pitches and row counts in blocks, so
   a BC texture already uploads through every adapter path that kiln drives.
 - The cooker picks RGBA8 / R8 / RG8 / R16 / RGBA16F in `plan_for` (`texture_cook.cpp`).
@@ -168,14 +169,27 @@ The runtime is unchanged. The example adapters (step 5, done 2026-09-29):
 A host that loads a BC texture on an adapter without BC support gets K5004 at metadata time, as
 for any unsupported format.
 
-### 6. Later in this work: Zstd supercompression and RDO
+### 6. Zstd supercompression (done 2026-09-29), then RDO (deferred)
 
 - **Zstd** compresses each mip level inside the KTX2 file (`supercompressionScheme = 2`). It
   shrinks the store on disk and the bytes read at load, not GPU memory.
-  - The reader must accept it.
-  - The loader decompresses each level straight into the staging memory, or through scratch memory
-    when the adapter pads rows.
-  - The runtime gets zstd's decoder, the dependency `dependencies.md` already plans ("Zstd").
+  - The reader accepts it (and still rejects BasisLZ and Zlib, K4107). A Zstd level has no
+    alignment; its `uncompressedByteLength` must match the dimensions, and it must be exactly one
+    frame of that size (`Ktx2View::decode_level`, K4110).
+  - The loader reads each frame into scratch memory and decodes it straight into the staging
+    memory, or into a second scratch buffer when the adapter pads rows. One decoder per upload
+    job, its memory from the context `Allocator`.
+  - zstd 1.5.7 is vendored (`third_party/zstd`): a decoder-only build in `kiln_runtime`, the
+    encoder in `kiln_cook` (`dependencies.md`, "Zstd").
+  - **On by default** (owner, 2026-09-29): `TextureCookSettings::supercompression = Zstd`,
+    `zstdLevel` 0 = level 3; `fastPreview` uses level 1; `kiln-cook --zstd <level>`, 0 = off.
+    Settings with `None` keep the hash, and so the store keys, of the files cooked before Zstd.
+  - The writer fixes zstd's parameters (level, content size on, checksum off, one thread), so the
+    goldens pin the frames on every compiler.
+  - A KTX2 source with Zstd levels passes through as it is.
+  - Measured on the example assets (39 textures, 8 threads): the uncompressed store shrinks from
+    437 MB to 68 MB for 0.9 s more cooking, the BC store from 109 MB to 38 MB for 0.7 s more.
+    Decoding runs at about 1 GB/s per core.
 - **RDO** (bc7enc_rdo's `ert`) changes the encoded blocks so Zstd compresses them better, at a
   small quality cost (a `rdoLambda` setting, 0 = off). It only helps with Zstd on, so it lands with
   it.
@@ -241,7 +255,9 @@ cross-cooking"), and this work leaves room for it:
 5. **Adapters and examples:** `supports_format`, compressed uploads (GL), BC5 normal Z in every
    example shader, the reference frame re-checked; then `desktop` switches to `blockFamily = BC`
    (done 2026-09-29).
-6. **Zstd supercompression and RDO:** reader, loader, runtime decoder, settings.
+6. **Zstd supercompression** (done 2026-09-29): reader, loader, runtime decoder, settings, on by
+   default. **RDO** is deferred: it costs 4–8 dB for about 2x smaller BC files, which suits a
+   shipping build, not fast iteration.
 7. **Later, with the mobile targets (v0.9):** astcenc, ASTC block sizes per usage, the `ASTC`
    family in `TargetProfile`; ETC2 only if a target needs it.
 
@@ -254,7 +270,7 @@ cross-cooking"), and this work leaves room for it:
    The numbers favored BC5.
 4. **UI textures:** BC7, like color.
 5. **Goldens:** the simple thing first (byte-exact); the PSNR fallback only if an encoder needs it.
-6. **Zstd and RDO:** last, as step 6.
+6. **Zstd and RDO:** last, as step 6. Zstd, on by default: decided 2026-09-29, with RDO deferred.
 7. **ASTC:** with the mobile targets (v0.9).
 8. **Encoders:** plain C++, `rgbcx` and `bc7enc` (option A of the spike). BC6H: no ISPC toolchain
    and no committed ISPC objects; a C++ port of the ISPC Texture Compressor's encoder.

@@ -2,6 +2,8 @@
 // See docs/design/threading-and-io.md.
 #include "runtime_internal.h"
 
+#include "../formats/formats_internal.h"
+
 #include <cstdarg>
 
 namespace kiln::rt {
@@ -245,10 +247,11 @@ Status texture_meta(Context* ctx, Slot& s, Source const& src) noexcept {
         return make_status(Code::ValidationFailed);
     }
     u32 const levels = d.levels;
-    u64* layout      = alloc_array<u64>(ctx->alloc, usize(levels) * 4, Tag::Payload);
+    u64* layout      = alloc_array<u64>(ctx->alloc, usize(levels) * kLayoutColumns, Tag::Payload);
     MetaSet& m       = s.next;
     m.layout         = layout;
     m.layoutLevels   = levels;
+    m.texZstd        = v.supercompressed();
     m.uploadSize =
         texture_layout(d, ctx->cc.optimalRowPitchAlign, ctx->cc.optimalOffsetAlign, layout, layout + levels);
     FormatInfo const& fi = v.info();
@@ -256,13 +259,14 @@ Status texture_meta(Context* ctx, Slot& s, Source const& src) noexcept {
         ktx2::LevelIndex const& li = v.levels()[i];
         layout[2 * levels + i]     = li.byteOffset;
         layout[3 * levels + i]     = li.byteLength;
+        layout[4 * levels + i]     = li.uncompressedByteLength;
         u64 const rowBytes         = format_row_bytes(d.format, v.level_width(i));
         u64 const rows = (u64(v.level_height(i)) + fi.blockHeight - 1) / fi.blockHeight * v.level_depth(i) *
                          d.layers * d.faces;
-        if (li.byteLength != rowBytes * rows)
+        if (li.uncompressedByteLength != rowBytes * rows)
             st = diagf(&sink, make_status(Code::Corrupt), ktx2::kDiagKtxLevelIndex, Severity::Error, name,
                        "levelIndex", "level %u holds %llu bytes, expected %llu", i,
-                       static_cast<unsigned long long>(li.byteLength),
+                       static_cast<unsigned long long>(li.uncompressedByteLength),
                        static_cast<unsigned long long>(rowBytes * rows));
         else if (li.byteOffset > src.size || li.byteLength > src.size - li.byteOffset)
             st = diagf(&sink, make_status(Code::Corrupt), ktx2::kDiagKtxLevelIndex, Severity::Error, name,
@@ -326,16 +330,20 @@ Status write_texture(Context* ctx, Slot& s, Source const& src, u8* dst) noexcept
     u32 const levels           = m.layoutLevels;
     u64 const* layout          = m.layout;
     Vec<u8> scratch(ctx->alloc, Tag::Io);
+    Vec<u8> texels(ctx->alloc, Tag::Io);
+    fmt::ZstdDecoder zstd(ctx->alloc);
     u64 cursor = 0;
     for (u32 i = 0; i < levels; ++i) {
         u64 const dOff  = layout[i];
         u64 const pitch = layout[levels + i];
         u64 const sOff  = layout[2 * levels + i];
         u64 const sLen  = layout[3 * levels + i];
+        u64 const tLen  = layout[4 * levels + i];
         if (dOff > cursor) std::memset(dst + cursor, 0, usize(dOff - cursor));
         u64 const rowBytes = format_row_bytes(d.format, max(d.width >> i, 1u));
-        u64 const rows     = rowBytes ? sLen / rowBytes : 0;
-        if (pitch == rowBytes) {
+        u64 const rows     = rowBytes ? tLen / rowBytes : 0;
+        bool const direct  = pitch == rowBytes;
+        if (direct && !m.texZstd) {
             IoBytes budget(ctx, sLen);
             KILN_TRY(src.read(sOff, sLen, dst + dOff));
         } else {
@@ -349,11 +357,27 @@ Status write_texture(Context* ctx, Slot& s, Source const& src, u8* dst) noexcept
                 KILN_TRY(src.read(sOff, sLen, scratch.data()));
                 from = scratch.data();
             }
-            for (u64 r = 0; r < rows; ++r) {
-                u8* row = dst + dOff + r * pitch;
-                std::memcpy(row, from + r * rowBytes, usize(rowBytes));
-                std::memset(row + rowBytes, 0, usize(pitch - rowBytes));
+            if (m.texZstd) {
+                // Straight into the adapter's memory unless its rows are padded.
+                u8* out = dst + dOff;
+                if (!direct) {
+                    texels.resize(usize(tLen));
+                    out = texels.data();
+                }
+                if (!zstd.decode(Span<u8 const>(from, usize(sLen)), Span<u8>(out, usize(tLen)))) {
+                    DiagSink const sink{&capture_fn, &s.capture};
+                    return diagf(&sink, make_status(Code::Corrupt), ktx2::kDiagKtxLevelDecode,
+                                 Severity::Error, path_of(s), "levelIndex", "level %u does not decode: %s", i,
+                                 zstd.error());
+                }
+                from = out;
             }
+            if (!direct)
+                for (u64 r = 0; r < rows; ++r) {
+                    u8* row = dst + dOff + r * pitch;
+                    std::memcpy(row, from + r * rowBytes, usize(rowBytes));
+                    std::memset(row + rowBytes, 0, usize(pitch - rowBytes));
+                }
         }
         cursor = dOff + pitch * rows;
     }

@@ -26,6 +26,13 @@ enum class CookShape : u8 { Auto = 0, Tex2D, Cube, Array };
 enum class TextureEncoding : u8 { Auto = 0, Uncompressed, BC1, BC3, BC4, BC5, BC6H, BC7 };
 /// Encoder effort. Fast is for previews; High costs several times Normal for a small gain.
 enum class EncodeQuality : u8 { Fast = 0, Normal, High };
+/// Lossless compression of the stored levels (docs/design/bcn-encoding.md, "Zstd"). It shrinks
+/// the file and the bytes read at load; GPU memory stays the same.
+enum class Supercompression : u8 { None = 0, Zstd };
+/// Resolved zstdLevel when it is 0, and under CookSession::fastPreview.
+inline constexpr u8 kDefaultZstdLevel = 3;
+inline constexpr u8 kPreviewZstdLevel = 1;
+inline constexpr u8 kMaxZstdLevel     = 19;
 
 struct TextureCookSettings {
     ColorSpace colorSpace  = ColorSpace::Auto;   ///< Auto: sRGB for Color/Ui, else Linear
@@ -37,9 +44,11 @@ struct TextureCookSettings {
     /// Cube and Array cut the source image into a vertical strip of slices, slice 0 at the top.
     CookShape shape = CookShape::Auto;
     u32 slices = 0; ///< Array: layers in the strip; 0 = square slices. Only for Array (cleared otherwise)
-    TextureEncoding encoding = TextureEncoding::Auto;
-    EncodeQuality quality    = EncodeQuality::Normal; ///< resolved to Normal when nothing is encoded
-    // reserved: alphaMode, premultiply, dilation, supercompression, residentMips
+    TextureEncoding encoding          = TextureEncoding::Auto;
+    EncodeQuality quality             = EncodeQuality::Normal; ///< resolved to Normal when nothing is encoded
+    Supercompression supercompression = Supercompression::Zstd;
+    u8 zstdLevel                      = 0; ///< 1..19; 0 = kDefaultZstdLevel. Resolved to 0 without Zstd
+    // reserved: alphaMode, premultiply, dilation, residentMips
 };
 
 /// The glTF material slot a texture was referenced from (for usage inference).
@@ -167,7 +176,8 @@ enum SettingsDiagCode : u32 {
 /// `encoding` is concrete on return. An enum value out of range returns
 /// InvalidArgument (K3004); an encoding the usage cannot take, InvalidArgument (K3002). An
 /// explicit BC encoding on a target without the BC family becomes
-/// Uncompressed (K3003). `session.fastPreview` sets `quality` to Fast.
+/// Uncompressed (K3003). `session.fastPreview` sets `quality` to Fast and a Zstd level to
+/// kPreviewZstdLevel. A zstdLevel above kMaxZstdLevel returns InvalidArgument (K3002).
 KILN_API Result<TextureCookSettings> resolve_texture(TextureCookSettings const& overrides, SlotHint hint,
                                                      TargetProfile const& target, CookSession const& session,
                                                      DiagSink const* diag = nullptr,
@@ -259,6 +269,7 @@ inline constexpr u32 kTargetSchema          = 1;
 [[nodiscard]] KILN_API char const* cook_shape_name(CookShape s) noexcept;
 [[nodiscard]] KILN_API char const* texture_encoding_name(TextureEncoding e) noexcept;
 [[nodiscard]] KILN_API char const* encode_quality_name(EncodeQuality q) noexcept;
+[[nodiscard]] KILN_API char const* supercompression_name(Supercompression s) noexcept;
 [[nodiscard]] KILN_API char const* block_family_name(BlockFamily f) noexcept;
 
 } // namespace kiln::cook

@@ -262,10 +262,13 @@ int dump_ktx2(Span<u8 const> bytes, Options const& o, DiagSink const* diag) {
     out("\nlevels\n");
     Span<ktx2::LevelIndex const> lv = v.levels();
     for (u32 i = 0; i < lv.size; ++i) {
-        out("  [%u] %ux%u  @ %llu  %llu B%s\n", i, v.level_width(i), v.level_height(i),
+        out("  [%u] %ux%u  @ %llu  %llu B", i, v.level_width(i), v.level_height(i),
             static_cast<unsigned long long>(lv[i].byteOffset),
-            static_cast<unsigned long long>(lv[i].byteLength),
-            v.level_data(i).empty() ? "  (data not in buffer)" : "");
+            static_cast<unsigned long long>(lv[i].byteLength));
+        if (v.supercompressed())
+            out(" of %llu (%.2fx)", static_cast<unsigned long long>(lv[i].uncompressedByteLength),
+                f64(lv[i].uncompressedByteLength) / f64(lv[i].byteLength));
+        out("%s\n", v.level_data(i).empty() ? "  (data not in buffer)" : "");
     }
 
     if (v.has_kvd()) {
@@ -278,16 +281,20 @@ int dump_ktx2(Span<u8 const> bytes, Options const& o, DiagSink const* diag) {
             std::fprintf(stderr, "%s: --check: level data missing from the file\n", o.path);
             return 4;
         }
+        Vec<u8> texels(default_allocator(), Tag::General);
         for (u32 i = 0; i < lv.size; ++i) {
             u64 expect = v.level_image_bytes(i) * d.faces * d.layers;
-            if (lv[i].byteLength != expect) {
+            if (lv[i].uncompressedByteLength != expect) {
                 std::fprintf(stderr, "%s: level %u is %llu bytes, expected %llu\n", o.path, i,
-                             static_cast<unsigned long long>(lv[i].byteLength),
+                             static_cast<unsigned long long>(lv[i].uncompressedByteLength),
                              static_cast<unsigned long long>(expect));
                 return 4;
             }
+            texels.resize(usize(expect));
+            if (v.decode_level(i, texels.span(), nullptr, diag, StrView(o.path)).failed()) return 4;
         }
-        out("\ncheck: %u levels present with expected sizes\n", unsigned(lv.size));
+        out("\ncheck: %u levels present with expected sizes%s\n", unsigned(lv.size),
+            v.supercompressed() ? ", every Zstd frame decodes" : "");
     }
     return 0;
 }

@@ -90,6 +90,9 @@ target_include_directories(kiln_core PUBLIC
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
 target_compile_features(kiln_core PUBLIC cxx_std_23)
 
+# zstd: the runtime decodes Zstd-supercompressed KTX2 levels; the cook also encodes them.
+add_subdirectory(third_party/zstd)
+
 # ---------------------------------------------------------------------------
 # kiln_runtime — loading, .mesh/KTX2 readers, IO. Ships in release builds.
 # Must never depend on kiln_cook.
@@ -101,6 +104,7 @@ add_library(kiln_runtime STATIC
     include/kiln/ktx2.h
     src/formats/formats_internal.h
     src/formats/ktx2_read.cpp
+    src/formats/zstd_decode.cpp
     include/kiln/assets.h
     src/runtime/runtime_internal.h
     src/runtime/context.cpp
@@ -123,6 +127,7 @@ add_library(kiln::runtime ALIAS kiln_runtime)
 set_target_properties(kiln_runtime PROPERTIES EXPORT_NAME runtime)
 kiln_apply_defaults(kiln_runtime)
 target_link_libraries(kiln_runtime PUBLIC kiln_core Threads::Threads)
+target_link_libraries(kiln_runtime PRIVATE kiln_zstd)
 if(KILN_HOT_RELOAD)
     target_compile_definitions(kiln_runtime PUBLIC KILN_HOT_RELOAD=1)
 endif()
@@ -169,7 +174,7 @@ if(KILN_BUILD_COOK)
 set_target_properties(kiln_cook PROPERTIES EXPORT_NAME cook)
     kiln_apply_defaults(kiln_cook)
     target_link_libraries(kiln_cook PUBLIC kiln_runtime)
-    target_link_libraries(kiln_cook PRIVATE kiln_third_party_cook)
+    target_link_libraries(kiln_cook PRIVATE kiln_third_party_cook kiln_zstd_enc)
     # tools/cli.h: the option parser of cook_cli_main; header-only and never installed.
     target_link_libraries(kiln_cook PRIVATE $<BUILD_INTERFACE:kiln_cli>)
     if(KILN_WEBP)

@@ -1,5 +1,5 @@
 // kiln/cook/ktx2_writer.h — KTX2 writer for uncompressed and BC1-BC7 2D, cube and array textures
-// with mips.
+// with mips, optionally Zstd-supercompressed.
 // Identical input gives byte-identical output (no timestamps, zeroed padding).
 // The DFD matches what libktx's vk2dfd produces for the same vkFormat.
 #pragma once
@@ -34,11 +34,14 @@ struct WriteDesc {
     /// Additional key/value entries (e.g. kiln.sourceHash). Keys must not collide
     /// with KTXwriter or each other. At most 15.
     Span<KeyValue const> extraKeys = {};
+    /// 1..22: each level is one Zstd frame of this level (supercompressionScheme 2), packed
+    /// without padding. 0 stores the levels as they are.
+    u32 zstdLevel = 0;
 };
 
 /// Serialize a KTX2 file into a new buffer allocated from `alloc` (Tag::Cook;
-/// nullptr means default_allocator()). Invalid input returns InvalidArgument and
-/// emits one K41xx diagnostic.
+/// nullptr means default_allocator()); the Zstd encoder allocates from it too. Invalid input
+/// returns InvalidArgument and emits one K41xx diagnostic.
 [[nodiscard]] KILN_API Result<Vec<u8>> write(WriteDesc const& desc, Allocator const* alloc,
                                              DiagSink const* diag = nullptr) noexcept;
 

@@ -75,13 +75,19 @@ struct DiagCapture {
     }
 };
 
+inline constexpr usize kLayoutColumns = 5;
+
 /// Outputs of the meta stage: validated metadata and the upload plan.
 struct MetaSet {
-    Buffer meta;                ///< mesh CPU region [0, gpuDataOffset)
-    mesh::MeshView meshView;    ///< points into `meta`
-    ktx2::TextureDesc texDesc;  ///< textures
-    u64* layout      = nullptr; ///< textures: [dstOffset | rowPitch | srcOffset | srcLength] x levels
+    Buffer meta;               ///< mesh CPU region [0, gpuDataOffset)
+    mesh::MeshView meshView;   ///< points into `meta`
+    ktx2::TextureDesc texDesc; ///< textures
+    /// Textures: kLayoutColumns arrays of layoutLevels values:
+    /// [dstOffset | rowPitch | srcOffset | srcLength | texelLength]. srcLength is the stored
+    /// size, which is smaller than texelLength when the levels are Zstd frames (texZstd).
+    u64* layout      = nullptr;
     u32 layoutLevels = 0;
+    bool texZstd     = false;
     u64 uploadSize   = 0; ///< bytes handed to begin_upload
 };
 

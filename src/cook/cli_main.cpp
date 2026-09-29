@@ -54,6 +54,7 @@ struct Options {
     char const* targetName  = "desktop";
     char const* block       = "bc";
     char const* quality     = "normal";
+    u32 zstd                = kDefaultZstdLevel; ///< 0: texture levels stay plain
     MeshCookSettings mesh;
     TextureCookSettings tex;
     TargetProfile target;
@@ -529,6 +530,11 @@ int kiln::cook::cook_cli_main(int argc, char** argv, CookPolicy const& policy) n
          .help    = "block encoder effort (default normal)",
          .str     = &o.quality,
          .choices = kQualities},
+        {.name   = "--zstd",
+         .arg    = "<level>",
+         .help   = "Zstd level of texture files, 1..19 (default 3); 0 stores them plain",
+         .number = &o.zstd,
+         .max    = kMaxZstdLevel},
         {.name    = "--profile",
          .arg     = "<name>",
          .help    = "vertex profile",
@@ -571,6 +577,8 @@ int kiln::cook::cook_cli_main(int argc, char** argv, CookPolicy const& policy) n
     o.tex.quality          = std::strcmp(o.quality, "fast") == 0   ? EncodeQuality::Fast
                              : std::strcmp(o.quality, "high") == 0 ? EncodeQuality::High
                                                                    : EncodeQuality::Normal;
+    o.tex.supercompression = o.zstd != 0 ? Supercompression::Zstd : Supercompression::None;
+    o.tex.zstdLevel        = u8(o.zstd);
     o.mesh.profile         = std::strcmp(o.profile, "float") == 0     ? VertexProfile::Float
                              : std::strcmp(o.profile, "precise") == 0 ? VertexProfile::Precise
                                                                       : VertexProfile::Default;

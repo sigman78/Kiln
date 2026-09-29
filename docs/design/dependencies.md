@@ -15,7 +15,7 @@ links it.
 | KTX2 write | **own** minimal writer (raw and BC formats) | n/a | cook only | in-tree `src/formats/` |
 | Mesh optimization | **meshoptimizer** | MIT | cook only, `KILN_MESH=ON` (decoder sources may later join `kiln_runtime`) | FetchContent, commit hash |
 | Tangents | **MikkTSpace** (reference `mikktspace.c/.h`) | zlib | cook only, `KILN_MESH=ON` | vendored in `third_party/mikktspace/` |
-| Zstd | deferred (v0.6) | BSD | runtime decoder-only build, cook encoder | FetchContent, commit hash |
+| Zstd | **zstd** 1.5.7 | BSD | runtime decoder-only build (`kiln_zstd`), cook encoder (`kiln_zstd_enc`) | vendored `lib/` in `third_party/zstd/` |
 | BC1/3/4/5/7 encoders | **bc7enc_rdo**: `rgbcx`, `bc7enc` | MIT or public domain | cook only | vendored in `third_party/bc7enc_rdo/` |
 | BC6H encoder | **ispc_bc6h**: kiln's scalar C++ port of the ISPC Texture Compressor's BC6H | MIT | cook only | ported from a pinned commit into `third_party/ispc_bc6h/` |
 | BC decoder for tests | **bcdec** | MIT or public domain | `kiln_tests` only | vendored header in `third_party/bcdec/` |
@@ -63,8 +63,8 @@ ships with codec `None` only, which needs no library.
 - A raw KTX2 file is: identifier, fixed header, level index, Data Format Descriptor, key/value
   data, then mip data. Reader and writer together are a few hundred lines.
 - The runtime reader lives in `kiln_runtime` and stays dependency-free.
-- libktx is large, has many build options, and brings Basis and Zstd code not needed yet. Revisit
-  libktx (or a Basis transcoder alone) when Basis or Zstd supercompression lands (v0.6+).
+- libktx is large, has many build options, and brings Basis code not needed yet. Zstd
+  supercompression needed only zstd itself. Revisit a Basis transcoder alone if Basis lands.
 
 ### BCn: bc7enc_rdo
 
@@ -84,14 +84,20 @@ ships with codec `None` only, which needs no library.
   repository is archived.
 - `bcdec` decodes every BC format in `kiln_tests`, independent of the encoders it checks.
 
-### Zstd (deferred, v0.6+)
+### Zstd (in use since 2026-09-29)
 
-- One dependency, two users: KTX2 Zstd supercompression and `.mesh` payload blobs (codec `Zstd` and
-  `kBlobOuterZstd`).
-- `kiln_runtime` gets a **decoder-only build** (zstd's `decompress/` and `common/` sources). The
-  runtime wrapper is one `.cpp` that decodes into caller memory, with the context `Allocator`
-  routed through zstd's memory hooks. `kiln_cook` gets the full library.
-- It is the first planned `kiln_runtime` dependency, so this note carries its reason.
+- One dependency, two users: KTX2 Zstd supercompression (in use, `bcn-encoding.md` step 6) and,
+  later, `.mesh` payload blobs (codec `Zstd` and `kBlobOuterZstd`).
+- `kiln_runtime` links a **decoder-only build**, `kiln_zstd` (zstd's `common/` and `decompress/`
+  sources). The runtime wrapper, `src/formats/zstd_decode.cpp`, decodes into caller memory, with
+  the context `Allocator` routed through zstd's custom-allocator hooks. `kiln_cook` also links
+  `kiln_zstd_enc` (`compress/`).
+- Vendored rather than fetched: `kiln_runtime` ships, and a shipping configure must not need the
+  network. Single-threaded, no legacy formats, no assembly (the x86-64 Huffman decoder in
+  `huf_decompress_amd64.S` is not vendored; the C decoder runs at about 1 GB/s per core).
+- The custom-allocator API is zstd's "static linking only" part, stable within one version; the
+  pin makes that safe. Both targets are in the install's export sets.
+- It is the first `kiln_runtime` dependency, so this note carries its reason.
 
 ### Mesh processing: meshoptimizer + MikkTSpace
 
@@ -150,8 +156,8 @@ behind `KILN_EXAMPLE_NGA`, OFF in every preset, and the manual `extended` workfl
 
 `kiln_runtime` accepts third-party code only as **decoders**: matching an encoder or writer in
 `kiln_cook`, built from source with kiln's own flags (never a prebuilt binary), and never able to
-write files or import a source format. In v0.5 there are none. The candidates are zstd
-(decode-only) and meshoptimizer's decoder sources. This rule, the `include/kiln/cook/` header
+write files or import a source format. The only one is zstd (decode-only, since 2026-09-29);
+meshoptimizer's decoder sources are the next candidate. This rule, the `include/kiln/cook/` header
 boundary and the `shipping` CI job form the read-only shipping contract (`shipping-split.md`).
 
 ## Rationale
@@ -179,14 +185,14 @@ boundary and the `shipping` CI job form the read-only shipping contract (`shippi
 - The importer keeps a single buffer-view resolution point (for meshopt decode later).
 - The KTX2 reader keeps the level index accessible, so later range reads can load the smallest
   mips first.
-- When supercompression lands, the reader gains a supercompression dispatch; the level index
-  already carries `byteLength` and `uncompressedByteLength`, so the file layout does not change.
+- Supercompression (Zstd) went into the reader without a layout change: the level index already
+  carried `byteLength` and `uncompressedByteLength`.
 - CI needs no Vulkan SDK: `KILN_BUILD_VIEWER` is ON in every preset, fetches headers and compiles
   the viewer, but CI never runs it. Linux runners need the X11 development packages GLFW builds
   against.
-- When `.mesh` compression lands, `kiln_runtime` gains its first third-party code. Each codec
-  should be behind a CMake option, so a project that ships only uncompressed payloads keeps a
-  dependency-free runtime.
+- `kiln_runtime` gained its first third-party code with Zstd textures, unconditionally: Zstd is
+  the cook's default, so a runtime without the decoder could not load a default store. Further
+  `.mesh` codecs (meshopt) should still be behind a CMake option.
 
 ## Open points for the owner
 

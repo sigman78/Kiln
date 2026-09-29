@@ -10,7 +10,7 @@ Pixel data comes from level 2 / level 3 of `../khronos/r8g8b8a8_srgb_mip.ktx2`
 `../khronos/LICENSE.Apache-2.0`), except `rgba16f.ktx2`, whose 4x4 gradient the script
 computes itself.
 
-| File | Bytes | Format | Size | Faces / levels | Covers | kiln v0.5 |
+| File | Bytes | Format | Size | Faces / levels | Covers | kiln |
 |---|---:|---|---|---|---|---|
 | `cube_rgba8_srgb_mip.ktx2` | 2376 | R8G8B8A8_SRGB | 8x8 | 6 / 4 | cubemap with generated mips | ok |
 | `r8_unorm.ktx2` | 280 | R8_UNORM | 8x8 | 1 / 1 | single channel, 1-byte texels | ok |
@@ -20,7 +20,7 @@ computes itself.
 | `rgba8_unorm_npot_mip.ktx2` | 480 | R8G8B8A8_UNORM | 7x5 | 1 / 3 | non-power-of-two mip chain | ok |
 | `rgba8_srgb_kvd.ktx2` | 564 | R8G8B8A8_SRGB | 8x8 | 1 / 1 | KTXswizzle + KTXorientation metadata | ok |
 | `1d_rgba8_srgb.ktx2` | 520 | R8G8B8A8_SRGB | 64 (1D) | 1 / 1 | 1D texture (pixelHeight 0) | unsupported, K4105 |
-| `rgba8_srgb_mip_zstd.ktx2` | 485 | R8G8B8A8_SRGB | 16x16 | 1 / 5 | Zstd supercompression of an uncompressed format | unsupported, K4107 |
+| `rgba8_srgb_mip_zstd.ktx2` | 485 | R8G8B8A8_SRGB | 16x16 | 1 / 5 | Zstd supercompression of an uncompressed format | ok (read and decoded; level 0 matches `rgba8_unorm_mip.ktx2`) |
 | `rgba8_srgb_mip_zlib.ktx2` | 493 | R8G8B8A8_SRGB | 16x16 | 1 / 5 | Zlib supercompression | unsupported, K4107 |
 
 Not generated: R32G32B32A32_SFLOAT (covered by the half-float file; `ktx create` refuses PNG

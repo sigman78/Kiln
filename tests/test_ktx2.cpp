@@ -465,3 +465,43 @@ KILN_TEST(Ktx2, WriterRejectsBadShapes) {
     bad({.width = 8, .height = 4, .layers = 6});                  // layers without isArray
     bad({.width = 8, .height = 4, .layers = 0, .isArray = true}); // no layers
 }
+
+KILN_TEST(Ktx2, WriterZstd) {
+    Format const formats[] = {Format::R8G8B8A8_SRGB, Format::R16G16B16A16_SFLOAT, Format::BC7_UNORM};
+    for (Format f : formats) {
+        FormatInfo const& info = *format_info(f);
+        TestImage img(f);
+        WriteDesc d  = img.desc();
+        d.zstdLevel  = 3;
+        Vec<u8> file = write_ok(d);
+        KILN_CHECK_MSG(bytes_equal(write_ok(d).span(), file.span()), "%s: two writes differ", info.name);
+        Result<Ktx2View> r = Ktx2View::open(file.span());
+        KILN_CHECK_MSG(r.ok(), "%s: open failed", info.name);
+        if (!r.ok()) continue;
+        KILN_CHECK(r->supercompressed());
+        KILN_CHECK_EQ(r->header().supercompressionScheme, u32(Supercompression::Zstd));
+        u64 end = 0;
+        for (u32 i = TestImage::kLevels; i-- > 0;) {
+            LevelIndex const& li = r->levels()[i];
+            KILN_CHECK_EQ(li.uncompressedByteLength, u64(img.spans[i].size));
+            // Packed without padding, smallest level first.
+            if (end != 0) KILN_CHECK_EQ(li.byteOffset, end);
+            end = li.byteOffset + li.byteLength;
+            Vec<u8> texels(default_allocator(), Tag::Test);
+            texels.resize(img.spans[i].size);
+            KILN_CHECK(r->decode_level(i, texels.span()).ok());
+            KILN_CHECK_MSG(bytes_equal(texels.span(), img.spans[i]), "%s level %u texels", info.name, i);
+        }
+        KILN_CHECK_EQ(end, u64(file.size()));
+    }
+}
+
+KILN_TEST(Ktx2, WriterRejectsZstdLevel) {
+    TestImage img(Format::R8G8B8A8_UNORM);
+    WriteDesc d = img.desc();
+    d.zstdLevel = 23;
+    DiagCapture cap;
+    DiagSink sink = cap.sink();
+    KILN_CHECK_EQ(ev(write(d, nullptr, &sink).code()), ev(Code::InvalidArgument));
+    KILN_CHECK_EQ(cap.code, u32(kDiagKtxSupercompression));
+}

@@ -28,10 +28,12 @@ BC4, BC5, BC6H, BC7 }`, `EncodeQuality { Fast, Normal, High }`.
 | `slices` | 0 | `Array` only: layers in the strip; 0 = square slices. Cleared with a K3002 warning for other shapes |
 | `encoding` | `Auto` | The stored format (`bcn-encoding.md`). `Auto` stays `Auto` after resolution: the usage table for the target's `blockFamily`, uncompressed without one. `BC1` drops alpha; `BC6H` is unsigned (`UFLOAT`) and for `Hdr` only |
 | `quality` | `Normal` | Encoder effort: `Fast`, `Normal`, `High`. Resolved to `Normal` when nothing is encoded; `fastPreview` sets `Fast` |
+| `supercompression` | `Zstd` | `Zstd`: each stored level is one Zstd frame (KTX2 scheme 2; `bcn-encoding.md` step 6). Smaller files and reads, same GPU memory. `None`: levels as they are |
+| `zstdLevel` | 0 | 1..19; 0 = 3. `fastPreview` sets 1. Resolved to 0 with `None`; above 19 is a K3002 error |
 
-Reserved: alphaMode, premultiply, dilation, supercompression, residentMips.
-Texture settings schema: 2 (`shape`, `slices`). `encoding` and `quality` are hashed only when they
-differ from their defaults (see "Hashing rule"), so they did not bump it.
+Reserved: alphaMode, premultiply, dilation, residentMips.
+Texture settings schema: 2 (`shape`, `slices`). `encoding`, `quality`, `supercompression` and
+`zstdLevel` are hashed behind tags (see "Hashing rule"), so they did not bump it.
 
 ### Mesh
 
@@ -219,6 +221,9 @@ changes meaning.
 - A field added after its schema was pinned may be hashed only when it differs from its default,
   behind a tag that tells it apart from other such fields (texture `encoding` and `quality`, the
   target's `blockFamily`). Cooks that do not use it keep their keys, and no schema bump is needed.
+  `supercompression` and `zstdLevel` follow the same idea with the old behavior as the reference:
+  they are hashed only when `supercompression` is not `None`. Its default is `Zstd`, so the default
+  key changed once, and a cook with `None` keeps the key of the files cooked before Zstd.
 
 ### Store key
 
@@ -252,8 +257,8 @@ type checking, allocates), and `optional<T>` per field (heavy; `Auto` covers v0.
 
 - Adding a field means: default value, serializer line, schema version bump. Old store entries then
   miss and re-cook, which is correct.
-- Reserved groups (alpha, encoding, supercompression, shape) are added as new fields, never by
-  changing the meaning of existing ones.
+- Reserved groups (alpha, residency) are added as new fields, never by changing the meaning of
+  existing ones, as encoding, supercompression and shape were.
 - Enabling a compression scheme later needs no struct or schema change, only accepting the enum
   value. `kCookerVersion` still bumps if defaults change.
 - Layers 3 and 4 are patches, so they know which fields they set. `--explain` can record the

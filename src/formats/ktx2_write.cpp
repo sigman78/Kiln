@@ -1,8 +1,12 @@
-// KTX2 writer for uncompressed and BC block-compressed textures, without supercompression.
+// KTX2 writer for uncompressed and BC block-compressed textures, optionally Zstd-supercompressed.
 #include "kiln/cook/ktx2_writer.h"
 #include "kiln/log.h"
 
 #include "formats_internal.h"
+
+// The custom-allocator API is stable only within one zstd version; the vendored one is pinned.
+#define ZSTD_STATIC_LINKING_ONLY
+#include <zstd.h>
 
 namespace kiln::ktx2 {
 
@@ -209,6 +213,9 @@ Result<Vec<u8>> write(WriteDesc const& desc, Allocator const* alloc, DiagSink co
         }
         entries[j] = e;
     }
+    if (desc.zstdLevel > u32(ZSTD_maxCLevel()))
+        return invalid(diag, kDiagKtxSupercompression, "zstdLevel %llu is above %llu", desc.zstdLevel,
+                       u32(ZSTD_maxCLevel()));
     u32 const levelCount = u32(desc.levels.size);
     for (u32 i = 0; i < levelCount; ++i) {
         u64 const expected =
@@ -219,6 +226,42 @@ Result<Vec<u8>> write(WriteDesc const& desc, Allocator const* alloc, DiagSink co
                            desc.levels[i].size, expected);
         if (expected != 0 && desc.levels[i].data == nullptr)
             return invalid(diag, kDiagKtxLevelIndex, "level %llu has no data", i);
+    }
+
+    // --- Supercompression ----------------------------------------------------------------
+    // Fixed parameters, one thread: the same levels give the same frames on every machine.
+    Allocator const* const a = alloc ? alloc : default_allocator();
+    bool const zstd          = desc.zstdLevel != 0;
+    Span<u8 const> stored[kMaxLevels];
+    Vec<u8> frames[kMaxLevels];
+    for (u32 i = 0; i < levelCount; ++i)
+        stored[i] = desc.levels[i];
+    if (zstd) {
+        fmt::ZstdMem mem{a, Tag::Cook};
+        ZSTD_CCtx* cctx = ZSTD_createCCtx_advanced(ZSTD_customMem{&fmt::zstd_alloc, &fmt::zstd_free, &mem});
+        if (!cctx)
+            return diagf(diag, make_status(Code::OutOfMemory), kDiagKtxSupercompression, Severity::Error, {},
+                         "ktx2 write", "out of memory for the Zstd context");
+        (void)ZSTD_CCtx_setParameter(cctx, ZSTD_c_compressionLevel, int(desc.zstdLevel));
+        (void)ZSTD_CCtx_setParameter(cctx, ZSTD_c_contentSizeFlag, 1);
+        (void)ZSTD_CCtx_setParameter(cctx, ZSTD_c_checksumFlag, 0);
+        usize failure = 0;
+        for (u32 i = 0; i < levelCount && failure == 0; ++i) {
+            frames[i].init(a, Tag::Cook);
+            frames[i].resize(ZSTD_compressBound(desc.levels[i].size));
+            usize const n = ZSTD_compress2(cctx, frames[i].data(), frames[i].size(), desc.levels[i].data,
+                                           desc.levels[i].size);
+            if (ZSTD_isError(n)) {
+                failure = n;
+                break;
+            }
+            frames[i].resize(n);
+            stored[i] = frames[i].span();
+        }
+        ZSTD_freeCCtx(cctx);
+        if (failure != 0)
+            return diagf(diag, make_status(Code::Internal), kDiagKtxSupercompression, Severity::Error, {},
+                         "ktx2 write", "Zstd compression failed: %s", ZSTD_getErrorName(failure));
     }
 
     // --- Layout ----------------------------------------------------------------------
@@ -232,15 +275,15 @@ Result<Vec<u8>> write(WriteDesc const& desc, Allocator const* alloc, DiagSink co
         kvdLength += u32(align_up(u64(4) + kvLength, u64(4)));
     }
 
-    u64 const align = fmt::ktx2_level_align(info->bytesPerBlock);
+    u64 const align = zstd ? 1u : fmt::ktx2_level_align(info->bytesPerBlock);
     LevelIndex index[kMaxLevels]{};
     u64 pos = u64(kvdOffset) + kvdLength;
     for (u32 i = levelCount; i-- > 0;) { // smallest level first, level 0 last
         pos                             = round_up(pos, align);
         index[i].byteOffset             = pos;
-        index[i].byteLength             = desc.levels[i].size;
+        index[i].byteLength             = stored[i].size;
         index[i].uncompressedByteLength = desc.levels[i].size;
-        pos += desc.levels[i].size;
+        pos += stored[i].size;
     }
     u64 const total = pos;
 
@@ -254,7 +297,7 @@ Result<Vec<u8>> write(WriteDesc const& desc, Allocator const* alloc, DiagSink co
     h.layerCount  = desc.isArray ? desc.layers : 0;
     h.faceCount   = desc.faces;
     h.levelCount  = levelCount;
-    h.supercompressionScheme = u32(Supercompression::None);
+    h.supercompressionScheme = u32(zstd ? Supercompression::Zstd : Supercompression::None);
     h.dfdByteOffset          = dfdOffset;
     h.dfdByteLength          = dfdLength;
     h.kvdByteOffset          = kvdOffset;
@@ -263,7 +306,7 @@ Result<Vec<u8>> write(WriteDesc const& desc, Allocator const* alloc, DiagSink co
     h.sgdByteLength          = 0;
 
     // --- Emit (resize zero-fills, so every padding byte is 0) -----------------------------
-    Vec<u8> out(alloc ? alloc : default_allocator(), Tag::Cook);
+    Vec<u8> out(a, Tag::Cook);
     out.resize(usize(total));
     u8* p = out.data();
     std::memcpy(p, &h, sizeof(h));
@@ -282,8 +325,7 @@ Result<Vec<u8>> write(WriteDesc const& desc, Allocator const* alloc, DiagSink co
     }
 
     for (u32 i = 0; i < levelCount; ++i)
-        if (desc.levels[i].size)
-            std::memcpy(p + index[i].byteOffset, desc.levels[i].data, desc.levels[i].size);
+        if (stored[i].size) std::memcpy(p + index[i].byteOffset, stored[i].data, stored[i].size);
 
     return Result<Vec<u8>>(std::move(out));
 }

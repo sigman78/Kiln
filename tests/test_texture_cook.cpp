@@ -111,12 +111,15 @@ KILN_TEST(texture_cook, color_srgb_7x5) {
 
     Result<ktx2::Ktx2View> v = ktx2::Ktx2View::open(r->file.span());
     KILN_REQUIRE(v.ok());
-    Span<u8 const> l0 = v->level_data(0);
+    KILN_CHECK(v->supercompressed());
+    Vec<u8> const t0  = kiln::test::corpus::texels(*v, 0);
+    Span<u8 const> l0 = t0.span();
     KILN_REQUIRE_EQ(l0.size, sizeof rgba);
     KILN_CHECK(std::memcmp(l0.data, rgba, sizeof rgba) == 0);
 
     // Level 1 is 3x2: each texel is the sRGB-correct 2x2 average of level 0.
-    Span<u8 const> l1 = v->level_data(1);
+    Vec<u8> const t1  = kiln::test::corpus::texels(*v, 1);
+    Span<u8 const> l1 = t1.span();
     KILN_REQUIRE_EQ(l1.size, usize(3 * 2 * 4));
     for (u32 y = 0; y < 2; ++y) {
         for (u32 x = 0; x < 3; ++x) {
@@ -145,7 +148,7 @@ KILN_TEST(texture_cook, color_srgb_7x5) {
         }
     }
     // Level 2 is 1x1.
-    KILN_CHECK_EQ(v->level_data(2).size, usize(4));
+    KILN_CHECK_EQ(kiln::test::corpus::texels(*v, 2).size(), usize(4));
 }
 
 KILN_TEST(texture_cook, color_rgb_and_linear) {
@@ -159,7 +162,9 @@ KILN_TEST(texture_cook, color_rgb_and_linear) {
     KILN_REQUIRE(check_file(*r, "color_linear"));
     Result<ktx2::Ktx2View> v = ktx2::Ktx2View::open(r->file.span());
     KILN_REQUIRE(v.ok());
-    Span<u8 const> l0 = v->level_data(0);
+    Vec<u8> const t0  = kiln::test::corpus::texels(*v, 0);
+    Span<u8 const> l0 = t0.span();
+    KILN_REQUIRE(l0.size >= 4);
     KILN_CHECK_EQ(u32(l0[0]), u32(rgb[0]));
     KILN_CHECK_EQ(u32(l0[3]), 255u); // alpha added
 }
@@ -178,7 +183,9 @@ KILN_TEST(texture_cook, normal_7x5) {
     Result<ktx2::Ktx2View> v = ktx2::Ktx2View::open(r->file.span());
     KILN_REQUIRE(v.ok());
     for (u32 level = 0; level < 3; ++level) {
-        Span<u8 const> d = v->level_data(level);
+        Vec<u8> const t  = kiln::test::corpus::texels(*v, level);
+        Span<u8 const> d = t.span();
+        KILN_CHECK(!d.empty());
         for (usize i = 0; i + 4 <= d.size; i += 4) {
             double const x = d[i] / 127.5 - 1.0, y = d[i + 1] / 127.5 - 1.0, z = d[i + 2] / 127.5 - 1.0;
             double const len = std::sqrt(x * x + y * y + z * z);
@@ -187,7 +194,8 @@ KILN_TEST(texture_cook, normal_7x5) {
         }
     }
     // Level 0 equals renormalize() of the source; alpha is untouched.
-    Span<u8 const> l0 = v->level_data(0);
+    Vec<u8> const t0  = kiln::test::corpus::texels(*v, 0);
+    Span<u8 const> l0 = t0.span();
     u8 const n0[4]    = {rgba[0], rgba[1], rgba[2], rgba[3]};
     Image one;
     one.width          = 1;
@@ -221,7 +229,8 @@ KILN_TEST(texture_cook, height_r16) {
     KILN_REQUIRE(check_file(*r, "height16"));
     Result<ktx2::Ktx2View> v = ktx2::Ktx2View::open(r->file.span());
     KILN_REQUIRE(v.ok());
-    Span<u8 const> l0 = v->level_data(0);
+    Vec<u8> const t0  = kiln::test::corpus::texels(*v, 0);
+    Span<u8 const> l0 = t0.span();
     KILN_REQUIRE_EQ(l0.size, usize(128));
     for (u32 i = 0; i < 64; ++i)
         KILN_CHECK_EQ(u32(l0[i * 2] | (l0[i * 2 + 1] << 8)), u32(g[i]));
@@ -238,7 +247,9 @@ KILN_TEST(texture_cook, mask_rg8) {
     KILN_REQUIRE(check_file(*r, "mask_rg"));
     Result<ktx2::Ktx2View> v = ktx2::Ktx2View::open(r->file.span());
     KILN_REQUIRE(v.ok());
-    KILN_CHECK(std::memcmp(v->level_data(0).data, ga, sizeof ga) == 0);
+    Vec<u8> const t0 = kiln::test::corpus::texels(*v, 0);
+    KILN_REQUIRE_EQ(t0.size(), sizeof ga);
+    KILN_CHECK(std::memcmp(t0.data(), ga, sizeof ga) == 0);
 }
 
 KILN_TEST(texture_cook, channel_mismatch) {
@@ -296,7 +307,8 @@ KILN_TEST(texture_cook, max_size) {
     Result<ktx2::Ktx2View> a = ktx2::Ktx2View::open(r->file.span());
     Result<ktx2::Ktx2View> b = ktx2::Ktx2View::open(full->file.span());
     KILN_REQUIRE(a.ok() && b.ok());
-    KILN_CHECK(kiln::test::corpus::bytes_equal(a->level_data(0), b->level_data(2)));
+    KILN_CHECK(kiln::test::corpus::bytes_equal(kiln::test::corpus::texels(*a, 0).span(),
+                                               kiln::test::corpus::texels(*b, 2).span()));
 
     // The target cap applies too, and genMips=false keeps a single level.
     s.maxSize                = 0;
@@ -310,7 +322,8 @@ KILN_TEST(texture_cook, max_size) {
     KILN_CHECK(log2.has(kDiagImageDownscaled, Severity::Info));
     Result<ktx2::Ktx2View> c = ktx2::Ktx2View::open(t->file.span());
     KILN_REQUIRE(c.ok());
-    KILN_CHECK(kiln::test::corpus::bytes_equal(c->level_data(0), b->level_data(1)));
+    KILN_CHECK(kiln::test::corpus::bytes_equal(kiln::test::corpus::texels(*c, 0).span(),
+                                               kiln::test::corpus::texels(*b, 1).span()));
 }
 
 KILN_TEST(texture_cook, npot_info) {
@@ -373,16 +386,53 @@ KILN_TEST(texture_cook, ktx2_cube_and_array_passthrough) {
     KILN_CHECK(log.has(kDiagImagePassthroughBad, Severity::Error));
 }
 
-KILN_TEST(texture_cook, ktx2_zstd_rejected) {
+// A Zstd KTX2 (libktx) passes through as it is; BasisLZ and Zlib are still rejected.
+KILN_TEST(texture_cook, ktx2_zstd_passes_through) {
     char const* dir = kiln::test::corpus_dir();
     char path[1024];
     format(path, sizeof path, "%s/generated/rgba8_srgb_mip_zstd.ktx2", dir);
     Vec<u8> bytes(default_allocator(), Tag::Test);
     KILN_REQUIRE(kiln::test::corpus::read_file(path, bytes));
+    Result<CookedTexture> r = run_cook(bytes.span(), kColor);
+    KILN_REQUIRE(r.ok());
+    KILN_CHECK(r->passthrough);
+    KILN_CHECK(kiln::test::corpus::bytes_equal(r->file.span(), bytes.span()));
+
+    format(path, sizeof path, "%s/generated/rgba8_srgb_mip_zlib.ktx2", dir);
+    KILN_REQUIRE(kiln::test::corpus::read_file(path, bytes));
     DiagLog log;
-    Result<CookedTexture> r = run_cook(bytes.span(), kColor, &log);
+    r = run_cook(bytes.span(), kColor, &log);
     KILN_CHECK_EQ(r.code(), Code::Unsupported);
     KILN_CHECK(log.has(kDiagImagePassthroughBad, Severity::Error));
+}
+
+KILN_TEST(texture_cook, supercompression_none_and_levels) {
+    u8 rgba[16 * 16 * 4];
+    pattern(rgba, sizeof rgba, 21);
+    Vec<u8> f = png::encode({.width = 16, .height = 16, .colorType = 6, .depth = 8, .pixels = rgba});
+
+    Result<CookedTexture> plain = run_cook(f.span(), {.supercompression = Supercompression::None});
+    KILN_REQUIRE(plain.ok());
+    Result<ktx2::Ktx2View> pv = ktx2::Ktx2View::open(plain->file.span());
+    KILN_REQUIRE(pv.ok());
+    KILN_CHECK(!pv->supercompressed());
+
+    Result<CookedTexture> z1 = run_cook(f.span(), {.zstdLevel = 1});
+    Result<CookedTexture> z9 = run_cook(f.span(), {.zstdLevel = 9});
+    KILN_REQUIRE(z1.ok() && z9.ok());
+    Result<ktx2::Ktx2View> v1 = ktx2::Ktx2View::open(z1->file.span());
+    Result<ktx2::Ktx2View> v9 = ktx2::Ktx2View::open(z9->file.span());
+    KILN_REQUIRE(v1.ok() && v9.ok());
+    KILN_CHECK(v1->supercompressed() && v9->supercompressed());
+    // Every level decodes to the plain file's level, whatever the Zstd level.
+    for (u32 i = 0; i < pv->desc().levels; ++i) {
+        KILN_CHECK_MSG(
+            kiln::test::corpus::bytes_equal(kiln::test::corpus::texels(*v1, i).span(), pv->level_data(i)),
+            "zstd 1, level %u", i);
+        KILN_CHECK_MSG(
+            kiln::test::corpus::bytes_equal(kiln::test::corpus::texels(*v9, i).span(), pv->level_data(i)),
+            "zstd 9, level %u", i);
+    }
 }
 
 KILN_TEST(texture_cook, jpeg_color) {
@@ -483,8 +533,10 @@ Vec<u8> strip_png(u32 w, u32 h, u32 count) {
 
 /// True if every texel of `slice` in `level` has the color of strip slice `slice`.
 bool slice_is(ktx2::Ktx2View const& v, u32 level, u32 slice) {
-    Span<u8 const> const data = v.level_data(level);
+    Vec<u8> const texels      = kiln::test::corpus::texels(v, level);
+    Span<u8 const> const data = texels.span();
     usize const bytes         = usize(v.level_image_bytes(level));
+    if (data.size < usize(slice + 1) * bytes) return false;
     for (usize i = 0; i < bytes; i += 4) {
         u8 const* px = data.data + usize(slice) * bytes + i;
         if (px[0] != u8(40 * slice) || px[1] != u8(255 - 40 * slice) || px[2] != u8(slice)) return false;

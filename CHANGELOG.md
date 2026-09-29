@@ -8,6 +8,20 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
 ## [Unreleased]
 
 ### Added
+- **Runtime: Zstd-supercompressed KTX2** (docs/design/bcn-encoding.md, step 6). The reader accepts
+  `supercompressionScheme = 2` (BasisLZ and Zlib stay K4107); `Ktx2View::supercompressed()` and
+  `Ktx2View::decode_level(level, out, alloc, diag)` give a level's texels, and the loader decodes
+  each level straight into the adapter's memory. New K4110 (`kDiagKtxLevelDecode`) for a level
+  that is not one Zstd frame of its size. zstd 1.5.7 is vendored (`third_party/zstd/`): the
+  decoder (`kiln_zstd`) is `kiln_runtime`'s first third-party code and installs with it; the cook
+  links the encoder (`kiln_zstd_enc`).
+- **Cook: Zstd supercompression, on by default.** New `TextureCookSettings::supercompression`
+  (`Supercompression`: `None`, `Zstd`; default `Zstd`) and `zstdLevel` (1..19, 0 = 3;
+  `fastPreview` uses 1). Sidecar keys `supercompression` and `zstdLevel`, `kiln-cook --zstd <level>`
+  (0 = off), `ktx2::WriteDesc::zstdLevel`. A KTX2 source with Zstd levels passes through.
+  `kiln-info` prints each level's stored and texel sizes, and `--check` decodes every frame.
+  On the example assets the uncompressed store shrinks 6.5x and the BC store 2.9x, for a few
+  percent more cook time.
 - **Cook: BC1/3/4/5/7 textures** (docs/design/bcn-encoding.md, rollout step 3).
   - New `TextureCookSettings::encoding` (`TextureEncoding`: `Auto`, `Uncompressed`, `BC1`, `BC3`,
     `BC4`, `BC5`, `BC6H`, `BC7`) and `quality` (`EncodeQuality`: `Fast`, `Normal`, `High`).
@@ -275,6 +289,15 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
   relative path, as the `UriResolver` already received for buffers.
 
 ### Changed
+- **Breaking (cook, format): cooked textures are Zstd-supercompressed by default** (see Added).
+  - The default settings hash, so every default texture store key and `cookHash`, changed once;
+    with `supercompression = None` the hash is the one from before, and so is the file.
+  - `Ktx2View::level_data()` of a supercompressed file returns the Zstd frames: tools that read
+    texels from it call `decode_level()` (plain files decode by copying).
+  - The texture goldens are Zstd files now.
+  - Migration: a host whose loader is not kiln's own, or a tool that reads cooked KTX2 without
+    Zstd support, sets `supercompression = None` (or `kiln-cook --zstd 0`). Existing named-layout
+    stores keep their uncompressed files until deleted (open-questions R9); both load.
 - **Breaking (cook): the default target cooks block-compressed textures.** `TargetProfile::blockFamily`
   defaults to `BC` (docs/design/bcn-encoding.md, step 5): color, UI and ORM become BC7, normals BC5,
   masks BC4/BC5, HDR BC6H. `kiln-cook --block` defaults to `bc`.

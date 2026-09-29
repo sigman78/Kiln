@@ -151,7 +151,7 @@ void leave_group(Context* ctx, Slot& s) noexcept {
 
 void free_meta_set(Allocator const* a, MetaSet& m) noexcept {
     m.meta.release();
-    if (m.layout) free_array(a, m.layout, usize(m.layoutLevels) * 4, Tag::Payload);
+    if (m.layout) free_array(a, m.layout, usize(m.layoutLevels) * kLayoutColumns, Tag::Payload);
     m = {};
 }
 

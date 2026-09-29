@@ -2,6 +2,7 @@
 // Design: docs/design/hdr-textures.md.
 #include "hdr_writer.h"
 #include "kiln_test.h"
+#include "ktx2_corpus.h" // texels
 #include "png_writer.h"
 
 #include "kiln/cook/cook.h"
@@ -217,7 +218,9 @@ KILN_TEST(Hdr, CooksToRgba16f) {
     KILN_CHECK_EQ(v->desc().levels, 3u);
     Result<Image> src = decode_hdr(f.span(), default_allocator());
     KILN_REQUIRE(src.ok());
-    Span<u8 const> const l0 = v->level_data(0);
+    Vec<u8> const t0        = kiln::test::corpus::texels(*v, 0);
+    Span<u8 const> const l0 = t0.span();
+    KILN_REQUIRE(l0.size >= 16 * 8);
     for (u32 i = 0; i < 16; ++i) {
         for (u32 c = 0; c < 3; ++c)
             KILN_CHECK_EQ(half_at(l0, i, c), float_to_half(pixel(*src, i % 4, i / 4, c)));
@@ -227,7 +230,7 @@ KILN_TEST(Hdr, CooksToRgba16f) {
     f32 const avg =
         ((pixel(*src, 0, 0, 0) + pixel(*src, 1, 0, 0)) + (pixel(*src, 0, 1, 0) + pixel(*src, 1, 1, 0))) *
         0.25f;
-    KILN_CHECK_EQ(half_at(v->level_data(1), 0, 0), float_to_half(avg));
+    KILN_CHECK_EQ(half_at(kiln::test::corpus::texels(*v, 1).span(), 0, 0), float_to_half(avg));
     write_sample("hdr", r->file.span());
 }
 
@@ -252,7 +255,8 @@ KILN_TEST(Hdr, UsageRules) {
     KILN_CHECK(w.code == kDiagImageNoHdrRange && w.sev == Severity::Warning);
     Result<ktx2::Ktx2View> v = ktx2::Ktx2View::open(r->file.span());
     KILN_REQUIRE(v.ok());
-    KILN_CHECK_EQ(half_at(v->level_data(0), 1, 0), float_to_half(f32(rgba[4]) / 255.0f));
+    KILN_CHECK_EQ(half_at(kiln::test::corpus::texels(*v, 0).span(), 1, 0),
+                  float_to_half(f32(rgba[4]) / 255.0f));
 }
 
 // A .hdr strip cooks into an HDR cube like any other strip.

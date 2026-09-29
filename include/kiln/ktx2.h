@@ -1,7 +1,8 @@
 // kiln/ktx2.h — minimal zero-copy KTX2 reader (kiln_runtime): header, level index, DFD, KVD.
-// v0.5 scope: 2D textures, optionally arrays and cubes; no supercompression.
+// Scope: 2D textures, optionally arrays and cubes; levels plain or Zstd-supercompressed.
 #pragma once
 
+#include "kiln/alloc.h"
 #include "kiln/core.h"
 #include "kiln/formats.h"
 #include "kiln/result.h"
@@ -64,9 +65,10 @@ enum DiagCode : u32 {
     kDiagKtxTypeSize         = 4104, ///< typeSize inconsistent with the format
     kDiagKtxDimensions       = 4105, ///< width/height/depth/faces/levels invalid or unsupported
     kDiagKtxLevelIndex       = 4106, ///< offset/length out of file, misaligned, size mismatch, order
-    kDiagKtxSupercompression = 4107, ///< supercompression scheme not supported
+    kDiagKtxSupercompression = 4107, ///< supercompression scheme not supported (only Zstd is)
     kDiagKtxDfd              = 4108, ///< malformed data format descriptor
     kDiagKtxKvd              = 4109, ///< malformed key/value data
+    kDiagKtxLevelDecode      = 4110, ///< a Zstd level is not one frame of uncompressedByteLength bytes
 };
 
 /// Engine-facing description of the texture. All counts are >= 1.
@@ -116,9 +118,21 @@ public:
     /// Bytes of one face/layer image at `level` (all depth slices), tightly packed.
     [[nodiscard]] u64 level_image_bytes(u32 level) const noexcept;
 
-    /// Raw bytes of level `level` (all layers and faces) if the span given to open()
-    /// contained them, else empty.
+    /// True when every level is one Zstd frame (supercompressionScheme 2). level_data() then
+    /// holds the frames; decode_level() gives the texels.
+    [[nodiscard]] bool supercompressed() const noexcept { return header_.supercompressionScheme != 0; }
+
+    /// Stored bytes of level `level` (all layers and faces) if the span given to open()
+    /// contained them, else empty. Compressed when supercompressed().
     [[nodiscard]] Span<u8 const> level_data(u32 level) const noexcept;
+
+    /// Writes the texels of level `level` into `out`, which must hold exactly
+    /// levels()[level].uncompressedByteLength bytes. Copies them when the file is not
+    /// supercompressed. The Zstd decoder takes its memory from `alloc` (Tag::Io; nullptr is
+    /// default_allocator()). InvalidArgument: wrong `out` size, or the level is not in the span.
+    /// Corrupt (K4110): the stored bytes do not decode to the level.
+    [[nodiscard]] Status decode_level(u32 level, Span<u8> out, Allocator const* alloc = nullptr,
+                                      DiagSink const* diag = nullptr, StrView assetName = {}) const noexcept;
 
     /// True when the span given to open() contained the data of every level.
     [[nodiscard]] bool has_all_level_data() const noexcept;

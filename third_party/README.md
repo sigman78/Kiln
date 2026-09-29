@@ -4,7 +4,8 @@ The cook entries are used by `kiln_cook` via the static helper library
 `kiln_third_party_cook` defined in `third_party/CMakeLists.txt`; the viewer entries are used
 only by the example executables under `examples/viewer/`. None of these reach `kiln_runtime`,
 the shipping install, or `kiln_cook`'s own installed/consumer-facing interface â€” see `docs/design/dependencies.md` and
-`docs/design/shipping-split.md`.
+`docs/design/shipping-split.md`. The one exception is zstd's decoder, which `kiln_runtime` links
+(`third_party/zstd/CMakeLists.txt`, the runtime-side dependency rule in `dependencies.md`).
 
 | Dependency | Version/commit | License | Used by | Notes |
 |---|---|---|---|---|
@@ -14,6 +15,7 @@ the shipping install, or `kiln_cook`'s own installed/consumer-facing interface â
 | [meshoptimizer](https://github.com/zeux/meshoptimizer) | `v1.3`, commit `9e1f07b159d3cb777f1c67ed31fc11fd117986f4` | MIT | `kiln_cook` (mesh optimization: vertex cache / overdraw / vertex fetch; `KILN_MESH=ON` only, not fetched otherwise) | `FetchContent`, pinned to the commit hash (never a floating tag/branch), declared in `third_party/CMakeLists.txt`. Options: `MESHOPT_BUILD_DEMO=OFF`, `MESHOPT_BUILD_GLTFPACK=OFF`, `MESHOPT_BUILD_SHARED_LIBS=OFF`, `MESHOPT_INSTALL=OFF` (kiln installs the target itself, into the `kilnCookTargets` export set, instead). `FETCHCONTENT_UPDATES_DISCONNECTED=ON` for reproducible offline rebuilds after the first fetch. |
 | [bc7enc_rdo](https://github.com/richgel999/bc7enc_rdo) | master of 2026-07-30, commit `b9438627eef73a1157e84201b6fa6eb2ffd6d9f0` | MIT or public domain (Unlicense), kiln takes MIT | `kiln_cook` (BC1/3/4/5 with `rgbcx`, BC7 with `bc7enc`) | Vendored `rgbcx.cpp/.h`, `rgbcx_table4_small.h`, `bc7enc.cpp/.h` and `LICENSE` in `third_party/bc7enc_rdo/`, compiled into `kiln_third_party_cook` with `RGBCX_USE_SMALLER_TABLES=1` (PUBLIC: it changes `rgbcx.h`) and `-ffp-contract=off`. The large `rgbcx_table4.h` and the ISPC, RDO and PNG files of the repository are not vendored. |
 | [ISPC Texture Compressor](https://github.com/GameTechDev/ISPCTextureCompressor) (BC6H only) | commit `79ddbc90334fc31edd438e68ccb0fe99b4e15aab` (repository archived) | MIT | `kiln_cook` (BC6H) | **A port, not a copy:** `third_party/ispc_bc6h/ispc_bc6h.cpp/.h` translate the BC6H part of `ispc_texcomp/kernel.ispc` (and the helpers it uses) to scalar C++, with the upstream `license.txt` as `LICENSE`. The arithmetic follows the ISPC code exactly (float literals, truncations, x86 float-to-int conversion), and the output was checked byte-identical to the ISPC build (sse4 target) on HDR test images. Compiled with `-ffp-contract=off`. |
+| [zstd](https://github.com/facebook/zstd) | `v1.5.7`, commit `f8745da6ff1ad1e7bab384bd1f9d742439278e99` | BSD-3-Clause (dual BSD/GPLv2 upstream; kiln takes the BSD terms) | `kiln_runtime` (decoder, `kiln_zstd`), `kiln_cook` (encoder, `kiln_zstd_enc`): Zstd-supercompressed KTX2 | Vendored `lib/zstd.h`, `lib/zstd_errors.h`, `lib/common/`, `lib/compress/`, `lib/decompress/` and `LICENSE` in `third_party/zstd/`, without the multithreading sources (`zstdmt_compress.c`, `pool.c`, `threading.c`) and the x86-64 assembly (`huf_decompress_amd64.S`). Built by `third_party/zstd/CMakeLists.txt` with `ZSTD_DISABLE_ASM=1 ZSTD_LEGACY_SUPPORT=0`, quietly; both libraries are installed in the export sets of the targets that link them. |
 | [bcdec](https://github.com/iOrange/bcdec) | commit `80859ed3b7afb1c527a2a99d70c61457bea72d0c` (v0.985) | MIT or public domain (Unlicense), kiln takes MIT | `kiln_tests` only (`kiln_bcdec`, an INTERFACE target) | Vendored `bcdec.h` and `LICENSE` in `third_party/bcdec/`; never linked into a kiln library. |
 | [Vulkan-Headers](https://github.com/KhronosGroup/Vulkan-Headers) | `vulkan-sdk-1.4.357.0`, commit `e3b1eec08173d6b825cd3ac88c885a63b621504a` | Apache-2.0 / MIT | `kiln-viewer`, `kiln-vk-smoke` (examples only) | `FetchContent` in `examples/viewer/CMakeLists.txt`, `SYSTEM`; only when `KILN_BUILD_VIEWER=ON`. Never reaches a library target. |
 | [volk](https://github.com/zeux/volk) | commit `7f46f79751d7e3b3a6df20e38d3e3986585bcdf4` (1.4.364) | MIT | `kiln-viewer`, `kiln-vk-smoke` (examples only) | `FetchContent`, `SYSTEM`; loads Vulkan entry points at runtime, no loader link. |
@@ -75,6 +77,16 @@ done
 gh api repos/iOrange/bcdec/commits/main --jq .sha
 curl -sL -o third_party/bcdec/bcdec.h "https://raw.githubusercontent.com/iOrange/bcdec/80859ed3b7afb1c527a2a99d70c61457bea72d0c/bcdec.h"
 curl -sL -o third_party/bcdec/LICENSE "https://raw.githubusercontent.com/iOrange/bcdec/80859ed3b7afb1c527a2a99d70c61457bea72d0c/LICENSE"
+
+# zstd: the v1.5.7 tag is annotated; resolve it to the commit, then copy lib/ from that checkout
+gh api repos/facebook/zstd/git/ref/tags/v1.5.7 --jq .object.sha                 # -> tag object
+gh api repos/facebook/zstd/git/tags/<tag-object-sha> --jq .object.sha           # -> commit f8745da6...
+git clone --depth 1 --branch v1.5.7 https://github.com/facebook/zstd.git zstd-src
+mkdir -p third_party/zstd/lib && cp zstd-src/LICENSE third_party/zstd/
+cp zstd-src/lib/zstd.h zstd-src/lib/zstd_errors.h third_party/zstd/lib/
+cp -r zstd-src/lib/common zstd-src/lib/compress zstd-src/lib/decompress third_party/zstd/lib/
+rm third_party/zstd/lib/decompress/huf_decompress_amd64.S third_party/zstd/lib/compress/zstdmt_compress.c \
+   third_party/zstd/lib/common/pool.c third_party/zstd/lib/common/threading.c
 
 # ISPC Texture Compressor: source of the BC6H port (third_party/ispc_bc6h), and its license
 curl -sL -o third_party/ispc_bc6h/LICENSE "https://raw.githubusercontent.com/GameTechDev/ISPCTextureCompressor/79ddbc90334fc31edd438e68ccb0fe99b4e15aab/license.txt"

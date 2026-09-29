@@ -56,6 +56,13 @@ Status set_u32(TomlEntry const& e, u32& field, KeyError const& err) noexcept {
     return kOk;
 }
 
+Status set_zstd_level(TomlEntry const& e, u8& field, KeyError const& err) noexcept {
+    if (e.type != TomlType::Int) return err(e, "expected an integer");
+    if (e.i < 0 || e.i > i64(kMaxZstdLevel)) return err(e, "out of range (0..19)");
+    field = u8(e.i);
+    return kOk;
+}
+
 /// An integer is accepted where a float is expected: `posTolMm = 1` reads as 1.0.
 Status set_f32(TomlEntry const& e, f32& field, KeyError const& err) noexcept {
     if (e.type == TomlType::Int)
@@ -104,6 +111,10 @@ constexpr EnumName<EncodeQuality> kQualities[] = {
     {"normal", EncodeQuality::Normal},
     {"high",   EncodeQuality::High  },
 };
+constexpr EnumName<Supercompression> kSupercompressions[] = {
+    {"none", Supercompression::None},
+    {"zstd", Supercompression::Zstd},
+};
 constexpr EnumName<VertexProfile> kProfiles[] = {
     {"default", VertexProfile::Default},
     {"precise", VertexProfile::Precise},
@@ -121,6 +132,8 @@ Status set_field(TomlEntry const& e, TextureCookSettings& s, KeyError const& err
     if (e.key == "encoding") return set_enum(e, kEncodings, s.encoding, err);
     if (e.key == "quality") return set_enum(e, kQualities, s.quality, err);
     if (e.key == "slices") return set_u32(e, s.slices, err);
+    if (e.key == "supercompression") return set_enum(e, kSupercompressions, s.supercompression, err);
+    if (e.key == "zstdLevel") return set_zstd_level(e, s.zstdLevel, err);
     return err(e, "unknown key for a texture");
 }
 

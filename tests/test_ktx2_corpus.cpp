@@ -51,11 +51,13 @@ void check_ok_file(corpus::Entry const& e, Span<u8 const> bytes) {
     u64 const images = u64(d.faces) * d.layers;
     for (u32 i = 0; i < li.size; ++i) {
         u64 const want = v.level_image_bytes(i) * images;
-        KILN_CHECK_MSG(want != 0 && li[i].byteLength == want, "%s: level %u byteLength %llu, expected %llu",
-                       name, i, static_cast<unsigned long long>(li[i].byteLength),
+        KILN_CHECK_MSG(want != 0 && li[i].uncompressedByteLength == want,
+                       "%s: level %u uncompressedByteLength %llu, expected %llu", name, i,
+                       static_cast<unsigned long long>(li[i].uncompressedByteLength),
                        static_cast<unsigned long long>(want));
         KILN_CHECK_MSG(v.level_data(i).size == li[i].byteLength, "%s: level %u data span %zu bytes", name, i,
                        v.level_data(i).size);
+        KILN_CHECK_MSG(corpus::texels(v, i).size() == want, "%s: level %u does not decode", name, i);
         if (i > 0)
             KILN_CHECK_MSG(li[i].byteOffset + li[i].byteLength <= li[i - 1].byteOffset,
                            "%s: level %u (offset %llu) not stored before level %u (offset %llu)", name, i,
@@ -139,4 +141,20 @@ KILN_TEST(Ktx2Corpus, Manifest) {
     }
     KILN_CHECK(okCount > 0);
     KILN_CHECK(unsupportedCount > 0);
+}
+
+// libktx's Zstd file and its plain sibling come from the same PNG: their level 0 texels match
+// (the mips differ: sRGB vs linear filtering).
+KILN_TEST(Ktx2Corpus, ZstdMatchesPlainSibling) {
+    char path[1024];
+    Vec<u8> zbytes(default_allocator(), Tag::Test), pbytes(default_allocator(), Tag::Test);
+    format(path, sizeof path, "%s/generated/rgba8_srgb_mip_zstd.ktx2", kiln::test::corpus_dir());
+    KILN_REQUIRE(corpus::read_file(path, zbytes));
+    format(path, sizeof path, "%s/generated/rgba8_unorm_mip.ktx2", kiln::test::corpus_dir());
+    KILN_REQUIRE(corpus::read_file(path, pbytes));
+    Result<Ktx2View> z = Ktx2View::open(zbytes.span());
+    Result<Ktx2View> p = Ktx2View::open(pbytes.span());
+    KILN_REQUIRE(z.ok() && p.ok());
+    KILN_CHECK(z->supercompressed() && !p->supercompressed());
+    KILN_CHECK(corpus::bytes_equal(corpus::texels(*z, 0).span(), p->level_data(0)));
 }

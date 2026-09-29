@@ -79,6 +79,22 @@ int main() {
         check(k->level_data(0).size == 1 && k->level_data(0)[0] == 0x7f, "ktx2 level data");
     }
 
+    // The same image with its level as a Zstd frame: the installed runtime carries the decoder.
+    constexpr u8 kFrame[] = {0x28, 0xB5, 0x2F, 0xFD, 0x20, 0x01, 0x09, 0x00, 0x00, 0x7f}; // one raw block
+    alignas(8) u8 zk[148 + sizeof kFrame] = {};
+    std::memcpy(zk, ktx, 148);
+    std::memcpy(zk + 148, kFrame, sizeof kFrame);
+    u32 const zstd = 2;
+    u64 const len  = sizeof kFrame;
+    std::memcpy(zk + 44, &zstd, 4); // supercompression
+    std::memcpy(zk + 88, &len, 8);  // byteLength
+    Result<ktx2::Ktx2View> z = ktx2::Ktx2View::open(Span<u8 const>(zk, sizeof zk));
+    check(z.ok() && z->supercompressed(), "ktx2 reader opens a Zstd image");
+    if (z.ok()) {
+        u8 px = 0;
+        check(z->decode_level(0, Span<u8>(&px, 1)).ok() && px == 0x7f, "ktx2 Zstd level decodes");
+    }
+
     KILN_INFO("consumer", "shipping consumer: %d failure(s)", fails);
     return fails ? 1 : 0;
 }

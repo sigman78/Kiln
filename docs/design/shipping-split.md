@@ -19,9 +19,9 @@ A product that ships pre-cooked assets links **`kiln_core` + `kiln_runtime` only
 - `kiln_runtime` reaches cooking only through the `CookProvider` function-pointer table that
   `kiln::cook::install_provider` registers. The provider is the only seam, and it is absent by
   construction when `kiln_cook` is not linked.
-- Third-party code inside `kiln_runtime`: **none in v0.5**. Later, only decoders (zstd
-  decode-only, meshoptimizer's vertex/index decoder sources, per `dependencies.md`), built from
-  source with kiln's own flags.
+- Third-party code inside `kiln_runtime`: only decoders, built from source (`dependencies.md`).
+  Since 2026-09-29 that is zstd's decoder (`kiln_zstd`, for Zstd-supercompressed KTX2), installed
+  with the runtime; meshoptimizer's decoder sources may follow.
 - `kiln-info` is read-only and links only `kiln_runtime`. It installs with the runtime, but the
   shipping presets do not build tools.
 

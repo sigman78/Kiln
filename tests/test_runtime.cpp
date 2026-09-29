@@ -13,6 +13,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <initializer_list>
 #include <thread>
 
@@ -396,8 +397,61 @@ KILN_TEST(Runtime, LoadMesh) {
     release(rt.ctx, m3);
 }
 
-// Tight rows and a 256-byte row pitch.
+namespace {
+
+/// The uploaded texture `t` holds the texels of `file`, rows padded to the adapter's pitch.
+void check_uploaded(Rt& rt, TextureHandle t, Span<u8 const> file, u64 pitchAlign, char const* what) {
+    Result<ktx2::Ktx2View> kv = ktx2::Ktx2View::open(file);
+    KILN_REQUIRE(kv.ok());
+    ktx2::TextureDesc const want = kv->desc();
+
+    TextureInfo const ti = texture_info(rt.ctx, t);
+    KILN_CHECK(!ti.isPlaceholder);
+    KILN_CHECK_EQ(ti.version, 1u);
+    KILN_CHECK_EQ(ti.desc.format, want.format);
+    KILN_CHECK_EQ(ti.desc.width, want.width);
+    KILN_CHECK_EQ(ti.desc.height, want.height);
+    KILN_CHECK_EQ(ti.desc.levels, want.levels);
+    KILN_REQUIRE_EQ(ti.levelOffsets.size, usize(want.levels));
+    KILN_REQUIRE_EQ(ti.levelRowPitches.size, usize(want.levels));
+    KILN_CHECK(want.levels > 1);
+
+    Span<u8 const> payload = null_adapter_payload(rt.na, ti.gpu);
+    KILN_REQUIRE(!payload.empty());
+    for (u32 i = 0; i < want.levels; ++i) {
+        u64 const off   = ti.levelOffsets[i];
+        u64 const pitch = ti.levelRowPitches[i];
+        KILN_CHECK_EQ(off % 64, u64(0));
+        if (i > 0) KILN_CHECK(off > ti.levelOffsets[i - 1]);
+        KILN_CHECK_EQ(pitch % pitchAlign, u64(0));
+        u64 const rowBytes     = format_row_bytes(want.format, kv->level_width(i));
+        u32 const rows         = kv->level_height(i);
+        Vec<u8> const texels   = test::corpus::texels(*kv, i);
+        Span<u8 const> const L = texels.span();
+        KILN_REQUIRE_EQ(L.size, usize(rowBytes * rows));
+        KILN_REQUIRE(off + pitch * rows <= payload.size);
+        bool same = true;
+        for (u32 r = 0; r < rows; ++r)
+            same =
+                same && bytes_equal(payload.data + off + r * pitch, L.data + r * rowBytes, usize(rowBytes));
+        KILN_CHECK_MSG(same, "%s: level %u rows differ (pitch align %llu)", what, i,
+                       static_cast<unsigned long long>(pitchAlign));
+    }
+}
+
+} // namespace
+
+// Tight rows and a 256-byte row pitch; Zstd levels (the cooked golden, libktx's file) and plain ones,
+// from the store and from memory.
 KILN_TEST(Runtime, LoadTexture) {
+    Vec<u8> golden(default_allocator(), Tag::Test), zstd(default_allocator(), Tag::Test),
+        plain(default_allocator(), Tag::Test);
+    if (!read_golden("ktx2/color_srgb", ".ktx2", golden)) return;
+    char path[1024];
+    format(path, sizeof path, "%s/generated/rgba8_srgb_mip_zstd.ktx2", test::corpus_dir());
+    KILN_REQUIRE(test::corpus::read_file(path, zstd));
+    format(path, sizeof path, "%s/generated/rgba8_unorm_mip.ktx2", test::corpus_dir());
+    KILN_REQUIRE(test::corpus::read_file(path, plain));
     for (u64 pitchAlign : {u64(1), u64(256)}) {
         Rt rt;
         NullAdapterDesc nd;
@@ -407,50 +461,43 @@ KILN_TEST(Runtime, LoadTexture) {
         TextureHandle t = request_texture(rt.ctx, "ktx2/color_srgb");
         KILN_REQUIRE(!t.is_null());
         KILN_CHECK(texture_info(rt.ctx, t).isPlaceholder);
-        KILN_REQUIRE(rt.pump_until([&] { return is_ready(rt.ctx, t); }));
+        TextureHandle tz = register_texture(rt.ctx, "gen/zstd", zstd.span());
+        TextureHandle tp = register_texture(rt.ctx, "gen/plain", plain.span());
+        KILN_REQUIRE(!tz.is_null() && !tp.is_null());
+        KILN_REQUIRE(rt.pump_until(
+            [&] { return is_ready(rt.ctx, t) && is_ready(rt.ctx, tz) && is_ready(rt.ctx, tp); }));
         int const meta  = rt.find_event(EventKind::MetaReady, t.bits());
         int const ready = rt.find_event(EventKind::Ready, t.bits());
         KILN_CHECK(meta >= 0 && ready > meta);
 
-        Vec<u8> file(default_allocator(), Tag::Test);
-        if (!read_golden("ktx2/color_srgb", ".ktx2", file)) return;
-        Result<ktx2::Ktx2View> kv = ktx2::Ktx2View::open(file.span());
-        KILN_REQUIRE(kv.ok());
-        ktx2::TextureDesc const want = kv->desc();
-
-        TextureInfo const ti = texture_info(rt.ctx, t);
-        KILN_CHECK(!ti.isPlaceholder);
-        KILN_CHECK_EQ(ti.version, 1u);
-        KILN_CHECK_EQ(ti.desc.format, want.format);
-        KILN_CHECK_EQ(ti.desc.width, want.width);
-        KILN_CHECK_EQ(ti.desc.height, want.height);
-        KILN_CHECK_EQ(ti.desc.levels, want.levels);
-        KILN_REQUIRE_EQ(ti.levelOffsets.size, usize(want.levels));
-        KILN_REQUIRE_EQ(ti.levelRowPitches.size, usize(want.levels));
-        KILN_CHECK(want.levels > 1);
-
-        Span<u8 const> payload = null_adapter_payload(rt.na, ti.gpu);
-        KILN_REQUIRE(!payload.empty());
-        for (u32 i = 0; i < want.levels; ++i) {
-            u64 const off   = ti.levelOffsets[i];
-            u64 const pitch = ti.levelRowPitches[i];
-            KILN_CHECK_EQ(off % 64, u64(0));
-            if (i > 0) KILN_CHECK(off > ti.levelOffsets[i - 1]);
-            KILN_CHECK_EQ(pitch % pitchAlign, u64(0));
-            u64 const rowBytes     = format_row_bytes(want.format, kv->level_width(i));
-            u32 const rows         = kv->level_height(i);
-            Span<u8 const> const L = kv->level_data(i);
-            KILN_REQUIRE_EQ(L.size, usize(rowBytes * rows));
-            KILN_REQUIRE(off + pitch * rows <= payload.size);
-            bool same = true;
-            for (u32 r = 0; r < rows; ++r)
-                same = same &&
-                       bytes_equal(payload.data + off + r * pitch, L.data + r * rowBytes, usize(rowBytes));
-            KILN_CHECK_MSG(same, "level %u rows differ (pitch align %llu)", i,
-                           static_cast<unsigned long long>(pitchAlign));
-        }
+        Result<ktx2::Ktx2View> const gv = ktx2::Ktx2View::open(golden.span());
+        KILN_CHECK(gv.ok() && gv->supercompressed()); // the cook's default
+        check_uploaded(rt, t, golden.span(), pitchAlign, "store golden");
+        check_uploaded(rt, tz, zstd.span(), pitchAlign, "libktx zstd");
+        check_uploaded(rt, tp, plain.span(), pitchAlign, "plain");
         release(rt.ctx, t);
+        release(rt.ctx, tz);
+        release(rt.ctx, tp);
     }
+}
+
+// A Zstd level that does not decode fails the asset at upload; the message carries the reason.
+KILN_TEST(Runtime, LoadTextureBadZstdFrame) {
+    Vec<u8> zstd(default_allocator(), Tag::Test);
+    char path[1024];
+    format(path, sizeof path, "%s/generated/rgba8_srgb_mip_zstd.ktx2", test::corpus_dir());
+    KILN_REQUIRE(test::corpus::read_file(path, zstd));
+    Result<ktx2::Ktx2View> kv = ktx2::Ktx2View::open(zstd.span());
+    KILN_REQUIRE(kv.ok());
+    zstd[usize(kv->levels()[0].byteOffset) + 5] ^= 0xFF; // inside level 0's frame header
+    Rt rt;
+    if (!rt.init()) return;
+    TextureHandle t = register_texture(rt.ctx, "gen/bad", zstd.span());
+    KILN_REQUIRE(!t.is_null());
+    KILN_REQUIRE(rt.pump_until([&] { return state(rt.ctx, t) == State::Failed; }));
+    KILN_CHECK(rt.diags.has(kDiagAssetLoadFailed));
+    KILN_CHECK_MSG(std::strstr(rt.diags.last, "does not decode") != nullptr, "%s", rt.diags.last);
+    release(rt.ctx, t);
 }
 
 KILN_TEST(Runtime, GoldenFolderGroupWait) {

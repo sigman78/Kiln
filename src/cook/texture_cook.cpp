@@ -37,12 +37,9 @@ Result<CookedTexture> pass_through(TextureSource const& src, CookShape shape, u3
     Result<ktx2::Ktx2View> r = ktx2::Ktx2View::open(src.bytes, diag, asset);
     if (r.failed())
         return fail(diag, asset, r.status(), kDiagImagePassthroughBad,
-                    "KTX2 source rejected by the reader (supercompressed, 3D or invalid)");
+                    "KTX2 source rejected by the reader (BasisLZ or Zlib, 3D or invalid)");
     ktx2::Ktx2View const& view = r.value();
     ktx2::TextureDesc const d  = view.desc();
-    if (view.header().supercompressionScheme != 0)
-        return fail(diag, asset, make_status(Code::Unsupported), kDiagImagePassthroughBad,
-                    "supercompressed KTX2 cannot be passed through");
     if (d.depth > 1 || (d.isArray && d.isCube))
         return fail(diag, asset, make_status(Code::Unsupported), kDiagImagePassthroughBad,
                     "only 2D, cube and array KTX2 can be passed through (depth %llu, cube array %llu)",
@@ -378,6 +375,9 @@ Result<CookedTexture> cook_decoded(TextureSource const& src, TextureCookSettings
         .writerTag          = "kiln-cook",
         .premultipliedAlpha = false,
         .extraKeys          = extra,
+        .zstdLevel          = settings.supercompression != Supercompression::Zstd ? 0u
+                              : settings.zstdLevel != 0                           ? u32(settings.zstdLevel)
+                                                                                  : u32(kDefaultZstdLevel),
     };
     detail::Stopwatch const swWrite;
     KILN_TRY_ASSIGN(Vec<u8> file, ktx2::write(wd, alloc, diag));

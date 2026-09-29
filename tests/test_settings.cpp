@@ -310,11 +310,42 @@ KILN_TEST(Settings, TextureHashIdenticalStructsEqual) {
     KILN_CHECK_EQ(hash_settings(a), hash_settings(b));
 }
 
-// Pinned against a reference build. A deliberate TextureCookSettings change must also bump
-// kTextureSettingsSchema (docs/design/settings.md), so old store entries miss instead of misreading.
+// Pinned against a reference build. A deliberate TextureCookSettings change must also change the
+// hash (bump kTextureSettingsSchema, or hash the new field with a tag; docs/design/settings.md), so
+// old store entries miss instead of misreading.
 KILN_TEST(Settings, TextureDefaultHashIsPinned) {
     TextureCookSettings defaults{};
-    KILN_CHECK_EQ(hash_settings(defaults), u64(0x7ef735bb784af79aull)); // schema 2: shape, slices
+    KILN_CHECK_EQ(hash_settings(defaults), u64(0x9982984a473fe444ull)); // schema 2 + Zstd by default
+    // Without Zstd the hash is the one from before supercompression: those files did not change.
+    defaults.supercompression = Supercompression::None;
+    KILN_CHECK_EQ(hash_settings(defaults), u64(0x7ef735bb784af79aull));
+}
+
+KILN_TEST(Settings, TextureZstdLevelResolution) {
+    TargetProfile const target{};
+    Result<TextureCookSettings> r = resolve_texture({}, SlotHint::None, target, {});
+    KILN_REQUIRE(r.ok());
+    KILN_CHECK(r->supercompression == Supercompression::Zstd);
+    KILN_CHECK_EQ(u32(r->zstdLevel), u32(kDefaultZstdLevel));
+
+    r = resolve_texture({.zstdLevel = 9}, SlotHint::None, target, {});
+    KILN_REQUIRE(r.ok());
+    KILN_CHECK_EQ(u32(r->zstdLevel), 9u);
+
+    r = resolve_texture({.zstdLevel = 9}, SlotHint::None, target, {.fastPreview = true});
+    KILN_REQUIRE(r.ok());
+    KILN_CHECK_EQ(u32(r->zstdLevel), u32(kPreviewZstdLevel));
+
+    r = resolve_texture({.supercompression = Supercompression::None, .zstdLevel = 9}, SlotHint::None, target,
+                        {});
+    KILN_REQUIRE(r.ok());
+    KILN_CHECK_EQ(u32(r->zstdLevel), 0u); // canonical: the level of no compression is 0
+
+    r = resolve_texture({.zstdLevel = kMaxZstdLevel + 1}, SlotHint::None, target, {});
+    KILN_CHECK(r.code() == Code::InvalidArgument);
+
+    r = resolve_texture({.supercompression = Supercompression(7)}, SlotHint::None, target, {});
+    KILN_CHECK(r.code() == Code::InvalidArgument);
 }
 
 namespace {
@@ -342,6 +373,14 @@ TextureCookSettings tex_mut_flipGreen(TextureCookSettings s) {
     s.flipGreen = !s.flipGreen;
     return s;
 }
+TextureCookSettings tex_mut_supercompression(TextureCookSettings s) {
+    s.supercompression = Supercompression::None;
+    return s;
+}
+TextureCookSettings tex_mut_zstdLevel(TextureCookSettings s) {
+    s.zstdLevel = 9;
+    return s;
+}
 
 struct TexMutation {
     char const* field;
@@ -355,6 +394,8 @@ TexMutation const kTexMutations[] = {
     {"normalRenormalize", &tex_mut_normalRenormalize},
     {"maxSize",           &tex_mut_maxSize          },
     {"flipGreen",         &tex_mut_flipGreen        },
+    {"supercompression",  &tex_mut_supercompression },
+    {"zstdLevel",         &tex_mut_zstdLevel        },
 };
 } // namespace
 
