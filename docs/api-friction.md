@@ -203,6 +203,10 @@ rediscover them). The design and the mapping tables are in `design/integration-e
   any order, space back in reservation order, `can_fit()` to tell Unsupported from Busy). `kiln-gl`
   and `kiln-nga` dropped their identical copies (about 40 lines net each). The Vulkan adapter keeps its
   timeline-value ring for now.
-- Still candidates: a generation-checked pool for upload tickets and a bounded committed-work
-  queue (GL, sokol, NGA), and an `Allocator` plus stats in every adapter desc. Promote any of them
+- Second: `ex::UploadPool<T>`, the records behind upload tokens. One `UploadState` per upload
+  replaced up to five bools per adapter (GL's `committed` was written and never read), and
+  `advance()` asserts each transition; tokens are generation-checked. `kiln-gl`, `kiln-sokol` and
+  `kiln-nga` use it. Vulkan keeps its `ObjectState`, since its upload and object records are one.
+- Still candidates: a bounded committed-work queue (GL, sokol, NGA), and an `Allocator` plus stats
+  in every adapter desc. Promote any of them
   into the library only after they prove themselves here.

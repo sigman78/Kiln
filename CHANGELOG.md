@@ -10,8 +10,11 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
 ### Added
 - `examples/adapter_support` (`kiln_example_adapter_support`): CPU-only helpers the example
   adapters share, starting with `ex::StagingRing`, a FIFO allocator for upload staging memory
-  whose ranges may be released in any order. `kiln-gl` and `kiln-nga` use it instead of their
-  copies of the same code; its tests (`kiln_adapter_support_tests`) run with the default CI.
+  whose ranges may be released in any order, and `ex::UploadPool<T>`, upload records with one
+  `UploadState` each (Free, Writing, Committed, InFlight, Complete, Failed; transitions asserted)
+  and generation-checked tokens. `kiln-gl` and `kiln-nga` use both, `kiln-sokol` the pool, in
+  place of their copies of the same code and of per-upload `used` / `committed` / `flushed` /
+  `done` / `failed` flags; the tests (`kiln_adapter_support_tests`) run with the default CI.
 - Hardening: `checked_add` / `checked_mul` and the `NothrowStorable` concept (`core.h`);
   `alloc_array`, `Vec` and `HashMap` panic on size overflow instead of allocating short, and
   `alloc()` panics on an alignment that is not a power of two. CMake `KILN_SANITIZE` (e.g.

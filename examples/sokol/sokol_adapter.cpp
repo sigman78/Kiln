@@ -7,6 +7,8 @@
 #include <kiln/containers.h>
 #include <kiln/log.h>
 
+#include "upload_pool.h"
+
 #include <mutex>
 
 namespace kiln::sk {
@@ -24,11 +26,8 @@ struct Object {
     bool used = false;
 };
 
+/// One upload's data; its state and token are the pool's (ex::UploadPool).
 struct Upload {
-    u32 gen         = 1;
-    bool used       = false;
-    bool done       = false;
-    bool failed     = false; ///< make_object() failed
     u32 object      = 0;
     UploadKind kind = UploadKind::MeshPayload;
     TextureDesc tex{};
@@ -67,30 +66,17 @@ struct SokolAdapter {
     std::mutex mutex;
     Vec<Object> objects;
     Vec<u32> freeObjects;
-    Vec<Upload> uploads;
-    Vec<u32> freeUploads;
+    ex::UploadPool<Upload> uploads;
     Vec<u32> committed; ///< upload indices waiting for flush, in commit order
     Vec<u32> flushing;  ///< flush's copy of `committed`
 };
 
 namespace {
 
-Upload* upload_of(SokolAdapter* a, u64 token) noexcept {
-    u32 const index = u32(token & 0xFFFFFFFFu) - 1;
-    if (index >= a->uploads.size()) return nullptr;
-    Upload& u = a->uploads[index];
-    return u.used && u.gen == u32(token >> 32) ? &u : nullptr;
-}
-
-/// Frees an upload record and its bytes; the caller holds no lock.
-void free_upload(SokolAdapter* a, u32 index) noexcept {
-    Upload& u = a->uploads[index];
+/// Frees the bytes kiln wrote; sokol has copied them, or never will.
+void free_bytes(Upload& u) noexcept {
     kiln::free(default_allocator(), u.bytes, usize(max<u64>(u.size, 1)), 16, Tag::Payload);
-    std::lock_guard<std::mutex> const lock(a->mutex);
     u.bytes = nullptr;
-    u.used  = false;
-    ++u.gen;
-    a->freeUploads.push_back(index);
 }
 
 void release_object(SokolAdapter* a, u32 index) noexcept {
@@ -190,17 +176,13 @@ Status begin_upload(void* user, UploadDesc const& desc, UploadTarget* out) {
             KILN_ERROR("sokol", "all %u objects are in use", u32(a->objects.size()));
             return make_status(Code::OutOfMemory);
         }
-        if (a->freeUploads.empty()) return make_status(Code::Busy);
-        ui = a->freeUploads.back();
-        a->freeUploads.pop_back();
+        ui = a->uploads.acquire();
+        if (ui == kInvalid) return make_status(Code::Busy);
         oi = a->freeObjects.back();
         a->freeObjects.pop_back();
         a->objects[oi].used = true;
     }
     Upload& u = a->uploads[ui];
-    u.used    = true;
-    u.done    = false;
-    u.failed  = false;
     u.object  = oi;
     u.kind    = desc.kind;
     u.tex     = desc.texture ? *desc.texture : TextureDesc{};
@@ -210,7 +192,7 @@ Status begin_upload(void* user, UploadDesc const& desc, UploadTarget* out) {
 
     out->dst           = u.bytes;
     out->rowPitchAlign = 1;
-    out->token         = (u64(u.gen) << 32) | (ui + 1);
+    out->token         = a->uploads.token(ui);
     ObjectKind const k = desc.kind == UploadKind::MeshPayload ? ObjectKind::Buffer : ObjectKind::Texture;
     out->object        = GpuObject{.native = oi + 1, .slot = kInvalid, .kind = u32(k)};
     return kOk;
@@ -219,18 +201,23 @@ Status begin_upload(void* user, UploadDesc const& desc, UploadTarget* out) {
 void commit_upload(void* user, u64 token) {
     auto* a = static_cast<SokolAdapter*>(user);
     std::lock_guard<std::mutex> const lock(a->mutex);
-    if (upload_of(a, token)) a->committed.push_back(u32(token & 0xFFFFFFFFu) - 1);
+    u32 const i = a->uploads.index_of(token);
+    if (i == kInvalid) return;
+    a->uploads.advance(i, ex::UploadState::Committed);
+    a->committed.push_back(i);
 }
 
 /// sokol creates a resource at once and orders its use itself: an upload is done once flushed.
 UploadStatus upload_status(void* user, u64 token) {
-    auto* a   = static_cast<SokolAdapter*>(user);
-    Upload* u = upload_of(a, token);
-    if (!u) return UploadStatus::Failed; // not an upload of this adapter
-    if (!u->done) return UploadStatus::Pending;
-    bool const failed = u->failed;
-    free_upload(a, u32(token & 0xFFFFFFFFu) - 1);
-    return failed ? UploadStatus::Failed : UploadStatus::Complete;
+    auto* a     = static_cast<SokolAdapter*>(user);
+    u32 const i = a->uploads.index_of(token);
+    if (i == kInvalid) return UploadStatus::Failed; // not an upload of this adapter
+    UploadStatus const st = ex::status_of(a->uploads.state(i));
+    if (st != UploadStatus::Pending) {
+        std::lock_guard<std::mutex> const lock(a->mutex);
+        a->uploads.release(i);
+    }
+    return st;
 }
 
 /// sokol defers the release of a resource that in-flight frames use, so the host reports no frames.
@@ -252,11 +239,11 @@ void flush(void* user) {
         a->committed.clear();
     }
     for (u32 i : a->flushing) {
-        Upload& u = a->uploads[i];
-        u.failed  = !make_object(a, u); // upload_status reports it; kiln fails the asset (K5004)
-        kiln::free(default_allocator(), u.bytes, usize(max<u64>(u.size, 1)), 16, Tag::Payload);
-        u.bytes = nullptr;
-        u.done  = true;
+        Upload& u     = a->uploads[i];
+        bool const ok = make_object(a, u);
+        free_bytes(u);
+        // A failure reaches kiln through upload_status: it fails the asset (K5004).
+        a->uploads.advance(i, ok ? ex::UploadState::Complete : ex::UploadState::Failed);
     }
 }
 
@@ -287,11 +274,9 @@ Result<SokolAdapter*> sokol_adapter_create(SokolAdapterDesc const& desc, Adapter
     }
     auto* a = new_object<SokolAdapter>(default_allocator(), Tag::Payload);
     a->objects.resize(desc.maxObjects);
-    a->uploads.resize(desc.maxUploads);
+    a->uploads = ex::UploadPool<Upload>(default_allocator(), desc.maxUploads);
     for (u32 i = desc.maxObjects; i-- > 0;)
         a->freeObjects.push_back(i);
-    for (u32 i = desc.maxUploads; i-- > 0;)
-        a->freeUploads.push_back(i);
     a->committed.reserve(desc.maxUploads);
     a->flushing.reserve(desc.maxUploads);
     *out = Adapter{
@@ -312,8 +297,8 @@ Result<SokolAdapter*> sokol_adapter_create(SokolAdapterDesc const& desc, Adapter
 
 void sokol_adapter_destroy(SokolAdapter* a) noexcept {
     if (!a) return;
-    for (u32 i = 0; i < a->uploads.size(); ++i)
-        if (a->uploads[i].used) free_upload(a, i);
+    for (u32 i = 0; i < a->uploads.capacity(); ++i)
+        free_bytes(a->uploads[i]); // uploads never flushed still hold theirs
     for (u32 i = 0; i < a->objects.size(); ++i)
         if (a->objects[i].used) release_object(a, i);
     delete_object(default_allocator(), a, Tag::Payload);

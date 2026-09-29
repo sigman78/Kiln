@@ -78,7 +78,7 @@ add_executable(kiln-sokol main.cpp sokol_adapter.h sokol_adapter.cpp readback.h 
                           ${_shader_dir}/scene.glsl.h)
 kiln_apply_defaults(kiln-sokol)
 target_include_directories(kiln-sokol SYSTEM PRIVATE ${_shader_dir}) # generated code: not held to kiln's warnings
-target_link_libraries(kiln-sokol PRIVATE kiln_runtime kiln_example_common kiln_sokol_impl)
+target_link_libraries(kiln-sokol PRIVATE kiln_runtime kiln_example_common kiln_example_adapter_support kiln_sokol_impl)
 if(TARGET kiln_cook)
     target_link_libraries(kiln-sokol PRIVATE kiln_cook)
     target_compile_definitions(kiln-sokol PRIVATE KILN_SOKOL_HAS_COOK=1)

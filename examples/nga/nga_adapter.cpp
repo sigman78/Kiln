@@ -5,6 +5,7 @@
 #include "nga_adapter.h"
 
 #include "staging_ring.h"
+#include "upload_pool.h"
 
 #include <kiln/alloc.h>
 #include <kiln/containers.h>
@@ -84,12 +85,8 @@ struct Object {
     bool used             = false;
 };
 
+/// One upload's data; its state and token are the pool's (ex::UploadPool).
 struct Upload {
-    u32 gen         = 1;
-    bool used       = false;
-    bool flushed    = false;
-    bool done       = false;
-    bool failed     = false; ///< the texture can never be made (too large, or creation failed)
     u32 object      = 0;
     UploadKind kind = UploadKind::MeshPayload;
     TextureDesc tex{};
@@ -138,8 +135,7 @@ struct NgaAdapter {
 
     Vec<Object> objects;
     Vec<u32> freeObjects;
-    Vec<Upload> uploads;
-    Vec<u32> freeUploads;
+    ex::UploadPool<Upload> uploads;
     Vec<u32> committed;
     Vec<u32> flushing;
     Vec<u32> inFlight;
@@ -156,15 +152,6 @@ struct NgaAdapter {
 
 namespace {
 
-u64 make_token(Upload const& u, u32 index) noexcept { return (u64(u.gen) << 32) | (index + 1); }
-
-Upload* upload_of(NgaAdapter* a, u64 token) noexcept {
-    u32 const index = u32(token & 0xFFFFFFFFu) - 1;
-    if (index >= a->uploads.size()) return nullptr;
-    Upload& u = a->uploads[index];
-    return u.used && u.gen == u32(token >> 32) ? &u : nullptr;
-}
-
 void release_object(NgaAdapter* a, u32 index) noexcept {
     Object& o = a->objects[index];
     if (o.texture) gpu::destroy_texture(o.texture);
@@ -180,9 +167,7 @@ void free_upload(NgaAdapter* a, u32 index) noexcept {
     std::lock_guard<std::mutex> const lock(a->mutex);
     Upload& u = a->uploads[index];
     if (u.kind == UploadKind::TextureLevels) a->ring.release(u.span);
-    u.used = false;
-    ++u.gen;
-    a->freeUploads.push_back(index);
+    a->uploads.release(index);
 }
 
 gpu::CommandPool* next_pool(NgaAdapter* a) noexcept {
@@ -248,13 +233,14 @@ Record record_texture(NgaAdapter* a, gpu::CommandBuffer* cmd, Upload& u) noexcep
     return Record::Done;
 }
 
+/// True once the upload is Complete or Failed; an InFlight copy completes when the timeline
+/// passes its submission.
 bool poll(NgaAdapter* a, u32 index) noexcept {
-    Upload& u = a->uploads[index];
-    if (u.done) return true;
-    if (!u.flushed) return false;
-    if (u.kind == UploadKind::TextureLevels && gpu::timeline_completed_value(a->timeline) < u.value)
-        return false;
-    u.done = true;
+    ex::UploadState const st = a->uploads.state(index);
+    if (st != ex::UploadState::InFlight)
+        return st == ex::UploadState::Complete || st == ex::UploadState::Failed;
+    if (gpu::timeline_completed_value(a->timeline) < a->uploads[index].value) return false;
+    a->uploads.advance(index, ex::UploadState::Complete);
     return true;
 }
 
@@ -296,7 +282,7 @@ Status begin_upload(void* user, UploadDesc const& desc, UploadTarget* out) {
         KILN_ERROR("nga", "all %u objects are in use", u32(a->objects.size()));
         return make_status(Code::OutOfMemory);
     }
-    if (a->freeUploads.empty()) return make_status(Code::Busy);
+    if (a->uploads.full()) return make_status(Code::Busy);
     u64 offset = 0;
     ex::StagingRing::Reservation r;
     if (isTexture) {
@@ -306,8 +292,7 @@ Status begin_upload(void* user, UploadDesc const& desc, UploadTarget* out) {
     if (isTexture ? !r.ok() : !a->meshRanges.alloc(size, kUploadAlign, &offset))
         return make_status(Code::Busy);
 
-    u32 const ui = a->freeUploads.back();
-    a->freeUploads.pop_back();
+    u32 const ui = a->uploads.acquire();
     u32 const oi = a->freeObjects.back();
     a->freeObjects.pop_back();
     Object& o = a->objects[oi];
@@ -318,21 +303,16 @@ Status begin_upload(void* user, UploadDesc const& desc, UploadTarget* out) {
         o.heapSize   = size;
     }
     Upload& u       = a->uploads[ui];
-    u.used          = true;
-    u.flushed       = false;
-    u.done          = false;
-    u.failed        = false;
     u.object        = oi;
     u.kind          = desc.kind;
     u.tex           = isTexture ? *desc.texture : TextureDesc{};
     u.size          = desc.size;
     u.stagingOffset = offset;
-    u.value         = 0;
     if (isTexture) u.span = r.id;
 
     out->dst           = (isTexture ? a->staging.range.cpu : a->meshHeap.range.cpu) + offset;
     out->rowPitchAlign = 1;
-    out->token         = make_token(u, ui);
+    out->token         = a->uploads.token(ui);
     out->object        = GpuObject{.native = oi + 1, .slot = kInvalid, .kind = u32(o.kind)};
     return kOk;
 }
@@ -340,16 +320,18 @@ Status begin_upload(void* user, UploadDesc const& desc, UploadTarget* out) {
 void commit_upload(void* user, u64 token) {
     auto* a = static_cast<NgaAdapter*>(user);
     std::lock_guard<std::mutex> const lock(a->mutex);
-    if (upload_of(a, token)) a->committed.push_back(u32(token & 0xFFFFFFFFu) - 1);
+    u32 const i = a->uploads.index_of(token);
+    if (i == kInvalid) return;
+    a->uploads.advance(i, ex::UploadState::Committed);
+    a->committed.push_back(i);
 }
 
 UploadStatus upload_status(void* user, u64 token) {
-    auto* a   = static_cast<NgaAdapter*>(user);
-    Upload* u = upload_of(a, token);
-    if (!u) return UploadStatus::Failed; // not an upload of this adapter
-    u32 const index = u32(token & 0xFFFFFFFFu) - 1;
+    auto* a         = static_cast<NgaAdapter*>(user);
+    u32 const index = a->uploads.index_of(token);
+    if (index == kInvalid) return UploadStatus::Failed; // not an upload of this adapter
     if (!poll(a, index)) return UploadStatus::Pending;
-    bool const failed = u->failed;
+    UploadStatus const st = ex::status_of(a->uploads.state(index));
     for (u32 i = 0; i < a->inFlight.size(); ++i)
         if (a->inFlight[i] == index) {
             a->inFlight[i] = a->inFlight.back();
@@ -357,7 +339,7 @@ UploadStatus upload_status(void* user, u64 token) {
             break;
         }
     free_upload(a, index);
-    return failed ? UploadStatus::Failed : UploadStatus::Complete;
+    return st;
 }
 
 /// Frames recorded earlier hold descriptor indices, not slots, so moving a slot is safe at any time.
@@ -400,8 +382,7 @@ void flush(void* user) {
         u32 const i = a->flushing[n];
         Upload& u   = a->uploads[i];
         if (u.kind == UploadKind::MeshPayload) { // written in place by kiln; visible to later submissions
-            u.flushed = true;
-            u.done    = true;
+            a->uploads.advance(i, ex::UploadState::Complete);
             continue;
         }
         if (!cmd) cmd = gpu::begin_commands(next_pool(a));
@@ -412,13 +393,11 @@ void flush(void* user) {
             continue;
         }
         if (r == Record::Failed) { // no GPU work: done at once
-            u.flushed = true;
-            u.done    = true;
-            u.failed  = true;
+            a->uploads.advance(i, ex::UploadState::Failed);
             continue;
         }
-        u.flushed = true;
-        u.value   = value;
+        u.value = value;
+        a->uploads.advance(i, ex::UploadState::InFlight);
         a->inFlight.push_back(i);
     }
     if (!cmd) return;
@@ -468,12 +447,10 @@ Result<NgaAdapter*> nga_adapter_create(NgaAdapterDesc const& desc, Adapter* out)
     a->meshRanges.init(desc.meshBytes);
     a->textureRanges.init(desc.textureBytes);
     a->objects.resize(kMaxObjects);
-    a->uploads.resize(kMaxUploads);
-    a->ring = ex::StagingRing(default_allocator(), a->staging.range.size, kMaxUploads);
+    a->uploads = ex::UploadPool<Upload>(default_allocator(), kMaxUploads);
+    a->ring    = ex::StagingRing(default_allocator(), a->staging.range.size, kMaxUploads);
     for (u32 i = kMaxObjects; i-- > 0;)
         a->freeObjects.push_back(i);
-    for (u32 i = kMaxUploads; i-- > 0;)
-        a->freeUploads.push_back(i);
     for (u32 i = desc.maxDescriptors; i-- > 0;)
         a->freeDescriptors.push_back(i);
     a->slotDescriptor.resize(desc.maxSlots, kInvalid);

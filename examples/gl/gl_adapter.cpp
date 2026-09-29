@@ -6,6 +6,7 @@
 
 #include "gl_api.h"
 #include "staging_ring.h"
+#include "upload_pool.h"
 
 #include <kiln/alloc.h>
 #include <kiln/containers.h>
@@ -34,19 +35,14 @@ struct Object {
     u64 handle    = 0; ///< bindless: the resident texture handle, once bound
 };
 
+/// One upload's data; its state and token are the pool's (ex::UploadPool).
 struct Upload {
-    u32 gen         = 1;
-    bool used       = false;
-    bool committed  = false;
-    bool flushed    = false;
-    bool done       = false;
-    bool failed     = false; ///< the GL ran out of memory for the object's storage
     u32 object      = 0;
     UploadKind kind = UploadKind::MeshPayload;
     TextureDesc tex{};
     u64 size     = 0;
     u64 offset   = 0; ///< in the staging ring
-    u32 span     = 0; ///< entry in the ring FIFO
+    u32 span     = 0; ///< staging ring reservation
     GLsync fence = nullptr;
 };
 
@@ -88,8 +84,7 @@ struct GlAdapter {
     ex::StagingRing ring; ///< reservations in `staging`, released when their fence signals
     Vec<Object> objects;
     Vec<u32> freeObjects;
-    Vec<Upload> uploads;
-    Vec<u32> freeUploads;
+    ex::UploadPool<Upload> uploads;
     Vec<u32> committed; ///< upload indices waiting for flush, in commit order
     Vec<u32> flushing;  ///< flush's copy of `committed`
     Vec<u32> inFlight;  ///< flushed, fence not yet signaled
@@ -106,16 +101,6 @@ struct GlAdapter {
 };
 
 namespace {
-
-u64 make_token(Upload const& u, u32 index) noexcept { return (u64(u.gen) << 32) | (index + 1); }
-
-/// The upload a token names, or null if it is stale.
-Upload* upload_of(GlAdapter* a, u64 token) noexcept {
-    u32 const index = u32(token & 0xFFFFFFFFu) - 1;
-    if (index >= a->uploads.size()) return nullptr;
-    Upload& u = a->uploads[index];
-    return u.used && u.gen == u32(token >> 32) ? &u : nullptr;
-}
 
 void release_object(GlAdapter* a, u32 index) noexcept {
     Object& o = a->objects[index];
@@ -141,19 +126,18 @@ bool storage_ok(Upload const& u) noexcept {
     return ok;
 }
 
-/// The GL side of one committed upload: create the object, copy from the staging buffer. Sets
-/// `u.failed` when the storage cannot be allocated.
-void run_upload(GlAdapter* a, Upload& u) noexcept {
+/// The GL side of one committed upload: create the object, copy from the staging buffer. False
+/// when the storage cannot be allocated; nothing then reads the staging range.
+bool run_upload(GlAdapter* a, Upload& u) noexcept {
     Object& o = a->objects[u.object];
     while (glGetError() != GL_NO_ERROR) {
     } // errors from before are not this upload's
     if (u.kind == UploadKind::MeshPayload) {
         glCreateBuffers(1, &o.name);
         glNamedBufferStorage(o.name, GLsizeiptr(u.size), nullptr, 0);
-        u.failed = !storage_ok(u);
-        if (u.failed) return;
+        if (!storage_ok(u)) return false;
         glCopyNamedBufferSubData(a->staging, o.name, GLintptr(u.offset), 0, GLsizeiptr(u.size));
-        return;
+        return true;
     }
     TextureDesc const& t = u.tex;
     TexFormat const f    = tex_format(t.format);
@@ -166,8 +150,7 @@ void run_upload(GlAdapter* a, Upload& u) noexcept {
         glTextureStorage3D(o.name, levels, f.internal, w, h, GLsizei(t.layers));
     else
         glTextureStorage2D(o.name, levels, f.internal, w, h); // a cube's storage is 2D per face
-    u.failed = !storage_ok(u);
-    if (u.failed) return;
+    if (!storage_ok(u)) return false;
     u64 offsets[kMaxLevels];
     CopyConstraints const cc{.optimalRowPitchAlign = 1,
                              .optimalOffsetAlign   = kOffsetAlign,
@@ -182,19 +165,22 @@ void run_upload(GlAdapter* a, Upload& u) noexcept {
         else // cube faces and array layers are the z range of a 3D sub-image
             glTextureSubImage3D(o.name, GLint(i), 0, 0, 0, lw, lh, GLsizei(t.layers), f.format, f.type, src);
     }
+    return true;
 }
 
-/// Retires `u` if its fence has signaled: frees its ring range.
+/// True once the upload is Complete or Failed. An InFlight one completes when its fence has
+/// signaled, which frees its ring range.
 bool poll(GlAdapter* a, u32 index) noexcept {
-    Upload& u = a->uploads[index];
-    if (u.done) return true;
-    if (!u.flushed) return false;
+    ex::UploadState const st = a->uploads.state(index);
+    if (st != ex::UploadState::InFlight)
+        return st == ex::UploadState::Complete || st == ex::UploadState::Failed;
+    Upload& u      = a->uploads[index];
     GLenum const r = glClientWaitSync(u.fence, GL_SYNC_FLUSH_COMMANDS_BIT, 0);
     if (r == GL_WAIT_FAILED) KILN_PANIC("gl: glClientWaitSync failed on an upload fence");
     if (r == GL_TIMEOUT_EXPIRED) return false;
     glDeleteSync(u.fence);
     u.fence = nullptr;
-    u.done  = true;
+    a->uploads.advance(index, ex::UploadState::Complete);
     std::lock_guard<std::mutex> const lock(a->mutex);
     a->ring.release(u.span);
     return true;
@@ -227,30 +213,26 @@ Status begin_upload(void* user, UploadDesc const& desc, UploadTarget* out) {
         KILN_ERROR("gl", "all %u objects are in use", u32(a->objects.size()));
         return make_status(Code::OutOfMemory);
     }
-    if (a->freeUploads.empty()) return make_status(Code::Busy);
+    if (a->uploads.full()) return make_status(Code::Busy);
     ex::StagingRing::Reservation const r = a->ring.reserve(desc.size, kUploadAlign);
     if (!r.ok()) return make_status(Code::Busy);
-    u64 const offset = r.offset;
 
-    u32 const ui = a->freeUploads.back();
-    a->freeUploads.pop_back();
+    u32 const ui = a->uploads.acquire();
     u32 const oi = a->freeObjects.back();
     a->freeObjects.pop_back();
     a->objects[oi].used = true;
 
-    Upload& u   = a->uploads[ui];
-    u.used      = true;
-    u.committed = u.flushed = u.done = u.failed = false;
-    u.object                                    = oi;
-    u.kind                                      = desc.kind;
-    u.tex                                       = desc.texture ? *desc.texture : TextureDesc{};
-    u.size                                      = desc.size;
-    u.offset                                    = offset;
-    u.span                                      = r.id;
+    Upload& u = a->uploads[ui];
+    u.object  = oi;
+    u.kind    = desc.kind;
+    u.tex     = desc.texture ? *desc.texture : TextureDesc{};
+    u.size    = desc.size;
+    u.offset  = r.offset;
+    u.span    = r.id;
 
-    out->dst           = a->mapped + offset;
+    out->dst           = a->mapped + r.offset;
     out->rowPitchAlign = 1;
-    out->token         = make_token(u, ui);
+    out->token         = a->uploads.token(ui);
     ObjectKind const k = desc.kind == UploadKind::MeshPayload ? ObjectKind::Buffer : ObjectKind::Texture;
     out->object        = GpuObject{.native = oi + 1, .slot = kInvalid, .kind = u32(k)};
     return kOk;
@@ -259,19 +241,18 @@ Status begin_upload(void* user, UploadDesc const& desc, UploadTarget* out) {
 void commit_upload(void* user, u64 token) {
     auto* a = static_cast<GlAdapter*>(user);
     std::lock_guard<std::mutex> const lock(a->mutex);
-    if (Upload* u = upload_of(a, token)) {
-        u->committed = true;
-        a->committed.push_back(u32(token & 0xFFFFFFFFu) - 1);
-    }
+    u32 const i = a->uploads.index_of(token);
+    if (i == kInvalid) return;
+    a->uploads.advance(i, ex::UploadState::Committed);
+    a->committed.push_back(i);
 }
 
 UploadStatus upload_status(void* user, u64 token) {
-    auto* a   = static_cast<GlAdapter*>(user);
-    Upload* u = upload_of(a, token);
-    if (!u) return UploadStatus::Failed; // not an upload of this adapter
-    u32 const index = u32(token & 0xFFFFFFFFu) - 1;
+    auto* a         = static_cast<GlAdapter*>(user);
+    u32 const index = a->uploads.index_of(token);
+    if (index == kInvalid) return UploadStatus::Failed; // not an upload of this adapter
     if (!poll(a, index)) return UploadStatus::Pending;
-    bool const failed = u->failed;
+    UploadStatus const st = ex::status_of(a->uploads.state(index));
     for (u32 i = 0; i < a->inFlight.size(); ++i)
         if (a->inFlight[i] == index) {
             a->inFlight[i] = a->inFlight.back();
@@ -279,10 +260,8 @@ UploadStatus upload_status(void* user, u64 token) {
             break;
         }
     std::lock_guard<std::mutex> const lock(a->mutex);
-    u->used = false;
-    ++u->gen;
-    a->freeUploads.push_back(index);
-    return failed ? UploadStatus::Failed : UploadStatus::Complete;
+    a->uploads.release(index);
+    return st;
 }
 
 /// GL keeps an object alive for commands already issued; a resident handle has no such guard, which
@@ -340,17 +319,21 @@ void flush(void* user) {
     glBindBuffer(GL_PIXEL_UNPACK_BUFFER, a->staging);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
     glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
-    for (u32 i : a->flushing)
-        run_upload(a, a->uploads[i]);
-    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
-    GLsync const fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
-    for (u32 n = 0; n < a->flushing.size(); ++n) {
-        Upload& u = a->uploads[a->flushing[n]];
-        // One fence per upload: each is deleted when its upload retires.
-        u.fence   = n == 0 ? fence : glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
-        u.flushed = true;
-        a->inFlight.push_back(a->flushing[n]);
+    usize const firstNew = a->inFlight.size();
+    for (u32 i : a->flushing) {
+        if (run_upload(a, a->uploads[i])) {
+            a->uploads.advance(i, ex::UploadState::InFlight);
+            a->inFlight.push_back(i);
+            continue;
+        }
+        a->uploads.advance(i, ex::UploadState::Failed); // nothing read the staging range
+        std::lock_guard<std::mutex> const lock(a->mutex);
+        a->ring.release(a->uploads[i].span);
     }
+    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+    // One fence per upload, after all of this flush's copies: each is deleted when its upload retires.
+    for (usize n = firstNew; n < a->inFlight.size(); ++n)
+        a->uploads[a->inFlight[n]].fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
 }
 
 } // namespace
@@ -385,11 +368,9 @@ Result<GlAdapter*> gl_adapter_create(GlAdapterDesc const& desc, Adapter* out) no
         return make_status(Code::OutOfMemory);
     }
     a->objects.resize(desc.maxObjects);
-    a->uploads.resize(desc.maxUploads);
+    a->uploads = ex::UploadPool<Upload>(default_allocator(), desc.maxUploads);
     for (u32 i = desc.maxObjects; i-- > 0;)
         a->freeObjects.push_back(i);
-    for (u32 i = desc.maxUploads; i-- > 0;)
-        a->freeUploads.push_back(i);
     a->committed.reserve(desc.maxUploads);
     a->flushing.reserve(desc.maxUploads);
     a->inFlight.reserve(desc.maxUploads);
@@ -436,8 +417,8 @@ Result<GlAdapter*> gl_adapter_create(GlAdapterDesc const& desc, Adapter* out) no
 
 void gl_adapter_destroy(GlAdapter* a) noexcept {
     if (!a) return;
-    for (Upload& u : a->uploads)
-        if (u.fence) glDeleteSync(u.fence);
+    for (u32 i = 0; i < a->uploads.capacity(); ++i)
+        if (a->uploads[i].fence) glDeleteSync(a->uploads[i].fence);
     for (u32 i = 0; i < a->objects.size(); ++i)
         if (a->objects[i].used) release_object(a, i);
     if (a->bindless) {
