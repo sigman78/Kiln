@@ -616,7 +616,7 @@ KILN_TEST(Provider, SourcePollerStopsOnUninstall) {
     KILN_CHECK(!wait_for_change(storeFile, before, after, 200));
 }
 
-// A named root: `lib:tex.png` cooks from the root's root into `<store>/lib#/tex.png.ktx2`.
+// A named root: `lib:tex.png` cooks from the root's directory into `<store>/@lib/tex.png.ktx2`.
 KILN_TEST(Provider, NamedRootCooksIntoItsStoreDirectory) {
     char root[1024], libRoot[1024], storeDir[1024];
     scratch_dir("provider_root_default", root, sizeof root);
@@ -643,7 +643,7 @@ KILN_TEST(Provider, NamedRootCooksIntoItsStoreDirectory) {
     TextureHandle const tex = request_texture(tc.ctx, "lib:tex.png");
     KILN_REQUIRE_EQ(pump_until_settled(tc.ctx, tex), State::Ready);
     char storeFile[1100];
-    format(storeFile, sizeof storeFile, "%s/lib#/tex.png.ktx2", storeDir);
+    format(storeFile, sizeof storeFile, "%s/@lib/tex.png.ktx2", storeDir);
     KILN_CHECK_MSG(file_exists(storeFile), "cook-on-miss did not write %s", storeFile);
 
     // The same file is not in the default root.

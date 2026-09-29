@@ -47,7 +47,7 @@ kiln-viewer --budget-mib 1 --store build/demo-store WaterBottle.glb BoomBox.glb
 kiln-viewer --source path/to/models --store build/my-store Robot.glb
 
 # two source roots: the demo models as the default root, the test corpus as the root `gen`.
-# The external_uri texture resolves inside `gen`; its store files go to build/roots-store/gen#/
+# The external_uri texture resolves inside `gen`; its store files go to build/roots-store/@gen/
 kiln-viewer --source examples/assets/khronos --root gen=tests/corpus/gltf/generated \
     --store build/roots-store WaterBottle.glb gen:external_uri.gltf
 

@@ -194,7 +194,8 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
     the default root), and `source_roots()` is `roots()`. `create()` rejects a bad or repeated
     root name (K5013).
   - Store files are `<store>/<name>.mesh|.ktx2` (`props/chair.glb.mesh`,
-    `props/chair.glb#wood.ktx2`); a named root `m:` is the directory `m#/`.
+    `props/chair.glb#wood.ktx2`); a named root `m:` is the top-level directory `@m/`, so a
+    default-root path may not start with `@` (K5013).
   - The provider finds `<root dir>/<path>` with no extension search. The extension gives the
     kind; a mismatch is K5014, an unknown root K5015, a name that differs in case from the file
     on disk K5016 (checked on Windows, `cook::source_case_matches`).

@@ -143,7 +143,8 @@ inline constexpr usize kMaxAssetNameLen = 255;
 /// Null if `name` is valid, else a short reason. Valid: at most kMaxAssetNameLen bytes; an
 /// optional `root:` prefix (see check_root_name); then `/`-separated segments that are not
 /// empty, `.` or `..`; no control characters and none of `\ : < > " | ? *`; at most one `#`,
-/// in the last segment, with text on both sides.
+/// in the last segment, with text on both sides. Without a root prefix the path may not start
+/// with `@`, which the store uses for named roots.
 [[nodiscard]] KILN_API char const* check_asset_name(StrView name) noexcept;
 /// Null if `root` is a valid root name (`[a-z0-9_]`, at least 2 characters), else a reason.
 [[nodiscard]] KILN_API char const* check_root_name(StrView root) noexcept;
@@ -162,7 +163,7 @@ struct AssetNameParts {
 [[nodiscard]] KILN_API usize resolve_asset_name(StrView owner, StrView uri, char* out, usize cap) noexcept;
 
 /// The cooked file of `name` in the Named layout: `<storeDir>/<name>.mesh|.ktx2`, with the
-/// prefix `m:` of a named root written as the directory `m#/`. Returns what `format()`
+/// prefix `m:` of a named root written as the top-level directory `@m/`. Returns what `format()`
 /// returns (>= cap - 1 means truncated).
 [[nodiscard]] KILN_API usize store_file_path(StrView storeDir, AssetKind kind, StrView name, char* out,
                                              usize cap) noexcept;

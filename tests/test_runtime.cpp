@@ -154,12 +154,13 @@ KILN_TEST(Runtime, AssetNameRules) {
     KILN_CHECK_EQ(asset_id("dir/.hidden"), "dir/.hidden"_h);
 
     for (char const* ok : {"a", "a.b/c", "props/chair.glb#wood", "pool:tex/wood.png", "m_2:x.glb#image0",
-                           "d\xc3\xa9j\xc3\xa0/vu.png"})
+                           "d\xc3\xa9j\xc3\xa0/vu.png", "pool:@x/a.png", "tex/@2x/a.png"})
         KILN_CHECK_MSG(check_asset_name(StrView(ok)) == nullptr, "'%s' should be valid", ok);
-    for (char const* bad : {"",         "/abs.png", "a//b.png",   "dir/",         "./a.png",   "a/../b.png",
-                            "a\\b.png", "x:",       "c:/tex.png", "Pool:a.png",   "a:b:c.png", "a.glb#",
-                            "#sub",     "dir/#sub", "a.glb#x#y",  "a#b/c.png",    "a?.png",    "a*.png",
-                            "a<b.png",  "a|b.png",  "a\"b.png",   "tab\there.png"})
+    for (char const* bad :
+         {"",         "/abs.png", "a//b.png",   "dir/",          "./a.png",        "a/../b.png",
+          "a\\b.png", "x:",       "c:/tex.png", "Pool:a.png",    "a:b:c.png",      "a.glb#",
+          "#sub",     "dir/#sub", "a.glb#x#y",  "a#b/c.png",     "a?.png",         "a*.png",
+          "a<b.png",  "a|b.png",  "a\"b.png",   "tab\there.png", "@pool/wood.png", "@x.png"})
         KILN_CHECK_MSG(check_asset_name(StrView(bad)) != nullptr, "'%s' should be invalid", bad);
     char longName[300];
     std::memset(longName, 'a', sizeof longName);
@@ -204,7 +205,8 @@ KILN_TEST(Runtime, StoreFilePath) {
     KILN_CHECK(path("cooked", AssetKind::Mesh, "props/chair.glb") == "cooked/props/chair.glb.mesh");
     KILN_CHECK(path("cooked/", AssetKind::Texture, "props/chair.glb#wood") ==
                "cooked/props/chair.glb#wood.ktx2");
-    KILN_CHECK(path("cooked", AssetKind::Texture, "pool:tex/wood.png") == "cooked/pool#/tex/wood.png.ktx2");
+    KILN_CHECK(path("cooked", AssetKind::Texture, "pool:tex/wood.png") == "cooked/@pool/tex/wood.png.ktx2");
+    KILN_CHECK(path("cooked", AssetKind::Texture, "pool:@2x/wood.png") == "cooked/@pool/@2x/wood.png.ktx2");
     KILN_CHECK(path("", AssetKind::Mesh, "a.glb") == "a.glb.mesh");
 }
 

@@ -220,7 +220,7 @@ key      = hash_combine(hash_combine(hash_combine(sourceHash, settingsHash), tar
 - Both hashes are stored inside each cooked file: the `.mesh` header's `sourceHash` and `cookHash`
   (open-questions B3), and the KTX2 key/value entries `kiln.sourceHash` / `kiln.cookHash`.
 - v0.5 stores files by name, `<storeDir>/<name>.mesh|.ktx2` (a named root's `m:` prefix becomes
-  the directory `m#/`), and invalidates by the stored hashes (R4). The hashed layout (16 lowercase
+  the top-level directory `@m/`), and invalidates by the stored hashes (R4). The hashed layout (16 lowercase
   hex digits of `key` plus the extension) is `kiln-cook --hashed`; it returns as the default with
   the index file in v0.6.
 

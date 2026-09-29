@@ -81,6 +81,9 @@ char const* check_asset_name(StrView name) noexcept {
         if (char const* why = check_root_name(name.substr(0, colon))) return why;
         name = name.substr(colon + 1);
         if (name.empty()) return "empty path after the root";
+    } else if (name[0] == '@') {
+        // The store writes named root `m:` as the top-level directory `@m/`.
+        return "a default-root path may not start with '@'";
     }
     return check_path(name);
 }
@@ -132,7 +135,7 @@ usize store_file_path(StrView storeDir, AssetKind kind, StrView name, char* out,
     AssetNameParts const p = split_asset_name(name);
     if (p.root.empty()) return format(out, cap, "%.*s%s%.*s%s", KILN_SV(storeDir), sep, KILN_SV(name), ext);
     StrView const rest = name.substr(p.root.size + 1);
-    return format(out, cap, "%.*s%s%.*s#/%.*s%s", KILN_SV(storeDir), sep, KILN_SV(p.root), KILN_SV(rest),
+    return format(out, cap, "%.*s%s@%.*s/%.*s%s", KILN_SV(storeDir), sep, KILN_SV(p.root), KILN_SV(rest),
                   ext);
 }
 

@@ -85,9 +85,10 @@ K1019, K1020, K5013-K5016 (`diagnostics.md`).
 
 Choices made during implementation, *Proposed* until the owner signs off:
 
-- **Store layout of a named root:** `m:` becomes the directory `m#/`
-  (`<store>/pool#/tex/wood.png.ktx2`). `#` never occurs in a directory segment of a valid name,
-  so no name maps to the same file, and no new path rule is needed.
+- **Store layout of a named root:** *decided (owner, 2026-09-28).* `m:` becomes the top-level
+  directory `@m/` (`<store>/@pool/tex/wood.png.ktx2`). So that no default-root name maps to the
+  same file, a path without a root prefix may not start with `@` (K5013). The first layout, `m#/`,
+  needed no rule but read oddly and needs escaping in URLs.
 - **More reserved characters:** names also exclude `< > " | ? *`, which Windows does not allow in
   file names. A name that works on Linux then works on Windows too, as with the case rule.
   I2 said "the store layout escapes as needed"; rejecting is simpler and stricter.

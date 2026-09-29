@@ -123,7 +123,7 @@ One upload job per mesh (mesh-format-spec §5.9, §7):
 - Reads always target **caller-provided memory**, so the runtime reads straight into adapter
   staging.
 - `ContextDesc` holds one `IoBackend const* io` (null = compat) and one `storeDir`. The loader reads
-  `<storeDir>/<name>.mesh|.ktx2` (a named root's `m:` prefix becomes the directory `m#/`).
+  `<storeDir>/<name>.mesh|.ktx2` (a named root's `m:` prefix becomes the top-level directory `@m/`).
   `ContextDesc::roots` (`roots(ctx)`) is the cook provider's named source roots (`struct Root {
   StrView name; StrView dir; }`); a pack-file backend would use the same root table.
 
