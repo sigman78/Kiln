@@ -1,6 +1,6 @@
 # Kiln
 
-<img src="docs/logo.svg" alt="Kiln logo: a kiln with a glowing opening and three stacked cubes" width="100" height="100" align="right">
+<img src="docs/logo.svg" alt="Kiln logo: a kiln with a glowing opening and three stacked cubes" width="200" height="200" align="right">
 
 Kiln is a graphics-API-agnostic asset cook and load library for C++23. It cooks source assets
 (`.glb`, `.gltf`, `.png`, `.jpg`, `.hdr`, `.ktx2`) into GPU-ready runtime formats (`.mesh`, and
