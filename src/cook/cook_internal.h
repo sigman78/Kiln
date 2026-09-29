@@ -111,10 +111,6 @@ struct ImportScene {
 Status import_gltf(MeshSource const& src, MeshCookSettings const& settings, Arena& arena,
                    Allocator const* alloc, DiagSink const* diag, ImportScene& out) noexcept;
 
-/// Deletes every cooked file (`.mesh`, `.ktx2`) under `dir` and its subdirectories; other files
-/// and the directories stay. Returns how many files it deleted.
-usize remove_cooked_files(char const* dir) noexcept;
-
 /// The asset name used in diagnostics (sourcePath if set, else assetPath).
 [[nodiscard]] inline StrView diag_asset(MeshSource const& src) noexcept {
     return src.sourcePath.empty() ? src.assetPath : src.sourcePath;

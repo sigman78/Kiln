@@ -1,8 +1,6 @@
 // src/cook/store.cpp — content-hashed store: atomic writes, no index (v0.5).
 // Paths are UTF-8 in stack buffers (no <filesystem>, no <string>).
 // TODO: Windows uses the narrow ("A") API; UTF-16 paths belong to the IO backend.
-#include "cook_internal.h"
-
 #include "kiln/cook/cook.h"
 
 #include "kiln/log.h"
@@ -10,13 +8,11 @@
 #include <atomic>
 #include <cerrno>
 #include <cstdio>
-#include <cstring>
 
 #if defined(KILN_OS_WINDOWS)
 #include <direct.h>  // _mkdir
 #include <windows.h> // MoveFileExA; WIN32_LEAN_AND_MEAN/NOMINMAX set by kiln_apply_defaults
 #else
-#include <dirent.h>   // opendir
 #include <sys/stat.h> // mkdir
 #include <unistd.h>   // getpid
 #endif
@@ -191,56 +187,5 @@ Status store_write(StrView dir, StrView name, Span<u8 const> bytes, DiagSink con
     }
     return kOk;
 }
-
-namespace detail {
-
-namespace {
-
-bool is_cooked_name(char const* name) noexcept {
-    StrView const n(name);
-    auto const ends = [&](StrView ext) { return n.size > ext.size && n.substr(n.size - ext.size) == ext; };
-    return ends(".mesh") || ends(".ktx2");
-}
-
-} // namespace
-
-usize remove_cooked_files(char const* dir) noexcept {
-    usize removed = 0;
-    char path[1024];
-#if defined(KILN_OS_WINDOWS)
-    if (format(path, sizeof path, "%s/*", dir) >= sizeof path - 1) return 0;
-    WIN32_FIND_DATAA fd;
-    HANDLE const h = FindFirstFileA(path, &fd);
-    if (h == INVALID_HANDLE_VALUE) return 0;
-    do {
-        if (std::strcmp(fd.cFileName, ".") == 0 || std::strcmp(fd.cFileName, "..") == 0) continue;
-        if (format(path, sizeof path, "%s/%s", dir, fd.cFileName) >= sizeof path - 1) continue;
-        if (fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)
-            continue; // never follow links out of the store
-        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
-            removed += remove_cooked_files(path);
-        else if (is_cooked_name(fd.cFileName) && DeleteFileA(path))
-            ++removed;
-    } while (FindNextFileA(h, &fd));
-    FindClose(h);
-#else
-    DIR* d = opendir(dir);
-    if (!d) return 0;
-    while (dirent* e = readdir(d)) {
-        if (std::strcmp(e->d_name, ".") == 0 || std::strcmp(e->d_name, "..") == 0) continue;
-        if (format(path, sizeof path, "%s/%s", dir, e->d_name) >= sizeof path - 1) continue;
-        struct stat st;
-        if (lstat(path, &st) != 0 || S_ISLNK(st.st_mode)) continue; // never follow links out of the store
-        if (S_ISDIR(st.st_mode))
-            removed += remove_cooked_files(path);
-        else if (is_cooked_name(e->d_name) && std::remove(path) == 0)
-            ++removed;
-    }
-    closedir(d);
-#endif
-    return removed;
-}
-
-} // namespace detail
 
 } // namespace kiln::cook

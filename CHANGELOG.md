@@ -8,13 +8,6 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
 ## [Unreleased]
 
 ### Added
-- **Cook: store stamp** (open-questions R9). `install_provider` in Disk mode keeps
-  `<store>/kiln-store.stamp`, a hash of the cooker version, the target, the default settings, the
-  name rules, `fastPreview` and the new `ProviderDesc::policyVersion`. When it is missing or
-  differs, every `.mesh` and `.ktx2` in the store is deleted and re-cooks on demand; a store that
-  holds a source root is never wiped (a warning says so). Before, a store file was used as long as
-  it existed, whatever the settings or target. Migration: a store made before this re-cooks once;
-  a host with a `CookPolicy` bumps `policyVersion` when the policy's choices change.
 - **Cook: BC1/3/4/5/7 textures** (docs/design/bcn-encoding.md, rollout step 3).
   - New `TextureCookSettings::encoding` (`TextureEncoding`: `Auto`, `Uncompressed`, `BC1`, `BC3`,
     `BC4`, `BC5`, `BC6H`, `BC7`) and `quality` (`EncodeQuality`: `Fast`, `Normal`, `High`).
@@ -291,8 +284,8 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
   - The default target's hash changed, so every store key and cooked `cookHash` changed once.
   - Migration: an adapter without BC support sets `TargetProfile::blockFamily = None` (or
     `kiln-cook --block none`). Shaders that read a normal map's Z must rebuild it from X and Y, or
-    set `encoding = BC7` for normals. Existing stores re-cook once: the store stamp below
-    deletes their cooked files at the next `install_provider`.
+    set `encoding = BC7` for normals. Delete existing stores once: a named-layout store file is
+    used while it exists and is not re-cooked for a target change (open-questions R9).
 - **Breaking (runtime, adapter):** `upload_status(user, token, Status* failure)`: with `Failed` the
   adapter writes why (for example `OutOfMemory` for a full pool, `Unsupported` for a resource it
   cannot make); the reason reaches K5004 / K5010 / K5009 and the Failed event instead of

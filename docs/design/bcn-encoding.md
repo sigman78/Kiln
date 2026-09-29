@@ -222,8 +222,8 @@ cross-cooking"), and this work leaves room for it:
 - Every example gained compressed uploads and Z reconstruction; `kiln-headless` and the null
   adapter already accepted every format.
 - The switch of the default target to BC changed its target hash, so every store key and the
-  `cookHash` of every cooked file changed once (the mesh goldens' header hashes too). The store
-  stamp (open-questions R9) deletes a store's stale files once, so they re-cook.
+  `cookHash` of every cooked file changed once (the mesh goldens' header hashes too). A store in
+  the named layout is not re-cooked by that (open-questions R9): delete it once.
 - Two cook-side dependencies (bc7enc_rdo, and the BC6H port kiln maintains) and one test-only
   decoder (bcdec), entered in `dependencies.md` and `third_party/README.md`.
 

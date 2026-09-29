@@ -13,8 +13,6 @@
 // recordMutex is taken inside a stripe lock or on its own, never the other way round.
 #include "kiln/cook/provider.h"
 
-#include "cook_internal.h"
-
 #include "kiln/cook/cook.h"
 #include "kiln/cook/image.h"
 #include "kiln/cook/sidecar.h"
@@ -25,9 +23,6 @@
 #include <cerrno>
 #include <chrono>
 #include <condition_variable>
-#include <cstdio>
-#include <cstdlib> // _fullpath, realpath
-#include <cstring>
 #include <cwchar>
 #include <mutex>
 #include <thread>
@@ -714,119 +709,6 @@ void stop_poller(Provider* p) noexcept {
     p->poller.join();
 }
 
-// ---------------------------------------------------------------------------
-// Store stamp: what every cooked file in the store was made with
-// ---------------------------------------------------------------------------
-
-constexpr char const* kStampFile = "kiln-store.stamp";
-
-/// Everything global that shapes cooked output. Per-asset inputs (a source and its sidecar) are
-/// the source poller's job.
-u64 store_stamp(ProviderDesc const& d) noexcept {
-    u64 h = hash_combine(u64(kCookerVersion), hash_target(d.target));
-    h     = hash_combine(h, hash_settings(d.textureDefaults));
-    h     = hash_combine(h, hash_settings(d.meshDefaults));
-    for (NameRule const& r : d.nameRules) {
-        h = hash_combine(h, xxh64(Span<u8 const>(reinterpret_cast<u8 const*>(r.suffix.data), r.suffix.size)));
-        h = hash_combine(h, u64(r.usage) | (u64(r.shape) << 8));
-    }
-    h = hash_combine(h, u64(d.fastPreview));
-    return hash_combine(h, d.policyVersion);
-}
-
-/// The stamp in `<dir>/kiln-store.stamp`, or false when there is none.
-bool read_stamp(char const* dir, u64* out) noexcept {
-    char path[1100];
-    format(path, sizeof path, "%s/%s", dir, kStampFile);
-    std::FILE* f = std::fopen(path, "rb");
-    if (!f) return false;
-    char text[512];
-    usize const n = std::fread(text, 1, sizeof text - 1, f);
-    std::fclose(f);
-    text[n]        = '\0';
-    char const* at = std::strstr(text, "stamp ");
-    if (!at) return false;
-    u64 v = 0;
-    at += 6;
-    for (int i = 0; i < 16; ++i, ++at) {
-        char const c = *at;
-        u32 const d  = c >= '0' && c <= '9' ? u32(c - '0') : c >= 'a' && c <= 'f' ? u32(c - 'a' + 10) : 99u;
-        if (d > 15) return false;
-        v = (v << 4) | d;
-    }
-    *out = v;
-    return true;
-}
-
-/// Absolute, `/`-separated, without a trailing separator. False if it cannot be resolved.
-bool absolute_path(StrView in, char* out, usize cap) noexcept {
-    char src[1024];
-    if (format(src, sizeof src, "%.*s", KILN_SV(in)) >= sizeof src - 1) return false;
-#if defined(KILN_OS_WINDOWS)
-    if (!_fullpath(out, src, cap)) return false;
-#else
-    char resolved[4096];
-    if (!realpath(src, resolved) || format(out, cap, "%s", resolved) >= cap - 1) return false;
-#endif
-    usize n = std::strlen(out);
-    for (usize i = 0; i < n; ++i)
-        if (out[i] == '\\') out[i] = '/';
-    while (n > 1 && out[n - 1] == '/')
-        out[--n] = '\0';
-    return true;
-}
-
-/// True when `inner` is `outer` or lies under it (ASCII case ignored on Windows).
-bool path_within(char const* inner, char const* outer) noexcept {
-    usize const n = std::strlen(outer);
-    for (usize i = 0; i < n; ++i) {
-        char a = inner[i], b = outer[i];
-#if defined(KILN_OS_WINDOWS)
-        a = a >= 'A' && a <= 'Z' ? char(a - 'A' + 'a') : a;
-        b = b >= 'A' && b <= 'Z' ? char(b - 'A' + 'a') : b;
-#endif
-        if (a != b) return false;
-    }
-    return inner[n] == '\0' || inner[n] == '/';
-}
-
-/// Deletes the store's cooked files when its stamp is missing or differs, then writes the stamp.
-void check_store_stamp(StrView storeDir, Span<Root const> roots, ProviderDesc const& d) noexcept {
-    if (storeDir.empty()) return; // the working directory: never wiped
-    char dir[1024];
-    if (format(dir, sizeof dir, "%.*s", KILN_SV(storeDir)) >= sizeof dir - 1) return;
-    u64 const stamp = store_stamp(d);
-    u64 old         = 0;
-    bool const had  = read_stamp(dir, &old);
-    if (had && old == stamp) return;
-
-    char storeAbs[1024];
-    if (absolute_path(storeDir, storeAbs, sizeof storeAbs)) {
-        for (Root const& r : roots) {
-            char rootAbs[1024];
-            if (!absolute_path(r.dir, rootAbs, sizeof rootAbs) || !path_within(rootAbs, storeAbs)) continue;
-            KILN_WARN("cook",
-                      "store %s holds the source root %s: its cooked files are not deleted although the "
-                      "store stamp %s; delete them by hand",
-                      dir, rootAbs, had ? "changed" : "is missing");
-            return;
-        }
-    }
-    usize const removed = cook::detail::remove_cooked_files(dir);
-    if (removed)
-        KILN_INFO("cook", "store %s: %s; deleted %llu cooked file(s), they re-cook on demand", dir,
-                  had ? "the cooker, target or default settings changed" : "no stamp yet",
-                  static_cast<unsigned long long>(removed));
-
-    char text[256];
-    usize const len = format(text, sizeof text, "kiln-store 1\nstamp %016llx\ncooker %u\ntarget %.*s %s\n",
-                             static_cast<unsigned long long>(stamp), kCookerVersion, KILN_SV(d.target.name),
-                             block_family_name(d.target.blockFamily));
-    Status const st = store_write(storeDir, kStampFile,
-                                  Span<u8 const>(reinterpret_cast<u8 const*>(text), len), nullptr, true);
-    if (st.failed()) KILN_WARN("cook", "could not write the store stamp in %s (%s)", dir, code_name(st.code));
-}
-
 } // namespace
 
 bool source_case_matches(StrView root, StrView path) noexcept {
@@ -929,9 +811,6 @@ Status install_provider(Context* ctx, ProviderDesc const& desc) noexcept {
     }
 
     if (effective.storeMode == StoreMode::Disk) {
-        ProviderDesc stamped = effective;
-        stamped.nameRules    = Span<NameRule const>(p->nameRules.data(), p->nameRules.size());
-        check_store_stamp(p->storeDir, ctxRoots, stamped);
         p->records.reserve(kMaxSources);
         p->emitted.reserve(kMaxSources);
         p->strings.reserve(kRecordStringBytes);
