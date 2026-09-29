@@ -435,7 +435,12 @@ CompletionKind run_upload(Context* ctx, Slot& s) noexcept {
             diag = s.jobDiag == kDiagStoreMiss ? kDiagAssetLoadFailed : s.jobDiag; // vanished since meta
         }
     }
-    a.commit_upload(a.user, t.token); // always: the adapter owns the ticket; a failure frees the object
+    if (st.failed() && a.discard_upload) { // nothing for the GPU: the adapter frees ticket and object
+        a.discard_upload(a.user, t.token);
+        s.hasTarget = false;
+    } else {
+        a.commit_upload(a.user, t.token); // a failed load commits too; kiln destroys the result
+    }
     if (st.failed()) {
         s.jobStatus = st;
         s.jobDiag   = diag;

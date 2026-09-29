@@ -34,6 +34,7 @@ struct Upload {
     TextureDesc tex{};
     u8* bytes = nullptr; ///< what kiln wrote; sokol copies it at creation
     u64 size  = 0;
+    Status failure; ///< why, once Failed
 };
 
 sg_pixel_format pixel_format(Format f) noexcept {
@@ -95,9 +96,15 @@ void release_object(SokolAdapter* a, u32 index) noexcept {
     a->freeObjects.push_back(index);
 }
 
+/// Why sokol could not make a resource: an invalid id means its pool was full, a valid one that the
+/// backend refused it.
+Status creation_failure(u32 id) noexcept {
+    return make_status(id == SG_INVALID_ID ? Code::OutOfMemory : Code::Unsupported);
+}
+
 /// The sokol side of one committed upload. sokol copies the data, so the bytes can go at once.
-/// False (logged; nothing left behind) when sokol rejects the buffer, the image or its view.
-bool make_object(SokolAdapter* a, Upload const& u) noexcept {
+/// The reason (logged; nothing left behind) when sokol rejects the buffer, the image or its view.
+Status make_object(SokolAdapter* a, Upload const& u) noexcept {
     Object& o = a->objects[u.object];
     if (u.kind == UploadKind::MeshPayload) {
         sg_buffer_desc d{};
@@ -108,12 +115,13 @@ bool make_object(SokolAdapter* a, Upload const& u) noexcept {
         d.data                = sg_range{u.bytes, usize(u.size)};
         d.label               = "kiln mesh";
         o.buffer              = sg_make_buffer(&d);
-        if (sg_query_buffer_state(o.buffer) == SG_RESOURCESTATE_VALID) return true;
+        if (sg_query_buffer_state(o.buffer) == SG_RESOURCESTATE_VALID) return kOk;
         KILN_ERROR("sokol", "mesh buffer of %llu bytes: creation failed",
                    static_cast<unsigned long long>(u.size));
+        Status const why = creation_failure(o.buffer.id);
         sg_destroy_buffer(o.buffer);
         o.buffer = {};
-        return false;
+        return why;
     }
     TextureDesc const& t = u.tex;
     sg_image_desc d{};
@@ -138,20 +146,22 @@ bool make_object(SokolAdapter* a, Upload const& u) noexcept {
     if (sg_query_image_state(o.image) != SG_RESOURCESTATE_VALID) { // sokol logged why
         KILN_ERROR("sokol", "image %ux%u, %u layer(s), %u level(s), %s: creation failed", t.width, t.height,
                    t.layers, t.levels, format_info(t.format) ? format_info(t.format)->name : "?");
+        Status const why = creation_failure(o.image.id);
         sg_destroy_image(o.image);
         o.image = {};
-        return false;
+        return why;
     }
     sg_view_desc v{};
     v.texture.image = o.image;
     o.view          = sg_make_view(&v);
-    if (sg_query_view_state(o.view) == SG_RESOURCESTATE_VALID) return true;
+    if (sg_query_view_state(o.view) == SG_RESOURCESTATE_VALID) return kOk;
     KILN_ERROR("sokol", "view of a %ux%u image: creation failed", t.width, t.height);
+    Status const why = creation_failure(o.view.id);
     sg_destroy_view(o.view);
     sg_destroy_image(o.image);
     o.view  = {};
     o.image = {};
-    return false;
+    return why;
 }
 
 // --- Adapter callbacks ---------------------------------------------------------------------------
@@ -220,12 +230,34 @@ void commit_upload(void* user, u64 token) {
     a->commits.push(i);
 }
 
+/// kiln's write failed: sokol never saw the upload, so its bytes, record and object go now.
+void discard_upload(void* user, u64 token) {
+    auto* a = static_cast<SokolAdapter*>(user);
+    u32 i   = kInvalid;
+    {
+        std::lock_guard<std::mutex> const lock(a->mutex);
+        i = a->uploads.index_of(token);
+        if (i == kInvalid) return;
+    }
+    Upload& u = a->uploads[i]; // this worker's until discarded
+    free_bytes(a, u);
+    std::lock_guard<std::mutex> const lock(a->mutex);
+    a->objects[u.object] = Object{{}, {}, {}, a->objects[u.object].gen + 1, false};
+    a->freeObjects.push_back(u.object);
+    a->uploads.discard(i);
+    ++a->stats.uploadsDiscarded;
+}
+
 /// sokol creates a resource at once and orders its use itself: an upload is done once flushed.
-UploadStatus upload_status(void* user, u64 token) {
+UploadStatus upload_status(void* user, u64 token, Status* failure) {
     auto* a     = static_cast<SokolAdapter*>(user);
     u32 const i = a->uploads.index_of(token);
-    if (i == kInvalid) return UploadStatus::Failed; // not an upload of this adapter
+    if (i == kInvalid) { // not an upload of this adapter
+        *failure = make_status(Code::InvalidArgument);
+        return UploadStatus::Failed;
+    }
     UploadStatus const st = ex::status_of(a->uploads.state(i));
+    if (st == UploadStatus::Failed) *failure = a->uploads[i].failure;
     if (st != UploadStatus::Pending) {
         std::lock_guard<std::mutex> const lock(a->mutex);
         a->uploads.release(i);
@@ -246,13 +278,14 @@ void flush(void* user) {
     auto* a = static_cast<SokolAdapter*>(user);
     for (u32 i : a->commits.take()) {
         Upload& u     = a->uploads[i];
-        bool const ok = make_object(a, u);
+        u.failure     = make_object(a, u);
+        bool const ok = u.failure.ok();
         free_bytes(a, u);
         if (!ok) {
             std::lock_guard<std::mutex> const lock(a->mutex);
             ++a->stats.uploadsFailed;
         }
-        // A failure reaches kiln through upload_status: it fails the asset (K5004).
+        // A failure reaches kiln through upload_status, with u.failure: it fails the asset (K5004).
         a->uploads.advance(i, ok ? ex::UploadState::Complete : ex::UploadState::Failed);
     }
 }
@@ -298,6 +331,7 @@ Result<SokolAdapter*> sokol_adapter_create(SokolAdapterDesc const& desc, Adapter
               .copy_constraints = &copy_constraints,
               .begin_upload     = &begin_upload,
               .commit_upload    = &commit_upload,
+              .discard_upload   = &discard_upload,
               .upload_status    = &upload_status,
               .bind             = nullptr, // bindings are rebuilt per draw from gpu_object()
               .destroy          = &destroy,

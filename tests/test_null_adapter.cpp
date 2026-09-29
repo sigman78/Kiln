@@ -52,7 +52,8 @@ KILN_TEST(NullAdapter, MeshUploadCycleWritesAndReadsBytes) {
         bytes[i] = u8(i);
 
     adapter.commit_upload(adapter.user, target.token);
-    KILN_CHECK(adapter.upload_status(adapter.user, target.token) == UploadStatus::Complete);
+    Status why;
+    KILN_CHECK(adapter.upload_status(adapter.user, target.token, &why) == UploadStatus::Complete);
 
     Span<u8 const> payload = null_adapter_payload(na, target.object);
     KILN_REQUIRE_EQ(payload.size, usize(64));
@@ -83,7 +84,8 @@ KILN_TEST(NullAdapter, TextureUploadCycleWritesAndReadsBytes) {
         bytes[i] = u8(0xA0 + i);
 
     adapter.commit_upload(adapter.user, target.token);
-    KILN_CHECK(adapter.upload_status(adapter.user, target.token) == UploadStatus::Complete);
+    Status why;
+    KILN_CHECK(adapter.upload_status(adapter.user, target.token, &why) == UploadStatus::Complete);
 
     Span<u8 const> payload = null_adapter_payload(na, target.object);
     KILN_REQUIRE_EQ(payload.size, usize(16));
@@ -244,8 +246,9 @@ KILN_TEST(NullAdapter, ConcurrentBeginCommitCyclesProduceDistinctCompletedTokens
     KILN_CHECK(distinct);
 
     bool allComplete = true;
+    Status why;
     for (u64 tok : all)
-        if (adapter.upload_status(adapter.user, tok) != UploadStatus::Complete) allComplete = false;
+        if (adapter.upload_status(adapter.user, tok, &why) != UploadStatus::Complete) allComplete = false;
     KILN_CHECK(allComplete);
 
     null_adapter_destroy(na);

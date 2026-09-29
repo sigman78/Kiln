@@ -97,14 +97,19 @@ Status upload_placeholder(Context* ctx, u32 index, AssetId id, TextureShape shap
             std::memset(dst + r * pitch + rowBytes, 0, usize(pitch - rowBytes));
         }
     }
-    a.commit_upload(a.user, t.token);
     if (!t.dst || !pitchOk) {
-        ctx->orphans.push_back({t.token, t.object});
+        if (a.discard_upload) {
+            a.discard_upload(a.user, t.token);
+        } else {
+            a.commit_upload(a.user, t.token);
+            ctx->orphans.push_back({t.token, t.object});
+        }
         return diagf(&ctx->diag, make_status(Code::Unsupported), kDiagPlaceholderFailed, Severity::Error, {},
                      "placeholder", "placeholder %u: %s", index,
                      t.dst ? "adapter row pitch alignment differs from copy_constraints"
                            : "no destination memory");
     }
+    a.commit_upload(a.user, t.token);
     p.obj     = t.object;
     p.token   = t.token;
     p.pending = true;

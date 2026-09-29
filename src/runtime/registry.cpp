@@ -370,7 +370,8 @@ void orphan_upload(Context* ctx, Slot& s) noexcept {
 void poll_orphans(Context* ctx) noexcept {
     for (usize i = 0; i < ctx->orphans.size();) {
         Orphan const o = ctx->orphans[i];
-        if (ctx->adapter.upload_status(ctx->adapter.user, o.token) == UploadStatus::Pending) {
+        Status why     = kOk; // an abandoned upload's reason goes nowhere
+        if (ctx->adapter.upload_status(ctx->adapter.user, o.token, &why) == UploadStatus::Pending) {
             ++i;
             continue;
         }

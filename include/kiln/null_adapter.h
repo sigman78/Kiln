@@ -19,8 +19,8 @@ struct NullAdapterDesc {
 };
 
 struct NullAdapterStats {
-    u32 beginUploads = 0, busyReturned = 0, commits = 0, completes = 0, uploadsFailed = 0, binds = 0,
-        destroys      = 0;
+    u32 beginUploads = 0, busyReturned = 0, commits = 0, discards = 0, completes = 0, uploadsFailed = 0,
+        binds = 0, destroys = 0;
     u64 bytesUploaded = 0;
     u32 liveObjects   = 0; ///< uploaded objects not yet destroyed
 };
@@ -38,6 +38,10 @@ KILN_API void null_adapter_destroy(NullAdapter* na) noexcept;
 [[nodiscard]] KILN_API GpuObject null_adapter_slot(NullAdapter* na, u32 slot) noexcept;
 [[nodiscard]] KILN_API NullAdapterStats null_adapter_stats(NullAdapter* na) noexcept;
 /// Testing: while `fail` is true, every upload committed reports UploadStatus::Failed.
+/// Their reason is Code::OutOfMemory.
 KILN_API void null_adapter_fail_uploads(NullAdapter* na, bool fail) noexcept;
+/// Testing: while `broken` is true, begin_upload succeeds but gives no destination memory, so kiln's
+/// write fails after it and kiln discards the upload (or commits it, without discard_upload).
+KILN_API void null_adapter_break_targets(NullAdapter* na, bool broken) noexcept;
 
 } // namespace kiln

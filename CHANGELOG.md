@@ -253,6 +253,17 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
   relative path, as the `UriResolver` already received for buffers.
 
 ### Changed
+- **Breaking (runtime, adapter):** `upload_status(user, token, Status* failure)`: with `Failed` the
+  adapter writes why (for example `OutOfMemory` for a full pool, `Unsupported` for a resource it
+  cannot make); the reason reaches K5004 / K5010 / K5009 and the Failed event instead of
+  `Unknown`. New optional `Adapter::discard_upload(user, token)`: kiln calls it instead of
+  `commit_upload` when reading or decoding failed after `begin_upload`, and the adapter frees the
+  reservation and the object at once (kiln neither polls the token nor destroys the object);
+  without it kiln commits as before and destroys the result. Null adapter:
+  `NullAdapterStats::discards`, `null_adapter_break_targets()`; failed uploads report
+  `OutOfMemory`. The example adapters implement both (`uploadsDiscarded` in `ex::AdapterStats`).
+  Migration: add the `Status* failure` parameter (write it when returning `Failed`); implement
+  `discard_upload` if the adapter can free an uncommitted upload cheaply.
 - Adapter contract, documentation only (`adapter.h`, `adapter.md`): `Busy` means a retry can
   succeed, and an upload that can never fit returns `Unsupported`, a full object table
   `OutOfMemory`; kiln never polls a token after its first terminal status; `Failed` means no GPU

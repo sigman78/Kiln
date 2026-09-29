@@ -45,6 +45,7 @@ struct Upload {
     u64 offset   = 0; ///< in the staging ring
     u32 span     = 0; ///< staging ring reservation
     GLsync fence = nullptr;
+    Status failure; ///< why, once Failed
 };
 
 struct TexFormat {
@@ -259,12 +260,31 @@ void commit_upload(void* user, u64 token) {
     a->commits.push(i);
 }
 
-UploadStatus upload_status(void* user, u64 token) {
+/// kiln's write failed: nothing reached GL, so the reservation, the record and the object (not
+/// made yet: no GL call on this worker thread) go now.
+void discard_upload(void* user, u64 token) {
+    auto* a = static_cast<GlAdapter*>(user);
+    std::lock_guard<std::mutex> const lock(a->mutex);
+    u32 const i = a->uploads.index_of(token);
+    if (i == kInvalid) return;
+    Upload const& u = a->uploads[i];
+    a->ring.release(u.span);
+    a->objects[u.object] = Object{0, 0, a->objects[u.object].gen + 1, false, 0};
+    a->freeObjects.push_back(u.object);
+    a->uploads.discard(i);
+    ++a->stats.uploadsDiscarded;
+}
+
+UploadStatus upload_status(void* user, u64 token, Status* failure) {
     auto* a         = static_cast<GlAdapter*>(user);
     u32 const index = a->uploads.index_of(token);
-    if (index == kInvalid) return UploadStatus::Failed; // not an upload of this adapter
+    if (index == kInvalid) { // not an upload of this adapter
+        *failure = make_status(Code::InvalidArgument);
+        return UploadStatus::Failed;
+    }
     if (!poll(a, index)) return UploadStatus::Pending;
     UploadStatus const st = ex::status_of(a->uploads.state(index));
+    if (st == UploadStatus::Failed) *failure = a->uploads[index].failure;
     for (u32 i = 0; i < a->inFlight.size(); ++i)
         if (a->inFlight[i] == index) {
             a->inFlight[i] = a->inFlight.back();
@@ -333,6 +353,7 @@ void flush(void* user) {
             continue;
         }
         a->uploads.advance(i, ex::UploadState::Failed); // nothing read the staging range
+        a->uploads[i].failure = make_status(Code::OutOfMemory);
         std::lock_guard<std::mutex> const lock(a->mutex);
         a->ring.release(a->uploads[i].span);
         ++a->stats.uploadsFailed;
@@ -416,6 +437,7 @@ Result<GlAdapter*> gl_adapter_create(GlAdapterDesc const& desc, Adapter* out) no
         .copy_constraints = &copy_constraints,
         .begin_upload     = &begin_upload,
         .commit_upload    = &commit_upload,
+        .discard_upload   = &discard_upload,
         .upload_status    = &upload_status,
         .bind             = desc.bindless ? &bind : nullptr, // bound: the host asks gpu_object() per draw
         .destroy          = &destroy,

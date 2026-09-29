@@ -89,7 +89,7 @@ enum class UploadStatus : u8 {
     Complete,    ///< kiln uses the object from now on
     /// The adapter could not make the object, and no GPU work on the upload remains (finished or
     /// cancelled). kiln fails the asset (K5004), or keeps the current version of a reload (K5010),
-    /// and passes the object to destroy.
+    /// with the reason upload_status wrote, and passes the object to destroy.
     Failed,
 };
 
@@ -100,9 +100,9 @@ struct UploadTarget {
     GpuObject object;            ///< the object that holds the data once the upload completes
 };
 
-/// Every function pointer except `bind` and `flush` must be set. `begin_upload` /
-/// `commit_upload` may run on kiln worker threads, everything else runs on the pump thread
-/// (threading contract and frames: docs/design/adapter.md, docs/design/adapter-frames-slots.md).
+/// Every function pointer except `discard_upload`, `bind` and `flush` must be set. `begin_upload`,
+/// `commit_upload` and `discard_upload` may run on kiln worker threads, everything else runs on the
+/// pump thread (threading contract and frames: docs/design/adapter.md, adapter-frames-slots.md).
 struct Adapter {
     /// Answers for the whole host: the API's support, and for VertexBuffer also what the host's
     /// shaders read (with vertex pulling, only the shaders decide).
@@ -113,11 +113,18 @@ struct Adapter {
     /// fit (larger than the whole staging ring or heap) returns Unsupported, a full object table
     /// OutOfMemory: both fail the asset (K5004).
     Status (*begin_upload)(void* user, UploadDesc const& desc, UploadTarget* out) = nullptr;
-    void (*commit_upload)(void* user, u64 token)                                  = nullptr;
+    /// kiln wrote the bytes. After a successful begin_upload kiln calls exactly one of
+    /// commit_upload and discard_upload.
+    void (*commit_upload)(void* user, u64 token) = nullptr;
+    /// Optional. kiln could not write the bytes (a read or decode failed): free the reservation and
+    /// the object now; no GPU work is wanted. kiln never polls the token nor destroys the object.
+    /// Without it kiln commits instead and destroys the result.
+    void (*discard_upload)(void* user, u64 token) = nullptr;
     /// Polled on the pump thread until not Pending; kiln never asks about the token again, so the
     /// adapter may recycle it with that answer. Once Complete, kiln uses the object (or destroys it
-    /// if the asset was dropped meanwhile).
-    UploadStatus (*upload_status)(void* user, u64 token) = nullptr;
+    /// if the asset was dropped meanwhile). With Failed, the adapter writes why to `*failure`
+    /// (kiln passes Code::Unknown in), which reaches the diagnostic and the Failed event.
+    UploadStatus (*upload_status)(void* user, u64 token, Status* failure) = nullptr;
     /// Bindless adapters: slot `slot` (kiln numbers them, [0, bindlessSlots)) shows `obj`: the
     /// placeholder of the texture's kind and shape at the request, the texture once Ready, the new
     /// one after a reload, the Failed checker with devPlaceholders. Frames the host records after

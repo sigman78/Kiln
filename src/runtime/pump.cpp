@@ -142,16 +142,17 @@ void submit_stage(Context* ctx, Slot& s, Stage stage) noexcept {
 void poll_placeholders(Context* ctx) noexcept {
     for (Placeholder& p : ctx->ph) {
         if (!p.pending) continue;
-        UploadStatus const st = ctx->adapter.upload_status(ctx->adapter.user, p.token);
+        Status why            = make_status(Code::Unknown);
+        UploadStatus const st = ctx->adapter.upload_status(ctx->adapter.user, p.token, &why);
         if (st == UploadStatus::Pending) continue;
         p.pending = false;
         if (st == UploadStatus::Failed) { // textures of this kind and shape get a null object
             p.failed = true;
             ctx->adapter.destroy(ctx->adapter.user, p.obj);
             p.obj = {};
-            (void)diagf(&ctx->diag, make_status(Code::Unknown), kDiagPlaceholderFailed, Severity::Error, {},
-                        "placeholder", "the adapter failed the upload of placeholder %llu",
-                        static_cast<unsigned long long>(p.id));
+            (void)diagf(&ctx->diag, why, kDiagPlaceholderFailed, Severity::Error, {}, "placeholder",
+                        "the adapter failed the upload of placeholder %llu (%s)",
+                        static_cast<unsigned long long>(p.id), code_name(why.code));
             continue;
         }
         p.ready = true;
@@ -302,14 +303,14 @@ void drain_completions(Context* ctx, u32 maxCompletions) noexcept {
         process(ctx, ctx->compScratch[i]);
 }
 
-/// The adapter failed a committed upload. No frame has seen the object: it goes at once.
-void fail_upload(Context* ctx, Slot& s) noexcept {
+/// The adapter failed a committed upload, for `why`. No frame has seen the object: it goes at once.
+void fail_upload(Context* ctx, Slot& s, Status why) noexcept {
     ctx->adapter.destroy(ctx->adapter.user, s.target.object);
     s.hasTarget = false;
     s.capture.reset();
     format(s.capture.msg, sizeof s.capture.msg, "the adapter failed the upload (upload_status)");
     s.capture.set = true;
-    fail_slot(ctx, s, kDiagAdapterRejected, make_status(Code::Unknown));
+    fail_slot(ctx, s, kDiagAdapterRejected, why);
 }
 
 void poll_awaiting(Context* ctx) noexcept {
@@ -317,13 +318,14 @@ void poll_awaiting(Context* ctx) noexcept {
     for (u32 i = ctx->queues[u32(QueueId::Await)].head; i != kInvalid;) {
         Slot& s               = ctx->slots[i];
         u32 const next        = s.qNext;
-        UploadStatus const st = a.upload_status(a.user, s.target.token);
+        Status why            = make_status(Code::Unknown);
+        UploadStatus const st = a.upload_status(a.user, s.target.token, &why);
         if (st != UploadStatus::Pending) {
             queue_remove(ctx, s);
             if (st == UploadStatus::Complete)
                 make_ready(ctx, s);
             else
-                fail_upload(ctx, s);
+                fail_upload(ctx, s, why);
         }
         i = next;
     }

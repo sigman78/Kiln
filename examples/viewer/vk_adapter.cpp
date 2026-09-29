@@ -131,7 +131,9 @@ struct Object {
 };
 
 /// A staging ring reservation, released when the timeline reaches `value`. Reservations are
-/// made in begin order and get their value at commit, so `value` is 0 until then.
+/// made in begin order and get their value at commit, so `value` is 0 until then; a discarded one
+/// gets kDiscarded and is released as soon as the entries before it are.
+constexpr u64 kDiscarded = ~u64(0);
 struct RingEntry {
     u64 value = 0;
     u64 end   = 0; ///< ring head after this reservation
@@ -247,7 +249,8 @@ namespace {
 
 /// Releases every reservation whose upload has completed. Caller holds the mutex.
 void ring_reclaim(VkAdapter* a, u64 completed) noexcept {
-    while (!a->ring.empty() && a->ring.front().value != 0 && a->ring.front().value <= completed) {
+    while (!a->ring.empty() && a->ring.front().value != 0 &&
+           (a->ring.front().value == kDiscarded || a->ring.front().value <= completed)) {
         a->ringTail = a->ring.front().end;
         a->ring.pop();
     }
@@ -706,12 +709,28 @@ void vk_commit_upload(void* user, u64 token) noexcept {
     if (!a->submitOnPoll) submit_ready(a);
 }
 
+/// kiln's write failed: nothing was recorded, so the image or buffer goes now, and its ring range
+/// once the ranges before it are reclaimed.
+void vk_discard_upload(void* user, u64 token) noexcept {
+    VkAdapter* a = self(user);
+    std::lock_guard<std::mutex> lock(a->mutex);
+    Object* const o = object_of_token(a, token);
+    if (!o || o->state != ObjectState::Begun) return;
+    a->ring.items[o->ringItem].value = kDiscarded;
+    object_free(a, u32((token & 0xFFFFFFFFu) - 1));
+    ++a->stats.uploadsDiscarded;
+    ring_reclaim(a, timeline_value(a));
+}
+
 /// A submitted copy cannot fail short of a lost device (VKX_CHECK), so never Failed for a live token.
-UploadStatus vk_upload_status(void* user, u64 token) noexcept {
+UploadStatus vk_upload_status(void* user, u64 token, Status* failure) noexcept {
     VkAdapter* a = self(user);
     std::lock_guard<std::mutex> lock(a->mutex);
     Object const* o = object_of_token(a, token);
-    if (!o) return UploadStatus::Failed; // not an upload of this adapter
+    if (!o) { // not an upload of this adapter
+        *failure = make_status(Code::InvalidArgument);
+        return UploadStatus::Failed;
+    }
     if (o->state == ObjectState::Recorded && a->submitOnPoll) submit_ready(a);
     if (o->state != ObjectState::Submitted || timeline_value(a) < o->value) return UploadStatus::Pending;
     if (o->value > a->watermark.load(std::memory_order_relaxed))
@@ -905,6 +924,7 @@ Result<VkAdapter*> adapter_create(AdapterDesc const& desc, Adapter* out) noexcep
     out->copy_constraints = &vk_copy_constraints;
     out->begin_upload     = &vk_begin_upload;
     out->commit_upload    = &vk_commit_upload;
+    out->discard_upload   = &vk_discard_upload;
     out->upload_status    = &vk_upload_status;
     out->bind             = desc.bindless ? &vk_bind : nullptr;
     out->destroy          = &vk_destroy;

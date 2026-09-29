@@ -39,7 +39,8 @@ struct NullAdapter {
 
     std::atomic<u32> busyCalls{0}; ///< begin_upload call counter for busyEveryN
     std::atomic<u32> failCalls{0}; ///< begin_upload call counter for failEveryN
-    bool failUploads = false;      ///< null_adapter_fail_uploads()
+    bool failUploads  = false;     ///< null_adapter_fail_uploads()
+    bool breakTargets = false;     ///< null_adapter_break_targets()
 };
 
 namespace {
@@ -107,7 +108,7 @@ Status null_begin_upload(void* user, UploadDesc const& desc, UploadTarget* out) 
     if (stored.desc.mesh == &entry.meshDesc) stored.desc.mesh = &stored.meshDesc;
 
     u64 index          = u64(na->table.size()); // 1-based
-    out->dst           = stored.bytes;
+    out->dst           = na->breakTargets ? nullptr : stored.bytes;
     out->rowPitchAlign = na->desc.rowPitchAlign;
     out->token         = index;
     out->object        = GpuObject{.native = index, .slot = kInvalid, .kind = u32(desc.kind)};
@@ -132,14 +133,30 @@ void null_commit_upload(void* user, u64 token) noexcept {
     na->stats.bytesUploaded += e.size;
 }
 
-UploadStatus null_upload_status(void* user, u64 token) noexcept {
+/// The upload was never committed: its object goes now, and kiln forgets both.
+void null_discard_upload(void* user, u64 token) noexcept {
+    NullAdapter* na = self(user);
+    std::lock_guard<std::mutex> lock(na->mutex);
+    KILN_VERIFY(token != 0 && token <= u64(na->table.size()));
+    ObjectEntry& e = na->table[usize(token - 1)];
+    KILN_VERIFY(e.state == EntryState::Uploading && "discard of a committed or unknown upload");
+    free(na->allocator, e.bytes, e.size ? usize(e.size) : 1, e.align, Tag::Payload);
+    e.bytes = nullptr;
+    e.size  = 0;
+    e.state = EntryState::Freed;
+    ++na->stats.discards;
+}
+
+UploadStatus null_upload_status(void* user, u64 token, Status* failure) noexcept {
     NullAdapter* na = self(user);
     std::lock_guard<std::mutex> lock(na->mutex);
     if (token == 0 || token > u64(na->table.size())) return UploadStatus::Pending;
     EntryState const st = na->table[usize(token - 1)].state;
-    return st == EntryState::Complete ? UploadStatus::Complete
-           : st == EntryState::Failed ? UploadStatus::Failed
-                                      : UploadStatus::Pending;
+    if (st == EntryState::Failed) {
+        *failure = make_status(Code::OutOfMemory);
+        return UploadStatus::Failed;
+    }
+    return st == EntryState::Complete ? UploadStatus::Complete : UploadStatus::Pending;
 }
 
 void null_bind(void* user, u32 slot, GpuObject obj, TextureShape /*shape*/) noexcept {
@@ -189,6 +206,7 @@ Result<NullAdapter*> null_adapter_create(NullAdapterDesc const& desc, Adapter* o
     out->begin_upload     = &null_begin_upload;
     out->commit_upload    = &null_commit_upload;
     out->upload_status    = &null_upload_status;
+    out->discard_upload   = &null_discard_upload;
     out->bind             = desc.bindlessSlots ? &null_bind : nullptr;
     out->destroy          = &null_destroy;
     out->bindlessSlots    = desc.bindlessSlots;
@@ -233,6 +251,12 @@ void null_adapter_fail_uploads(NullAdapter* na, bool fail) noexcept {
     if (!na) return;
     std::lock_guard<std::mutex> lock(na->mutex);
     na->failUploads = fail;
+}
+
+void null_adapter_break_targets(NullAdapter* na, bool broken) noexcept {
+    if (!na) return;
+    std::lock_guard<std::mutex> lock(na->mutex);
+    na->breakTargets = broken;
 }
 
 } // namespace kiln

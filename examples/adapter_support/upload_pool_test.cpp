@@ -51,6 +51,16 @@ KILN_TEST(UploadPool, ExhaustionAndCounts) {
     KILN_CHECK(pool.acquire() != kInvalid);
 }
 
+KILN_TEST(UploadPool, DiscardFreesAWritingRecord) {
+    UploadPool<Data> pool(nullptr, 1);
+    u32 const a = pool.acquire();
+    u64 const t = pool.token(a);
+    pool.discard(a); // kiln's write failed: never committed
+    KILN_CHECK_EQ(pool.index_of(t), kInvalid);
+    KILN_CHECK_EQ(pool.in_use(), 0u);
+    KILN_CHECK(pool.acquire() != kInvalid);
+}
+
 KILN_TEST(UploadPool, StateMachine) {
     using S = UploadState;
     KILN_CHECK(ex::can_advance(S::Writing, S::Committed));

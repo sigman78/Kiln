@@ -55,7 +55,8 @@ using Clock = std::chrono::steady_clock;
 /// Polls `token` for up to `ms`; true once complete.
 bool wait_upload(Adapter const& a, u64 token, u32 ms) {
     Clock::time_point const end = Clock::now() + std::chrono::milliseconds(ms);
-    while (a.upload_status(a.user, token) == UploadStatus::Pending) {
+    Status why;
+    while (a.upload_status(a.user, token, &why) == UploadStatus::Pending) {
         if (Clock::now() >= end) return false;
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
@@ -94,7 +95,8 @@ bool check_commit_order(Adapter const& a, u64 stagingBytes) {
     a.commit_upload(a.user, smallT.token); // the big one is still "being written"
     bool const smallDone = wait_upload(a, smallT.token, 5000);
     double const ms      = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
-    bool const bigWaited = a.upload_status(a.user, bigT.token) == UploadStatus::Pending;
+    Status why;
+    bool const bigWaited = a.upload_status(a.user, bigT.token, &why) == UploadStatus::Pending;
     a.commit_upload(a.user, bigT.token);
     bool const bigDone = wait_upload(a, bigT.token, 5000);
     a.destroy(a.user, smallT.object);
@@ -111,6 +113,41 @@ bool check_commit_order(Adapter const& a, u64 stagingBytes) {
               "still uncommitted",
               ull(small.size), ms, ull(big.size));
     return true;
+}
+
+/// discard_upload frees an upload kiln never committed: its object at once, and its staging range
+/// even though a later upload was reserved behind it and committed.
+bool check_discard(Adapter const& a, vkx::VkAdapter* vka) {
+    ex::AdapterStats const before = vkx::adapter_stats(vka);
+    MeshPayloadDesc const md{.payloadDecodedSize = 4096, .payloadAlignment = 256, .indexSize = 4};
+    UploadDesc const d{.id        = 0x6b696c6e00000003ull,
+                       .kind      = UploadKind::MeshPayload,
+                       .size      = md.payloadDecodedSize,
+                       .alignment = 256,
+                       .texture   = nullptr,
+                       .mesh      = &md};
+    UploadTarget dropped{}, kept{};
+    if (a.begin_upload(a.user, d, &dropped).failed() || a.begin_upload(a.user, d, &kept).failed()) {
+        KILN_ERROR("smoke", "discard: begin_upload failed");
+        return false;
+    }
+    a.discard_upload(a.user, dropped.token); // the first reservation, never committed
+    std::memset(kept.dst, 0x3c, usize(d.size));
+    a.commit_upload(a.user, kept.token);
+    bool const keptDone = wait_upload(a, kept.token, 5000);
+    a.destroy(a.user, kept.object);
+    ex::AdapterStats const after = vkx::adapter_stats(vka);
+    bool const ok                = keptDone && after.uploadsDiscarded == before.uploadsDiscarded + 1 &&
+                    after.liveObjects == before.liveObjects && after.stagingUsed == 0 &&
+                    after.uploadsPending == 0;
+    if (!ok)
+        KILN_ERROR("smoke",
+                   "discard: kept upload %s, %u discarded, %u -> %u live objects, %llu staging bytes held",
+                   keptDone ? "completed" : "timed out", after.uploadsDiscarded - before.uploadsDiscarded,
+                   before.liveObjects, after.liveObjects, ull(after.stagingUsed));
+    else
+        KILN_INFO("smoke", "discard: the object went at once and the ring reclaimed its range");
+    return ok;
 }
 
 struct Options {
@@ -207,8 +244,9 @@ int main(int argc, char** argv) {
         vkx::device_destroy(device);
         return 2;
     }
-    vkx::VkAdapter* vka = va.value();
-    bool const orderOk  = check_commit_order(adapter, ad.stagingBytes);
+    vkx::VkAdapter* vka  = va.value();
+    bool const orderOk   = check_commit_order(adapter, ad.stagingBytes);
+    bool const discardOk = check_discard(adapter, vka);
 
     // 2. The context. create() uploads the placeholders through the adapter and waits for them.
     ContextDesc const desc{.diag = diag, .adapter = &adapter, .storeDir = StrView(o.store)};
@@ -271,5 +309,5 @@ int main(int argc, char** argv) {
     destroy(ctx);
     vkx::adapter_destroy(vka);
     vkx::device_destroy(device);
-    return notReady == 0 && orderOk ? 0 : 1;
+    return notReady == 0 && orderOk && discardOk ? 0 : 1;
 }

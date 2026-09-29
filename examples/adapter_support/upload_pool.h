@@ -64,11 +64,14 @@ public:
     }
     /// Back to the free list; the token of the record goes stale. From a terminal state only.
     void release(u32 index) noexcept {
-        Record& r = records_[index];
-        KILN_ASSERT(r.state == UploadState::Complete || r.state == UploadState::Failed);
-        r.state = UploadState::Free;
-        r.gen   = r.gen + 1 == 0 ? 1 : r.gen + 1;
-        free_.push_back(index);
+        KILN_ASSERT(records_[index].state == UploadState::Complete ||
+                    records_[index].state == UploadState::Failed);
+        free_record(index);
+    }
+    /// discard_upload: kiln never committed the record, so it goes straight back from Writing.
+    void discard(u32 index) noexcept {
+        KILN_ASSERT(records_[index].state == UploadState::Writing);
+        free_record(index);
     }
 
     [[nodiscard]] u64 token(u32 index) const noexcept {
@@ -95,6 +98,13 @@ public:
     [[nodiscard]] bool full() const noexcept { return free_.empty(); } ///< acquire() would fail
 
 private:
+    void free_record(u32 index) noexcept {
+        Record& r = records_[index];
+        r.state   = UploadState::Free;
+        r.gen     = r.gen + 1 == 0 ? 1 : r.gen + 1;
+        free_.push_back(index);
+    }
+
     struct Record {
         T data{};
         UploadState state = UploadState::Free;

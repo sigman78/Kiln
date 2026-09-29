@@ -1115,7 +1115,9 @@ KILN_TEST(Runtime, UploadFailedFailsAsset) {
     KILN_REQUIRE(rt.pump_until([&] { return state(rt.ctx, t) == State::Failed; }));
     null_adapter_fail_uploads(rt.na, false);
     KILN_CHECK(rt.diags.has(kDiagAdapterRejected));
-    KILN_CHECK(rt.find_event(EventKind::Failed, t.bits()) >= 0);
+    int const failed = rt.find_event(EventKind::Failed, t.bits());
+    KILN_REQUIRE(failed >= 0);
+    KILN_CHECK_EQ(rt.events[usize(failed)].status.code, Code::OutOfMemory); // the adapter's reason
     KILN_CHECK_EQ(progress(rt.ctx, g).failed, 1u);
     KILN_CHECK_EQ(null_adapter_stats(rt.na).uploadsFailed, 1u);
     KILN_CHECK_EQ(null_adapter_stats(rt.na).liveObjects, baseline); // the failed object is gone
@@ -1130,6 +1132,39 @@ KILN_TEST(Runtime, UploadFailedFailsAsset) {
     KILN_CHECK_EQ(progress(rt.ctx, g).ready, 1u);
     release(rt.ctx, t);
     release(rt.ctx, g);
+}
+
+// kiln's write fails after a successful begin_upload (here: no destination memory). With
+// discard_upload the adapter frees the ticket and object at once, nothing is committed, and kiln
+// neither polls nor destroys; without it kiln commits and destroys the result. Either way nothing
+// is left, and the asset recovers on reload.
+KILN_TEST(Runtime, CpuFailureDiscardsUpload) {
+    for (bool withDiscard : {true, false}) {
+        Rt rt;
+        Result<NullAdapter*> na = null_adapter_create({}, &rt.adapter);
+        KILN_REQUIRE(na.ok());
+        rt.na = *na;
+        if (!withDiscard) rt.adapter.discard_upload = nullptr;
+        Result<Context*> c = create(
+            ContextDesc{.diag = rt.diags.sink(), .adapter = &rt.adapter, .storeDir = test::golden_dir()});
+        KILN_REQUIRE(c.ok());
+        rt.ctx                    = *c;
+        NullAdapterStats const s0 = null_adapter_stats(rt.na);
+        null_adapter_break_targets(rt.na, true);
+        TextureHandle t = request_texture(rt.ctx, "ktx2/normal");
+        KILN_REQUIRE(rt.pump_until([&] { return state(rt.ctx, t) == State::Failed; }));
+        null_adapter_break_targets(rt.na, false);
+        for (int i = 0; i < 3; ++i) // an orphaned commit is destroyed on a later pump
+            rt.pump_once();
+        NullAdapterStats const s1 = null_adapter_stats(rt.na);
+        KILN_CHECK(rt.diags.has(kDiagAdapterRejected));
+        KILN_CHECK_EQ(s1.discards, s0.discards + (withDiscard ? 1u : 0u));
+        KILN_CHECK_EQ(s1.commits, s0.commits + (withDiscard ? 0u : 1u));
+        KILN_CHECK_EQ(s1.liveObjects, s0.liveObjects); // nothing left behind
+        request_reload(rt.ctx, t);
+        KILN_REQUIRE(rt.pump_until([&] { return is_ready(rt.ctx, t); }));
+        release(rt.ctx, t);
+    }
 }
 
 // A reload whose upload the adapter fails keeps the current version (K5010), like any failed reload.

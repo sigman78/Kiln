@@ -99,6 +99,7 @@ struct Upload {
     u64 stagingOffset = 0;
     u32 span          = 0; ///< staging ring entry (textures)
     u64 value         = 0; ///< timeline value of the submission that copies it
+    Status failure;        ///< why, once Failed
 };
 
 gpu::Format gpu_format(Format f) noexcept {
@@ -208,6 +209,7 @@ Record record_texture(NgaAdapter* a, gpu::CommandBuffer* cmd, Upload& u) noexcep
         KILN_ERROR("nga", "texture %ux%u needs %llu bytes; the texture heap has %llu", t.width, t.height,
                    static_cast<unsigned long long>(sa.size),
                    static_cast<unsigned long long>(a->desc.textureBytes));
+        u.failure = make_status(Code::Unsupported);
         return Record::Failed;
     }
     {
@@ -222,6 +224,7 @@ Record record_texture(NgaAdapter* a, gpu::CommandBuffer* cmd, Upload& u) noexcep
     o.texture    = gpu::create_texture(cmd, d, a->textureHeap, offset);
     if (!o.texture) {
         KILN_ERROR("nga", "creating a %ux%u texture failed", t.width, t.height);
+        u.failure = make_status(Code::OutOfMemory);
         return Record::Failed;
     }
     CopyConstraints const cc{
@@ -341,12 +344,34 @@ void commit_upload(void* user, u64 token) {
     a->commits.push(i);
 }
 
-UploadStatus upload_status(void* user, u64 token) {
+/// kiln's write failed: nothing was recorded for the GPU, so the staging or mesh heap range, the
+/// record and the object (not created yet) go now.
+void discard_upload(void* user, u64 token) {
+    auto* a = static_cast<NgaAdapter*>(user);
+    u32 oi  = kInvalid;
+    {
+        std::lock_guard<std::mutex> const lock(a->mutex);
+        u32 const i = a->uploads.index_of(token);
+        if (i == kInvalid) return;
+        Upload const& u = a->uploads[i];
+        if (u.kind == UploadKind::TextureLevels) a->ring.release(u.span);
+        oi = u.object;
+        a->uploads.discard(i);
+        ++a->stats.uploadsDiscarded;
+    }
+    release_object(a, oi); // gives the mesh heap range back; no GPU object exists
+}
+
+UploadStatus upload_status(void* user, u64 token, Status* failure) {
     auto* a         = static_cast<NgaAdapter*>(user);
     u32 const index = a->uploads.index_of(token);
-    if (index == kInvalid) return UploadStatus::Failed; // not an upload of this adapter
+    if (index == kInvalid) { // not an upload of this adapter
+        *failure = make_status(Code::InvalidArgument);
+        return UploadStatus::Failed;
+    }
     if (!poll(a, index)) return UploadStatus::Pending;
     UploadStatus const st = ex::status_of(a->uploads.state(index));
+    if (st == UploadStatus::Failed) *failure = a->uploads[index].failure;
     for (u32 i = 0; i < a->inFlight.size(); ++i)
         if (a->inFlight[i] == index) {
             a->inFlight[i] = a->inFlight.back();
@@ -481,6 +506,7 @@ Result<NgaAdapter*> nga_adapter_create(NgaAdapterDesc const& desc, Adapter* out)
         .copy_constraints = &copy_constraints,
         .begin_upload     = &begin_upload,
         .commit_upload    = &commit_upload,
+        .discard_upload   = &discard_upload,
         .upload_status    = &upload_status,
         .bind             = &bind,
         .destroy          = &destroy,
