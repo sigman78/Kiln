@@ -55,7 +55,8 @@ if(TARGET kiln_cook)
                                        test_settings.cpp test_sidecar.cpp test_store.cpp
                                        png_writer.h hdr_writer.h image_fixtures.h test_image.cpp
                                        test_texture_cook.cpp test_hdr.cpp test_texture_golden.cpp
-                                       test_provider.cpp test_parallel.cpp test_texture_bc.cpp)
+                                       test_provider.cpp test_parallel.cpp test_texture_bc.cpp
+                                       test_catalog.cpp)
     target_link_libraries(kiln_tests PRIVATE kiln_cook)
     # bcdec decodes the BC encoders' output (test_texture_bc.cpp).
     target_link_libraries(kiln_tests PRIVATE kiln_bcdec)

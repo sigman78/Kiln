@@ -105,6 +105,8 @@ add_library(kiln_runtime STATIC
     src/formats/formats_internal.h
     src/formats/ktx2_read.cpp
     src/formats/zstd_decode.cpp
+    include/kiln/catalog.h
+    src/formats/xxh3.cpp
     include/kiln/assets.h
     src/runtime/runtime_internal.h
     src/runtime/context.cpp
@@ -168,6 +170,10 @@ if(KILN_BUILD_COOK)
         src/cook/cook_internal.h
         include/kiln/cook/provider.h
         src/cook/provider.cpp
+        src/cook/unit.h
+        src/cook/unit.cpp
+        include/kiln/cook/catalog.h
+        src/cook/build_key.cpp
         include/kiln/cook/cli.h
         src/cook/cli_main.cpp
     )

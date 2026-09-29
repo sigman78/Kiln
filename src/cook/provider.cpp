@@ -13,6 +13,8 @@
 // recordMutex is taken inside a stripe lock or on its own, never the other way round.
 #include "kiln/cook/provider.h"
 
+#include "unit.h"
+
 #include "kiln/cook/cook.h"
 #include "kiln/cook/image.h"
 #include "kiln/cook/sidecar.h"
@@ -29,7 +31,7 @@
 
 #if defined(KILN_OS_WINDOWS)
 #include <direct.h>  // _mkdir
-#include <windows.h> // GetFileAttributesExW; WIN32_LEAN_AND_MEAN/NOMINMAX set by kiln_apply_defaults
+#include <windows.h> // FindFirstFileW; WIN32_LEAN_AND_MEAN/NOMINMAX set by kiln_apply_defaults
 #else
 #include <sys/stat.h> // mkdir, stat
 #endif
@@ -58,7 +60,7 @@ struct SourceRecord {
     u32 assetOff = 0, assetLen = 0;   ///< the asset to re-cook: the mesh for a glb/gltf (even
                                       ///< when a texture request created the record), the
                                       ///< texture for a png/ktx2 of its own
-    AssetKind kind = AssetKind::Mesh; ///< Mesh: cook_mesh_full; Texture: cook_texture_own_source
+    AssetKind kind = AssetKind::Mesh; ///< the unit: a mesh source, or a texture of its own
     SourceStat stat;                  ///< the source as last cooked successfully
     SourceStat failedStat;            ///< the source version whose re-cook last failed
     bool failed      = false;
@@ -143,12 +145,6 @@ void make_dirs(char* buf, usize n) noexcept {
     }
 }
 
-/// Directory containing a source file path, or "." if it names a bare file.
-StrView source_dir(StrView sourcePath) noexcept {
-    usize const slash = sourcePath.rfind('/');
-    return slash == StrView::kNpos ? StrView(".") : sourcePath.substr(0, slash);
-}
-
 /// Writes `bytes` to the store file of `name` (store_file_path), creating its directories.
 /// `overwrite`: replace an existing file (re-cook) instead of leaving it (cook-on-miss).
 Status write_to_store(StrView storeDir, StrView name, AssetKind kind, Span<u8 const> bytes, bool overwrite,
@@ -218,223 +214,60 @@ void sidecar_path(StrView sourcePath, char (&buf)[1100], StrView& out) noexcept 
     out = StrView(buf, format(buf, sizeof buf, "%.*s%.*s", KILN_SV(sourcePath), KILN_SV(kSidecarExt)));
 }
 
-/// The resolution inputs of one asset. The sidecar text, if any, lives in `sidecarBytes`.
-struct Layers {
-    ResolveDesc desc;
-    Vec<u8> sidecarBytes;
-    char sidecarBuf[1100] = {};
-};
-
-/// Fills `out` for the asset `name` read from `sourcePath`. With `readSidecar`, the source's
-/// `.kiln` file is read when it exists (embedded images have none).
-Status prepare_layers(Provider const& p, StrView name, StrView sourcePath, SlotHint slot, bool readSidecar,
-                      Allocator const* alloc, DiagSink const* diag, Layers* out) noexcept {
-    ResolveDesc& d = out->desc;
-    d.asset        = CookAssetInfo{name, sourcePath, slot};
-    d.nameRules    = Span<NameRule const>(p.nameRules.data(), p.nameRules.size());
-    d.policy       = p.desc.policy;
-    d.target       = p.desc.target;
-    d.session      = p.session;
-    d.diag         = diag;
-    if (!readSidecar) return kOk;
-    StrView path;
-    sidecar_path(sourcePath, out->sidecarBuf, path);
-    if (!io_file_exists(path)) return kOk;
-    out->sidecarBytes.init(alloc, Tag::Cook);
-    KILN_TRY(io_read_file(compat_io_backend(), path, alloc, &out->sidecarBytes));
-    d.sidecar = StrView(reinterpret_cast<char const*>(out->sidecarBytes.data()), out->sidecarBytes.size());
-    d.sidecarPath = path;
-    return kOk;
-}
-
-// Mesh URI resolver: external buffers/images relative to the source file.
-
-struct UriResolverCtx {
-    char baseDir[900] = {};
-};
-
-Status resolve_uri_fn(void* user, StrView uri, Allocator const* alloc, Vec<u8>* out) noexcept {
-    auto const* ctx = static_cast<UriResolverCtx const*>(user);
-    char path[1200];
-    usize const n = format(path, sizeof path, "%s/%.*s", ctx->baseDir, KILN_SV(uri));
-    StrView const pathView(path, n);
-    if (!io_file_exists(pathView)) return make_status(Code::NotFound);
-    return io_read_file(compat_io_backend(), pathView, alloc, out);
-}
-
-/// A texture with a source file of its own (no owning mesh involved).
-Status cook_texture_own_source(Provider const& p, StrView sourcePath, StrView assetPath, bool overwrite,
-                               Allocator const* alloc, Vec<u8>* out, DiagSink const* diag) noexcept {
-    Vec<u8> bytes(alloc, Tag::Cook);
-    KILN_TRY(io_read_file(compat_io_backend(), sourcePath, alloc, &bytes));
-
-    Layers layers;
-    KILN_TRY(prepare_layers(p, assetPath, sourcePath, SlotHint::None, true, alloc, diag, &layers));
-    Result<TextureCookSettings> rs = resolve_texture_layers(p.desc.textureDefaults, layers.desc);
-    if (rs.failed()) return rs.status();
-
-    TextureSource src{};
-    src.bytes      = bytes.span();
-    src.assetPath  = assetPath;
-    src.sourcePath = sourcePath;
-    Result<CookedTexture> r =
-        cook_texture(src, *rs, p.desc.target, {.alloc = alloc, .diag = diag, .jobs = p.jobs});
-    if (r.failed()) return r.status();
-
-    if (p.desc.storeMode == StoreMode::Disk) {
-        Status const st =
-            write_to_store(p.storeDir, assetPath, AssetKind::Texture, r->file.span(), overwrite, diag);
-        if (st.failed()) return st;
-    }
-    *out = std::move(r->file);
-    return kOk;
-}
-
-/// What cook_mesh_full did with the mesh's textures.
-struct MeshEmit {
-    Vec<char> textures;        ///< asset paths written to the store, NUL-separated
-    Status firstFailure = kOk; ///< first texture that could not be read, cooked or written
-};
-
-/// Cooks the mesh and every texture it references. `out` gets the mesh bytes (Mesh)
-/// or the requested texture's bytes (Texture), taken from the in-process result,
-/// never re-read from the store (Memory mode has none). `emit` is optional.
-Status cook_mesh_full(Provider const& p, StrView meshAssetPath, StrView sourcePath, AssetKind requestedKind,
-                      StrView requestedAssetPath, bool overwrite, Allocator const* alloc, Vec<u8>* out,
-                      DiagSink const* diag, MeshEmit* emit) noexcept {
-    Vec<u8> bytes(alloc, Tag::Cook);
-    KILN_TRY(io_read_file(compat_io_backend(), sourcePath, alloc, &bytes));
-
-    UriResolverCtx uctx;
-    StrView const baseDir = source_dir(sourcePath);
-    format(uctx.baseDir, sizeof uctx.baseDir, "%.*s", KILN_SV(baseDir));
-
-    MeshSource src{};
-    src.bytes      = bytes.span();
-    src.assetPath  = meshAssetPath;
-    src.sourcePath = sourcePath;
-    src.resolver   = {&resolve_uri_fn, &uctx};
-
-    Layers layers;
-    KILN_TRY(prepare_layers(p, meshAssetPath, sourcePath, SlotHint::None, true, alloc, diag, &layers));
-    Result<MeshCookSettings> rm = resolve_mesh_layers(p.desc.meshDefaults, layers.desc);
-    if (rm.failed()) return rm.status();
-
-    Result<CookedMesh> r = cook_mesh(src, *rm, p.desc.target, {.alloc = alloc, .diag = diag, .jobs = p.jobs});
-    if (r.failed()) return r.status();
-
-    if (p.desc.storeMode == StoreMode::Disk) {
-        Status const st =
-            write_to_store(p.storeDir, meshAssetPath, AssetKind::Mesh, r->file.span(), overwrite, diag);
-        if (st.failed()) return st;
-    }
-
-    bool requestedFound       = requestedKind == AssetKind::Mesh;
-    Status requestedTexStatus = make_status(Code::NotFound);
-    Vec<u8> requestedTexBytes(alloc, Tag::Cook);
-
-    auto const noteFailure = [emit](Status const& st) noexcept {
-        if (emit && emit->firstFailure.ok()) emit->firstFailure = st;
+/// The unit of the source `sourcePath`, named `name` (a mesh, or a texture of its own).
+UnitDesc unit_desc(Provider const& p, AssetKind kind, StrView name, StrView sourcePath,
+                   Allocator const* alloc, DiagSink const* diag) noexcept {
+    return UnitDesc{
+        .kind            = kind,
+        .name            = name,
+        .sourcePath      = sourcePath,
+        .meshDefaults    = &p.desc.meshDefaults,
+        .textureDefaults = &p.desc.textureDefaults,
+        .nameRules       = Span<NameRule const>(p.nameRules.data(), p.nameRules.size()),
+        .policy          = p.desc.policy,
+        .target          = &p.desc.target,
+        .session         = p.session,
+        .env             = {.alloc = alloc, .diag = diag, .jobs = p.jobs},
     };
-    for (TextureRef const& t : r->textures) {
-        bool const isRequested = requestedKind == AssetKind::Texture && t.assetPath == requestedAssetPath;
+}
 
-        Span<u8 const> const texBytes = t.embedded;
-        if (texBytes.empty()) continue; // the importer only emits refs with bytes
-
-        Layers texLayers;
-        Status const prepared =
-            prepare_layers(p, t.assetPath, sourcePath, t.slot, false, alloc, diag, &texLayers);
-        Result<TextureCookSettings> rs = prepared.ok()
-                                             ? resolve_texture_layers(p.desc.textureDefaults, texLayers.desc)
-                                             : Result<TextureCookSettings>(prepared);
-        if (rs.failed()) {
-            if (isRequested) requestedTexStatus = rs.status();
-            noteFailure(rs.status());
+/// Cooks a source and, in Disk mode, writes every output that cooked to the store. A texture that
+/// cannot be written keeps the failure in its output; the first output failing fails the call.
+/// `emitted` (optional) gets the names of the textures written, NUL-separated.
+Status cook_to_store(Provider const& p, UnitDesc const& d, bool overwrite, CookUnit* unit,
+                     Vec<char>* emitted) noexcept {
+    KILN_TRY(cook_unit(d, unit));
+    if (p.desc.storeMode != StoreMode::Disk) return kOk;
+    for (usize i = 0; i < unit->outputs.size(); ++i) {
+        UnitOutput& o = unit->outputs[i];
+        if (o.status.failed()) continue;
+        StrView const name = unit->name(o);
+        Status const st    = write_to_store(p.storeDir, name, o.kind, o.bytes.span(), overwrite, d.env.diag);
+        if (st.failed()) {
+            if (i == 0) return st;
+            o.status = st;
             continue;
         }
-        TextureSource tsrc{};
-        tsrc.bytes      = texBytes;
-        tsrc.assetPath  = t.assetPath;
-        tsrc.sourcePath = sourcePath;
-        Result<CookedTexture> tr =
-            cook_texture(tsrc, *rs, p.desc.target, {.alloc = alloc, .diag = diag, .jobs = p.jobs});
-        if (tr.failed()) {
-            if (isRequested) requestedTexStatus = tr.status();
-            noteFailure(tr.status());
-            continue;
-        }
-
-        if (p.desc.storeMode == StoreMode::Disk) {
-            Status const st =
-                write_to_store(p.storeDir, t.assetPath, AssetKind::Texture, tr->file.span(), overwrite, diag);
-            if (st.failed()) {
-                if (isRequested) requestedTexStatus = st;
-                noteFailure(st);
-                continue;
-            }
-            if (emit) {
-                emit->textures.append(Span<char const>(t.assetPath.data, t.assetPath.size));
-                emit->textures.push_back('\0');
-            }
-        }
-        if (isRequested) {
-            requestedTexBytes = std::move(tr->file);
-            requestedFound    = true;
+        if (emitted && o.kind == AssetKind::Texture) {
+            emitted->append(Span<char const>(name.data, name.size));
+            emitted->push_back('\0');
         }
     }
+    return kOk;
+}
 
-    if (requestedKind == AssetKind::Mesh) {
-        *out = std::move(r->file);
-        return kOk;
-    }
-    if (!requestedFound) return requestedTexStatus;
-    *out = std::move(requestedTexBytes);
+/// Moves the bytes of the output `name` into `out`, or returns why there are none.
+Status take_output(CookUnit& unit, AssetKind kind, StrView name, Vec<u8>* out) noexcept {
+    UnitOutput* o = unit.find(kind, name);
+    if (!o) return make_status(Code::NotFound);
+    if (o->status.failed()) return o->status;
+    *out = std::move(o->bytes);
     return kOk;
 }
 
 // ---------------------------------------------------------------------------
 // Source records
 // ---------------------------------------------------------------------------
-
-/// Size and modification time of a file. Uses the compat backend's `stat` when it has
-/// one, else the same platform calls locally, so every stat in a process uses one clock.
-Status stat_file(StrView path, IoStat* out) noexcept {
-    IoBackend const* io = compat_io_backend();
-    if (io && io->stat) return io->stat(io->user, path, out);
-
-    char buf[1024];
-    if (path.size + 1 > sizeof buf) return make_status(Code::InvalidArgument);
-    std::memcpy(buf, path.data, path.size);
-    buf[path.size] = '\0';
-#if defined(KILN_OS_WINDOWS)
-    wchar_t wbuf[1024];
-    if (MultiByteToWideChar(CP_UTF8, 0, buf, -1, wbuf, int(sizeof wbuf / sizeof wbuf[0])) == 0)
-        return make_status(Code::InvalidArgument);
-    WIN32_FILE_ATTRIBUTE_DATA d{};
-    if (!GetFileAttributesExW(wbuf, GetFileExInfoStandard, &d)) {
-        DWORD const err    = GetLastError();
-        bool const missing = err == ERROR_FILE_NOT_FOUND || err == ERROR_PATH_NOT_FOUND;
-        return make_status(missing ? Code::NotFound : Code::IoError, u16(err & 0xFFFFu));
-    }
-    out->size = (u64(d.nFileSizeHigh) << 32) | u64(d.nFileSizeLow);
-    out->mtimeNs =
-        ((u64(d.ftLastWriteTime.dwHighDateTime) << 32) | u64(d.ftLastWriteTime.dwLowDateTime)) * 100u;
-#else
-    struct stat st{};
-    if (::stat(buf, &st) != 0) {
-        int const e = errno;
-        return make_status(e == ENOENT ? Code::NotFound : Code::IoError, u16(e & 0xFFFF));
-    }
-    out->size = u64(st.st_size);
-#if defined(KILN_OS_MACOS)
-    out->mtimeNs = u64(st.st_mtimespec.tv_sec) * 1000000000ull + u64(st.st_mtimespec.tv_nsec);
-#else
-    out->mtimeNs = u64(st.st_mtim.tv_sec) * 1000000000ull + u64(st.st_mtim.tv_nsec);
-#endif
-#endif
-    return kOk;
-}
 
 /// Fails only if the source itself cannot be stat'ed.
 Status stat_source(StrView path, SourceStat* out) noexcept {
@@ -539,31 +372,23 @@ std::unique_lock<std::mutex> lock_source_if_watching(Provider& p, StrView source
     return std::unique_lock<std::mutex>(source_lock(p, sourcePath));
 }
 
-Status cook_mesh_on_miss(Provider& p, StrView meshAssetPath, StrView sourcePath, AssetKind requestedKind,
-                         StrView requestedAssetPath, Allocator const* alloc, Vec<u8>* out,
-                         DiagSink const* diag) noexcept {
+/// Cooks the source of a missed request and returns the output `name` of `kind`.
+Status cook_on_miss(Provider& p, AssetKind unitKind, StrView unitName, StrView sourcePath, AssetKind kind,
+                    StrView name, Allocator const* alloc, Vec<u8>* out, DiagSink const* diag) noexcept {
     std::unique_lock<std::mutex> const lock = lock_source_if_watching(p, sourcePath);
 
     // Stat before the cook reads the source, so an edit during the cook is seen later.
     bool const disk = p.desc.storeMode == StoreMode::Disk;
     SourceStat st{};
     bool const haveStat = disk && stat_source(sourcePath, &st).ok();
-    MeshEmit emit;
-    emit.textures.init(alloc, Tag::Cook);
-    Status const s = cook_mesh_full(p, meshAssetPath, sourcePath, requestedKind, requestedAssetPath, false,
-                                    alloc, out, diag, disk ? &emit : nullptr);
-    if (s.ok() && haveStat) record_source(p, sourcePath, st, AssetKind::Mesh, meshAssetPath, &emit.textures);
-    return s;
-}
-
-Status cook_texture_on_miss(Provider& p, StrView sourcePath, StrView assetPath, Allocator const* alloc,
-                            Vec<u8>* out, DiagSink const* diag) noexcept {
-    std::unique_lock<std::mutex> const lock = lock_source_if_watching(p, sourcePath);
-
-    SourceStat st{};
-    bool const haveStat = p.desc.storeMode == StoreMode::Disk && stat_source(sourcePath, &st).ok();
-    Status const s      = cook_texture_own_source(p, sourcePath, assetPath, false, alloc, out, diag);
-    if (s.ok() && haveStat) record_source(p, sourcePath, st, AssetKind::Texture, assetPath, nullptr);
+    CookUnit unit(alloc);
+    Vec<char> emitted(alloc, Tag::Cook);
+    KILN_TRY(cook_to_store(p, unit_desc(p, unitKind, unitName, sourcePath, alloc, diag), false, &unit,
+                           disk ? &emitted : nullptr));
+    Status const s = take_output(unit, kind, name, out);
+    if (s.ok() && haveStat)
+        record_source(p, sourcePath, st, unitKind, unitName,
+                      unitKind == AssetKind::Mesh ? &emitted : nullptr);
     return s;
 }
 
@@ -584,9 +409,8 @@ Status provider_cook(void* user, AssetKind kind, StrView name, Allocator const* 
     FoundSource src;
     KILN_TRY(find_source(*p, owner, src, diag));
     StrView const sourcePath(src.path, src.len);
-    if (kind == AssetKind::Texture && !embedded)
-        return cook_texture_on_miss(*p, sourcePath, name, alloc, out, diag);
-    return cook_mesh_on_miss(*p, owner, sourcePath, kind, name, alloc, out, diag);
+    AssetKind const unitKind = kind == AssetKind::Texture && !embedded ? AssetKind::Texture : AssetKind::Mesh;
+    return cook_on_miss(*p, unitKind, owner, sourcePath, kind, name, alloc, out, diag);
 }
 
 // ---------------------------------------------------------------------------
@@ -620,21 +444,15 @@ void recook_source(Provider& p, u32 idx, SourceRecord const& rec, Vec<char> cons
     logDiag.quiet = rec.failed && same_stat(now, rec.failedStat);
     DiagSink const sink{&LogDiag::fn, &logDiag};
 
-    Vec<u8> out(p.alloc, Tag::Cook);
-    MeshEmit emit;
-    emit.textures.init(p.alloc, Tag::Cook);
-    Status s = kOk;
-    if (rec.kind == AssetKind::Mesh) {
-        s = cook_mesh_full(p, assetPath, sourcePath, AssetKind::Mesh, assetPath, true, p.alloc, &out, &sink,
-                           &emit);
-        if (s.ok() && emit.firstFailure.failed()) s = emit.firstFailure;
-    } else {
-        s = cook_texture_own_source(p, sourcePath, assetPath, true, p.alloc, &out, &sink);
-    }
+    CookUnit unit(p.alloc);
+    Vec<char> emitted(p.alloc, Tag::Cook);
+    Status s = cook_to_store(p, unit_desc(p, rec.kind, assetPath, sourcePath, p.alloc, &sink), true, &unit,
+                             &emitted);
+    if (s.ok()) s = unit.first_failure();
 
     std::lock_guard<std::mutex> const rlock(p.recordMutex);
     SourceRecord& r = p.records[idx];
-    if (rec.kind == AssetKind::Mesh) set_emitted(p, idx, emit.textures, true);
+    if (rec.kind == AssetKind::Mesh) set_emitted(p, idx, emitted, true);
     if (s.ok()) {
         r.stat   = now;
         r.failed = false;

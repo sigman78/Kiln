@@ -1,5 +1,6 @@
 #include "kiln_test.h"
 
+#include "kiln/catalog.h"
 #include "kiln/hash.h"
 
 #include <cstring>
@@ -159,4 +160,13 @@ KILN_TEST(Hash, HashOfHandleDeterministic) {
 KILN_TEST(Hash, HashOfEnumDeterministic) {
     KILN_CHECK_EQ(hash_of(Color::Red), hash_of(Color::Red));
     KILN_CHECK_NE(hash_of(Color::Red), hash_of(Color::Green));
+}
+
+KILN_TEST(Hash, Xxh3_128KnownVector) {
+    // xxhsum -H2 of an empty file.
+    char hex[33];
+    hash128_hex(xxh3_128({}), hex);
+    KILN_CHECK(std::strcmp(hex, "99aa06d3014798d86001c324468d497f") == 0);
+    KILN_CHECK(xxh3_128(Span<u8 const>(kAbc, 3)) == xxh3_128(Span<u8 const>(kAbc, 3)));
+    KILN_CHECK(!(xxh3_128(Span<u8 const>(kAbc, 3)) == xxh3_128(Span<u8 const>(kAbc, 2))));
 }
