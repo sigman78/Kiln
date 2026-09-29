@@ -55,6 +55,10 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
   the cooker version, asset kind and name, target, resolved settings and the content of every
   input file a cook read: the source, its sidecar (or its absence), a `.gltf`'s buffers. The cook
   provider and `kiln-cook` share one cook path that records those inputs.
+- **Store catalog format 0.1** (step 2): `CatalogView` validates and looks up a catalog in memory
+  (binary search, no allocation), `write_catalog()` writes one, `catalog_file_path()` and
+  `artifact_file_path()` name the files, `check_profile_name()`. Diagnostics K4201-K4209; fuzz
+  target `kiln_fuzz_catalog_read`.
 
 ## [0.5.0] - 2026-09-29
 

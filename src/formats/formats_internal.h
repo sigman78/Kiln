@@ -2,6 +2,7 @@
 #pragma once
 
 #include "kiln/alloc.h"
+#include "kiln/catalog.h"
 
 struct ZSTD_DCtx_s;
 
@@ -16,6 +17,10 @@ constexpr u32 gcd(u32 a, u32 b) noexcept {
     return a;
 }
 constexpr u32 lcm(u32 a, u32 b) noexcept { return a / gcd(a, b) * b; }
+
+/// xxh3_128 of `bytes` as if `[zeroOff, zeroOff + zeroLen)` were zero (at most 64 bytes): a
+/// checksum stored inside the bytes it covers.
+[[nodiscard]] Hash128 xxh3_128_zeroed(Span<u8 const> bytes, u64 zeroOff, u64 zeroLen) noexcept;
 
 /// KTX 2.0 level alignment without supercompression: lcm(texel block size, 4).
 constexpr u32 ktx2_level_align(u32 bytesPerBlock) noexcept { return lcm(bytesPerBlock, 4u); }
