@@ -35,7 +35,7 @@ char const* const kGoldenMeshes[] = {
     "mesh/mounts_extras", "mesh/multi_material", "mesh/no_uv_no_normals", "mesh/non_triangle",
     "mesh/pbr_textures",  "mesh/two_uv_sets",    "mesh/u32_indices",
 };
-char const* const kGoldenTextures[] = {"ktx2/color_srgb", "ktx2/height16", "ktx2/normal"};
+char const* const kGoldenTextures[] = {"ktx2/color_srgb", "ktx2/color_zstd", "ktx2/height16", "ktx2/normal"};
 
 // Diagnostics collector (pump thread only).
 struct DiagLog {
@@ -446,7 +446,7 @@ void check_uploaded(Rt& rt, TextureHandle t, Span<u8 const> file, u64 pitchAlign
 KILN_TEST(Runtime, LoadTexture) {
     Vec<u8> golden(default_allocator(), Tag::Test), zstd(default_allocator(), Tag::Test),
         plain(default_allocator(), Tag::Test);
-    if (!read_golden("ktx2/color_srgb", ".ktx2", golden)) return;
+    if (!read_golden("ktx2/color_zstd", ".ktx2", golden)) return;
     char path[1024];
     format(path, sizeof path, "%s/generated/rgba8_srgb_mip_zstd.ktx2", test::corpus_dir());
     KILN_REQUIRE(test::corpus::read_file(path, zstd));
@@ -458,7 +458,7 @@ KILN_TEST(Runtime, LoadTexture) {
         nd.rowPitchAlign = pitchAlign;
         nd.offsetAlign   = 64;
         if (!rt.init(nd)) return;
-        TextureHandle t = request_texture(rt.ctx, "ktx2/color_srgb");
+        TextureHandle t = request_texture(rt.ctx, "ktx2/color_zstd");
         KILN_REQUIRE(!t.is_null());
         KILN_CHECK(texture_info(rt.ctx, t).isPlaceholder);
         TextureHandle tz = register_texture(rt.ctx, "gen/zstd", zstd.span());
@@ -471,7 +471,7 @@ KILN_TEST(Runtime, LoadTexture) {
         KILN_CHECK(meta >= 0 && ready > meta);
 
         Result<ktx2::Ktx2View> const gv = ktx2::Ktx2View::open(golden.span());
-        KILN_CHECK(gv.ok() && gv->supercompressed()); // the cook's default
+        KILN_CHECK(gv.ok() && gv->supercompressed());
         check_uploaded(rt, t, golden.span(), pitchAlign, "store golden");
         check_uploaded(rt, tz, zstd.span(), pitchAlign, "libktx zstd");
         check_uploaded(rt, tp, plain.span(), pitchAlign, "plain");

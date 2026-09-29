@@ -505,3 +505,37 @@ KILN_TEST(Ktx2, WriterRejectsZstdLevel) {
     KILN_CHECK_EQ(ev(write(d, nullptr, &sink).code()), ev(Code::InvalidArgument));
     KILN_CHECK_EQ(cap.code, u32(kDiagKtxSupercompression));
 }
+
+KILN_TEST(Ktx2, WriterZstdMinSaving) {
+    // 64x64 RGBA8, one level, 16 KiB: 4 disk blocks plain.
+    Vec<u8> level(default_allocator(), Tag::Test);
+    level.resize(64 * 64 * 4);
+    Span<u8 const> const levels[] = {level.span()};
+    WriteDesc d{.format = Format::R8G8B8A8_UNORM, .width = 64, .height = 64, .levels = levels};
+    d.zstdLevel          = 3;
+    d.zstdMinSaving      = 0.1f;
+    auto const zstd_kept = [&] {
+        Vec<u8> const file = write_ok(d);
+        Result<Ktx2View> r = Ktx2View::open(file.span());
+        return r.ok() && r->supercompressed();
+    };
+    KILN_CHECK(zstd_kept()); // zeros: one block instead of five
+    u32 s = 1;
+    for (usize i = 0; i < level.size(); ++i) { // noise: no saving
+        s        = s * 1664525u + 1013904223u;
+        level[i] = u8(s >> 24);
+    }
+    KILN_CHECK(!zstd_kept());
+    d.zstdMinSaving = 0.0f; // always keep
+    KILN_CHECK(zstd_kept());
+
+    TestImage small(Format::R8G8B8A8_UNORM); // one block either way
+    WriteDesc sd       = small.desc();
+    sd.zstdLevel       = 3;
+    sd.zstdMinSaving   = 0.1f;
+    Result<Ktx2View> r = Ktx2View::open(write_ok(sd).span());
+    KILN_CHECK(r.ok() && !r->supercompressed());
+
+    d.zstdMinSaving = 1.0f;
+    KILN_CHECK_EQ(ev(write(d, nullptr).code()), ev(Code::InvalidArgument));
+}

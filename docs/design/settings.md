@@ -29,7 +29,7 @@ BC4, BC5, BC6H, BC7 }`, `EncodeQuality { Fast, Normal, High }`.
 | `encoding` | `Auto` | The stored format (`bcn-encoding.md`). `Auto` stays `Auto` after resolution: the usage table for the target's `blockFamily`, uncompressed without one. `BC1` drops alpha; `BC6H` is unsigned (`UFLOAT`) and for `Hdr` only |
 | `quality` | `Normal` | Encoder effort: `Fast`, `Normal`, `High`. Resolved to `Normal` when nothing is encoded; `fastPreview` sets `Fast` |
 | `supercompression` | `Zstd` | `Zstd`: each stored level is one Zstd frame (KTX2 scheme 2; `bcn-encoding.md` step 6). Smaller files and reads, same GPU memory. `None`: levels as they are |
-| `zstdLevel` | 0 | 1..19; 0 = 3. `fastPreview` sets 1. Resolved to 0 with `None`; above 19 is a K3002 error |
+| `zstdLevel` | 0 | 1..19; 0 = 3. `fastPreview` sets 1. Resolved to 0 with `None`; above 19 is a K3002 error. The cook still stores a file plain when Zstd saves under 10% of it in 4 KiB blocks (`kZstdMinSaving`) |
 
 Reserved: alphaMode, premultiply, dilation, residentMips.
 Texture settings schema: 2 (`shape`, `slices`). `encoding`, `quality`, `supercompression` and

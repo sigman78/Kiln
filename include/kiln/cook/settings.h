@@ -33,6 +33,9 @@ enum class Supercompression : u8 { None = 0, Zstd };
 inline constexpr u8 kDefaultZstdLevel = 3;
 inline constexpr u8 kPreviewZstdLevel = 1;
 inline constexpr u8 kMaxZstdLevel     = 19;
+/// The cook keeps a texture's Zstd levels only when they save this much of the file, in 4 KiB disk
+/// blocks (ktx2::WriteDesc::zstdMinSaving). Below it, decoding costs more than the space is worth.
+inline constexpr f32 kZstdMinSaving = 0.10f;
 
 struct TextureCookSettings {
     ColorSpace colorSpace  = ColorSpace::Auto;   ///< Auto: sRGB for Color/Ui, else Linear

@@ -112,6 +112,23 @@ KILN_TEST(TextureGolden, ColorSrgb7x5) {
     check_golden_ktx2("color_srgb", r->file.span());
 }
 
+// Big and smooth enough for Zstd to pay (the small cases stay plain): pins the encoder's frames.
+KILN_TEST(TextureGolden, ColorZstd64x64) {
+    u8 rgba[64 * 64 * 4];
+    for (u32 i = 0; i < 64 * 64; ++i) {
+        u32 const x = i % 64, y = i / 64;
+        u8 const px[4] = {u8(x * 4), u8(y * 4), u8(x + y), 255};
+        std::memcpy(rgba + i * 4, px, 4);
+    }
+    Vec<u8> f = png::encode({.width = 64, .height = 64, .colorType = 6, .depth = 8, .pixels = rgba});
+    Result<CookedTexture> r =
+        run_cook(f.span(), {.colorSpace = ColorSpace::Srgb, .usage = TextureUsage::Color});
+    if (!KILN_CHECK_MSG(r.ok(), "cook failed")) return;
+    Result<ktx2::Ktx2View> v = ktx2::Ktx2View::open(r->file.span());
+    KILN_CHECK(v.ok() && v->supercompressed());
+    check_golden_ktx2("color_zstd", r->file.span());
+}
+
 KILN_TEST(TextureGolden, Normal8x8) {
     u8 rgba[8 * 8 * 4];
     pattern(rgba, sizeof rgba, 102);

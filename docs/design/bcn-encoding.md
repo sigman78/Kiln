@@ -171,29 +171,11 @@ for any unsupported format.
 
 ### 6. Zstd supercompression (done 2026-09-29), then RDO (deferred)
 
-- **Zstd** compresses each mip level inside the KTX2 file (`supercompressionScheme = 2`). It
-  shrinks the store on disk and the bytes read at load, not GPU memory.
-  - The reader accepts it (and still rejects BasisLZ and Zlib, K4107). A Zstd level has no
-    alignment; its `uncompressedByteLength` must match the dimensions, and it must be exactly one
-    frame of that size (`Ktx2View::decode_level`, K4110).
-  - The loader reads each frame into scratch memory and decodes it straight into the staging
-    memory, or into a second scratch buffer when the adapter pads rows. One decoder per upload
-    job, its memory from the context `Allocator`.
-  - zstd 1.5.7 is vendored (`third_party/zstd`): a decoder-only build in `kiln_runtime`, the
-    encoder in `kiln_cook` (`dependencies.md`, "Zstd").
-  - **On by default** (owner, 2026-09-29): `TextureCookSettings::supercompression = Zstd`,
-    `zstdLevel` 0 = level 3; `fastPreview` uses level 1; `kiln-cook --zstd <level>`, 0 = off.
-    Settings with `None` keep the hash, and so the store keys, of the files cooked before Zstd.
-  - The writer fixes zstd's parameters (level, content size on, checksum off, one thread), so the
-    goldens pin the frames on every compiler.
-  - A KTX2 source with Zstd levels passes through as it is.
-  - Measured on the example assets (39 textures, 8 threads): the uncompressed store shrinks from
-    437 MB to 68 MB for 0.9 s more cooking, the BC store from 109 MB to 38 MB for 0.7 s more.
-    Decoding runs at about 1 GB/s per core.
-- **RDO** (bc7enc_rdo's `ert`) changes the encoded blocks so Zstd compresses them better, at a
-  small quality cost (a `rdoLambda` setting, 0 = off). It only helps with Zstd on, so it lands with
-  it.
-- Settings: `supercompression` (`None`, `Zstd`), `zstdLevel`, `rdoLambda`.
+Each mip level is one Zstd frame (KTX2 scheme 2), on by default, and only where it saves 10% of
+the file. The measurements, the decision and the alternatives (LZ4, Oodle, Basis, a filter
+scheme, RDO) are in `zstd-supercompression.md`. RDO (bc7enc_rdo's `ert`, an `rdoLambda` setting)
+is deferred: it costs 4–8 dB for about 2x smaller BC files, which suits a shipping build, not fast
+iteration.
 
 ### 7. ASTC and ETC2 (later, with the mobile targets)
 

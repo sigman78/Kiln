@@ -37,6 +37,10 @@ struct WriteDesc {
     /// 1..22: each level is one Zstd frame of this level (supercompressionScheme 2), packed
     /// without padding. 0 stores the levels as they are.
     u32 zstdLevel = 0;
+    /// With zstdLevel: the levels stay plain unless Zstd shrinks the file by at least this
+    /// fraction, counted in 4 KiB disk blocks (so a file under 4 KiB stays plain). In [0, 1);
+    /// 0 keeps Zstd whatever it saves.
+    f32 zstdMinSaving = 0.0f;
 };
 
 /// Serialize a KTX2 file into a new buffer allocated from `alloc` (Tag::Cook;

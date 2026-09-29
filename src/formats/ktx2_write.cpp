@@ -216,6 +216,8 @@ Result<Vec<u8>> write(WriteDesc const& desc, Allocator const* alloc, DiagSink co
     if (desc.zstdLevel > u32(ZSTD_maxCLevel()))
         return invalid(diag, kDiagKtxSupercompression, "zstdLevel %llu is above %llu", desc.zstdLevel,
                        u32(ZSTD_maxCLevel()));
+    if (!(desc.zstdMinSaving >= 0.0f && desc.zstdMinSaving < 1.0f)) // also false for NaN
+        return invalid(diag, kDiagKtxSupercompression, "zstdMinSaving must be in [0, 1)");
     u32 const levelCount = u32(desc.levels.size);
     for (u32 i = 0; i < levelCount; ++i) {
         u64 const expected =
@@ -231,7 +233,7 @@ Result<Vec<u8>> write(WriteDesc const& desc, Allocator const* alloc, DiagSink co
     // --- Supercompression ----------------------------------------------------------------
     // Fixed parameters, one thread: the same levels give the same frames on every machine.
     Allocator const* const a = alloc ? alloc : default_allocator();
-    bool const zstd          = desc.zstdLevel != 0;
+    bool zstd                = desc.zstdLevel != 0;
     Span<u8 const> stored[kMaxLevels];
     Vec<u8> frames[kMaxLevels];
     for (u32 i = 0; i < levelCount; ++i)
@@ -275,17 +277,34 @@ Result<Vec<u8>> write(WriteDesc const& desc, Allocator const* alloc, DiagSink co
         kvdLength += u32(align_up(u64(4) + kvLength, u64(4)));
     }
 
-    u64 const align = zstd ? 1u : fmt::ktx2_level_align(info->bytesPerBlock);
+    // Writes the level index for Zstd frames or plain levels; returns the file size.
+    auto const lay_out = [&](bool frames, LevelIndex* index) {
+        u64 const align = frames ? 1u : fmt::ktx2_level_align(info->bytesPerBlock);
+        u64 pos         = u64(kvdOffset) + kvdLength;
+        for (u32 i = levelCount; i-- > 0;) { // smallest level first, level 0 last
+            u64 const size                  = frames ? stored[i].size : desc.levels[i].size;
+            pos                             = round_up(pos, align);
+            index[i].byteOffset             = pos;
+            index[i].byteLength             = size;
+            index[i].uncompressedByteLength = desc.levels[i].size;
+            pos += size;
+        }
+        return pos;
+    };
     LevelIndex index[kMaxLevels]{};
-    u64 pos = u64(kvdOffset) + kvdLength;
-    for (u32 i = levelCount; i-- > 0;) { // smallest level first, level 0 last
-        pos                             = round_up(pos, align);
-        index[i].byteOffset             = pos;
-        index[i].byteLength             = stored[i].size;
-        index[i].uncompressedByteLength = desc.levels[i].size;
-        pos += stored[i].size;
+    u64 total = lay_out(zstd, index);
+    if (zstd && desc.zstdMinSaving > 0.0f) {
+        // Disk space is allocated in blocks, so a small file gains nothing: compare 4 KiB blocks.
+        constexpr u64 kBlock  = 4096;
+        u64 const plainBlocks = (lay_out(false, index) + kBlock - 1) / kBlock;
+        u64 const zstdBlocks  = (total + kBlock - 1) / kBlock;
+        if (f64(zstdBlocks) > f64(plainBlocks) * (1.0 - f64(desc.zstdMinSaving))) {
+            zstd = false;
+            for (u32 i = 0; i < levelCount; ++i)
+                stored[i] = desc.levels[i];
+        }
+        total = lay_out(zstd, index);
     }
-    u64 const total = pos;
 
     Header h{};
     std::memcpy(h.identifier, kIdentifier, sizeof(kIdentifier));

@@ -111,7 +111,7 @@ KILN_TEST(texture_cook, color_srgb_7x5) {
 
     Result<ktx2::Ktx2View> v = ktx2::Ktx2View::open(r->file.span());
     KILN_REQUIRE(v.ok());
-    KILN_CHECK(v->supercompressed());
+    KILN_CHECK(!v->supercompressed()); // under 4 KiB: Zstd would save no disk block
     Vec<u8> const t0  = kiln::test::corpus::texels(*v, 0);
     Span<u8 const> l0 = t0.span();
     KILN_REQUIRE_EQ(l0.size, sizeof rgba);
@@ -386,6 +386,18 @@ KILN_TEST(texture_cook, ktx2_cube_and_array_passthrough) {
     KILN_CHECK(log.has(kDiagImagePassthroughBad, Severity::Error));
 }
 
+// Noise does not compress: the cook keeps the levels plain although Zstd is on.
+KILN_TEST(texture_cook, zstd_skipped_when_it_does_not_pay) {
+    u8 rgba[64 * 64 * 4];
+    pattern(rgba, sizeof rgba, 22);
+    Vec<u8> f = png::encode({.width = 64, .height = 64, .colorType = 6, .depth = 8, .pixels = rgba});
+    Result<CookedTexture> r = run_cook(f.span(), {});
+    KILN_REQUIRE(r.ok());
+    Result<ktx2::Ktx2View> v = ktx2::Ktx2View::open(r->file.span());
+    KILN_REQUIRE(v.ok());
+    KILN_CHECK(!v->supercompressed());
+}
+
 // A Zstd KTX2 (libktx) passes through as it is; BasisLZ and Zlib are still rejected.
 KILN_TEST(texture_cook, ktx2_zstd_passes_through) {
     char const* dir = kiln::test::corpus_dir();
@@ -407,9 +419,14 @@ KILN_TEST(texture_cook, ktx2_zstd_passes_through) {
 }
 
 KILN_TEST(texture_cook, supercompression_none_and_levels) {
-    u8 rgba[16 * 16 * 4];
-    pattern(rgba, sizeof rgba, 21);
-    Vec<u8> f = png::encode({.width = 16, .height = 16, .colorType = 6, .depth = 8, .pixels = rgba});
+    // Smooth, so Zstd pays; big enough to span several 4 KiB blocks.
+    u8 rgba[64 * 64 * 4];
+    for (u32 i = 0; i < 64 * 64; ++i) {
+        u32 const x = i % 64, y = i / 64;
+        u8 const px[4] = {u8(x * 4), u8(y * 4), u8(x + y), 255};
+        std::memcpy(rgba + i * 4, px, 4);
+    }
+    Vec<u8> f = png::encode({.width = 64, .height = 64, .colorType = 6, .depth = 8, .pixels = rgba});
 
     Result<CookedTexture> plain = run_cook(f.span(), {.supercompression = Supercompression::None});
     KILN_REQUIRE(plain.ok());

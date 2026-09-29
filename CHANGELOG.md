@@ -22,6 +22,10 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
   `kiln-info` prints each level's stored and texel sizes, and `--check` decodes every frame.
   On the example assets the uncompressed store shrinks 6.5x and the BC store 2.9x, for a few
   percent more cook time.
+  - Zstd only when it pays: the cook keeps a texture plain unless Zstd saves 10% of the file in
+    4 KiB disk blocks (`kZstdMinSaving`, `ktx2::WriteDesc::zstdMinSaving`), so small files and
+    textures that barely compress load without decoding. `kCookerVersion` is 4, so every store key
+    and `cookHash` changed once (mesh files only in their header's `cookHash`).
 - **Cook: BC1/3/4/5/7 textures** (docs/design/bcn-encoding.md, rollout step 3).
   - New `TextureCookSettings::encoding` (`TextureEncoding`: `Auto`, `Uncompressed`, `BC1`, `BC3`,
     `BC4`, `BC5`, `BC6H`, `BC7`) and `quality` (`EncodeQuality`: `Fast`, `Normal`, `High`).

@@ -19,11 +19,14 @@ the same input with the same settings ever produce different bytes, a golden tes
   (deterministic, no external files), one per texture usage the cooker treats
   differently: `color_srgb` (sRGB, mips), `normal` (renormalized), `height16` (16-bit,
   mips). KTX2 pass-through has no cooker output to pin, so it isn't covered here.
+- `ktx2/color_zstd.ktx2` — a 64x64 smooth ramp, big and smooth enough that the cook keeps Zstd:
+  it pins the Zstd encoder's frames. Every other texture golden is under 4 KiB, so the cook stores
+  it plain (`kZstdMinSaving`).
 - `ktx2/bc*.ktx2` — the BC encoders on a target with `blockFamily = BC`: `bc7_color_srgb`,
   `bc5_normal`, `bc6h_hdr` (the default table), `bc1_high` and `bc4_mask_high` (explicit BC1,
   and `High` quality). They pin the vendored encoders' bytes on every compiler and OS in CI.
 
-Total size: 25 files, ~36 KB (the corpus itself is tiny by design — see
+Total size: 26 files, ~53 KB (the corpus itself is tiny by design — see
 `tests/corpus/gltf/generated/README.md`).
 
 ## Regenerating

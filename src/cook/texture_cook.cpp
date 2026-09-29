@@ -378,6 +378,7 @@ Result<CookedTexture> cook_decoded(TextureSource const& src, TextureCookSettings
         .zstdLevel          = settings.supercompression != Supercompression::Zstd ? 0u
                               : settings.zstdLevel != 0                           ? u32(settings.zstdLevel)
                                                                                   : u32(kDefaultZstdLevel),
+        .zstdMinSaving      = kZstdMinSaving,
     };
     detail::Stopwatch const swWrite;
     KILN_TRY_ASSIGN(Vec<u8> file, ktx2::write(wd, alloc, diag));
