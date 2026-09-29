@@ -83,7 +83,9 @@ struct NameHints {
 // Mesh
 // ---------------------------------------------------------------------------
 
-enum class VertexProfile : u8 { Default = 0, Precise };
+/// Default: quantized; Precise: float positions and UVs; Float: every attribute float except color
+/// (mesh-format-spec §6). Ordered by size: a target caps the profile (TargetProfile).
+enum class VertexProfile : u8 { Default = 0, Precise, Float };
 
 enum class CompressionScheme : u8 {
     None        = 0, ///< every blob codec None; the cooker sets kPayloadRaw
@@ -115,8 +117,8 @@ struct MeshCookSettings {
 struct TargetProfile {
     StrView name                   = "desktop";
     u32 maxTextureSize             = 16384;
-    VertexProfile maxVertexProfile = VertexProfile::Precise; ///< highest profile the target accepts
-    u32 maxArrayLayers             = 2048;                   ///< more layers is an error (K2004), not a clamp
+    VertexProfile maxVertexProfile = VertexProfile::Float; ///< highest profile the target accepts
+    u32 maxArrayLayers             = 2048;                 ///< more layers is an error (K2004), not a clamp
 };
 
 enum class StoreMode : u8 { Disk = 0, Memory, None }; ///< store / cache-less / validate only

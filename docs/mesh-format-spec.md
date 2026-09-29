@@ -486,17 +486,20 @@ A cook setting selects the scheme per asset or per target (see the hand-off doc'
 
 ## 6. Vertex encoding profiles (cooker settings)
 
-The format allows any `kiln::Format` (`VkFormat` value) with `VERTEX_BUFFER` support. The cooker ships two profiles:
+The format allows any `kiln::Format` (`VkFormat` value) with `VERTEX_BUFFER` support. The cooker ships three profiles:
 
-| Attribute | `default` (quantized) | `precise` | Bytes (default) |
-|---|---|---|---|
-| Position (stream 0) | `R16G16B16A16_UNORM` + part dequant | `R32G32B32_SFLOAT` | 8 |
-| Normal | `R16G16_SNORM` octahedral | `R16G16_SNORM` oct | 4 |
-| Tangent | `R16G16B16A16_SNORM` (w = sign) | same | 8 |
-| UV0 / UV1 | `R16G16_SFLOAT` | `R32G32_SFLOAT` | 4 each |
-| Color0 | `R8G8B8A8_UNORM` | same | 4 |
+| Attribute | `default` (quantized) | `precise` | `float` | Bytes (default / float) |
+|---|---|---|---|---|
+| Position (stream 0) | `R16G16B16A16_UNORM` + part dequant | `R32G32B32_SFLOAT` | `R32G32B32_SFLOAT` | 8 / 12 |
+| Normal | `R16G16_SNORM` octahedral | `R16G16_SNORM` oct | `R32G32B32_SFLOAT` | 4 / 12 |
+| Tangent | `R16G16B16A16_SNORM` (w = sign) | same | `R32G32B32A32_SFLOAT` (w = ±1) | 8 / 16 |
+| UV0 / UV1 | `R16G16_SFLOAT` | `R32G32_SFLOAT` | `R32G32_SFLOAT` | 4 / 8 each |
+| Color0 | `R8G8B8A8_UNORM` | same | same | 4 |
 
 A typical `default` mesh uses stream 0 (8 B) and stream 1 with normal, tangent and UV0 (16 B), for **24 B/vertex**.
+The same mesh in `float` is 12 + 36 = **48 B/vertex**. `float` needs no decoding in a shader: every
+attribute is a plain float vector (color is normalized by the vertex fetch). It is meant for simple
+renderers and the integration examples; `default` stays the profile for shipping content.
 
 **Automatic fallback to `precise`:**
 

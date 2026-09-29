@@ -61,7 +61,7 @@ Reserved: indexWidthPolicy, unit/axis override, name prefixes to strip.
 
 ### Target and session
 
-- `TargetProfile { name = "desktop"; maxTextureSize = 16384; maxVertexProfile = Precise; }`. v0.5
+- `TargetProfile { name = "desktop"; maxTextureSize = 16384; maxVertexProfile = Float; }`. v0.5
   has one implicit target, `desktop`, with raw formats.
 - `StoreMode { Disk, Memory, None }`: store, cache-less, validate only.
 - `CookSession { storeMode = Disk; fastPreview = false; }`. `fastPreview` turns off `optimize` and
@@ -171,7 +171,7 @@ name or an out-of-range number is K3006. An integer is accepted where a float is
 
 | Mesh key | Value |
 |---|---|
-| `profile` | `"default"`, `"precise"` |
+| `profile` | `"default"`, `"precise"`, `"float"` |
 | `genTangents`, `optimize`, `useAuthoredLods` | boolean |
 | `posTolMm`, `weldTol` | number |
 

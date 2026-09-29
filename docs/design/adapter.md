@@ -38,8 +38,9 @@ Formats the v0.5 cooker writes:
 | `R16G16_SFLOAT` | 83 | | UV (default profile) |
 | `R16G16B16A16_UNORM` | 91 | | quantized position |
 | `R16G16B16A16_SNORM` | 92 | | tangent |
-| `R32G32_SFLOAT` | 103 | | UV (precise profile) |
-| `R32G32B32_SFLOAT` | 106 | | position (precise profile) |
+| `R32G32_SFLOAT` | 103 | | UV (precise and float profiles) |
+| `R32G32B32_SFLOAT` | 106 | | position (precise and float profiles), normal (float profile) |
+| `R32G32B32A32_SFLOAT` | 109 | | tangent (float profile) |
 
 ### `GpuObject`
 

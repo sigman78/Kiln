@@ -56,6 +56,9 @@ KILN_TEST(Sidecar, MeshKeys) {
     KILN_CHECK(!s.useAuthoredLods);
     KILN_CHECK_EQ(f64(s.posTolMm), 1.0);
     KILN_CHECK_EQ(f64(s.weldTol), f64(0.05f));
+    MeshCookSettings f;
+    KILN_REQUIRE(apply_sidecar("profile = \"float\"\n", &f).ok());
+    KILN_CHECK(f.profile == VertexProfile::Float);
 }
 
 KILN_TEST(Sidecar, KeysNotSetKeepTheirValues) {

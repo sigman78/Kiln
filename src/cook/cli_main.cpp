@@ -482,7 +482,7 @@ bool add_root(void* user, char const* arg) {
     return true;
 }
 
-char const* const kProfiles[] = {"default", "precise", nullptr};
+char const* const kProfiles[] = {"default", "precise", "float", nullptr};
 char const* const kTargets[]  = {"desktop", nullptr};
 
 } // namespace
@@ -552,7 +552,9 @@ int kiln::cook::cook_cli_main(int argc, char** argv, CookPolicy const& policy) n
     o.mesh.optimize        = !noOptimize;
     o.mesh.useAuthoredLods = !noLods;
     o.tex.genMips          = !noMips;
-    o.mesh.profile = std::strcmp(o.profile, "precise") == 0 ? VertexProfile::Precise : VertexProfile::Default;
+    o.mesh.profile         = std::strcmp(o.profile, "float") == 0     ? VertexProfile::Float
+                             : std::strcmp(o.profile, "precise") == 0 ? VertexProfile::Precise
+                                                                      : VertexProfile::Default;
 
     DiagState ds{o.quiet, o.verbose};
     Ctx c{

@@ -71,6 +71,7 @@ struct LodGeom {
 
 struct PartFormat {
     bool floatPos            = false;
+    bool floatDirs           = false; ///< float normal and tangent (VertexProfile::Float)
     bool floatUv[kMaxUvSets] = {false, false};
     f32 posScale[3]          = {1, 1, 1};
     f32 posBias[3]           = {0, 0, 0};
@@ -813,12 +814,14 @@ void quantize_lod(LodTask& task) {
     l.strides[0]      = pf.floatPos ? 12 : 8;
     u16 o             = 0;
     u16 const oNormal = o;
-    add_attrib(l, mesh::Semantic::Normal, 0, 1, Format::R16G16_SNORM, o);
-    o                  = u16(o + 4);
+    add_attrib(l, mesh::Semantic::Normal, 0, 1,
+               pf.floatDirs ? Format::R32G32B32_SFLOAT : Format::R16G16_SNORM, o);
+    o                  = u16(o + (pf.floatDirs ? 12 : 4));
     u16 const oTangent = o;
     if (g.hasTangent) {
-        add_attrib(l, mesh::Semantic::Tangent, 0, 1, Format::R16G16B16A16_SNORM, o);
-        o = u16(o + 8);
+        add_attrib(l, mesh::Semantic::Tangent, 0, 1,
+                   pf.floatDirs ? Format::R32G32B32A32_SFLOAT : Format::R16G16B16A16_SNORM, o);
+        o = u16(o + (pf.floatDirs ? 16 : 8));
     }
     u16 oUv[kMaxUvSets] = {0, 0};
     for (u32 s = 0; s < kMaxUvSets; ++s) {
@@ -855,13 +858,21 @@ void quantize_lod(LodTask& task) {
             std::memcpy(p0, q, 8);
         }
         u8* p1 = stream1 + usize(i) * l.strides[1];
-        i16 oct[2];
-        oct_encode(v.n, oct);
-        std::memcpy(p1 + oNormal, oct, 4);
-        if (g.hasTangent) {
-            i16 const t[4] = {snorm16(v.t[0]), snorm16(v.t[1]), snorm16(v.t[2]),
-                              i16(v.t[3] < 0 ? -32767 : 32767)};
-            std::memcpy(p1 + oTangent, t, 8);
+        if (pf.floatDirs) {
+            std::memcpy(p1 + oNormal, v.n, 12);
+            if (g.hasTangent) {
+                f32 const t[4] = {v.t[0], v.t[1], v.t[2], v.t[3] < 0 ? -1.0f : 1.0f};
+                std::memcpy(p1 + oTangent, t, 16);
+            }
+        } else {
+            i16 oct[2];
+            oct_encode(v.n, oct);
+            std::memcpy(p1 + oNormal, oct, 4);
+            if (g.hasTangent) {
+                i16 const t[4] = {snorm16(v.t[0]), snorm16(v.t[1]), snorm16(v.t[2]),
+                                  i16(v.t[3] < 0 ? -32767 : 32767)};
+                std::memcpy(p1 + oTangent, t, 8);
+            }
         }
         for (u32 s = 0; s < kMaxUvSets; ++s) {
             if (!g.hasUv[s]) continue;
@@ -997,8 +1008,9 @@ bool plan_part(MeshCookSettings const& settings, Span<LodTask> tasks, PartPlan& 
         maxExtent = max(maxExtent, mx[a] - mn[a]);
 
     PartFormat& pf     = plan.pf;
-    bool const precise = settings.profile == VertexProfile::Precise;
+    bool const precise = settings.profile != VertexProfile::Default; // Precise or Float
     pf.floatPos        = precise;
+    pf.floatDirs       = settings.profile == VertexProfile::Float;
     if (!precise && maxExtent / 65535.0f > settings.posTolMm / 1000.0f) {
         pf.floatPos      = true;
         plan.posFallback = true;

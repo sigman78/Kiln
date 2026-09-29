@@ -140,7 +140,7 @@ TextureUsage usage_from_name(StrView path, Span<NameRule const> rules) noexcept 
 Result<MeshCookSettings> resolve_mesh(MeshCookSettings const& overrides, TargetProfile const& target,
                                       CookSession const& session, DiagSink const* diag,
                                       StrView asset) noexcept {
-    if (u8(overrides.profile) > u8(VertexProfile::Precise) ||
+    if (u8(overrides.profile) > u8(VertexProfile::Float) ||
         u8(overrides.compression) > u8(CompressionScheme::MeshoptZstd)) {
         return diagf(diag, make_status(Code::InvalidArgument), kDiagSettingsEnumRange, Severity::Error, asset,
                      "mesh", "profile or compression holds a value outside its enum range");
@@ -272,6 +272,7 @@ char const* vertex_profile_name(VertexProfile p) noexcept {
     switch (p) {
     case VertexProfile::Default: return "default";
     case VertexProfile::Precise: return "precise";
+    case VertexProfile::Float: return "float";
     }
     return "?";
 }

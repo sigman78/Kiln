@@ -92,6 +92,7 @@ constexpr EnumName<CookShape> kShapes[] = {
 constexpr EnumName<VertexProfile> kProfiles[] = {
     {"default", VertexProfile::Default},
     {"precise", VertexProfile::Precise},
+    {"float",   VertexProfile::Float  },
 };
 
 Status set_field(TomlEntry const& e, TextureCookSettings& s, KeyError const& err) noexcept {

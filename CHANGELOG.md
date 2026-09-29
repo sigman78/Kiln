@@ -8,6 +8,13 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
 ## [Unreleased]
 
 ### Added
+- `VertexProfile::Float` (`profile = "float"` in a sidecar, `kiln-cook --profile float`): every
+  vertex attribute as a plain float vector (position, normal `R32G32B32_SFLOAT`, tangent
+  `R32G32B32A32_SFLOAT`, UVs `R32G32_SFLOAT`; color stays `R8G8B8A8_UNORM`), 48 B/vertex for the
+  usual attributes. No shader decoding; for simple renderers and the integration examples. The
+  default `TargetProfile::maxVertexProfile` is now `Float`, which changes the target hash: every
+  cook key and the `cookHash` stored in cooked files change (payloads are unchanged), so existing
+  stores re-cook once.
 - Texture-only builds (`docs/design/texture-only.md`): CMake option `KILN_MESH` (default ON). With
   OFF, `kiln_cook` builds without the glTF importer and mesh cooker, and cgltf, MikkTSpace and
   meshoptimizer are neither fetched nor built. `cook_mesh` stays declared and fails with

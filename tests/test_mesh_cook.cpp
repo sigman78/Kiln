@@ -365,6 +365,26 @@ KILN_TEST(MeshCook, TolerancesAndProfiles) {
         KILN_CHECK(find_attrib(l, mesh::Semantic::Tangent) == nullptr);
         KILN_CHECK_EQ(l.strides[1], u16(4 + 8));
     }
+    {
+        Diags d;
+        cook::MeshCookSettings s   = default_settings();
+        s.profile                  = cook::VertexProfile::Float;
+        Result<cook::CookedMesh> r = cook_bytes(glb.span(), "meshes/float", d, s);
+        KILN_REQUIRE(r.ok());
+        Opened o;
+        open_cooked(r.value(), o, "float");
+        KILN_REQUIRE(o.ok);
+        mesh::VertexLayout const& l = o.view.layouts()[o.view.lods()[0].layout];
+        KILN_CHECK_EQ(l.attribs[0].format, u32(Format::R32G32B32_SFLOAT));
+        mesh::VertexAttrib const* n  = find_attrib(l, mesh::Semantic::Normal);
+        mesh::VertexAttrib const* t  = find_attrib(l, mesh::Semantic::Tangent);
+        mesh::VertexAttrib const* uv = find_attrib(l, mesh::Semantic::TexCoord);
+        KILN_REQUIRE(n && t && uv);
+        KILN_CHECK_EQ(n->format, u32(Format::R32G32B32_SFLOAT));
+        KILN_CHECK_EQ(t->format, u32(Format::R32G32B32A32_SFLOAT));
+        KILN_CHECK_EQ(uv->format, u32(Format::R32G32_SFLOAT));
+        KILN_CHECK_EQ(l.strides[1], u16(12 + 16 + 8));
+    }
 }
 
 KILN_TEST(MeshCook, DeterministicAndErrors) {
