@@ -572,23 +572,26 @@ VkPipeline create_sky_pipeline(Renderer* r) noexcept {
     return res == VK_SUCCESS ? pipeline : VK_NULL_HANDLE;
 }
 
-Status create_shared_objects(Renderer* r) noexcept {
+/// The host's SPIR-V when it gave some, else the viewer's.
+VkShaderModule shader_module(Renderer* r, Span<u32 const> host, u32 const* builtin,
+                             usize builtinBytes) noexcept {
     VkShaderModuleCreateInfo smi{};
-    smi.sType    = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
-    smi.codeSize = sizeof k_mesh_vert_spv;
-    smi.pCode    = k_mesh_vert_spv;
-    VKX_CHECK(vkCreateShaderModule(r->device, &smi, nullptr, &r->vert));
-    smi.codeSize = sizeof k_mesh_frag_spv;
-    smi.pCode    = k_mesh_frag_spv;
-    VKX_CHECK(vkCreateShaderModule(r->device, &smi, nullptr, &r->frag));
-    smi.codeSize = sizeof k_sky_vert_spv;
-    smi.pCode    = k_sky_vert_spv;
-    VKX_CHECK(vkCreateShaderModule(r->device, &smi, nullptr, &r->skyVert));
-    smi.codeSize = sizeof k_sky_frag_spv;
-    smi.pCode    = k_sky_frag_spv;
-    VKX_CHECK(vkCreateShaderModule(r->device, &smi, nullptr, &r->skyFrag));
+    smi.sType        = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+    smi.codeSize     = host.empty() ? builtinBytes : host.size * sizeof(u32);
+    smi.pCode        = host.empty() ? builtin : host.data;
+    VkShaderModule m = VK_NULL_HANDLE;
+    VKX_CHECK(vkCreateShaderModule(r->device, &smi, nullptr, &m));
+    return m;
+}
 
-    // Set 1: the frame uniform buffer, one descriptor set per frame in flight.
+Status create_shared_objects(Renderer* r) noexcept {
+    RendererDesc const& d = r->desc;
+    r->vert               = shader_module(r, d.meshVert, k_mesh_vert_spv, sizeof k_mesh_vert_spv);
+    r->frag               = shader_module(r, d.meshFrag, k_mesh_frag_spv, sizeof k_mesh_frag_spv);
+    r->skyVert            = shader_module(r, d.skyVert, k_sky_vert_spv, sizeof k_sky_vert_spv);
+    r->skyFrag            = shader_module(r, d.skyFrag, k_sky_frag_spv, sizeof k_sky_frag_spv);
+
+    // The frame uniform buffer (set 1, or set 0 with a host material set), one set per frame in flight.
     VkDescriptorSetLayoutBinding binding{};
     binding.binding         = 0;
     binding.descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
@@ -607,7 +610,10 @@ Status create_shared_objects(Renderer* r) noexcept {
     dpci.pPoolSizes    = &poolSize;
     VKX_CHECK(vkCreateDescriptorPool(r->device, &dpci, nullptr, &r->framePool));
 
-    VkDescriptorSetLayout const setLayouts[2] = {adapter_set_layout(r->adapter), r->frameSetLayout};
+    VkDescriptorSetLayout const setLayouts[2] = {
+        d.materialSetLayout ? r->frameSetLayout : adapter_set_layout(r->adapter),
+        d.materialSetLayout ? d.materialSetLayout : r->frameSetLayout,
+    };
     VkPushConstantRange push{};
     push.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
     push.offset     = 0;
@@ -867,9 +873,14 @@ VkCommandBuffer renderer_begin(Renderer* r) noexcept {
     VkRect2D scissor{};
     scissor.extent = r->extent;
     vkCmdSetScissor(f.cmd, 0, 1, &scissor);
-    VkDescriptorSet const sets[2] = {adapter_descriptor_set(r->adapter), f.set};
-    vkCmdBindDescriptorSets(f.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->pipelineLayout, 0, 2, sets, 0,
-                            nullptr);
+    if (r->desc.materialSetLayout) { // the host binds set 1 per draw
+        vkCmdBindDescriptorSets(f.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->pipelineLayout, 0, 1, &f.set, 0,
+                                nullptr);
+    } else {
+        VkDescriptorSet const sets[2] = {adapter_descriptor_set(r->adapter), f.set};
+        vkCmdBindDescriptorSets(f.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->pipelineLayout, 0, 2, sets, 0,
+                                nullptr);
+    }
     return f.cmd;
 }
 

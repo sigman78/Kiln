@@ -33,6 +33,8 @@ enum class State : u8 {
 
 enum class Priority : u8 { Normal = 0, High };
 enum class AssetKind : u8 { Mesh = 0, Texture };
+/// After Ready, Changed or Failed, gpu() may return another object than before the event (the real
+/// one, the reloaded one, the Failed placeholder); after MetaReady it returns the same one.
 enum class EventKind : u8 { MetaReady = 0, Ready, Changed, Failed };
 
 struct Event {

@@ -978,7 +978,7 @@ Result<VkAdapter*> adapter_create(AdapterDesc const& desc, Adapter* out) noexcep
     *out                    = Adapter{};
     out->supports_format    = &vk_supports_format;
     out->copy_constraints   = &vk_copy_constraints;
-    out->acquire            = &vk_acquire;
+    out->acquire            = desc.bindless ? &vk_acquire : nullptr;
     out->begin_upload       = &vk_begin_upload;
     out->commit_upload      = &vk_commit_upload;
     out->is_upload_complete = &vk_is_upload_complete;
@@ -1025,6 +1025,14 @@ MeshPayload adapter_mesh(VkAdapter* a, GpuObject obj) noexcept {
     Object const* o = object_of(a, obj);
     if (!o || !o->buffer) return {};
     return MeshPayload{.buffer = o->buffer, .offset = 0, .size = o->size, .address = o->address};
+}
+
+TextureView adapter_texture(VkAdapter* a, GpuObject obj) noexcept {
+    if (!a) return {};
+    std::lock_guard<std::mutex> lock(a->mutex);
+    Object const* o = object_of(a, obj);
+    if (!o || !o->view) return {};
+    return TextureView{.view = o->view, .shape = o->texture.shape};
 }
 
 void adapter_retire(VkAdapter* a, u64 completedFrame) noexcept {

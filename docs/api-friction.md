@@ -16,7 +16,7 @@ Rejected (with reason), Done (with version). The integration examples
 | 2026-09-28 | agent | adapter threading | GL and sokol calls must run on the context's thread, but `begin_upload` / `commit_upload` may run on workers. The adapter can only queue there, and nothing tells it when to do the GPU work. | Optional `Adapter::flush`, called on the pump thread in `pump()` and `wait()` | Done (unreleased): `Adapter::flush`; `kiln-gl` sets it and its host loop no longer flushes |
 | 2026-09-28 | agent | adapter / `wait()` | An adapter that is not self-submitting cannot use `wait()` (K5007), even when its work would complete on the pump thread. | `wait()` accepts `kSelfSubmitting` or `flush` | Done (unreleased): `wait()` and `create()`'s placeholder spin accept either (`Runtime.AdapterFlush`) |
 | 2026-09-28 | agent | `UploadTarget::object` | The GPU object must exist at `begin_upload`, before the data. GL cannot create names on a worker thread. | Document that `GpuObject` may be an adapter table index filled in later | Rejected as an API change: `kiln-gl` puts its table index in `native` and creates the GL name at flush; this works. Documented in `adapter.md` (`GpuObject`) |
-| 2026-09-28 | agent | `publish` without bindless | `publish` gives an `AssetId`; a host with descriptor sets needs its own id-to-material map to know what to rebuild. | Measure in `vk-basic`; maybe a per-frame "changed since" query | Predicted (not hit in `kiln-gl`: it calls `gpu()` per draw, so a new version needs no bookkeeping) |
+| 2026-09-28 | agent | `publish` without bindless | `publish` gives an `AssetId`; a host with descriptor sets needs its own id-to-material map to know what to rebuild. | Measure in `vk-basic`; maybe a per-frame "changed since" query | Rejected as an API change: `kiln-vk-basic` takes the events (Ready, Changed, Failed carry the handle), maps each texture handle to the materials that use it (about 20 lines) and rewrites those sets per frame slot; `publish` is not needed. `kiln-gl` calls `gpu()` per draw and needs nothing |
 | 2026-09-28 | agent | formats | A format the adapter rejects fails the asset (K5004); there is no fallback, so each API needs a cook target that matches it. | Named `TargetProfile` presets per API family | Predicted |
 | 2026-09-28 | agent | `.mesh` vertex data | Quantized streams need shader decoding and part dequantization in every renderer. | `VertexProfile::Float` for simple renderers; decode snippets for the quantized profile | Accepted: `VertexProfile::Float` is done (unreleased) and `kiln-gl`'s shaders read plain floats; the snippets stay open |
 | 2026-09-28 | agent | `destroy_deferred` | GL and sokol can destroy at once; check the contract does not force frame counting on them. | Clarify in `adapter.md` | Rejected: `kiln-gl` deletes at once and GL keeps objects alive for issued commands; no frame counting needed. Documented in `adapter.md` |
@@ -27,7 +27,8 @@ Rejected (with reason), Done (with version). The integration examples
 | 2026-09-28 | agent (`kiln-gl-bindless`) | bindless slots | `publish` and `begin_upload` give only the `AssetId`, so every bindless adapter keeps its own id-to-slot map under a mutex (`vk_adapter.cpp`, `gl_adapter.cpp`), although kiln stores the object `acquire` returned for each asset. | Pass the acquired `GpuObject` in `UploadDesc` and to `publish` | Open |
 | 2026-09-28 | agent (`kiln-gl-bindless`) | `destroy_deferred` | Bindless GL handles must stay resident until earlier frames finish, so "GL may free at once" holds only for bound textures. The adapter uses `flush` as its frame boundary to fence retired handles and slots. | Documented in `adapter.md` | Rejected as an API change: `flush` gives the adapter the frame boundary it needs |
 | 2026-09-28 | agent | host loop | sokol_app owns the main loop (callbacks); `pump()` and `wait()` assume the host owns it. | Measure in `sokol` | Rejected: `kiln-sokol` calls `create()` in the init callback and `pump()` in the frame callback; nothing needs `wait()` or a loop of its own |
-| 2026-09-28 | agent (`kiln-sokol`) | placeholders | sokol validates that every texture slot a shader declares is bound, so the host needs a texture for slots a material leaves empty. kiln holds a placeholder per kind and shape, but a host can reach one only through a handle (`gpu()` of a null handle gives the 2D base-color one; there is no cube one). The example makes its own white and black textures. | `placeholder_object(ctx, TextureKind, TextureShape)` returning the placeholder's `GpuObject` | Open |
+| 2026-09-28 | agent (`kiln-sokol`) | placeholders | sokol validates that every texture slot a shader declares is bound, so the host needs a texture for slots a material leaves empty. kiln holds a placeholder per kind and shape, but a host can reach one only through a handle (`gpu()` of a null handle gives the 2D base-color one; there is no cube one). The example makes its own white and black textures. `kiln-vk-basic` meets the same wall (every binding of a descriptor set written) and avoids it with `descriptorBindingPartiallyBound`, which a plainer Vulkan host may not want. | `placeholder_object(ctx, TextureKind, TextureShape)` returning the placeholder's `GpuObject` | Open |
+| 2026-09-28 | agent (`kiln-vk-basic`) | events | A host that caches GPU objects (descriptor sets) must know which events change what `gpu()` returns; the header did not say. | State it on `EventKind` | Done: `assets.h` (`EventKind`): Ready, Changed, Failed may change it; MetaReady does not |
 | 2026-09-28 | agent (`kiln-sokol`) | index types | The `.mesh` format allows 8-bit indices; sokol (and D3D11, Metal, WebGPU) has none. The cooker never writes them, but a host cannot know that from the API. | State in `mesh-format-spec.md` / `mesh.h` that the cooker emits 16- or 32-bit indices only | Open |
 | 2026-09-28 | agent (`kiln-sokol`) | mesh payload | One payload buffer holds vertices and indices. sokol takes that (one buffer with both usages) everywhere but WebGL2, which needs separate buffers (`sg_features.separate_buffer_types`). | Nothing now; revisit with a WebGL/WebGPU target (two uploads, or index offset metadata the host can split on) | Predicted |
 | 2026-09-28 | agent (`kiln-sokol`) | upload memory | sokol creates immutable images from data it copies, so the adapter hands kiln CPU memory it allocates per upload and frees at flush: kiln decodes into it, sokol copies it again. | None needed: per-upload memory is the natural shape for such APIs; note it in `adapter.md` | Rejected as an API change: documented in `adapter.md` (`begin_upload`) |
@@ -94,4 +95,26 @@ rediscover them). The design and the mapping tables are in `design/integration-e
   did not match `sg_pixel_format` at the pinned commit; `sglue_environment().defaults` does.
   sokol_app has no hidden window, so `--offscreen` shows one until the scene settles. A sokol
   validation panic aborts, which on Windows opens a dialog and hangs a scripted run.
+
+### `kiln-vk-basic` (Vulkan 1.4, a descriptor set per material)
+
+- The adapter is the viewer's with bindless off (`AdapterDesc::bindless = false`): no `acquire`, so
+  no slots; `publish` stays, only to advance the upload watermark the frame submit waits on. The
+  host turns a `GpuObject` into an image view with `adapter_texture()`. Nothing else changed.
+- Each material has one descriptor set per frame in flight and a stamp. A texture event (Ready,
+  Changed, Failed) bumps the stamp of every material that uses the texture; each frame rewrites
+  only the current slot's sets whose stamp moved, after `renderer_wait_frame()` freed that slot.
+  WaterBottle with its sky: 6 invalidations and 15 set writes for the whole load (2 frame slots).
+- The first write of a set happens before the texture arrives: `gpu()` gives the placeholder of the
+  texture's kind (and shape: the sky's cube placeholder), which the self-submitting adapter had
+  ready when `create()` returned.
+- A changed mesh (hot reload) may bring other materials and layouts, so the host waits for the GPU
+  and makes the sets again; the old payload goes through `destroy_deferred` as usual.
+- Hot reload was run by hand (`--watch`, the source touched): the model and each texture reported
+  Changed, and the sets followed. No Vulkan validation layer on the dev machine, so the descriptor
+  usage is unvalidated.
+- The frame plumbing is the viewer's (`kiln_example_vk`); it now takes a host's SPIR-V and material
+  set layout. The viewer's own frame is byte-identical after that change.
+- Against `kiln-gl`: 19.5% of pixels differ, 0.7% by more than 4 levels (hardware sRGB encode
+  against the shader's; no anisotropic filtering here, 8x there).
 

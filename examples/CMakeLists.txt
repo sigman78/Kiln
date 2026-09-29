@@ -37,11 +37,14 @@ if(KILN_BUILD_TESTS)
 endif()
 
 # The windowed examples share GLFW and examples/common (docs/design/integration-examples.md).
-if(KILN_BUILD_VIEWER OR KILN_EXAMPLE_GL OR KILN_EXAMPLE_GL_BINDLESS OR KILN_EXAMPLE_SOKOL)
+if(KILN_BUILD_VIEWER OR KILN_EXAMPLE_GL OR KILN_EXAMPLE_GL_BINDLESS OR KILN_EXAMPLE_SOKOL OR KILN_EXAMPLE_VK_BASIC)
     add_subdirectory(common)
 endif()
-if(KILN_BUILD_VIEWER)
-    add_subdirectory(viewer)
+if(KILN_BUILD_VIEWER OR KILN_EXAMPLE_VK_BASIC)
+    add_subdirectory(viewer) # kiln_example_vk, and kiln-viewer with KILN_BUILD_VIEWER
+endif()
+if(KILN_EXAMPLE_VK_BASIC)
+    add_subdirectory(vk-basic)
 endif()
 if(KILN_EXAMPLE_GL OR KILN_EXAMPLE_GL_BINDLESS)
     add_subdirectory(gl)

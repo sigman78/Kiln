@@ -58,19 +58,31 @@ if(KILN_GLSLANG OR KILN_GLSLC)
 endif()
 
 # ---------------------------------------------------------------------------
-# kiln-viewer and the adapter smoke test
+# kiln_example_vk: device bring-up, the example adapter and the frame plumbing, shared by
+# kiln-viewer, kiln-vk-smoke and kiln-vk-basic (examples/vk-basic).
 # ---------------------------------------------------------------------------
-add_executable(kiln-viewer
-    main.cpp
+add_library(kiln_example_vk STATIC
     viewer_math.h
     viewer_render.h viewer_render.cpp
     vk_device.h vk_device.cpp
     vk_adapter.h vk_adapter.cpp
     ${KILN_VIEWER_SHADER_HEADERS})
+kiln_apply_defaults(kiln_example_vk)
+target_include_directories(kiln_example_vk PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+target_link_libraries(kiln_example_vk PUBLIC kiln_runtime volk)
+
+if(NOT KILN_BUILD_VIEWER)
+    return() # only the library, for kiln-vk-basic
+endif()
+
+# ---------------------------------------------------------------------------
+# kiln-viewer and the adapter smoke test
+# ---------------------------------------------------------------------------
+add_executable(kiln-viewer main.cpp)
 kiln_apply_defaults(kiln-viewer)
-target_include_directories(kiln-viewer PRIVATE ${CMAKE_CURRENT_BINARY_DIR} ${CMAKE_SOURCE_DIR}/tests)
+target_include_directories(kiln-viewer PRIVATE ${CMAKE_SOURCE_DIR}/tests)
 target_compile_definitions(kiln-viewer PRIVATE GLFW_INCLUDE_NONE)
-target_link_libraries(kiln-viewer PRIVATE kiln_runtime kiln_cli volk glfw)
+target_link_libraries(kiln-viewer PRIVATE kiln_example_vk kiln_cli glfw)
 if(TARGET kiln_cook)
     target_link_libraries(kiln-viewer PRIVATE kiln_cook)
     target_compile_definitions(kiln-viewer PRIVATE KILN_VIEWER_HAS_COOK=1)
@@ -80,9 +92,9 @@ endif()
 
 # Loads the golden store through the real adapter with no window; runs only by hand
 # (needs a Vulkan driver), so it is not a CTest.
-add_executable(kiln-vk-smoke adapter_smoke.cpp vk_device.cpp vk_adapter.cpp)
+add_executable(kiln-vk-smoke adapter_smoke.cpp)
 kiln_apply_defaults(kiln-vk-smoke)
-target_link_libraries(kiln-vk-smoke PRIVATE kiln_runtime kiln_cli volk)
+target_link_libraries(kiln-vk-smoke PRIVATE kiln_example_vk kiln_cli)
 
 # Demo models (CC0, Khronos glTF-Sample-Assets, pinned and hash-checked) into
 # examples/assets/khronos/, which git ignores. Never part of ALL; see examples/assets/README.md.

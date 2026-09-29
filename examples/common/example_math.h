@@ -109,4 +109,17 @@ struct Mat4 {
     return r;
 }
 
+/// Vulkan clip space: depth 0 at `nearZ`, 1 at `farZ`, +Y down.
+[[nodiscard]] inline Mat4 perspective_vk(f32 fovyRadians, f32 aspect, f32 nearZ, f32 farZ) noexcept {
+    f32 const f = 1.0f / std::tan(fovyRadians * 0.5f);
+    Mat4 r;
+    r.m[0]  = f / aspect;
+    r.m[5]  = -f;
+    r.m[10] = farZ / (nearZ - farZ);
+    r.m[11] = -1;
+    r.m[14] = nearZ * farZ / (nearZ - farZ);
+    r.m[15] = 0;
+    return r;
+}
+
 } // namespace kiln::ex

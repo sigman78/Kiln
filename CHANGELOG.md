@@ -8,6 +8,12 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
 ## [Unreleased]
 
 ### Added
+- `kiln-vk-basic` (`examples/vk-basic`, CMake option `KILN_EXAMPLE_VK_BASIC`, ON in the presets): the
+  scene on Vulkan 1.4 without bindless, a descriptor set per material and frame slot rewritten on
+  kiln's events. The viewer's Vulkan code is now the library `kiln_example_vk`: its adapter takes
+  `AdapterDesc::bindless` (false: no `acquire`; `adapter_texture()` gives the image view), and its
+  renderer takes a host's SPIR-V and material set layout (`RendererDesc`).
+- `EventKind` documents which events may change what `gpu()` returns (Ready, Changed, Failed).
 - `kiln-sokol` (`examples/sokol`, CMake option `KILN_EXAMPLE_SOKOL`, ON in the presets): the scene
   through sokol_gfx with sokol_app owning the main loop (D3D11 on Windows, GL on Linux, Metal on
   macOS). Its adapter writes uploads into per-upload CPU memory and makes the images and buffers in

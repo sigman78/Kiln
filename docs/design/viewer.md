@@ -24,6 +24,11 @@ offscreen mode.
   `viewer_render.{h,cpp}` (swapchain or offscreen image, frames in flight, one pipeline per vertex
   layout), `viewer_math.h`, and `main.cpp` (scene, camera, streaming, draws per spec §8).
 
+The adapter, the device code and `viewer_render` form the library `kiln_example_vk`, which
+`kiln-vk-basic` (`examples/vk-basic`, the non-bindless integration example) links too: its adapter
+runs with `AdapterDesc::bindless = false`, and `RendererDesc` takes its SPIR-V and material set
+layout.
+
 Targets, all built only with `KILN_BUILD_VIEWER=ON` (ON in every preset):
 
 - `kiln-viewer`: links `kiln_runtime`, plus `kiln_cook` for cook-on-miss when it is built.

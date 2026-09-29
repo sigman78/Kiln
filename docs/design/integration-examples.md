@@ -1,7 +1,7 @@
 # Integration examples
 
-**Status:** Decided (owner, 2026-09-28): as proposed, all open points as proposed. Steps 1 to 3
-(`gl`, `gl-bindless`, `sokol`) are implemented, and so is `Adapter::flush`.
+**Status:** Decided (owner, 2026-09-28): as proposed, all open points as proposed. Steps 1 to 4
+(`gl`, `gl-bindless`, `sokol`, `vk-basic`) are implemented, and so is `Adapter::flush`.
 **Decides:** Which small renderers show newcomers how to plug kiln in, what each one maps kiln's
 adapter onto, how their third-party code is fetched, and how the work feeds the API review.
 
@@ -110,7 +110,7 @@ adds what nobody predicted.
 1. *(done)* `examples/common/` and `gl`, with the host-side flush; then decide `Adapter::flush`.
 2. *(done)* `gl-bindless`.
 3. *(done)* `sokol`.
-4. `vk-basic`.
+4. *(done)* `vk-basic`.
 5. `nga` (built on CI, run by the owner on a supported GPU).
 6. API review of the friction log; changes go to `CHANGELOG.md` with migration notes.
 

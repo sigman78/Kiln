@@ -17,12 +17,15 @@ struct AdapterDesc {
     u32 maxSlots           = 4096; ///< bindless sampled-image slots
     u32 maxObjects         = 8192; ///< images + buffers alive at once
     u32 framesInFlight     = 2;    ///< destroy_deferred delay, in frames
+    /// true: acquire() hands out bindless slots and publish() writes them. false: no acquire(); the
+    /// host binds each texture's image view itself (adapter_texture), as kiln-vk-basic does.
+    bool bindless = true;
 };
 
 struct VkAdapter;
 
-/// Fills `out` (kSelfSubmitting, kCubeTextures, kArrayTextures, kMeshes, bindless). `out` must outlive its
-/// users.
+/// Fills `out` (kSelfSubmitting, kCubeTextures, kArrayTextures, kMeshes; bindless unless
+/// AdapterDesc::bindless is false). `out` must outlive its users.
 [[nodiscard]] Result<VkAdapter*> adapter_create(AdapterDesc const& desc, Adapter* out) noexcept;
 /// Waits for the transfer queue to go idle, then frees everything, including deferred objects.
 void adapter_destroy(VkAdapter* a) noexcept;
@@ -50,6 +53,14 @@ struct MeshPayload {
     VkDeviceAddress address = 0; ///< device address of the payload start
 };
 [[nodiscard]] MeshPayload adapter_mesh(VkAdapter* a, GpuObject obj) noexcept;
+
+/// The image view behind a texture's GpuObject (placeholder or real), for hosts that write their
+/// own descriptor sets. Null if `obj` is not a texture.
+struct TextureView {
+    VkImageView view   = VK_NULL_HANDLE;
+    TextureShape shape = TextureShape::Tex2D;
+};
+[[nodiscard]] TextureView adapter_texture(VkAdapter* a, GpuObject obj) noexcept;
 
 /// Frees objects that destroy_deferred received at least framesInFlight frames before
 /// `completedFrame`. Call once per frame after the frame's fence has been waited.

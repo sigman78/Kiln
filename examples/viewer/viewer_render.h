@@ -62,6 +62,12 @@ struct RendererDesc {
     /// Window mode: the current framebuffer size in pixels (0 x 0 while minimized).
     void (*framebufferSize)(void* user, u32* width, u32* height) = nullptr;
     void* user                                                   = nullptr;
+    /// A host with descriptor sets of its own (kiln-vk-basic) passes its SPIR-V and the layout of
+    /// its material set: set 0 is then the frame set and set 1 the material set, which the host
+    /// binds per draw (and before renderer_draw_sky). Empty: the viewer's bindless shaders, with
+    /// the adapter's bindless set at 0 and the frame set at 1.
+    Span<u32 const> meshVert = {}, meshFrag = {}, skyVert = {}, skyFrag = {};
+    VkDescriptorSetLayout materialSetLayout = VK_NULL_HANDLE;
 };
 
 /// One graphics pipeline per distinct vertex layout. Bindings 0..streamCount-1 are the
