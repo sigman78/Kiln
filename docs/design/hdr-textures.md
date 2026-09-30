@@ -97,8 +97,8 @@ They stay out of the first version:
   exponent, follow exact rules that need their own tests for determinism and edge cases (zero,
   overflow, denormals).
 - **BC6H is the real answer to size.** It is 1 byte per texel, 8 times smaller than RGBA16F, and
-  it is what shipping titles use for HDR. It needs an encoder, so it belongs to the v0.6 texture
-  compression work, where BC1-BC7 are decided together. The packed formats would be an interim
+  it is what shipping titles use for HDR. It needs an encoder, so it belongs to the texture
+  compression work, where BC1-BC7 are decided together (BC6H shipped in v0.6). The packed formats would be an interim
   step with a narrower benefit.
 - **Size matters mostly for skies.** A 2048 x 2048 cube in RGBA16F is 192 MiB, 256 MiB with mips.
   Until BC6H, a sky can use a smaller face size (`maxSize`).

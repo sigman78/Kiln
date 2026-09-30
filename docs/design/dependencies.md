@@ -20,7 +20,7 @@ links it.
 | BC6H encoder | **ispc_bc6h**: kiln's scalar C++ port of the ISPC Texture Compressor's BC6H | MIT | cook only | ported from a pinned commit into `third_party/ispc_bc6h/` |
 | BC decoder for tests | **bcdec** | MIT or public domain | `kiln_tests` only | vendored header in `third_party/bcdec/` |
 | ASTC encoder | deferred (v0.9) | to be chosen | cook only | to be chosen |
-| Config parsing | deferred (v0.6), leaning TOML | to be chosen | cook only | to be chosen |
+| Config parsing | deferred (v0.7), leaning TOML | to be chosen | cook only | to be chosen |
 | File watching | **own** polling watcher (M5) | n/a | runtime (dev builds, `KILN_HOT_RELOAD`) | in-tree |
 | Tests | **own** runner `tests/kiln_test.h` | n/a | tests | in-tree |
 | Viewer GPU API | raw **Vulkan 1.4** (Vulkan-Headers) + **volk** | Apache-2.0 / MIT; MIT | example viewer only | FetchContent, commit hash (no SDK) |
@@ -105,8 +105,8 @@ example-only. The `.mesh` blob decode loop ships with codec `None` only, which n
 ### Mesh processing: meshoptimizer + MikkTSpace
 
 - meshoptimizer: vertex cache, overdraw and vertex fetch optimization in v0.5. Later:
-  simplification (LOD generation, v0.6) and vertex/index codecs.
-- If a meshopt scheme is chosen for `.mesh` payloads (by measurement, v0.6-0.7), its vertex and
+  simplification (LOD generation, v0.7) and vertex/index codecs.
+- If a meshopt scheme is chosen for `.mesh` payloads (by measurement, v0.7), its vertex and
   index **decoder** sources may be compiled into `kiln_runtime`. The rest stays cook-only.
 - MikkTSpace: the reference implementation, so tangents match what bakers (Blender, Substance,
   xNormal) assume.

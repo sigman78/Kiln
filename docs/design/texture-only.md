@@ -16,7 +16,7 @@ from the cook side, how an adapter says it takes no meshes, and why the runtime 
 - A new adapter capability bit, **`kMeshes`**. An adapter without it never gets a mesh upload, and
   a mesh request fails at the call.
 - The runtime has no mesh switch. Its mesh code has no third-party dependency. The question
-  returns when `.mesh` codecs bring a decoder into the runtime (v0.6).
+  returns when `.mesh` codecs bring a decoder into the runtime (v0.7).
 
 ## What exists
 
@@ -72,7 +72,7 @@ it validates a `.mesh` blob table; it decodes nothing.
 - A switch needs `#if` in `loader.cpp`, `registry.cpp` and `pump.cpp`, and a second shipping
   configuration to build and test.
 - `kMeshes` already gives a texture-only host what it needs: its adapter never handles meshes.
-- Revisit in v0.6. The `.mesh` codecs (meshopt, zstd) put decoders into `kiln_runtime`. Then a
+- Revisit in v0.7. The `.mesh` codecs (meshopt, zstd) put decoders into `kiln_runtime`. Then a
   texture-only shipping build would carry decoders it never uses, and an option such as
   `KILN_RUNTIME_MESH` (or one per codec) becomes worth its cost. zstd's decoder is already in the
   runtime for textures, so it does not count against this.

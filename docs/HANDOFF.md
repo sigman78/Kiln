@@ -214,7 +214,7 @@ cook(...) → blob ─┬─► store      write to disk, reuse later (normal de
 - **Writes are atomic** (temp file, then rename). A corrupt entry is a recoverable error: re-cook it.
 - *v0.5 (as implemented in M3):* no index file, **named layout**: files are `<store>/<assetPath>.mesh|.ktx2`, with the content hash stored inside each file (`.mesh` header `sourceHash`/`cookHash`; KTX2 key/value) for invalidation. The runtime does not hash sources at load; hashed file names return with the index file (see `docs/open-questions.md` R4).
 - *v0.6:* the store manifest (`docs/design/store-manifest.md`): artifacts named by an XXH3-128 build key, one binary manifest per target profile (the index), input records with sizes and times for fast "unchanged" checks. The named layout was removed (2026-09-30).
-- *Later:* garbage collection via `kiln-cook --gc` (never automatic at runtime).
+- *v0.6:* garbage collection via `kiln-cook --gc` (never automatic at runtime) and `--export` for shipping.
 
 **The store must stay optional in the runtime API.** A host that cooks everything in its build step can treat it as a plain read-only directory.
 
@@ -558,7 +558,8 @@ Quality, performance and platform-reach features come after v0.5, behind interfa
 
 | Version | Theme | Contents |
 |---|---|---|
-| **v0.6–0.7** | Quality & pipeline | BCn encoding, Zstd, RDO; `.mesh` payload compression (implement candidate schemes, benchmark ratio and decode MB/s on real assets, pick a default); alpha-coverage mips, channel packing, cubes/arrays; LOD generation (simplifier); config files, presets, rules, sidecars, `--explain`; store index + `--gc`; fuller dependency tracking for hot reload |
+| **v0.6** | Released 2026-09-30 | BCn encoding, Zstd; target profiles; PBR material factors; store manifest + `--gc` / `--export` |
+| **v0.7** | Quality & pipeline | RDO; SIMD BC encoders; cook tracing; `.mesh` payload compression (implement candidate schemes, benchmark ratio and decode MB/s on real assets, pick a default); alpha-coverage mips, channel packing, LOD generation (simplifier); config files, presets, rules, `--explain`; fuller dependency tracking for hot reload |
 | **v0.8** | Streaming | Range requests, progressive mips/LODs (`Partial` state), residency/budget/eviction hooks |
 | **v0.9** | Platforms | Target profiles + cross-cooking (ASTC/ETC2 mobile), native async IO backends, native file watchers, macOS; network IO backend for on-device iteration *(discuss)* |
 | **v1.0** | Hardening & freeze | `.mesh` v1 freeze; `KILN_NO_EXCEPTIONS` / `KILN_NO_RTTI` in CI; sanitizers everywhere; fuzzing; docs |
@@ -586,7 +587,7 @@ Unscheduled: `EXT_meshopt_compression` input, GPU decompression of chunked blobs
 4. fastgltf vs cgltf.
 5. Format enum: mirror `VkFormat` numerically, or a compact own enum with mapping tables?
 6. Should material *remapping* (name → engine material) be a library feature (data-driven table) or strictly the host's job?
-7. Config file format for cook settings (TOML vs JSON vs own INI-like). Decision needed by v0.6.
+7. Config file format for cook settings (TOML vs JSON vs own INI-like). Decision needed by v0.7.
 8. Example viewer on raw Vulkan 1.4 or a thin NoGraphicsAPI-style layer?
 9. Pack/archive format: in scope for v1?
 10. Should textures also expose a `MetaReady` state (extent and format known before pixel data), e.g. for pre-sizing UI layout?

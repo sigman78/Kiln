@@ -113,7 +113,7 @@ One upload job per mesh (mesh-format-spec §5.9, §7):
 - **`kPayloadRaw` clear:** read `GPUD` into a `Tag::Io` scratch buffer, then `mesh::decode_payload`
   zero-fills the destination and decodes blob by blob. Any codec or filter other than `None` fails
   the asset with `Code::Unsupported` (K4015).
-- Proposed for when compressed codecs land (v0.6-0.7): one job per blob (or small batch of blobs),
+- Proposed for when compressed codecs land (v0.7): one job per blob (or small batch of blobs),
   a per-worker reused scratch arena, the job owning the preceding range zero-fills each gap, and
   the last job to finish commits or reports the failure.
 

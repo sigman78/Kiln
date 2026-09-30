@@ -1,7 +1,7 @@
 # Cooked artifacts and a store manifest
 
-**Status:** Decided (owner, 2026-09-29, revised 2026-09-30); phases A and B implemented (branch
-`store-catalog`, choices made on the way in open-questions R11). The owner asked for hashed
+**Status:** Decided (owner, 2026-09-29, revised 2026-09-30); phases A and B shipped in v0.6 (choices
+made on the way in open-questions R11; phase C set aside). The owner asked for hashed
 artifacts and a binary index with its own lookup, then chose: XXH3-128 keys, no source re-hashing
 for freshness, an index rewritten in place (not a new file per change), and a single writer. On
 2026-09-30 the owner removed the named layout (no backward compatibility), flattened the store,
@@ -9,7 +9,7 @@ and chose one manifest shared by every profile, input records without paths in a
 own, one lock per store, artifacts named by the key in base32 with no extension and no
 subdirectories, and hashing a file before a new time counts as a change. Then (2026-09-30) a root
 table in the input records, so `kiln-cook` can run without inputs and scans the recorded roots by
-default. Phase A (below) is the last step of v0.6.
+default.
 **Decides:** How cooked files are named, how the runtime finds them, how a dev cook knows a file is
 still fresh, and how the store is written and cleaned. Replaces the named store's "a file is used
 while it exists" rule (open-questions R9).
@@ -322,7 +322,7 @@ that does not decode is dropped with an info log.
 `manifest.dir` (one profile or all) and the artifacts it names, for shipping. With them, the root
 table and runs without inputs (decision 7).
 
-**Phase C, if needed:** a memory-mapped manifest through the IO backend; several writers.
+**Phase C, if needed (set aside, owner 2026-09-30):** a memory-mapped manifest through the IO backend; several writers.
 
 The named layout was removed after phase A (owner, 2026-09-30). A store from before is cooked again
 into a new directory; kiln deletes no store.

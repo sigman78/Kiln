@@ -9,7 +9,8 @@ memory the renderer provides, and hot-reloads them when a source changes. The li
 a graphics API: every GPU interaction goes through a small adapter struct that the renderer fills
 in.
 
-**Status:** v0.5 (milestones M0-M5, plus BC and Zstd textures). The API is not stable yet; breaks
+**Status:** v0.6 (milestones M0-M5, BC and Zstd textures, target profiles, PBR factors, the store
+manifest). The API is not stable yet; breaks
 are listed in `CHANGELOG.md` with migration notes. Next: see the roadmap in `docs/HANDOFF.md`.
 
 ```

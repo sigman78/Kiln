@@ -7,6 +7,12 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-09-30
+
+Stores that cook only what changed: artifacts named by a build key over every input, one manifest
+for all target profiles, `kiln-cook --gc` and `--export`. Also target profiles and PBR material
+factors. The named store layout is gone: delete old stores and cook again.
+
 ### Changed
 - **Breaking (format, runtime, cook, tools): one flat store with a shared manifest** (owner,
   2026-09-30; store-manifest.md). A store is `manifest.dir` (what the runtime reads: every target

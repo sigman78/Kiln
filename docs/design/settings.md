@@ -7,7 +7,7 @@ resolved settings are hashed into the store key.
 
 ## Decision
 
-The C++ structs are the real interface. Config files, presets and rules come in v0.6 as layers that
+The C++ structs are the real interface. Config files, presets and rules come in v0.7 as layers that
 produce the same structs.
 
 ### Texture
@@ -45,7 +45,7 @@ Texture settings schema: 2 (`shape`, `slices`). `encoding`, `quality`, `supercom
 | `genTangents` | true | MikkTSpace |
 | `optimize` | true | vertex cache, overdraw, vertex fetch |
 | `useAuthoredLods` | true | pass through `_lodN` nodes |
-| `genLods` | false | reserved: the simplifier lands in v0.6 |
+| `genLods` | false | reserved: the simplifier lands in v0.7 |
 | `posTolMm` | 0.1 | quantization tolerance before falling back to float positions |
 | `weldTol` | 0 | 0 = exact-match welding only |
 | `compression` | `None` | `None`: every blob codec `None`, the cooker sets `kPayloadRaw`. `Basic`: Zstd + ByteShuffle (vertex), Zstd (index). `Meshopt`: MeshoptVertex / MeshoptIndex. `MeshoptZstd`: Meshopt + `kBlobOuterZstd` |
@@ -61,9 +61,9 @@ Reserved: indexWidthPolicy, unit/axis override, name prefixes to strip.
   A non-zero `zstdLevel` is a K3002 warning and is ignored.
 - The schemes map to the candidate schemes in mesh-format-spec §5.9.
 - Later the scheme becomes selectable **per target** (a default in `TargetProfile`) and **per
-  asset** (presets, rules, sidecars in v0.6).
+  asset** (presets and rules in v0.7).
 - The **default scheme is picked by measurement** (ratio and decode MB/s on real assets) in
-  v0.6-0.7. Until then the default stays `None`.
+  v0.7. Until then the default stays `None`.
 
 ### Target and session
 
@@ -87,12 +87,12 @@ values; code layers fill or override them. Each layer beats the ones above it.
 |---|---|---|---|---|
 | 1 | built-in defaults (the member initializers) | data | every field | **yes** |
 | 2 | host settings: `ProviderDesc::textureDefaults` / `meshDefaults`, `kiln-cook` flags | data, base | what the host changes | **yes** |
-| 3 | project config: presets, path rules (globs), target encodings | data, patch | the keys it names | reserved (v0.6) |
+| 3 | project config: presets, path rules (globs), target encodings | data, patch | the keys it names | reserved (v0.7) |
 | 4 | per-asset sidecar (`<source>.kiln`) | data, patch | the keys it names | **yes** (see "Sidecar files") |
 | 5 | inference: glTF slot, else name rules, else Color | code | `usage` and `shape`, only if `Auto` | **yes** |
 | 6 | `CookPolicy` (optional) | code | anything; may refuse the asset (K3007) | **yes** |
 | - | resolve: derived fields, validation, `CookSession`, target caps | kiln | `colorSpace` if `Auto`; clears; errors | **yes** |
-| - | `kiln-cook --explain` (which layer set each field) | | | reserved (v0.6) |
+| - | `kiln-cook --explain` (which layer set each field) | | | reserved (v0.7) |
 
 Why this order:
 
