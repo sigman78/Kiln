@@ -1,11 +1,11 @@
-// tests/hand_store.h — catalog stores written by hand, without cook code, so the reader-only
-// (shipping) suite and kiln-headless read test files the way they read any store.
+// tests/hand_store.h — stores written by hand, without cook code, so the reader-only (shipping)
+// suite and kiln-headless read test files the way they read any store.
 #pragma once
 
 #include "kiln_test.h"
 
 #include "kiln/assets.h"
-#include "kiln/catalog.h"
+#include "kiln/manifest.h"
 
 #include <algorithm>
 #include <chrono>
@@ -16,8 +16,8 @@
 
 namespace kiln::test {
 
-/// A catalog store at a scratch directory. Every put() writes the artifact and rewrites the catalog
-/// by a temporary file and a rename, so a store poller never reads half a catalog.
+/// A store at a scratch directory with one profile, `compat`. Every put() writes the artifact and
+/// rewrites the manifest by a temporary file and a rename, so a store poller never reads half of it.
 class HandStore {
 public:
     /// An empty store at `<sample_dir()>/<name>`. With `clear`, what was there is removed first.
@@ -25,18 +25,18 @@ public:
         format(dir_, sizeof dir_, "%s/%s", sample_dir(), name);
         std::error_code ec;
         if (clear) std::filesystem::remove_all(dir_, ec);
-        std::filesystem::create_directories(std::filesystem::path(dir_) / "catalogs", ec);
+        std::filesystem::create_directories(dir_, ec);
         return KILN_CHECK_MSG(std::filesystem::is_directory(dir_, ec), "cannot create %s", dir_);
     }
     [[nodiscard]] char const* dir() const { return dir_; }
-    /// The profile's block formats the catalog records (none by default: create() checks none).
+    /// The profile's block formats the manifest records (none by default: create() checks none).
     void set_block_formats(u64 formats) { blockFormats_ = formats; }
 
     /// The entry (`name`, `kind`) names an artifact holding `bytes` (added or replaced).
     bool put(StrView name, AssetKind kind, Span<u8 const> bytes) {
         Hash128 const key = xxh3_128(bytes);
         char path[1200];
-        (void)artifact_file_path(StrView(dir_), kind, key, path, sizeof path);
+        (void)artifact_file_path(StrView(dir_), key, path, sizeof path);
         std::error_code ec;
         std::filesystem::create_directories(std::filesystem::path(path).parent_path(), ec);
         if (!std::filesystem::exists(path, ec) && !write_atomic(path, bytes)) return false;
@@ -50,7 +50,7 @@ public:
         }
         it->key   = key;
         it->bytes = bytes.size;
-        return write_catalog();
+        return write_manifest();
     }
     /// put() with the bytes of the file `path`.
     bool put_file(StrView name, AssetKind kind, char const* path) {
@@ -107,9 +107,10 @@ private:
         return int(a->kind) - int(b->kind);
     }
 
-    /// Format 0.1 (docs/design/store-catalog.md): header, entries sorted by name then kind, the
-    /// index sorted by (name hash, entry), then the profile name and the entry names.
-    bool write_catalog() {
+    /// Format 0.1 (docs/design/store-catalog.md): header, the one profile, its entries sorted by
+    /// name then kind, the index sorted by (name hash, entry), then the profile name and the entry
+    /// names.
+    bool write_manifest() {
         Item const* order[kMaxItems];
         for (usize i = 0; i < count_; ++i)
             order[i] = &items_[i];
@@ -119,25 +120,30 @@ private:
         u64 stringBytes       = profile.size;
         for (usize i = 0; i < count_; ++i)
             stringBytes += order[i]->nameLen;
-        u64 const entries = kCatalogHeaderBytes;
-        u64 const index   = entries + count_ * kCatalogEntryBytes;
-        u64 const strings = index + count_ * kCatalogIndexBytes;
-        u64 const total   = (strings + stringBytes + 7) & ~u64(7);
-        Vec<u8> cat(default_allocator(), Tag::Test);
-        cat.resize(usize(total), u8(0));
-        u8* b = cat.data();
-        write_unaligned<u32>(b, kCatalogMagic);
-        write_unaligned<u16>(b + 4, kCatalogMajor);
-        write_unaligned<u16>(b + 6, kCatalogMinor);
-        write_unaligned<u32>(b + 8, kCatalogHeaderBytes);
+        u64 const profiles = kManifestHeaderBytes;
+        u64 const entries  = profiles + kManifestProfileBytes;
+        u64 const index    = entries + count_ * kManifestEntryBytes;
+        u64 const strings  = index + count_ * kManifestIndexBytes;
+        u64 const total    = (strings + stringBytes + 7) & ~u64(7);
+        Vec<u8> man(default_allocator(), Tag::Test);
+        man.resize(usize(total), u8(0));
+        u8* b = man.data();
+        write_unaligned<u32>(b, kManifestMagic);
+        write_unaligned<u16>(b + 4, kManifestMajor);
+        write_unaligned<u16>(b + 6, kManifestMinor);
+        write_unaligned<u32>(b + 8, kManifestHeaderBytes);
         write_unaligned<u64>(b + 16, total);
-        write_unaligned<u64>(b + 24, u64(count_));
-        write_unaligned<u64>(b + 32, entries);
-        write_unaligned<u64>(b + 40, index);
-        write_unaligned<u64>(b + 48, strings);
-        write_unaligned<u64>(b + 56, stringBytes);
-        write_unaligned<u64>(b + 72, blockFormats_);
-        write_unaligned<u32>(b + 84, u32(profile.size));
+        write_unaligned<u32>(b + 24, 1u);
+        write_unaligned<u64>(b + 32, u64(count_));
+        write_unaligned<u64>(b + 40, profiles);
+        write_unaligned<u64>(b + 48, entries);
+        write_unaligned<u64>(b + 56, index);
+        write_unaligned<u64>(b + 64, strings);
+        write_unaligned<u64>(b + 72, stringBytes);
+        u8* p = b + profiles;
+        write_unaligned<u32>(p + 4, u32(profile.size));
+        write_unaligned<u64>(p + 16, blockFormats_);
+        write_unaligned<u64>(p + 32, u64(count_));
         std::memcpy(b + strings, profile.data, profile.size);
 
         struct IndexRec {
@@ -147,7 +153,7 @@ private:
         u64 str = profile.size;
         for (usize i = 0; i < count_; ++i) {
             Item const& it = *order[i];
-            u8* e          = b + entries + i * kCatalogEntryBytes;
+            u8* e          = b + entries + i * kManifestEntryBytes;
             write_unaligned<u32>(e, u32(str));
             write_unaligned<u32>(e + 4, it.nameLen);
             write_unaligned<u16>(e + 8, u16(it.kind == AssetKind::Mesh ? 1 : 2));
@@ -162,15 +168,15 @@ private:
             return x.hash != y.hash ? x.hash < y.hash : x.entry < y.entry;
         });
         for (usize i = 0; i < count_; ++i) {
-            write_unaligned<u64>(b + index + i * kCatalogIndexBytes, idx[i].hash);
-            write_unaligned<u64>(b + index + i * kCatalogIndexBytes + 8, idx[i].entry);
+            write_unaligned<u64>(b + index + i * kManifestIndexBytes, idx[i].hash);
+            write_unaligned<u64>(b + index + i * kManifestIndexBytes + 8, idx[i].entry);
         }
-        Hash128 const check = xxh3_128(cat.span()); // the checksum field is still zero
-        std::memcpy(b + kCatalogChecksumOffset, check.bytes, 16);
+        Hash128 const check = xxh3_128(man.span()); // the checksum field is still zero
+        std::memcpy(b + kManifestChecksumOffset, check.bytes, 16);
 
         char path[1200];
-        (void)catalog_file_path(StrView(dir_), profile, path, sizeof path);
-        return write_atomic(path, cat.span());
+        (void)manifest_file_path(StrView(dir_), path, sizeof path);
+        return write_atomic(path, man.span());
     }
 
     char dir_[1024] = {};

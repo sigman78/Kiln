@@ -108,7 +108,7 @@ void fail_slot(Context* ctx, Slot& s, u32 code, Status st) noexcept {
 }
 
 bool catalog_names_other(Context const* ctx, Slot const& s) noexcept {
-    CatalogEntry e;
+    ManifestEntry e;
     if (!ctx->catalogPresent || !ctx->catalog.find(s.kind, path_of(s), &e)) return false;
     return !(s.keyValid && s.key == e.key);
 }
@@ -145,7 +145,7 @@ void submit_stage(Context* ctx, Slot& s, Stage stage) noexcept {
         s.provider    = ctx->provider;
         s.jobKeyValid = false;
         // The artifact is chosen here, so a catalog swapped in later leaves this load alone.
-        CatalogEntry e;
+        ManifestEntry e;
         if (s.source == SourceKind::File && !s.cookedValid && ctx->catalogPresent &&
             ctx->catalog.find(s.kind, path_of(s), &e)) {
             s.jobKey      = e.key;

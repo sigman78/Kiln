@@ -9,7 +9,7 @@ if(NOT KILN_BUILD_COOK)
     message(FATAL_ERROR "KILN_FUZZ needs KILN_BUILD_COOK (fuzz_hdr_decode)")
 endif()
 
-foreach(target mesh_read ktx2_read hdr_decode catalog_read)
+foreach(target mesh_read ktx2_read hdr_decode manifest_read)
     add_executable(kiln_fuzz_${target} fuzz_${target}.cpp)
     target_link_libraries(kiln_fuzz_${target} PRIVATE kiln_runtime kiln_cook)
     target_link_options(kiln_fuzz_${target} PRIVATE -fsanitize=fuzzer)

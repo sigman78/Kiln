@@ -8,8 +8,6 @@
 #if defined(KILN_OS_WINDOWS)
 #include <windows.h> // GetFileAttributesExW; WIN32_LEAN_AND_MEAN/NOMINMAX set by kiln_apply_defaults
 #else
-#include <climits> // PATH_MAX
-#include <cstdlib> // realpath
 #include <sys/stat.h>
 #endif
 
@@ -25,8 +23,6 @@ u32 add_string(CookUnit& u, StrView s) noexcept {
 
 void add_input(CookUnit& u, InputRole role, StrView name, StrView path, IoStat const& stat,
                Hash128 const& content) noexcept {
-    char canonical[1024];
-    if (usize const n = canonical_path(path, canonical, sizeof canonical)) path = StrView(canonical, n);
     UnitInput in;
     in.role    = role;
     in.nameOff = add_string(u, name);
@@ -214,10 +210,12 @@ u64 host_digest(UnitDesc const& d, u32 policyVersion) noexcept {
 bool recorded_keys_match(UnitDesc const& d, CookUnit const& rec) noexcept {
     Allocator const* alloc = d.env.alloc ? d.env.alloc : default_allocator();
     Vec<u8> sidecar(alloc, Tag::Cook);
+    char sidecarBuf[1100];
     StrView sidecarPath;
     for (UnitInput const& in : rec.inputs) {
         if (in.role != InputRole::Sidecar || !in.present) continue;
-        sidecarPath = rec.str(in.pathOff, in.pathLen);
+        sidecarPath = StrView(sidecarBuf, input_path(d.sourcePath, in.role, rec.str(in.nameOff, in.nameLen),
+                                                     sidecarBuf, sizeof sidecarBuf));
         if (io_read_file(compat_io_backend(), sidecarPath, alloc, &sidecar).failed()) return false;
     }
     Vec<BuildInput> inputs(alloc, Tag::Cook);
@@ -263,27 +261,43 @@ bool recorded_keys_match(UnitDesc const& d, CookUnit const& rec) noexcept {
     return true;
 }
 
-bool recorded_inputs_unchanged(CookUnit const& rec, bool rehash) noexcept {
+usize input_path(StrView sourcePath, InputRole role, StrView name, char* out, usize cap) noexcept {
+    if (role == InputRole::Source) return format(out, cap, "%.*s", KILN_SV(sourcePath));
+    if (role == InputRole::Sidecar)
+        return format(out, cap, "%.*s%.*s", KILN_SV(sourcePath), KILN_SV(kSidecarExt));
+    usize const slash = sourcePath.rfind('/');
+    StrView const dir = slash == StrView::kNpos ? StrView(".") : sourcePath.substr(0, slash);
+    return format(out, cap, "%.*s/%.*s", KILN_SV(dir), KILN_SV(name));
+}
+
+InputsCheck check_recorded_inputs(CookUnit& rec, StrView sourcePath, bool rehash) noexcept {
     Vec<u8> bytes(rec.inputs.allocator(), Tag::Cook);
-    for (UnitInput const& in : rec.inputs) {
-        StrView const path = rec.str(in.pathOff, in.pathLen);
+    bool touched = false;
+    for (UnitInput& in : rec.inputs) {
+        char path[1200];
+        usize const n = input_path(sourcePath, in.role, rec.str(in.nameOff, in.nameLen), path, sizeof path);
+        if (n >= sizeof path - 1) return InputsCheck::Changed;
+        StrView const file(path, n);
         IoStat now;
-        Status const st = stat_file(path, &now);
+        Status const st = stat_file(file, &now);
         if (!in.present) {
-            if (st.code != Code::NotFound) return false;
+            if (st.code != Code::NotFound) return InputsCheck::Changed;
             continue;
         }
-        if (st.failed()) return false;
-        if (!rehash) {
-            if (now.size != in.stat.size || now.mtimeNs != in.stat.mtimeNs) return false;
-            continue;
-        }
+        if (st.failed()) return InputsCheck::Changed;
+        bool const same = now.size == in.stat.size && now.mtimeNs == in.stat.mtimeNs;
+        if (same && !rehash) continue;
+        // A new time alone (a checkout, a save without edits) is no change: the content decides.
         bytes.clear();
-        if (io_read_file(compat_io_backend(), path, rec.inputs.allocator(), &bytes).failed() ||
+        if (io_read_file(compat_io_backend(), file, rec.inputs.allocator(), &bytes).failed() ||
             !(xxh3_128(bytes.span()) == in.content))
-            return false;
+            return InputsCheck::Changed;
+        if (!same) {
+            in.stat = now;
+            touched = true;
+        }
     }
-    return true;
+    return touched ? InputsCheck::Touched : InputsCheck::Unchanged;
 }
 
 Status cook_unit(UnitDesc const& d, CookUnit* out) noexcept {
@@ -293,35 +307,6 @@ Status cook_unit(UnitDesc const& d, CookUnit* out) noexcept {
     KILN_TRY(read_input(d, *out, InputRole::Source, d.name, d.sourcePath, alloc, &bytes));
     if (d.kind == AssetKind::Mesh) return cook_mesh_unit(d, *out, bytes.span(), alloc);
     return cook_one_texture(d, *out, bytes.span(), d.name, SlotHint::None, true, alloc);
-}
-
-usize canonical_path(StrView path, char* out, usize cap) noexcept {
-    char buf[1024];
-    if (path.size + 1 > sizeof buf) return 0;
-    std::memcpy(buf, path.data, path.size);
-    buf[path.size] = '\0';
-#if defined(KILN_OS_WINDOWS)
-    wchar_t wide[1024], full[1024];
-    if (MultiByteToWideChar(CP_UTF8, 0, buf, -1, wide, 1024) == 0) return 0;
-    DWORD const w = GetFullPathNameW(wide, 1024, full, nullptr);
-    if (w == 0 || w >= 1024) return 0;
-    int const n = WideCharToMultiByte(CP_UTF8, 0, full, int(w), out, int(cap), nullptr, nullptr);
-    if (n <= 0 || usize(n) >= cap) return 0;
-    for (int i = 0; i < n; ++i)
-        if (out[i] == '\\') out[i] = '/';
-    out[n] = '\0';
-    return usize(n);
-#else
-    // realpath needs an existing file: resolve the directory of a missing one (an absent sidecar).
-    char resolved[PATH_MAX];
-    if (::realpath(buf, resolved)) return format(out, cap, "%s", resolved) < cap - 1 ? std::strlen(out) : 0;
-    char* const slash = std::strrchr(buf, '/');
-    char const* dir   = slash ? (slash == buf ? "/" : buf) : ".";
-    if (slash && slash != buf) *slash = '\0';
-    if (!::realpath(dir, resolved)) return 0;
-    usize const n = format(out, cap, "%s/%s", resolved, slash ? slash + 1 : buf);
-    return n < cap - 1 ? n : 0;
-#endif
 }
 
 Status stat_file(StrView path, IoStat* out) noexcept {

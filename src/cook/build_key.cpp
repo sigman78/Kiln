@@ -1,7 +1,7 @@
 // Build keys: XXH3-128 over a tagged, little-endian serialization, never struct memory.
 #include "kiln/containers.h"
-#include "kiln/cook/catalog.h"
 #include "kiln/cook/cook.h"
+#include "kiln/cook/manifest.h"
 
 namespace kiln::cook {
 

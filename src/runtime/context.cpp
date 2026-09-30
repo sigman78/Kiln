@@ -170,7 +170,7 @@ void free_tables(Context* ctx) noexcept {
     free_array(a, ctx->events, ctx->maxEvents, Tag::Registry);
     if (ctx->storeDir) free_array(a, ctx->storeDir, ctx->storeDirLen + 1, Tag::Registry);
     if (ctx->profile) free_array(a, ctx->profile, ctx->profileLen + 1, Tag::Registry);
-    ctx->catalogBytes.release();
+    ctx->manifestBytes.release();
     free_array(a, ctx->roots, ctx->rootCount, Tag::Registry);
     free_array(a, ctx->rootChars, ctx->rootCharsLen, Tag::Registry);
     ctx->meshMap.release();
@@ -258,50 +258,53 @@ Status check_formats(ContextDesc const& desc, StrView profile, u64 blockFormats)
     return allow ? kOk : out;
 }
 
-/// Reads and validates the profile's catalog into `bytes`. A missing catalog (or no store) is no
+/// Reads and validates the store's manifest into `bytes`. A missing manifest (or no store) is no
 /// error: a cook provider or kiln-cook may write it later.
-Status load_catalog(ContextDesc const& desc, Allocator const* a, Vec<u8>* bytes, CatalogView* view,
-                    bool* present) noexcept {
-    *present = false;
+Status load_manifest(ContextDesc const& desc, Allocator const* a, Vec<u8>* bytes,
+                     ManifestView* view) noexcept {
     if (char const* why = check_profile_name(desc.profile))
         return diagf(&desc.diag, make_status(Code::InvalidArgument), kDiagBadAssetName, Severity::Error,
                      desc.profile, "create", "invalid profile name: %s", why);
     if (desc.storeDir.empty()) return kOk;
     char path[1024];
-    usize const n = catalog_file_path(desc.storeDir, desc.profile, path, sizeof path);
+    usize const n = manifest_file_path(desc.storeDir, path, sizeof path);
     if (n >= sizeof path - 1) return make_status(Code::InvalidArgument);
     IoBackend const* io = desc.io ? desc.io : compat_io_backend();
     Status const st     = io_read_file(io, StrView(path, n), a, bytes);
     if (st.code == Code::NotFound) return kOk;
     if (st.failed())
         return diagf(&desc.diag, st, kDiagCatalogMissing, Severity::Error, StrView(path, n), "create",
-                     "cannot read the catalog");
-    Result<CatalogView> v = CatalogView::open(bytes->span(), &desc.diag, StrView(path, n));
+                     "cannot read the manifest");
+    Result<ManifestView> v = ManifestView::open(bytes->span(), &desc.diag, StrView(path, n));
     if (v.failed()) return v.status();
-    *view    = *v;
-    *present = true;
-    return check_formats(desc, v->profile().name, v->profile().blockFormats);
+    *view = *v;
+    ManifestProfile p;
+    if (!v->find_profile(desc.profile, &p)) return kOk;
+    return check_formats(desc, p.name(), p.block_formats());
 }
 
 } // namespace
 
+void adopt_manifest(Context* ctx, Vec<u8>&& bytes, ManifestView const& v) noexcept {
+    ctx->manifestBytes  = std::move(bytes); // the view's bytes stay where they are
+    ctx->catalogPresent = v.find_profile(StrView(ctx->profile, ctx->profileLen), &ctx->catalog);
+}
+
 void refresh_catalog(Context* ctx) noexcept {
     if (ctx->watch || ctx->storeDirLen == 0) return;
     char path[1024];
-    usize const n = catalog_path(ctx, path, sizeof path);
+    usize const n = manifest_path(ctx, path, sizeof path);
     if (n + 1 >= sizeof path) return;
     Vec<u8> bytes(ctx->alloc, Tag::Registry);
     if (io_read_file(ctx->io, StrView(path, n), ctx->alloc, &bytes).failed()) return;
     // The stored checksum tells whether it changed; a rewrite may keep the size and the time.
-    if (ctx->catalogPresent && bytes.size() >= kCatalogHeaderBytes &&
-        std::memcmp(bytes.data() + kCatalogChecksumOffset, ctx->catalogBytes.data() + kCatalogChecksumOffset,
-                    16) == 0)
+    if (!ctx->manifestBytes.empty() && bytes.size() >= kManifestHeaderBytes &&
+        std::memcmp(bytes.data() + kManifestChecksumOffset,
+                    ctx->manifestBytes.data() + kManifestChecksumOffset, 16) == 0)
         return;
-    Result<CatalogView> v = CatalogView::open(bytes.span(), &ctx->diag, StrView(path, n));
-    if (v.failed()) return;                 // the one in use stays
-    ctx->catalogBytes   = std::move(bytes); // the view's bytes stay where they are
-    ctx->catalog        = *v;
-    ctx->catalogPresent = true;
+    Result<ManifestView> v = ManifestView::open(bytes.span(), &ctx->diag, StrView(path, n));
+    if (v.failed()) return; // the one in use stays
+    adopt_manifest(ctx, std::move(bytes), *v);
 }
 
 } // namespace rt
@@ -327,10 +330,9 @@ Result<Context*> create(ContextDesc const& desc) noexcept {
     }
 
     Allocator const* a = desc.alloc ? desc.alloc : default_allocator();
-    Vec<u8> catalogBytes(a, Tag::Registry);
-    CatalogView catalog;
-    bool catalogPresent = false;
-    KILN_TRY(load_catalog(desc, a, &catalogBytes, &catalog, &catalogPresent));
+    Vec<u8> manifestBytes(a, Tag::Registry);
+    ManifestView manifest;
+    KILN_TRY(load_manifest(desc, a, &manifestBytes, &manifest));
 
     Context* ctx         = new_object<Context>(a, Tag::Registry);
     ctx->alloc           = a;
@@ -367,13 +369,11 @@ Result<Context*> create(ContextDesc const& desc) noexcept {
     ctx->maxGroups    = desc.maxGroups;
     ctx->maxEvents    = desc.maxEvents;
 
-    ctx->storeDirLen    = desc.storeDir.size;
-    ctx->storeDir       = copy_str(a, desc.storeDir);
-    ctx->profileLen     = desc.profile.size;
-    ctx->profile        = copy_str(a, desc.profile);
-    ctx->catalogBytes   = std::move(catalogBytes); // the view's bytes stay where they are
-    ctx->catalog        = catalog;
-    ctx->catalogPresent = catalogPresent;
+    ctx->storeDirLen = desc.storeDir.size;
+    ctx->storeDir    = copy_str(a, desc.storeDir);
+    ctx->profileLen  = desc.profile.size;
+    ctx->profile     = copy_str(a, desc.profile);
+    if (!manifestBytes.empty()) adopt_manifest(ctx, std::move(manifestBytes), manifest);
     if (!desc.roots.empty()) {
         usize chars = 0;
         for (Root const& m : desc.roots)

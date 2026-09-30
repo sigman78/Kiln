@@ -173,7 +173,7 @@ KILN_API Result<CookedTexture> cook_texture(TextureSource const& src, TextureCoo
                                             TargetProfile const& target, CookEnv const& env = {}) noexcept;
 
 // ---------------------------------------------------------------------------
-// Store files: atomic writes (the catalog store in kiln/cook/catalog.h builds on them)
+// Store files: atomic writes (the store writer builds on them)
 // ---------------------------------------------------------------------------
 
 /// Write `bytes` to `<dir>/<name>` atomically (temp file + rename). Creates `dir`

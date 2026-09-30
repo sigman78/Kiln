@@ -238,7 +238,7 @@ inline constexpr u32 kXxh32P5 = 374761393u;
 }
 
 /// A 128-bit hash in XXH3's canonical byte order: the hex of the bytes is what `xxhsum -H2` prints.
-/// xxh3_128() is in kiln/catalog.h (kiln_runtime).
+/// xxh3_128() is in kiln/manifest.h (kiln_runtime).
 struct Hash128 {
     u8 bytes[16] = {};
 

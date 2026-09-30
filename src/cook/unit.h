@@ -2,8 +2,8 @@
 // read (docs/design/store-catalog.md). Shared by the cook provider and kiln-cook.
 #pragma once
 
-#include "kiln/cook/catalog.h"
 #include "kiln/cook/cook.h"
+#include "kiln/cook/manifest.h"
 #include "kiln/io.h"
 
 namespace kiln::cook {
@@ -12,7 +12,7 @@ namespace kiln::cook {
 struct UnitInput {
     InputRole role = InputRole::Source;
     u32 nameOff = 0, nameLen = 0; ///< BuildInput::name
-    u32 pathOff = 0, pathLen = 0; ///< the file as the cook opened it
+    u32 pathOff = 0, pathLen = 0; ///< the file as the cook opened it; empty in a record (input_path())
     IoStat stat;                  ///< taken before the read; zeros when UnitDesc::statInputs is false
     Hash128 content;              ///< zero when absent
     bool present = true;          ///< false: a sidecar that does not exist, so creating it is a change
@@ -73,17 +73,24 @@ void unit_build_inputs(CookUnit const& unit, BuildInput* out) noexcept;
 
 /// True if the settings of `d` give every output of the recorded unit `rec` the key it has
 /// (copy_input_record()): the settings are resolved again over the recorded inputs, reading only
-/// the sidecar. False when an output has no key or the sidecar cannot be read.
+/// the sidecar next to `d.sourcePath`. False when an output has no key or the sidecar cannot be read.
 [[nodiscard]] bool recorded_keys_match(UnitDesc const& d, CookUnit const& rec) noexcept;
 
-/// True if every recorded input still has its size and modification time (an absent sidecar is
-/// still absent). With `rehash`, its content hash instead: every input is read.
-[[nodiscard]] bool recorded_inputs_unchanged(CookUnit const& rec, bool rehash = false) noexcept;
+/// The file of a recorded input, from the unit's source as it is found now: the source itself, its
+/// `.kiln` file, or a buffer URI relative to the source's directory. Records keep no paths, so a
+/// store stays valid when the sources move. Returns what `format()` returns.
+usize input_path(StrView sourcePath, InputRole role, StrView name, char* out, usize cap) noexcept;
 
-/// The absolute form of `path` with `/` separators and no `.` or `..` (the file need not exist)
-/// into `out`; its length, or 0 when it cannot be made. Records store inputs this way, so the same
-/// file named from another directory or through another root compares equal.
-[[nodiscard]] usize canonical_path(StrView path, char* out, usize cap) noexcept;
+enum class InputsCheck : u8 {
+    Unchanged, ///< every input has its recorded size and time (an absent sidecar is still absent)
+    Touched,   ///< some size or time differs, but every content hash matches: `rec` has the new stats
+    Changed,   ///< some content differs, or a file appeared or went missing
+};
+
+/// Compares the recorded inputs of `rec` with the files next to `sourcePath`. A file whose size or
+/// time differs is read and hashed before it counts as changed; with `rehash`, every file is.
+[[nodiscard]] InputsCheck check_recorded_inputs(CookUnit& rec, StrView sourcePath,
+                                                bool rehash = false) noexcept;
 
 /// Size and modification time of a file, through the compat backend's stat when it has one.
 [[nodiscard]] Status stat_file(StrView path, IoStat* out) noexcept;

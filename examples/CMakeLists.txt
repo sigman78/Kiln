@@ -18,8 +18,8 @@ if(KILN_BUILD_TESTS)
                      mesh/Box.mesh mesh/BoxTextured.mesh ktx2/color_srgb.ktx2 ktx2/normal.ktx2)
     set_tests_properties(example_headless PROPERTIES FIXTURES_REQUIRED golden_store)
 
-    # Cook-on-miss from two source roots into an empty catalog store: the default root and a named
-    # root `gen:`. kiln-info then checks the catalog and every artifact it names.
+    # Cook-on-miss from two source roots into an empty store: the default root and a named
+    # root `gen:`. kiln-info then checks the manifest and every artifact it names.
     if(TARGET kiln_cook AND KILN_MESH)
         set(_store ${CMAKE_BINARY_DIR}/example-roots-store)
         add_test(NAME example_headless_roots_clean COMMAND ${CMAKE_COMMAND} -E rm -rf ${_store})
@@ -33,7 +33,7 @@ if(KILN_BUILD_TESTS)
         set_tests_properties(example_headless_roots PROPERTIES FIXTURES_SETUP headless_roots_store
                                                                FIXTURES_REQUIRED headless_roots)
         add_test(NAME example_headless_roots_layout
-                 COMMAND $<TARGET_FILE:kiln-info> "${_store}/catalogs/compat.kcat" --check)
+                 COMMAND $<TARGET_FILE:kiln-info> "${_store}/manifest.dir" --check)
         set_tests_properties(example_headless_roots_layout PROPERTIES FIXTURES_REQUIRED headless_roots_store)
     endif()
 endif()
