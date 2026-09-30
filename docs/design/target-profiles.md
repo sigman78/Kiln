@@ -190,7 +190,7 @@ provider whose target is not the context's profile. The text below is the first 
   `kDesktopBlockFormats`, `kCompatTarget` / `kDesktopTarget` / `kUncompressedTarget`,
   `target_profile()`, K3008. The usage table is `block_format()` in `src/cook/texture_cook.cpp`.
 - The store descriptor (`bind_store_profile()`, `StoreProfile`, `read_store_profile()`) was replaced
-  by the catalog's profile fields (2026-09-30). `ContextDesc::allowUnsampledFormats`, K5018 and
+  by the manifest's profile fields (2026-09-30). `ContextDesc::allowUnsampledFormats`, K5018 and
   `diag_sink()` stay; the check is `check_formats()` in `src/runtime/context.cpp`.
 - `kiln-cook --target compat|desktop|uncompressed` (default `compat`).
 

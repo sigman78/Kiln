@@ -7,22 +7,22 @@ editing a glb or PNG updates the viewer in about a second without leaks or crash
 
 Hot reload is two independent pollers joined by the store on disk:
 
-1. **`kiln_runtime` watches the catalog.** Artifacts never change, so a poll thread stats the
-   profile's catalog file. When a new valid catalog appears, the pump thread swaps it in and reloads
+1. **`kiln_runtime` watches the manifest.** Artifacts never change, so a poll thread stats the
+   store's `manifest.dir`. When a new valid manifest appears, the pump thread swaps it in and reloads
    each loaded asset whose entry names another artifact than the one it loaded or tried. This alone
    covers "someone re-ran `kiln-cook`" and any external pipeline, and needs no cook code.
 2. **`kiln_cook`'s provider watches sources.** The provider watches every input file its cooks
-   recorded this session (sources, sidecars, a `.gltf`'s buffers). A poll thread stats them; it
-   re-cooks the changed sources of one round, publishes their artifacts and rewrites the catalog
-   once, which the runtime poller then sees.
+   recorded this session (sources, sidecars, a `.gltf`'s buffers). A poll thread stats them, hashes
+   a file whose size or time changed, re-cooks the sources whose content changed in one round,
+   publishes their artifacts and rewrites the manifest once, which the runtime poller then sees.
 
 Neither poller knows about the other. Dependencies exist only on the cook side and only for the
 v0.5 relation: glb to its embedded textures.
 
 The cooker may also run in another process: `kiln-cook` (once, or `--watch` to keep cooking what
-changes) writes the store while a read-only app (no provider) watches the catalog. One writer per
-profile holds the lock, so an app with a disk-mode provider and `kiln-cook` do not share a store
-(K3009).
+changes) writes the store while a read-only app (no provider) watches the manifest. One writer
+per store holds `manifest.lock`, so an app with a disk-mode provider and `kiln-cook` do not share a
+store (K3009).
 
 ### Runtime
 
@@ -50,10 +50,10 @@ profile holds the lock, so an app with a disk-mode provider and `kiln-cook` do n
   implements it; a host backend that leaves it null gets K5011 when `watchStore` is on. The compat
   backend opens files with `FILE_SHARE_DELETE` on Windows so a rewrite by rename can replace a file
   the loader is reading.
-- The poller stats the catalog file, sleeps `pollMs` between rounds, reads and validates a changed
-  catalog, and hands it to `pump()` under a mutex; the pump thread swaps it in and reloads. It is
-  joined by `destroy()`. Without the poller, a reload reads the catalog again when it starts, so
-  `request_reload` sees a catalog rewritten meanwhile.
+- The poller stats `manifest.dir`, sleeps `pollMs` between rounds, reads and validates a changed
+  manifest, and hands it to `pump()` under a mutex; the pump thread swaps it in and reloads. It is
+  joined by `destroy()`. Without the poller, a reload reads the manifest again when it starts, so
+  `request_reload` sees a manifest rewritten meanwhile.
 
 ### Cook side
 
@@ -63,8 +63,8 @@ profile holds the lock, so an app with a disk-mode provider and `kiln-cook` do n
   its mesh and its embedded images again; an image its texture.
   Diagnostics from a re-cook go to the log (`KILN_WARN` / `KILN_ERROR`), since there is no pump
   thread to replay them on.
-- Artifacts are written once; only the catalog is replaced (a temporary file, then a rename). A
-  failed rewrite is tried again next round.
+- Artifacts are written once; only `manifest.dir` and `manifest.in` are replaced (a temporary file,
+  then a rename). A failed rewrite is tried again next round.
 - The poller is joined by `uninstall_provider`, which the host calls before `destroy(ctx)`.
 
 ### Viewer and examples
@@ -83,7 +83,7 @@ are created the same way. `kiln-headless --watch` does the same without a GPU.
 
 ## Rationale
 
-- Two pollers joined by the catalog keep `kiln_runtime` free of any notion of sources and keep the
+- Two pollers joined by the manifest keep `kiln_runtime` free of any notion of sources and keep the
   cook side free of any notion of slots. Either half is useful alone.
 - Swapping through a `next` metadata set makes first load and reload one code path and guarantees
   the old view stays valid until `Changed`.

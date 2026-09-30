@@ -100,8 +100,8 @@ build/win-msvc-debug/examples/gl/kiln-gl                       # or any of the o
 On first run the model and the textures cook into the build tree's `example-store`, so the first
 frames show placeholders. All the examples cook with the default target profile, `compat`, whose
 block formats every example backend samples, so they share that one store
-(docs/design/target-profiles.md). It is a catalog store: a store made before v0.6 (named files and a
-`kiln-store.txt`) is not read; delete it once. Left-drag orbits, the wheel zooms, + and - change the exposure, Esc
+(docs/design/target-profiles.md). A store from before the flat layout of `store-catalog.md` (named
+files and `kiln-store.txt`, or `catalogs/` and `artifacts/`) is not read; delete it once. Left-drag orbits, the wheel zooms, + and - change the exposure, Esc
 quits. Hot reload is on: re-export or edit a file under `examples/assets` and the view updates.
 `--dump <file.png>` waits until everything has loaded, writes the frame and exits (the window is
 hidden where the API allows; sokol_app always shows one). Meshes cook as plain floats

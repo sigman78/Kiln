@@ -153,7 +153,7 @@ Never a crash, never a silent failure (v0.5 exit criterion).
 | K1000-1999 | glTF import (unsupported extensions, sparse accessors, Draco, bad node names, missing UVs) |
 | K2000-2999 | image import and encode (PNG/JPEG/WebP decode, KTX2 pass-through, size, channel checks) |
 | K3000-3999 | settings resolution (invalid combinations, unknown keys later) |
-| K4000-4999 | Cooked-file validation: `.mesh` and KTX2 (reader and writer checks, including `BLOB` table checks), the store catalog (K4200-4299) |
+| K4000-4999 | Cooked-file validation: `.mesh` and KTX2 (reader and writer checks, including `BLOB` table checks), the store manifest (K4200-4299) |
 | K5000-5999 | runtime and store (store miss, corrupt entry, adapter failures, placeholder failures) |
 | K6000-9999 | reserved |
 

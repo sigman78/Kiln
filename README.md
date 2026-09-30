@@ -96,7 +96,7 @@ have the contracts.
 All programs print their options with `--help`.
 
 - `kiln-cook <input>... -o <store>` cooks files or directories into a store: artifacts named by
-  their build key and `catalogs/<target>.kcat` (docs/design/store-catalog.md). It cooks only the
+  their build key and the store's manifest (docs/design/store-catalog.md). It cooks only the
   sources whose inputs changed; `--verify` compares their content instead of size and time.
   `--watch` keeps cooking what changes; an app that watches the store (no cook provider) reloads
   it. `--check` validates
@@ -104,8 +104,9 @@ All programs print their options with `--help`.
   GPUs sample), `--quality` the BC encoder effort,
   `--zstd <level>` the texture supercompression (0 = off), `--threads <n>` sets the pool size and
   the per-cook thread budget, `--verbose` prints per-stage timings.
-- `kiln-info <file>` dumps a `.mesh`, a `.ktx2` or a catalog; `--check` decodes and verifies (for a
-  catalog, every artifact). Read-only, ships with the runtime side.
+- `kiln-info <file>` dumps a `.mesh`, a `.ktx2` or a store's `manifest.dir` (it knows a file by its
+  first bytes, so an artifact needs no extension); `--check` decodes and verifies (for a manifest,
+  every artifact of every profile). Read-only, ships with the runtime side.
 - `kiln-headless` (`examples/headless`) drives the runtime with the null adapter and logs every event;
   `--slow` and `--latency` simulate slow IO and cooking; `--watch` keeps it running to log hot reloads.
 - `kiln-viewer` (`examples/viewer`) draws cooked meshes through the example Vulkan 1.4 adapter:

@@ -82,15 +82,15 @@ sequenceDiagram
     Ctx-->>Host: handle (state Pending)
 
     Host->>Ctx: pump()
-    Ctx->>Ctx: look the name up in the catalog (the artifact's build key)
+    Ctx->>Ctx: look the name up in the profile's manifest entries (the artifact's build key)
     Ctx->>Worker: dispatch meta stage (High before Normal, up to maxIoJobs)
     opt a provider is installed
         Worker->>Prov: prepare(Mesh, name)
         Prov->>Prov: find the source in its root, check the kind, case and recorded inputs
-        Prov->>Store: when an input changed: cook, publish the artifacts, rewrite the catalog
+        Prov->>Store: when an input's content changed: cook, publish the artifacts, rewrite the manifest
         Prov-->>Worker: the build key (and the cooked bytes, if it cooked)
     end
-    Worker->>Store: open artifacts/<key>.mesh
+    Worker->>Store: open <store>/<key in base32>
     Note over Worker,Store: no entry and no cooked bytes: completion Failed (K5001 or K5019), the load stops
     Worker->>Worker: validate the header, read the metadata
     Worker-->>Ctx: completion MetaReady (queued under a mutex)
@@ -120,7 +120,7 @@ A texture serves its placeholder until `Ready`, and after `Failed`.
 
 ## Hot reload
 
-Two pollers that do not know each other, joined by the catalog on disk (`hot-reload.md`). The
+Two pollers that do not know each other, joined by the manifest on disk (`hot-reload.md`). The
 source poller exists only with a cook provider and `ProviderDesc::watchSources`; the store poller
 only with `KILN_HOT_RELOAD` and `ContextDesc::hotReload.watchStore`. Either one also works alone.
 
@@ -140,14 +140,14 @@ sequenceDiagram
     loop every pollMs
         SP->>Src: stat the recorded inputs (source, sidecar, buffers)
     end
-    SP->>SP: size or mtime changed, re-cook
-    SP->>Store: publish the new artifacts, rewrite the catalog once per round
-    Note over SP,Store: a failed re-cook logs an error and keeps the old catalog entry
+    SP->>SP: size or mtime changed and the content too, re-cook
+    SP->>Store: publish the new artifacts, rewrite the manifest once per round
+    Note over SP,Store: a failed re-cook logs an error and keeps the old manifest entry
 
     loop every pollMs
-        RP->>Store: stat the catalog file
+        RP->>Store: stat manifest.dir
     end
-    RP->>Host: a new catalog (mutex)
+    RP->>Host: a new manifest (mutex)
     Host->>Host: pump() swaps it in and reloads the assets whose key changed
     Note over Host: the asset stays Ready, gpu_object() still returns the old object
 
