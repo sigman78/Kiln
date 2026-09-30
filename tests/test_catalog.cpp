@@ -929,17 +929,26 @@ KILN_TEST(CatalogProvider, SourceEditsReachLoadedAssets) {
     KILN_REQUIRE(p.init(store, sources, {.watchSources = true, .pollMs = 5}, true).ok());
     MeshHandle const m = request_mesh(p.c.ctx, "external_uri.gltf"_sv);
     KILN_REQUIRE(settle(p.c.ctx, m) == State::Ready);
+
+    // Nothing changed yet: the catalog appearing on disk must not reload the asset.
+    u32 changes         = 0;
+    auto const pump_for = [&](int ms) {
+        for (int i = 0; i < ms; ++i) {
+            (void)pump(p.c.ctx, {});
+            for (Event const& e : events(p.c.ctx))
+                if (e.kind == EventKind::Changed && e.handle == m.bits()) ++changes;
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+    };
+    pump_for(600);
+    KILN_CHECK_EQ(changes, 0u);
     Hash128 const before = catalog_key(store, AssetKind::Mesh, "external_uri.gltf"_sv);
+    KILN_REQUIRE(!before.is_zero());
 
     edit_first_byte(bin, false);
-    bool changed = false;
-    for (int i = 0; i < 5000 && !changed; ++i) {
-        (void)pump(p.c.ctx, {});
-        for (Event const& e : events(p.c.ctx))
-            if (e.kind == EventKind::Changed && e.handle == m.bits()) changed = true;
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    }
-    KILN_CHECK(changed);
+    for (int i = 0; i < 50 && changes == 0; ++i)
+        pump_for(100);
+    KILN_CHECK_EQ(changes, 1u);
     KILN_CHECK_EQ(version(p.c.ctx, m), u32(2));
     Hash128 const after = catalog_key(store, AssetKind::Mesh, "external_uri.gltf"_sv);
     char hb[33], ha[33];

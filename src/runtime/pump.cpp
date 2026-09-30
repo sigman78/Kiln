@@ -44,6 +44,10 @@ char const* failure_text(u32 code) noexcept {
 
 /// A slot reached Ready or Failed with no job and no queue: run the reload requested meanwhile.
 void settle(Context* ctx, Slot& s) noexcept {
+    if (s.catalogCheck) {
+        s.catalogCheck = false;
+        if (catalog_names_other(ctx, s)) s.reloadPending = true;
+    }
     if (!s.reloadPending) return;
     s.reloadPending = false;
     reload_slot(ctx, s);
@@ -103,6 +107,12 @@ void fail_slot(Context* ctx, Slot& s, u32 code, Status st) noexcept {
     settle(ctx, s);
 }
 
+bool catalog_names_other(Context const* ctx, Slot const& s) noexcept {
+    CatalogEntry e;
+    if (!ctx->catalogPresent || !ctx->catalog.find(s.kind, path_of(s), &e)) return false;
+    return !(s.keyValid && s.key == e.key);
+}
+
 void reload_slot(Context* ctx, Slot& s) noexcept {
     if (s.source == SourceKind::Memory) {
         (void)diagf(&ctx->diag, make_status(Code::Unsupported), kDiagReloadMemorySource, Severity::Warning,
@@ -142,8 +152,6 @@ void submit_stage(Context* ctx, Slot& s, Stage stage) noexcept {
             s.jobKeyValid = true;
         }
         s.jobCatalogPresent = ctx->catalogPresent;
-        s.dispatchKey       = s.jobKey;
-        s.dispatchKeyValid  = s.jobKeyValid;
     }
     ++ctx->jobsOutstanding;
     ctx->jobsInFlight.fetch_add(1, std::memory_order_acq_rel);
