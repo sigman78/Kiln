@@ -12,7 +12,7 @@ it; the shipping presets and the CI job that keeps the contract green.
 
 ### 1. Shipping contract
 
-A product that ships pre-cooked assets links **`kiln_core` + `kiln_runtime` only** (HANDOFF rule).
+A product that ships pre-cooked assets links **`kiln_core` + `kiln_runtime` only** (`ROADMAP.md`, scope rule 3).
 
 - `kiln_runtime` never writes files, never imports source formats (glTF, PNG, JPEG, WebP), never encodes, and
   has no dependency, symbol reference or link edge to `kiln_cook`.

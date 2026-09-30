@@ -1,6 +1,6 @@
 # kiln — agent notes
 
-Read `docs/HANDOFF.md` first (direction, principles, milestones) and `docs/design/README.md`
+Read `docs/ROADMAP.md` first (scope and plans) and `docs/design/README.md`
 (the design notes: what is decided, what awaits owner sign-off). `docs/open-questions.md` tracks anything unresolved;
 add to it instead of deciding silently.
 
@@ -21,7 +21,7 @@ unformatted staged files; enable it once per clone with `git config core.hooksPa
 Language baseline is C++23 (owner decision, 2026-09-27). Never add shims for older compilers; if a local
 compiler is too old, update it.
 
-## Hard rules (from HANDOFF §2, enforced in review)
+## Hard rules (enforced in review)
 
 - No `throw`/`try`/`catch`, no `dynamic_cast`/`typeid` in kiln code. Third-party code that may
   throw is caught only inside the `.cpp` that calls it and converted to `Status`.
@@ -53,7 +53,7 @@ compiler is too old, update it.
   implementation details (why this way). Do not repeat one in the other.
 - The file-top comment is at most 3 lines.
 - Write comments in Simple Technical English: short sentences, present tense, one idea each.
-- Never refer to `docs/HANDOFF.md` or its sections in code; it is temporary and its numbering moves.
+- Never refer to `docs/ROADMAP.md` in code; it changes with every release.
 - Prune tautological comments (`// increment i`) and comments that repeat a name, a type, or a
   nearby comment.
 

@@ -5,7 +5,7 @@ After sign-off, change its status line to `Accepted (date)` and tick it below. E
 what is implemented and where; implementation details that deviate from or add to a note are
 recorded as R-numbers in `../open-questions.md`.
 
-The notes follow HANDOFF v2 and mesh-format-spec draft v0.5 (magic `KMSH`, namespace
+The notes follow mesh-format-spec draft v0.5 (magic `KMSH`, namespace
 `kiln::mesh`, exact-minor version rule while 0.x, resolved `BLOB` rules; open-questions section B).
 
 | Note | Decides |
@@ -43,7 +43,8 @@ Related documents:
   (R-numbers), spec ambiguities, reserved-space register.
 - [`../diagnostics.md`](../diagnostics.md): the `Kxxxx` diagnostic code catalogue.
 - [`../api-friction.md`](../api-friction.md): friction log from the external project.
-- [`../cook-settings.md`](../cook-settings.md): stub for the v0.7 layered settings design.
+- [`../cook-settings.md`](../cook-settings.md): the full cook-settings model the v0.7 project-settings work fills in.
+- [`../ROADMAP.md`](../ROADMAP.md): scope, released versions and the plan.
 
 ## Sign-off checklist
 

@@ -24,7 +24,7 @@ All geometry is procedural (boxes and quads built from half-extents; see `box_fl
 `box_subdivided`, `box_welded`, `quad` in `generate.py`), centered at the origin, Y-up,
 CCW winding viewed from outside. Every mesh has normals unless the case is specifically
 testing their absence. Materials are named explicitly so the `.NNN`-stripping and
-material-library-by-name conventions (HANDOFF §4.1, §5.7) have something to bite on.
+material-library-by-name conventions (mesh-format-spec §5.7) have something to bite on.
 
 ## Files
 
@@ -42,7 +42,7 @@ material-library-by-name conventions (HANDOFF §4.1, §5.7) have something to bi
 | `jpeg_texture.glb` | Embedded JPEG (not PNG) `baseColorTexture`. | One material "hull_paint", one cube, `baseColorTexture` = `tests/corpus/images/jpeg_gradient_rgb.jpg` (a real, non-procedural JPEG committed by `tests/corpus/images/generate.py`, read from disk by `read_fixture_image()` below) embedded with `mimeType: "image/jpeg"`. Everywhere else in this corpus, embedded images are the pure-Python PNGs `write_png_bytes()` makes; this file exercises the cooker's embedded-JPEG path instead. |
 | `external_uri.gltf` + `.bin` + `.png` | The URI-resolution path (`.gltf` with external buffer + external image), as opposed to every other file here which is a self-contained `.glb`. | Same geometry/material shape as `cube_basic.glb` plus a `baseColorTexture`, but `buffers[0].uri = "external_uri.bin"` and `images[0].uri = "external_uri_albedo.png"`, both resolved relative to the `.gltf`'s own directory. 1 part, 1 material, 1 texture. |
 | `draco_required.glb` | Required-extension rejection. | `extensionsRequired: ["KHR_draco_mesh_compression"]` on a primitive whose real geometry lives in a `KHR_draco_mesh_compression` extension object; the bufferView it points at is a few dummy bytes, not a real Draco bitstream. The cooker must reject on `extensionsRequired` **before** attempting to decode anything (provisional code K1001 — see `../manifest.txt` header). |
-| `sparse_accessor.glb` | Sparse accessor rejection. | An 8-vertex welded cube whose POSITION accessor has no `bufferView` (implicit all-zero base) plus a full `sparse` override for all 8 corners — legal glTF, but per HANDOFF §4.1 / mesh-format-spec the cooker must reject it, with **K1003**. |
+| `sparse_accessor.glb` | Sparse accessor rejection. | An 8-vertex welded cube whose POSITION accessor has no `bufferView` (implicit all-zero base) plus a full `sparse` override for all 8 corners — legal glTF, but per mesh-format-spec the cooker must reject it, with **K1003**. |
 | `non_triangle.glb` | Mixed primitive topology in one mesh. | One LINES primitive (`mode=1`, 2 verts, no material) and one TRIANGLES primitive (`mode=4`) in the same mesh. The cooker must skip the LINES primitive **with a warning** and cook the TRIANGLES primitive normally as the part's only submesh. |
 
 ## Deliberate deviations from the task prompt, and why

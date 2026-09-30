@@ -30,7 +30,7 @@ request refcounting, events, placeholders and load groups.
 **Hot reload must not bump the handle generation.** The host stores handles in its own structures.
 If a reload changed the generation, every stored handle would go stale after every edit. Hosts that
 cache derived data compare the version or react to `Changed` events. `Changed` events carry the
-content version. This departs from HANDOFF's "bumps the
+content version. This departs from the original brief's "bumps the
 generation" wording but keeps its intent.
 
 ### `AssetId`

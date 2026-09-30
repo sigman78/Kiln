@@ -291,6 +291,6 @@ per-frame lookup only: all rejected for the reasons above.
   the v0.5 cooker never writes.
 - Confirm `begin_upload` / `commit_upload` on worker threads.
 - Confirm the `reserved[4]` tail plus `caps` (vs a versioned `structSize` field).
-- Confirm `UploadTarget.object` as the way kiln learns the `GpuObject` of an upload (HANDOFF does
-  not say).
+- Confirm `UploadTarget.object` as the way kiln learns the `GpuObject` of an upload (the original
+  brief does not say).
 - Slot release at unload: decided, kiln owns slot numbers (`adapter-frames-slots.md`).

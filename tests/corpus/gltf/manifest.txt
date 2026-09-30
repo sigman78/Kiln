@@ -1,7 +1,7 @@
 # glTF/GLB corpus manifest for the M2 cooker (glb -> .mesh). One line per model; expected
 # values are what the cooker should produce from that source after applying the naming
-# conventions in docs/HANDOFF.md §4.1 (mount_ / _lodN / col_ / _ / .NNN) and rejecting the
-# cases docs/HANDOFF.md §4.1 and docs/mesh-format-spec.md say to reject (Draco, sparse
+# conventions in docs/design/mesh-cook.md (mount_ / _lodN / col_ / _ / .NNN) and rejecting the
+# cases docs/mesh-format-spec.md says to reject (Draco, sparse
 # accessors). Columns:
 #
 #   path        relative to tests/corpus/gltf/. `generated/external_uri.gltf` is the entry
@@ -26,7 +26,7 @@
 #   lods        max MeshLod count across all parts (>=1 whenever parts>0).
 #   materials   expected MaterialSlot count after `.NNN` suffix stripping and collapsing
 #               distinct materials that strip to the same name AND have identical
-#               resolved properties into one entry (mesh-format-spec §5.7, HANDOFF §5.1).
+#               resolved properties into one entry (mesh-format-spec §5.7).
 #               A primitive with no material gets the cooker's MaterialSlot "default" (every
 #               submesh needs a MATL index), which IS counted here.
 #   textures    expected count of distinct SOURCE IMAGES actually referenced by a
@@ -53,11 +53,11 @@ generated/pbr_textures.glb|ok|0|1|1|1|4|0|One material, 5 images: hull_albedo, h
 generated/jpeg_texture.glb|ok|0|1|1|1|1|0|Same box_flat cube as cube_basic.glb, one material "hull_paint" whose baseColorTexture is a real (non-procedural) JPEG: tests/corpus/images/jpeg_gradient_rgb.jpg (16x8 RGB baseline, quality 95, subsampling 0), embedded with mimeType "image/jpeg". Exercises the cooker's embedded-JPEG import path (pbr_textures.glb is all embedded PNG).
 generated/external_uri.gltf|ok|0|1|1|1|1|0|Same shape as cube_basic.glb plus a baseColorTexture, but as .gltf with an external buffer (external_uri.bin) and external image (external_uri_albedo.png), both resolved by relative URI. Tests the URI-resolver path, not exercised by any .glb file (which never has external references).
 generated/draco_required.glb|error|1002|0|0|0|0|0|extensionsRequired=["KHR_draco_mesh_compression"]; primitive's real data lives in a KHR_draco_mesh_compression extension object pointing at a few dummy (non-decodable) bytes. Cooker must reject on extensionsRequired before attempting to decode anything.
-generated/sparse_accessor.glb|error|1003|0|0|0|0|0|POSITION accessor has no bufferView (implicit zero base) plus a sparse override for all 8 corners of a welded cube -- legal glTF, must still be rejected per HANDOFF §4.1 / mesh-format-spec.
+generated/sparse_accessor.glb|error|1003|0|0|0|0|0|POSITION accessor has no bufferView (implicit zero base) plus a sparse override for all 8 corners of a welded cube -- legal glTF, must still be rejected per mesh-format-spec.
 generated/non_triangle.glb|ok|0|1|1|1|0|0|One mesh, one LINES primitive (mode=1, 2 verts, no material) and one TRIANGLES primitive (mode=4). LINES must be skipped with a warning; TRIANGLES becomes the part's only submesh.
 #
 # --- Khronos glTF-Sample-Assets (see khronos/README.md for provenance/licenses) ---
 khronos/Box.glb|ok|0|1|1|1|0|0|1 mesh node under a root empty with a NON-identity transform (a coordinate-fixup rotation matrix). The root has no mesh, so it is not a part; its rotation is folded into the mesh node's part rotation (parts=1). No images/textures.
-khronos/BoxTextured.glb|ok|0|1|1|1|1|0|Same root-transform shape as Box.glb (parts=1). Real (non-procedural) baseColorTexture + sampler; sampler wrap/filter are carried as hints per HANDOFF §4.1 and are not a manifest column.
+khronos/BoxTextured.glb|ok|0|1|1|1|1|0|Same root-transform shape as Box.glb (parts=1). Real (non-procedural) baseColorTexture + sampler; sampler wrap/filter are carried as hints and are not a manifest column.
 khronos/BoxVertexColors.glb|ok|0|1|1|1|0|0|Single node IS the mesh (no wrapping root, parts=1). COLOR_0 vertex attribute present (MaterialSlot.flags bit0); no material authored at all -- cooker assigns its "default" material (materials=1, same as no_uv_no_normals.glb).
 khronos/MultiUVTest.glb|ok|0|1|1|1|2|0|Real second UV set: TEXCOORD_0 -> baseColorTexture, TEXCOORD_1 -> emissiveTexture (texCoord=1); also has TANGENT. Two scene-root nodes besides the mesh: "Camera" (with child "Correction_Camera"), both camera nodes with no mesh and no mount_/col_/_ prefix. Pinned by the M2 cooker: mesh-less nodes (the cameras) are not parts and emit no diagnostic, so parts=1 ("Cube"), code 0. Authored TANGENT is ignored (MikkTSpace regenerates).

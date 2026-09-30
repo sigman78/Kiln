@@ -11,7 +11,7 @@ in.
 
 **Status:** v0.6 (milestones M0-M5, BC and Zstd textures, target profiles, PBR factors, the store
 manifest). The API is not stable yet; breaks
-are listed in `CHANGELOG.md` with migration notes. Next: see the roadmap in `docs/HANDOFF.md`.
+are listed in `CHANGELOG.md` with migration notes. Next: see `docs/ROADMAP.md`.
 
 ```
 source (glb, png, jpg, hdr, ktx2) --> cook (kiln_cook, in-process or kiln-cook CLI) --> store (manifest + artifacts)
@@ -134,7 +134,7 @@ cmake --build --preset win-msvc-debug --target viewer-demo   # fetches six CC0 K
 - `docs/mesh-format-spec.md` the cooked `.mesh` format
 - `docs/diagnostics.md` diagnostic codes (K1xxx cook, K2xxx image, K3xxx settings, K4xxx formats, K5xxx runtime)
 - `docs/open-questions.md` decisions awaiting the owner, and the reserved-space register
-- `docs/HANDOFF.md` the owner's project brief and engineering principles
+- `docs/ROADMAP.md` scope, released versions and the plan
 
 ## License
 

@@ -1,7 +1,7 @@
 # kiln_warnings.cmake
 #
 # Centralized compiler warning / target-default configuration for kiln.
-# See docs/HANDOFF.md, section 2 ("Style"), for the policy this implements.
+# The policy it implements is in CLAUDE.md ("Hard rules").
 
 include_guard(GLOBAL)
 
@@ -93,7 +93,7 @@ endfunction()
 # compile definitions that avoid CRT and macro friction.
 #
 # Exceptions and RTTI are intentionally left enabled here -- KILN_NO_EXCEPTIONS
-# / KILN_NO_RTTI are a later (v1.0 hardening) addition, per docs/HANDOFF.md.
+# / KILN_NO_RTTI are a later (v1.0 hardening) addition.
 function(kiln_apply_defaults target)
     kiln_apply_warnings(${target})
 

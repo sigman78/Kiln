@@ -186,8 +186,8 @@ iteration.
 ### 7. ASTC and ETC2 (later, with the mobile targets)
 
 Desktop GPUs sample BC; phones, Apple GPUs on iOS and handheld consoles sample ASTC (and older
-Android ETC2). So ASTC belongs to per-platform targets (HANDOFF v0.9, "target profiles and
-cross-cooking"), and this work leaves room for it:
+Android ETC2). So ASTC belongs to per-platform targets (`ROADMAP.md` v0.9, mobile
+target profiles), and this work leaves room for it:
 - **Encoder: astcenc** (Arm's reference). Apache-2.0, maintained, and its normal builds are
   documented to give bit-identical output across compilers and CPU architectures, which fits
   kiln's byte-exact goldens. It is the largest candidate (1.26 MB of source), a cost the spike
@@ -248,12 +248,12 @@ cross-cooking"), and this work leaves room for it:
    shipping build, not fast iteration.
 7. **Later, with the mobile targets (v0.9):** astcenc, ASTC block sizes per usage, the `ASTC`
    family in `TargetProfile`; ETC2 only if a target needs it.
-8. **Next: SIMD in the BC encoders** (owner, 2026-09-30). Encoding is about 90% of a cook on miss:
-   WaterBottle's four 2048x2048 textures take 0.25-0.35 s each to encode in a release build and
-   about 1 s each in a debug build. Candidates: SSE2 (the x64 baseline) and NEON paths for the
-   `rgbcx` and `bc7enc` hot loops, the way `cook-kernels.md` step 5 did for the image kernels.
-   Constraint: the output stays byte-identical to the scalar path (section 3), so no runtime ISA
-   dispatch unless every path gives the same bytes.
+8. **Next (v0.7): faster BC encoding** (owner, 2026-09-30). Encoding is about 90% of a cook on
+   miss: WaterBottle's four 2048x2048 textures take 0.25-0.35 s each to encode in a release build
+   and about 1 s each in a debug build. The benchmark below measured the candidates: Basis `bc7f` /
+   `bc6hf` for fast presets, scalar `bc7e` for an offline quality mode; SIMD paths in `rgbcx` and
+   `bc7enc` remain the alternative. Constraint: the output stays identical across threads and
+   compilers (section 3).
 
 ## Benchmark follow-up: Basis direct BC encoders (2026-09-30)
 
