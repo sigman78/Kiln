@@ -248,6 +248,12 @@ cross-cooking"), and this work leaves room for it:
    shipping build, not fast iteration.
 7. **Later, with the mobile targets (v0.9):** astcenc, ASTC block sizes per usage, the `ASTC`
    family in `TargetProfile`; ETC2 only if a target needs it.
+8. **Next: SIMD in the BC encoders** (owner, 2026-09-30). Encoding is about 90% of a cook on miss:
+   WaterBottle's four 2048x2048 textures take 0.25-0.35 s each to encode in a release build and
+   about 1 s each in a debug build. Candidates: SSE2 (the x64 baseline) and NEON paths for the
+   `rgbcx` and `bc7enc` hot loops, the way `cook-kernels.md` step 5 did for the image kernels.
+   Constraint: the output stays byte-identical to the scalar path (section 3), so no runtime ISA
+   dispatch unless every path gives the same bytes.
 
 ## Owner decisions (2026-09-29)
 

@@ -197,7 +197,9 @@ void Target::release() noexcept {
     if (fbo) glDeleteFramebuffers(1, &fbo);
     if (color) glDeleteRenderbuffers(1, &color);
     if (depth) glDeleteRenderbuffers(1, &depth);
+    if (frameDone) glDeleteSync(frameDone);
     fbo = color = depth = 0;
+    frameDone           = nullptr;
     width = height = 0;
 }
 
@@ -288,10 +290,20 @@ bool begin_frame(GLFWwindow* w, ex::OrbitCamera const& camera, Target& t, Frame*
     return true;
 }
 
-void end_frame(GLFWwindow* w, Target const& t, bool offscreen) noexcept {
+void end_frame(GLFWwindow* w, Target& t, bool offscreen) noexcept {
     GLint const tw = GLint(t.width), th = GLint(t.height);
     glBlitNamedFramebuffer(t.fbo, 0, 0, 0, tw, th, 0, 0, tw, th, GL_COLOR_BUFFER_BIT, GL_NEAREST);
-    if (!offscreen) glfwSwapBuffers(w);
+    if (!offscreen) {
+        glfwSwapBuffers(w);
+        return;
+    }
+    // Without a swap nothing throttles the loop: the driver queues frames until some later call
+    // blocks for seconds.
+    if (t.frameDone) {
+        (void)glClientWaitSync(t.frameDone, GL_SYNC_FLUSH_COMMANDS_BIT, ~GLuint64(0));
+        glDeleteSync(t.frameDone);
+    }
+    t.frameDone = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
 }
 
 namespace {

@@ -110,8 +110,9 @@ KILN_API Result<Image> decode_image(Span<u8 const> bytes, Allocator const* alloc
 // ---------------------------------------------------------------------------
 
 /// Optional workers for a split pass. `maxThreads` counts the calling thread: 1 runs
-/// inline, 0 lifts the cap. The default keeps a cook from crowding out the host's threads.
-inline constexpr u32 kDefaultCookThreads = 3;
+/// inline, 0 lifts the cap; never more than the hardware threads. The default keeps a cook
+/// from crowding out the host's threads.
+inline constexpr u32 kDefaultCookThreads = 6;
 struct JobBudget {
     JobSystem const* jobs = nullptr;
     u32 maxThreads        = kDefaultCookThreads;

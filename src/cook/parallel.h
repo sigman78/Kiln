@@ -23,7 +23,8 @@ using ParallelFn = void (*)(void* user, u32 begin, u32 end) noexcept;
 /// has returned, so `alloc` must outlive the jobs submitted to `jobs`.
 ///
 /// `maxThreads` counts the calling thread: at most `maxThreads - 1` helpers are
-/// submitted; 1 runs inline; 0 lifts the cap (an internal limit still applies).
+/// submitted; 1 runs inline; 0 lifts the cap (an internal limit still applies). A cap
+/// above the hardware threads is lowered to them.
 void parallel_for(JobSystem const* jobs, Allocator const* alloc, u32 count, u32 grain, ParallelFn fn,
                   void* user, u32 maxThreads = 0) noexcept;
 
