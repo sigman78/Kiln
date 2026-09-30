@@ -489,6 +489,8 @@ Status install_provider(Context* ctx, ProviderDesc const& desc) noexcept {
             delete_object(alloc, p, Tag::Cook);
             return opened;
         }
+        // A later kiln-cook run without inputs cooks from these roots.
+        record_store_roots(p->store, Span<Root const>(p->roots.data(), p->roots.size()));
     }
     if (effective.watchSources) {
         if (effective.storeMode != StoreMode::Disk)

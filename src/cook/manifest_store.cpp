@@ -14,10 +14,13 @@
 #include <direct.h>  // _mkdir
 #include <windows.h> // CreateFileW; WIN32_LEAN_AND_MEAN/NOMINMAX set by kiln_apply_defaults
 #else
+#include <climits>    // PATH_MAX
+#include <cstdlib>    // realpath
+#include <dirent.h>   // opendir
 #include <fcntl.h>    // open
 #include <sys/file.h> // flock
 #include <sys/stat.h> // mkdir
-#include <unistd.h>   // close
+#include <unistd.h>   // close, unlink
 #endif
 
 namespace kiln::cook {
@@ -26,7 +29,7 @@ namespace {
 
 constexpr u32 kInputsMagic = fourcc('K', 'M', 'I', 'N');
 constexpr u16 kInputsMajor = 0;
-constexpr u16 kInputsMinor = 1;
+constexpr u16 kInputsMinor = 2; ///< 2: the root table
 
 // ---------------------------------------------------------------------------
 // Paths and the lock
@@ -189,6 +192,12 @@ struct OtherProfile {
     [[nodiscard]] StrView name() const noexcept { return {strings.data() + nameOff, nameLen}; }
 };
 
+/// A root of the table: its name (empty: the default root) and directory, as stored.
+struct RootEntry {
+    u32 nameOff = 0, nameLen = 0; ///< into ManifestStore::rootStrings
+    u32 dirOff = 0, dirLen = 0;
+};
+
 } // namespace
 
 struct ManifestStore {
@@ -209,11 +218,14 @@ struct ManifestStore {
     Vec<Record> records;
     NameIndex recordIndex;
     Vec<OtherProfile> others;
+    Vec<char> rootStrings; ///< the root table, shared by every profile
+    Vec<RootEntry> roots;
     bool dirty = false;
 
     explicit ManifestStore(Allocator const* a) noexcept
         : alloc(a), storeDir(a, Tag::Cook), profileName(a, Tag::Cook), names(a, Tag::Cook),
-          entries(a, Tag::Cook), entryIndex(a), records(a, Tag::Cook), recordIndex(a), others(a, Tag::Cook) {}
+          entries(a, Tag::Cook), entryIndex(a), records(a, Tag::Cook), recordIndex(a), others(a, Tag::Cook),
+          rootStrings(a, Tag::Cook), roots(a, Tag::Cook) {}
 
     [[nodiscard]] StrView dir() const noexcept { return {storeDir.data(), storeDir.size() - 1}; }
     [[nodiscard]] StrView profile() const noexcept { return {profileName.data(), profileName.size()}; }
@@ -266,6 +278,32 @@ struct ManifestStore {
     [[nodiscard]] Record* live_record(StrView name) noexcept {
         u32 const i = find_record(name);
         return i == kInvalid || !records[i].live ? nullptr : &records[i];
+    }
+
+    [[nodiscard]] StrView root_str(u32 off, u32 len) const noexcept {
+        return {rootStrings.data() + off, len};
+    }
+    u32 add_root_str(StrView v) noexcept {
+        u32 const off = u32(rootStrings.size());
+        rootStrings.append(Span<char const>(v.data, v.size));
+        return off;
+    }
+    /// Sets the directory of the root `name`; true if that changed the table.
+    bool set_root(StrView name, StrView dir) noexcept {
+        for (RootEntry& r : roots) {
+            if (root_str(r.nameOff, r.nameLen) != name) continue;
+            if (root_str(r.dirOff, r.dirLen) == dir) return false;
+            r.dirOff = add_root_str(dir);
+            r.dirLen = u32(dir.size);
+            return true;
+        }
+        RootEntry r;
+        r.nameOff = add_root_str(name);
+        r.nameLen = u32(name.size);
+        r.dirOff  = add_root_str(dir);
+        r.dirLen  = u32(dir.size);
+        roots.push_back(r);
+        return true;
     }
 };
 
@@ -388,6 +426,7 @@ bool decode_record(In& in, Record& r) noexcept {
 void clear_records(ManifestStore& s) noexcept {
     s.records.clear();
     s.recordIndex.clear();
+    s.roots.clear();
     for (OtherProfile& o : s.others) {
         o.records.clear();
         o.recordEnds.clear();
@@ -405,8 +444,14 @@ bool load_records(ManifestStore& s, Span<u8 const> bytes, bool ownDropped) noexc
     if (!(xxh3_128(body) == stored)) return false;
     In in{body};
     if (in.u(4) != kInputsMagic || in.u(2) != kInputsMajor || in.u(2) != kInputsMinor) return false;
-    u64 const count = in.u(4);
-    (void)in.u(4);
+    u64 const count     = in.u(4);
+    u64 const rootCount = in.u(4);
+    for (u64 k = 0; k < rootCount && in.ok; ++k) {
+        StrView const name = in.str();
+        StrView const dir  = in.str();
+        if (!in.ok || (!name.empty() && check_root_name(name)) || dir.empty()) return false;
+        (void)s.set_root(name, dir);
+    }
     for (u64 k = 0; k < count && in.ok; ++k) {
         StrView const profile = in.str();
         usize const start     = in.at;
@@ -695,7 +740,18 @@ Status commit_manifest(ManifestStore* s, DiagSink const* diag, u32 minIntervalMs
         o.u(kInputsMinor, 2);
         usize const countAt = records.size();
         o.u(0, 4);
-        o.u(0, 4);
+        o.u(s->roots.size(), 4);
+        Vec<u32> rootOrder(s->alloc, Tag::Cook);
+        for (u32 i = 0; i < s->roots.size(); ++i)
+            rootOrder.push_back(i);
+        std::sort(rootOrder.begin(), rootOrder.end(), [s](u32 a, u32 b) noexcept {
+            return name_less(s->root_str(s->roots[a].nameOff, s->roots[a].nameLen),
+                             s->root_str(s->roots[b].nameOff, s->roots[b].nameLen));
+        });
+        for (u32 const i : rootOrder) {
+            o.str(s->root_str(s->roots[i].nameOff, s->roots[i].nameLen));
+            o.str(s->root_str(s->roots[i].dirOff, s->roots[i].dirLen));
+        }
         u64 count = 0;
         for (u32 const p : order) {
             if (p == 0) {
@@ -839,6 +895,394 @@ void fresh_units(ManifestStore* s, Vec<char>* out) noexcept {
         out->append(Span<char const>(src.data, src.size));
         out->push_back('\0');
     }
+}
+
+// ---------------------------------------------------------------------------
+// Roots and units
+// ---------------------------------------------------------------------------
+
+namespace {
+
+bool is_absolute(StrView p) noexcept { return (p.size && p[0] == '/') || (p.size >= 2 && p[1] == ':'); }
+
+/// The part of an asset name before `#`: the unit that makes it.
+StrView owner_of(StrView name) noexcept {
+    usize const hash = name.find('#');
+    return hash == StrView::kNpos ? name : name.substr(0, hash);
+}
+
+} // namespace
+
+void record_store_roots(ManifestStore* s, Span<Root const> roots) noexcept {
+    char store[1024];
+    usize const storeLen = absolute_path(s->dir(), store, sizeof store);
+    std::lock_guard<std::mutex> const lock(s->mutex);
+    for (Root const& r : roots) {
+        char abs[1024], rel[1024];
+        usize const absLen = absolute_path(r.dir, abs, sizeof abs);
+        if (!absLen) continue;
+        usize const relLen =
+            storeLen ? relative_path(StrView(store, storeLen), StrView(abs, absLen), rel, sizeof rel) : 0;
+        if (s->set_root(r.name, relLen ? StrView(rel, relLen) : StrView(abs, absLen))) s->dirty = true;
+    }
+}
+
+void store_roots(ManifestStore* s, Vec<char>* out) noexcept {
+    char store[1024];
+    usize const storeLen = absolute_path(s->dir(), store, sizeof store);
+    std::lock_guard<std::mutex> const lock(s->mutex);
+    out->clear();
+    for (RootEntry const& r : s->roots) {
+        StrView const dir = s->root_str(r.dirOff, r.dirLen);
+        char joined[2100], abs[1024];
+        usize n = 0;
+        if (is_absolute(dir))
+            n = absolute_path(dir, abs, sizeof abs);
+        else if (storeLen)
+            n = absolute_path(StrView(joined, format(joined, sizeof joined, "%.*s/%.*s", int(storeLen), store,
+                                                     KILN_SV(dir))),
+                              abs, sizeof abs);
+        if (!n) continue;
+        StrView const name = s->root_str(r.nameOff, r.nameLen);
+        out->append(Span<char const>(name.data, name.size));
+        out->push_back('\0');
+        out->append(Span<char const>(abs, n));
+        out->push_back('\0');
+    }
+}
+
+void unit_names(ManifestStore* s, Vec<char>* out) noexcept {
+    std::lock_guard<std::mutex> const lock(s->mutex);
+    out->clear();
+    HashMap<u64, u8> seen(s->alloc, Tag::Cook);
+    auto const add = [&](StrView name) noexcept {
+        if (!seen.try_emplace(hash_name(name), u8(1)).inserted) return;
+        out->append(Span<char const>(name.data, name.size));
+        out->push_back('\0');
+    };
+    for (Record const& r : s->records)
+        if (r.live) add(r.name());
+    for (Entry const& e : s->entries)
+        if (e.live) add(owner_of(s->name_of(e)));
+}
+
+void drop_unit(ManifestStore* s, StrView name) noexcept {
+    std::lock_guard<std::mutex> const lock(s->mutex);
+    if (Record* r = s->live_record(name)) r->live = false;
+    for (Entry& e : s->entries)
+        if (e.live && owner_of(s->name_of(e)) == name) e.live = false;
+    s->dirty = true;
+}
+
+// ---------------------------------------------------------------------------
+// Maintenance
+// ---------------------------------------------------------------------------
+
+namespace {
+
+bool is_base32_name(StrView n) noexcept {
+    if (n.size != 26) return false;
+    for (char const c : n)
+        if (!((c >= 'a' && c <= 'z') || (c >= '2' && c <= '7'))) return false;
+    return true;
+}
+
+/// `<name>.tmp.<16 lowercase hex digits>`, what store_write() writes before its rename.
+bool is_temporary_name(StrView n) noexcept {
+    if (n.size < 5 + 16 + 1) return false;
+    if (n.substr(n.size - 21, 5) != ".tmp."_sv) return false;
+    for (char const c : n.substr(n.size - 16))
+        if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) return false;
+    return true;
+}
+
+/// Calls `fn(name, isDir, bytes)` for each entry of `dir`; false when it cannot be read.
+template <class Fn> bool list_dir(char const* dir, Fn&& fn) noexcept {
+#if defined(KILN_OS_WINDOWS)
+    char pattern[1100];
+    format(pattern, sizeof pattern, "%s/*", dir);
+    wchar_t wide[1100];
+    if (MultiByteToWideChar(CP_UTF8, 0, pattern, -1, wide, 1100) == 0) return false;
+    WIN32_FIND_DATAW fd;
+    HANDLE const h = FindFirstFileW(wide, &fd);
+    if (h == INVALID_HANDLE_VALUE) return false;
+    do {
+        char name[1024];
+        int const n =
+            WideCharToMultiByte(CP_UTF8, 0, fd.cFileName, -1, name, int(sizeof name), nullptr, nullptr);
+        if (n <= 1 || std::strcmp(name, ".") == 0 || std::strcmp(name, "..") == 0) continue;
+        bool const isDir = (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+        fn(StrView(name, usize(n - 1)), isDir, (u64(fd.nFileSizeHigh) << 32) | u64(fd.nFileSizeLow));
+    } while (FindNextFileW(h, &fd));
+    FindClose(h);
+    return true;
+#else
+    DIR* d = opendir(dir);
+    if (!d) return false;
+    while (dirent const* e = readdir(d)) {
+        if (std::strcmp(e->d_name, ".") == 0 || std::strcmp(e->d_name, "..") == 0) continue;
+        char path[2100];
+        format(path, sizeof path, "%s/%s", dir, e->d_name);
+        struct stat st{};
+        if (::stat(path, &st) != 0) continue;
+        fn(StrView(e->d_name), S_ISDIR(st.st_mode), u64(st.st_size));
+    }
+    closedir(d);
+    return true;
+#endif
+}
+
+bool remove_file(char const* path) noexcept {
+#if defined(KILN_OS_WINDOWS)
+    wchar_t wide[1100];
+    return MultiByteToWideChar(CP_UTF8, 0, path, -1, wide, 1100) != 0 && DeleteFileW(wide) != 0;
+#else
+    return ::unlink(path) == 0;
+#endif
+}
+
+/// Reads and validates `<store>/manifest.dir` into `bytes`; NotFound when there is none.
+Status read_manifest(StrView storeDir, Allocator const* alloc, Vec<u8>* bytes, ManifestView* view,
+                     DiagSink const* diag) noexcept {
+    char path[1024];
+    usize const n = manifest_file_path(storeDir, path, sizeof path);
+    if (n >= sizeof path - 1) return make_status(Code::InvalidArgument);
+    if (!io_file_exists(StrView(path, n))) return make_status(Code::NotFound);
+    KILN_TRY(io_read_file(compat_io_backend(), StrView(path, n), alloc, bytes));
+    Result<ManifestView> v = ManifestView::open(bytes->span(), diag, StrView(path, n));
+    if (v.failed()) return v.status();
+    *view = *v;
+    return kOk;
+}
+
+} // namespace
+
+Status collect_store_garbage(StrView storeDir, bool dryRun, GcReportFn report, void* user, GcResult* out,
+                             DiagSink const* diag) noexcept {
+    *out                   = {};
+    Allocator const* alloc = default_allocator();
+    char dir[1024];
+    if (format(dir, sizeof dir, "%.*s", KILN_SV(storeDir)) >= sizeof dir - 1)
+        return make_status(Code::InvalidArgument);
+    char path[1100];
+    format(path, sizeof path, "%s/%s", dir, kStoreLockFile);
+    FileLock lock;
+    if (Status const st = lock.acquire(path); st.failed())
+        return diagf(diag, st, st.code == Code::Busy ? u32(kDiagStoreLocked) : 0u, Severity::Error, storeDir,
+                     "gc",
+                     st.code == Code::Busy ? "another process writes the store" : "cannot lock the store");
+
+    // The names every profile references, in base32, sorted for a binary search.
+    Vec<u8> bytes(alloc, Tag::Cook);
+    ManifestView view;
+    Status const read = read_manifest(storeDir, alloc, &bytes, &view, diag);
+    if (read.failed() && read.code != Code::NotFound) {
+        lock.release();
+        return read;
+    }
+    struct Name {
+        char c[26];
+    };
+    Vec<Name> keep(alloc, Tag::Cook);
+    if (read.ok())
+        for (u32 p = 0; p < view.profile_count(); ++p) {
+            ManifestProfile const prof = view.profile(p);
+            for (u64 i = 0; i < prof.size(); ++i) {
+                char b32[27];
+                hash128_base32(prof.entry(i).key, b32);
+                Name nm;
+                std::memcpy(nm.c, b32, 26);
+                keep.push_back(nm);
+            }
+        }
+    std::sort(keep.begin(), keep.end(),
+              [](Name const& a, Name const& b) noexcept { return std::memcmp(a.c, b.c, 26) < 0; });
+    auto const referenced = [&keep](StrView n) noexcept {
+        Name const* it = std::lower_bound(keep.begin(), keep.end(), n, [](Name const& a, StrView b) noexcept {
+            return std::memcmp(a.c, b.data, 26) < 0;
+        });
+        return it != keep.end() && std::memcmp(it->c, n.data, 26) == 0;
+    };
+
+    Status result     = kOk;
+    bool const listed = list_dir(dir, [&](StrView name, bool isDir, u64 size) noexcept {
+        if (isDir) return;
+        bool const artifact = is_base32_name(name) && !referenced(name);
+        bool const temp     = is_temporary_name(name);
+        if (!artifact && !temp) return;
+        format(path, sizeof path, "%s/%.*s", dir, KILN_SV(name));
+        if (!dryRun && !remove_file(path)) {
+            result = diagf(diag, make_status(Code::IoError), 0, Severity::Error, name, "gc",
+                           "cannot delete %s", path);
+            return;
+        }
+        ++(artifact ? out->artifacts : out->temporaries);
+        out->bytes += size;
+        if (report) report(user, name, size);
+    });
+    lock.release();
+    if (!listed)
+        return diagf(diag, make_status(Code::NotFound), 0, Severity::Error, storeDir, "gc",
+                     "cannot read the store directory");
+    return result;
+}
+
+Status export_store(StrView storeDir, StrView outDir, StrView profile, ExportResult* out,
+                    DiagSink const* diag) noexcept {
+    *out                   = {};
+    Allocator const* alloc = default_allocator();
+    char dir[1024];
+    if (format(dir, sizeof dir, "%.*s", KILN_SV(outDir)) >= sizeof dir - 1)
+        return make_status(Code::InvalidArgument);
+    bool empty = true;
+    (void)list_dir(dir, [&empty](StrView, bool, u64) noexcept { empty = false; });
+    if (!empty)
+        return diagf(diag, make_status(Code::AlreadyExists), 0, Severity::Error, outDir, "export",
+                     "the export directory is not empty");
+
+    Vec<u8> bytes(alloc, Tag::Cook);
+    ManifestView view;
+    if (Status const st = read_manifest(storeDir, alloc, &bytes, &view, diag); st.failed())
+        return st.code == Code::NotFound ? diagf(diag, st, kDiagManifestMissing, Severity::Error, storeDir,
+                                                 "export", "the store has no manifest")
+                                         : st;
+
+    Vec<Vec<ManifestEntry>> entries(alloc, Tag::Cook);
+    Vec<ManifestProfileDesc> profiles(alloc, Tag::Cook);
+    for (u32 p = 0; p < view.profile_count(); ++p) {
+        ManifestProfile const prof = view.profile(p);
+        if (!profile.empty() && prof.name() != profile) continue;
+        entries.push_back(Vec<ManifestEntry>(alloc, Tag::Cook));
+        for (u64 i = 0; i < prof.size(); ++i)
+            entries.back().push_back(prof.entry(i));
+    }
+    if (entries.empty())
+        return diagf(diag, make_status(Code::NotFound), kDiagManifestMissing, Severity::Error, profile,
+                     "export", "the store's manifest has no profile '%.*s'", KILN_SV(profile));
+    usize at = 0;
+    for (u32 p = 0; p < view.profile_count(); ++p) {
+        ManifestProfile const prof = view.profile(p);
+        if (!profile.empty() && prof.name() != profile) continue;
+        profiles.push_back({.name         = prof.name(),
+                            .hash         = prof.hash(),
+                            .blockFormats = prof.block_formats(),
+                            .entries      = entries[at++].span()});
+    }
+
+    if (!make_dirs(dir))
+        return diagf(diag, make_status(Code::IoError, u16(errno & 0xFFFF)), 0, Severity::Error, outDir,
+                     "mkdir", "cannot create %s", dir);
+    Vec<u8> artifact(alloc, Tag::Cook);
+    for (Vec<ManifestEntry> const& es : entries)
+        for (ManifestEntry const& e : es) {
+            char path[1100];
+            (void)artifact_file_path(storeDir, e.key, path, sizeof path);
+            artifact.clear();
+            if (io_read_file(compat_io_backend(), StrView(path), alloc, &artifact).failed() ||
+                artifact.size() != e.bytes || !(xxh3_128(artifact.span()) == e.checksum))
+                return diagf(diag, make_status(Code::Corrupt), 0, Severity::Error, e.name, "export",
+                             "the artifact %s is missing or has other bytes", path);
+            char b32[27];
+            hash128_base32(e.key, b32);
+            KILN_TRY(store_write(outDir, StrView(b32, 26), artifact.span(), diag, false));
+            ++out->artifacts;
+            out->bytes += artifact.size();
+        }
+    // The manifest last: a failed export never leaves a manifest naming missing artifacts.
+    Vec<u8> written(alloc, Tag::Cook); // `bytes` still backs the names in `profiles`
+    KILN_TRY(write_manifest({.profiles = profiles.span()}, &written, diag));
+    KILN_TRY(store_write(outDir, StrView(kManifestFile), written.span(), diag, true));
+    out->profiles = u32(profiles.size());
+    return kOk;
+}
+
+// ---------------------------------------------------------------------------
+// Paths
+// ---------------------------------------------------------------------------
+
+usize absolute_path(StrView path, char* out, usize cap) noexcept {
+    char buf[1024];
+    if (path.size + 1 > sizeof buf || cap == 0) return 0;
+    std::memcpy(buf, path.data, path.size);
+    buf[path.size] = '\0';
+#if defined(KILN_OS_WINDOWS)
+    wchar_t wide[1024], full[1024];
+    if (MultiByteToWideChar(CP_UTF8, 0, buf, -1, wide, 1024) == 0) return 0;
+    DWORD const w = GetFullPathNameW(wide, 1024, full, nullptr);
+    if (w == 0 || w >= 1024) return 0;
+    int n = WideCharToMultiByte(CP_UTF8, 0, full, int(w), out, int(cap), nullptr, nullptr);
+    if (n <= 0 || usize(n) >= cap) return 0;
+    for (int i = 0; i < n; ++i)
+        if (out[i] == '\\') out[i] = '/';
+    while (n > 3 && out[n - 1] == '/') // keep "C:/"
+        --n;
+    out[n] = '\0';
+    return usize(n);
+#else
+    // realpath needs an existing path: resolve the parent of a missing last segment.
+    char resolved[PATH_MAX];
+    if (::realpath(buf, resolved)) {
+        usize const n = format(out, cap, "%s", resolved);
+        return n < cap - 1 ? n : 0;
+    }
+    char* const slash = std::strrchr(buf, '/');
+    char const* dir   = slash ? (slash == buf ? "/" : buf) : ".";
+    if (slash && slash != buf) *slash = '\0';
+    if (!::realpath(dir, resolved)) return 0;
+    char const* leaf = slash ? slash + 1 : buf;
+    usize const n    = format(out, cap, "%s%s%s", resolved, std::strcmp(resolved, "/") == 0 ? "" : "/", leaf);
+    return n < cap - 1 ? n : 0;
+#endif
+}
+
+usize relative_path(StrView from, StrView to, char* out, usize cap) noexcept {
+    // Segments compare byte for byte, except that Windows drive letters and names ignore ASCII case.
+    auto const same = [](StrView a, StrView b) noexcept {
+        if (a.size != b.size) return false;
+        for (usize i = 0; i < a.size; ++i) {
+            char x = a[i], y = b[i];
+#if defined(KILN_OS_WINDOWS)
+            if (x >= 'A' && x <= 'Z') x = char(x - 'A' + 'a');
+            if (y >= 'A' && y <= 'Z') y = char(y - 'A' + 'a');
+#endif
+            if (x != y) return false;
+        }
+        return true;
+    };
+    auto const next = [](StrView& rest) noexcept {
+        while (rest.size && rest[0] == '/')
+            rest = rest.substr(1);
+        usize const slash = rest.find('/');
+        StrView const seg = slash == StrView::kNpos ? rest : rest.substr(0, slash);
+        rest              = rest.substr(seg.size);
+        return seg;
+    };
+    StrView a = from, b = to;
+    // Both must start at the same root: `/`, a drive, or a UNC server and share.
+    if (!is_absolute(a) || !is_absolute(b) || (a[0] == '/') != (b[0] == '/')) return 0;
+    StrView ra = a, rb = b;
+    if (a[0] != '/' && !same(next(ra), next(rb))) return 0; // another drive
+    ra           = a;
+    rb           = b;
+    usize common = 0, fromSegs = 0;
+    for (StrView x = ra, y = rb;;) {
+        StrView const sx = next(x), sy = next(y);
+        if (sx.empty() || sy.empty() || !same(sx, sy)) break;
+        ++common;
+    }
+    for (StrView x = ra; !next(x).empty();)
+        ++fromSegs;
+    if (common == 0) return 0;
+    usize n = 0;
+    for (usize i = common; i < fromSegs && n < cap; ++i)
+        n += format(out + n, cap - n, "%s..", n ? "/" : "");
+    StrView y = rb;
+    for (usize i = 0; i < common; ++i)
+        (void)next(y);
+    for (StrView seg = next(y); !seg.empty() && n < cap; seg = next(y))
+        n += format(out + n, cap - n, "%s%.*s", n ? "/" : "", KILN_SV(seg));
+    if (n == 0) n = format(out, cap, ".");
+    return n < cap - 1 ? n : 0;
 }
 
 } // namespace kiln::cook
