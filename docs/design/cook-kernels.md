@@ -84,7 +84,9 @@ baseline, so no ISA decision was needed). Measured on a 4096x4096 RGBA8 image, M
 single thread: `downsample_2x` linear 71 ms to 13 ms, sRGB 190 ms to 21 ms, renormalize 450 ms to
 162 ms, then 133 ms with the 8-bit table; the normal-map downsample 114 ms to 33 ms on the shared
 SSE2 routine. With a pool the row split gives a further 2x to 4x on the split passes, and the
-default budget of 3 threads captures most of it.
+default budget of 3 threads captured most of it. BC encoding (bcn-encoding.md) changed that: a cook
+on miss of WaterBottle took 2.5 s with 3 threads against 1.2 s in `kiln-cook`, so the default is 6
+threads since 2026-09-30 (owner), never more than the hardware threads.
 
 ## Rationale
 

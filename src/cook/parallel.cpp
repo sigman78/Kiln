@@ -75,6 +75,8 @@ void parallel_for(JobSystem const* jobs, Allocator const* alloc, u32 count, u32 
         fn(user, 0, count);
         return;
     }
+    static u32 const hwThreads = max(1u, std::thread::hardware_concurrency());
+    if (maxThreads > hwThreads) maxThreads = hwThreads;
     u32 const helpers = min(chunks - 1, min(kMaxHelpers, maxThreads ? maxThreads - 1 : kMaxHelpers));
     auto* const c     = ::new (mem) Call;
     c->alloc          = alloc;

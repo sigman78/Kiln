@@ -36,6 +36,7 @@ extern char const* const kCommonFs;
 struct Target {
     GLuint fbo = 0, color = 0, depth = 0;
     u32 width = 0, height = 0;
+    GLsync frameDone = nullptr; ///< offscreen: the last frame's fence
     void resize(u32 w, u32 h) noexcept;
     void release() noexcept;
 };
@@ -64,8 +65,9 @@ struct Frame {
 };
 /// Sizes and clears the target and computes the camera. False while the window is minimized.
 bool begin_frame(GLFWwindow* w, ex::OrbitCamera const& camera, Target& t, Frame* f) noexcept;
-/// Blits the target to the window and, with a window, swaps.
-void end_frame(GLFWwindow* w, Target const& t, bool offscreen) noexcept;
+/// Blits the target to the window and, with a window, swaps. Offscreen, it waits for the
+/// previous frame instead, so at most one frame is queued, as with a swap.
+void end_frame(GLFWwindow* w, Target& t, bool offscreen) noexcept;
 
 /// Offscreen: stop one frame after the scene settled (writing --dump), or at --timeout.
 struct OffscreenRun {

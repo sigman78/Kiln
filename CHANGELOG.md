@@ -61,6 +61,13 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
   - Migration: a 0.4 `.mesh` fails with `VersionMismatch` (K4002); delete existing stores so they
     re-cook (a named store file is used while it exists, open-questions R9). Renderers that read
     `MaterialSlot` get the factors from the same record.
+- **Cook threads** (owner, 2026-09-30): `CookEnv::maxThreads` and `kDefaultCookThreads` default to
+  6 (was 3), and every cap is lowered to the hardware threads. A cook on miss of WaterBottle
+  (four 2048x2048 BC textures) took 2.5 s with 3 threads; `kiln-cook` needs 1.2 s.
+  - Migration: none. A host that wants the old budget sets `maxThreads = 3`.
+- **Examples:** `kiln-gl` and `kiln-gl-bindless --dump` wait for the previous frame, as a swap
+  does. Without that, the driver queued frames until a later GL call blocked for seconds (a cold
+  start took 8.7 s against 2.9 s in a window).
 
 ### Added
 - **Target profiles** (docs/design/target-profiles.md). A profile is the set of block formats a
