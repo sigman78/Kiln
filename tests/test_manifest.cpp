@@ -1280,7 +1280,7 @@ usize count_files(char const* dir) {
     std::error_code ec;
     usize n = 0;
     for (auto const& e : std::filesystem::directory_iterator(dir, ec))
-        n += e.is_regular_file(ec) ? 1 : 0;
+        n += e.is_regular_file(ec) ? usize(1) : usize(0);
     return n;
 }
 
@@ -1486,8 +1486,14 @@ KILN_TEST(StorePaths, RelativeAndAbsolute) {
     KILN_CHECK(relative_path("/a"_sv, "/a"_sv, out, sizeof out) == 1 && out[0] == '.');
     KILN_CHECK_EQ(relative_path("/a"_sv, "/b"_sv, out, sizeof out), usize(0)); // no common directory
 #endif
-    usize const n = absolute_path("some/dir/../file"_sv, out, sizeof out);
+    // Every directory but the last segment exists (POSIX resolves them on disk).
+    char probe[1100];
+    format(probe, sizeof probe, "%s/paths-probe/dir", kiln::test::sample_dir());
+    std::error_code ec;
+    std::filesystem::create_directories(probe, ec);
+    format(probe, sizeof probe, "%s/paths-probe/dir/../file", kiln::test::sample_dir());
+    usize const n = absolute_path(StrView(probe), out, sizeof out);
     KILN_REQUIRE(n > 0);
-    KILN_CHECK(StrView(out, n).ends_with("/some/file"_sv));
+    KILN_CHECK(StrView(out, n).ends_with("/paths-probe/file"_sv));
     KILN_CHECK(std::strstr(out, "/../") == nullptr);
 }
