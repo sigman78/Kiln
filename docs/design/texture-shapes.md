@@ -137,3 +137,6 @@ New fields in `TextureCookSettings` (texture settings schema 2):
 
 Later: seamless cube filtering, horizontal strips, slice-by-slice decode.
 
+Proposed follow-up: [runtime texture arrays](runtime-texture-arrays.md) would assemble separate
+2D assets at load time while retaining this document's one-file cooking rule. No combined cooked
+asset is produced; the proposal is not yet implemented.

@@ -255,6 +255,122 @@ cross-cooking"), and this work leaves room for it:
    Constraint: the output stays byte-identical to the scalar path (section 3), so no runtime ISA
    dispatch unless every path gives the same bytes.
 
+## Benchmark follow-up: Basis direct BC encoders (2026-09-30)
+
+These are measurements and candidates for the next encoder decision; the production encoders
+and quality presets have not changed.
+
+### Existing usage and candidates
+
+- Kiln vendors `rgbcx` (BC1/3/4/5) and `bc7enc` (BC7) from `bc7enc_rdo` revision
+  `b9438627eef73a1157e84201b6fa6eb2ffd6d9f0`, under MIT, and maintains the scalar BC6H C++
+  port of ISPCTextureCompressor revision `79ddbc90334fc31edd438e68ccb0fe99b4e15aab`, also MIT.
+- The individual encoders are scalar, but the cooker already parallelizes block rows through
+  its job system, at roughly 1,024 blocks per task. A host without a job system runs inline.
+  Adding SIMD and adding parallelism are therefore separate questions.
+- Basis Universal v2_50, tested at `9bebe16726b3a61c8c213eeee3b7cffb462ef34e`, provides direct
+  `bc7f` and `bc6hf` encoders in its transcoder, plus a standalone `basisu_bc7e_scalar` encoder.
+  These accept pixels and produce GPU BC blocks; they do not require a `.basis` intermediate
+  or a runtime transcoder. Initialize shared tables before submitting parallel work.
+- Basis is [Apache-2.0](https://github.com/BinomialLLC/basis_universal/blob/9bebe16726b3a61c8c213eeee3b7cffb462ef34e/LICENSE):
+  commercial use is permitted without royalties or releasing kiln's source; retain applicable
+  license/notices and mark modified redistributed files. Its direct encoders here are scalar
+  C++; much of `bc7f`'s speed comes from avoiding expensive searches, rather than explicit SIMD.
+- Keep `rgbcx` for BC1–5 pending separate measurements. Its configurable search levels and HQ
+  alpha/channel helpers offer more quality control than Basis's simpler BC1–5 helpers. This
+  experiment benchmarks BC7 and BC6H only.
+
+### Method
+
+Windows, MSVC 19.51 Release `/O2 /fp:precise`, no LTO, i7-9700K (8 cores / 8 threads).
+The BC7 corpus has 17 opaque color/emissive images, 5 alpha images (all from one model), and
+9 ORM images; normals are excluded. BC6H uses three natural HDR environments and one synthetic
+HDR cube. Inputs are center-cropped to at most 1024×1024, rounded to whole blocks, with no
+resizing or mip generation. HDR inputs are clamped nonnegative and rounded to half before timing.
+
+Each image has three timed repetitions at one and eight threads, with alternating execution
+order and a warmup per configuration. Throughput uses summed per-image median times. The
+benchmark includes block gathering, excludes initialization, allocations, decoding, quality
+measurement, I/O and Zstd, and uses a persistent worker pool with kiln's approximate task grain.
+BC7 uses linear channel weights; an independent `bcdec` decoder measures pixel-weighted pooled
+RGB PSNR (higher is better). Alpha quality is measured separately in the raw results. HDR quality
+is log-RMSE on `log2(1 + RGB)` (lower is better).
+
+### BC7: opaque color, side by side
+
+MP/s is millions of input pixels per second. All rows produce the same 16-byte BC7 block size.
+
+| Encoder / preset | 1 thread MP/s | 8 threads MP/s | RGB PSNR (dB) |
+|---|---:|---:|---:|
+| Ours Fast (`bc7enc` uber 0) | 6.12 | 44.35 | 54.24 |
+| Ours Normal (uber 2) | 4.23 | 29.90 | 54.75 |
+| Ours High (uber 4) | 3.98 | 28.86 | 54.79 |
+| Basis `bc7f` fast | 137.55 | 883.12 | 51.49 |
+| Basis `bc7f` default | 100.53 | 669.06 | 52.34 |
+| Basis `bc7f` partially analytical | 82.89 | 549.67 | 52.37 |
+| Basis `bc7f` extended search (`DefaultNonAnalytical`) | 12.59 | 90.87 | 54.04 |
+| Basis scalar `bc7e` Fast (level 2) | 1.66 | 11.85 | 54.76 |
+| Basis scalar `bc7e` Basic (level 3) | 0.63 | 4.57 | 55.49 |
+| Basis scalar `bc7e` Slow (level 4) | 0.77 | 5.56 | 55.47 |
+| Basis scalar `bc7e` Very Slow (level 5) | 0.21 | 1.54 | 56.04 |
+| Basis scalar `bc7e` Slowest (level 6) | 0.15 | 1.06 | 56.00 |
+
+At one thread, Basis default is about 24× faster than our Normal, at a 2.40 dB loss.
+Extended search is about 2× faster than our Fast, at a 0.20 dB loss. Scalar Very Slow gains
+1.25 dB over our High but takes about 19× as long. Preset names do not imply monotonically
+better quality or slower execution: Slowest slightly loses to Very Slow on this color corpus.
+
+The result depends on texture usage. Against our High, `bc7f` extended search improves ORM
+from 49.79 to 51.32 dB while increasing eight-thread throughput from 18.33 to 54.01 MP/s
+(2.9×). On alpha textures, RGB PSNR rises from 49.93 to 52.57 dB and throughput from 28.59
+to 125.30 MP/s (4.4×); the separate mean alpha PSNR rises from 54.84 to 58.64 dB. That alpha
+sample is small and comes from a single model. Scalar Very Slow reaches 53.26 dB on ORM,
+3.47 dB above our High, but runs at only 0.96 MP/s on eight threads.
+
+### BC6H: HDR
+
+| Encoder / preset | 1 thread MP/s | 8 threads MP/s | Log-RMSE |
+|---|---:|---:|---:|
+| Ours Fast (`veryfast`) | 18.10 | 121.69 | 0.00889 |
+| Ours Normal (`fast`) | 1.98 | 13.82 | 0.00797 |
+| Ours High (`basic`) | 0.77 | 5.58 | 0.00750 |
+| Basis `bc6hf` default | 32.65 | 220.84 | 0.00891 |
+| Basis custom search4 | 25.11 | 170.36 | 0.00887 |
+| Basis custom search32 | 7.66 | 46.34 | 0.00881 |
+
+The custom settings try 4 differential endpoint modes / 4 two-subset patterns, or 9 modes /
+32 patterns with brute-force weight setting 4, respectively. Default uses 2 modes / 1 pattern;
+all retain HQ least-squares refinement. More search only slightly improves this corpus:
+Basis is attractive near our Fast quality, while our Normal and High retain lower HDR error.
+
+### Dependency cost, SIMD experiment and conclusions
+
+Minimal linked executable size deltas on this compiler were 47.5 KiB for our BC7, 19 KiB for
+our BC6H, 335 KiB for Basis `bc7f`, 260 KiB for `bc6hf`, 370.5 KiB for both together, and
+89.5 KiB for standalone scalar `bc7e`. The Basis transcoder probes use normal initialization
+with KTX2 Zstd support disabled; these are measured integration costs, not theoretical minima
+after extracting functions or trimming features. All would be cook-side dependencies.
+
+Also tested etcpak's AVX2 BC7 at `3d716e1550023dc5ff8b602636af8b76584e0b66`. Its linear
+RGB distance sums an unwanted alpha lane, causing nondeterministic output with uninitialized
+palette alpha and double-counting alpha in the RGBA path. A standalone check with identical
+RGB and alpha 0/255 returned RGB distance 65,025 instead of zero. Masking the fourth weight
+fixed that check and thread invariance, but gave little speed benefit over our encoder for
+these linear settings. Only the benchmark copy was patched; production code is unchanged.
+
+Basis fast/extended search merits consideration for fast cooking, and standalone scalar
+`bc7e` for an optional expensive offline quality mode. The results do not justify replacing
+every existing preset. Current and Basis configurations, plus patched etcpak, produced identical
+bytes between one and eight threads on this machine. Cross-compiler / cross-architecture
+goldens and visual side-by-side decoded crops have not been checked. This measures encoder
+throughput and numerical error, not whole-cook time, RDO, Zstd size or visual acceptability.
+
+Local reproducibility artifacts are under ignored `build/bc-benchmark/`: `src/`, `CMakeLists.txt`,
+`build.cmd`, `analyze.py`, `results/comparison.csv` (60 configurations), per-image CSVs and logs
+for `crop1024`, `fixed1024` and `hq1024`, `results/input-manifest.json` (input hashes), and
+`results/etcpak-linear-rgb-fix.patch`. These local artifacts are not committed; the measurements
+above preserve the findings in the repository.
+
 ## Owner decisions (2026-09-29)
 
 1. **Axes:** dependency cost against speed and quality, as proposed; the encoders are picked from
