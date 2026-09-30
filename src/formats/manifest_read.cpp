@@ -1,4 +1,4 @@
-// Store manifest reader, format 0.1 (docs/design/store-catalog.md). Every field is decoded from
+// Store manifest reader, format 0.1 (docs/design/store-manifest.md). Every field is decoded from
 // the bytes and every offset checked against the file size before use.
 #include "formats_internal.h"
 

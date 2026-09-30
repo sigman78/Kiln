@@ -1,5 +1,5 @@
 // src/cook/unit.h — one cook of one source file: every output it made and every input file it
-// read (docs/design/store-catalog.md). Shared by the cook provider and kiln-cook.
+// read (docs/design/store-manifest.md). Shared by the cook provider and kiln-cook.
 #pragma once
 
 #include "kiln/cook/cook.h"

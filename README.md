@@ -13,7 +13,7 @@ in.
 are listed in `CHANGELOG.md` with migration notes. Next: see the roadmap in `docs/HANDOFF.md`.
 
 ```
-source (glb, png, jpg, hdr, ktx2) --> cook (kiln_cook, in-process or kiln-cook CLI) --> store (catalog + artifacts)
+source (glb, png, jpg, hdr, ktx2) --> cook (kiln_cook, in-process or kiln-cook CLI) --> store (manifest + artifacts)
                                                                                      |
 renderer (Vulkan, sokol, bgfx, ...) <-- adapter <-- kiln_runtime: async load, pump() per frame, placeholders
 ```
@@ -96,7 +96,7 @@ have the contracts.
 All programs print their options with `--help`.
 
 - `kiln-cook <input>... -o <store>` cooks files or directories into a store: artifacts named by
-  their build key and the store's manifest (docs/design/store-catalog.md). It cooks only the
+  their build key and the store's manifest (docs/design/store-manifest.md). It cooks only the
   sources whose inputs changed; `--verify` compares their content instead of size and time.
   `--watch` keeps cooking what changes; an app that watches the store (no cook provider) reloads
   it. `--check` validates

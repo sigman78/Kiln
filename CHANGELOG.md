@@ -9,7 +9,7 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
 
 ### Changed
 - **Breaking (format, runtime, cook, tools): one flat store with a shared manifest** (owner,
-  2026-09-30; store-catalog.md). A store is `manifest.dir` (what the runtime reads: every target
+  2026-09-30; store-manifest.md). A store is `manifest.dir` (what the runtime reads: every target
   profile's entries and index, format `KMAN` 0.1), `manifest.in` (the cook's input records of every
   profile, never shipped), `manifest.lock` (one writer per store, K3009) and the artifacts at
   `<store>/<26>`: the build key in base32 (`hash128_base32()`), no extension, no subdirectories. Profiles share the store; a writer edits its own profile and keeps the others, and
@@ -24,20 +24,20 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
   - Migration: delete the store and cook again (`catalogs/`, `inputs/` and `artifacts/` are not
     read any more). Code that named the old types uses the new names above.
 - **Breaking (runtime, cook, tools): the named store layout is removed** (owner, 2026-09-30); the
-  catalog store is the only one. Gone: `StoreLayout` and `ContextDesc::storeLayout`,
+  manifest store is the only one. Gone: `StoreLayout` and `ContextDesc::storeLayout`,
   `store_layout()`, `store_file_path()`, `kiln-store.txt` (`StoreProfile`, `parse_store_profile`,
   `read_store_profile`, `bind_store_profile`), `store_key()` and `store_file_name()`,
   `CookProvider::cook` (the provider always installs `prepare`), and `--layout` in `kiln-cook`,
-  `kiln-headless` and `kiln-viewer`. The store poller watches only the catalog; a reload without
-  it reads the catalog again when it starts. A `prepare` that returns Ok with neither bytes nor a
-  key leaves the catalog entry as it is. K3008 now means a provider whose target is not the
+  `kiln-headless` and `kiln-viewer`. The store poller watches only the manifest; a reload without
+  it reads the manifest again when it starts. A `prepare` that returns Ok with neither bytes nor a
+  key leaves the manifest entry as it is. K3008 now means a provider whose target is not the
   context's profile. An empty `ContextDesc::storeDir` is a context without a store.
   - Migration: cook named stores again into a new directory (`kiln-cook <sources> -o <store>`);
     kiln deletes no store. A host `CookProvider` implements `prepare` instead of `cook` (return the
-    bytes with a zero key, or Ok with nothing to use the catalog). Tests and tools that read
+    bytes with a zero key, or Ok with nothing to use the manifest). Tests and tools that read
     `tests/golden` as a store use `<build>/tests/samples/golden-store`, which `kiln_tests
     GoldenStore.Build` (the ctest fixture `golden_store`) writes.
-- **Breaking (runtime, tools): `kiln-cook` writes the store** (store-catalog.md, Phase A step 6):
+- **Breaking (runtime, tools): `kiln-cook` writes the store** (store-manifest.md, Phase A step 6):
   artifacts and the manifest. It cooks only the sources whose recorded inputs changed; `--verify`
   compares every input's content, for CI and shipping builds. `--hashed` is gone; `--map` prints
   `<name>\t<file>\t<build key>`. `cook_cli_main` takes a `policyVersion`. `kiln-info` reads the
@@ -78,7 +78,7 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
   diagnostic sink. `unsampled_block_formats(adapter)` (`kiln/adapter.h`) reads the set an adapter
   cannot sample.
 - Examples: every integration example cooks with the default profile into one `example-store`.
-- Examples: `example-store` and the viewer's stores are manifest stores (store-catalog phase A step
+- Examples: `example-store` and the viewer's stores are manifest stores (store-manifest phase A step
   7): the backends share the artifacts cooked by the first one to run. Delete a build tree's old
   `example-store` once.
 - Examples: every renderer (the viewer, `kiln-gl`, `kiln-gl-bindless`, `kiln-sokol`,
@@ -87,7 +87,7 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
   authored color. `ex::material_factors()` and `vkx::material_uniforms()` pack them; the Vulkan
   examples read them from a material table in the frame uniforms (`DrawPush::material`), the others
   per draw. Scenes with all factors at 1 render as before (WaterBottle: identical pixels).
-- **Build keys** (store-catalog.md, Phase A step 1): `Hash128`, `xxh3_128()`, `hash128_hex()` and
+- **Build keys** (store-manifest.md, Phase A step 1): `Hash128`, `xxh3_128()`, `hash128_hex()` and
   `hash128_base32()` (`kiln/manifest.h`, from the xxhash zstd vendors); `build_key()`
   (`kiln/cook/manifest.h`) hashes
   the cooker version, asset kind and name, target, resolved settings and the content of every

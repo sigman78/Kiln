@@ -1,15 +1,15 @@
 // src/cook/provider.cpp — the cook provider: checks each asset against its recorded inputs, cooks
 // what changed into the store, and polls the sources for hot reload
-// (docs/design/store-catalog.md, docs/design/hot-reload.md).
+// (docs/design/store-manifest.md, docs/design/hot-reload.md).
 //
 // provider_prepare() runs on workers, concurrently. A published Provider's settings never change;
-// the mutable state is the CatalogStore (its own mutexes) and the poller's stop flag. Only
+// the mutable state is the ManifestStore (its own mutexes) and the poller's stop flag. Only
 // install/uninstall touch the registry.
 //
 // Locks. Per-source work (check, cook, publish) runs under one of kSourceLockStripes mutexes picked
 // by the hash of the source path, so a mesh and its images requested together, or a request and
 // the poller, never cook one source twice at once; different sources still cook in parallel unless
-// their paths share a stripe. The CatalogStore mutexes are taken inside a stripe lock or on their
+// their paths share a stripe. The ManifestStore mutexes are taken inside a stripe lock or on their
 // own, never the other way.
 #include "kiln/cook/provider.h"
 

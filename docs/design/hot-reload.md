@@ -1,6 +1,6 @@
 # Hot reload (M5)
 
-Status: **Proposed** (2026-09-27; landed the same day: `src/runtime/watch.cpp`, the reload path in `pump.cpp`, the source poller in `src/cook/provider.cpp`; verified end to end with `kiln-viewer --watch`). Updated 2026-09-30: the store is a catalog store (`store-catalog.md`); the runtime watches the catalog, not store files. Implements the reload rows of `handles-and-states.md`. Done when
+Status: **Proposed** (2026-09-27; landed the same day: `src/runtime/watch.cpp`, the reload path in `pump.cpp`, the source poller in `src/cook/provider.cpp`; verified end to end with `kiln-viewer --watch`). Updated 2026-09-30: the store is a manifest store (`store-manifest.md`); the runtime watches the manifest, not store files. Implements the reload rows of `handles-and-states.md`. Done when
 editing a glb or PNG updates the viewer in about a second without leaks or crashes.
 
 ## Decision
@@ -58,7 +58,7 @@ store (K3009).
 ### Cook side
 
 - `ProviderDesc::watchSources` and `pollMs` start the source poller in `install_provider`.
-- The provider's input records (`store-catalog.md`) hold, per source, every input with its size,
+- The provider's input records (`store-manifest.md`) hold, per source, every input with its size,
   time and content hash, and the outputs. A re-cook runs on the poller thread, so a glb publishes
   its mesh and its embedded images again; an image its texture.
   Diagnostics from a re-cook go to the log (`KILN_WARN` / `KILN_ERROR`), since there is no pump

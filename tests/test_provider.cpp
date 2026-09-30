@@ -184,7 +184,7 @@ bool same_bytes(Vec<u8> const& a, Vec<u8> const& b) {
     return a.size() == b.size() && (a.size() == 0 || std::memcmp(a.data(), b.data(), a.size()) == 0);
 }
 
-/// Reads the catalog every 10 ms for up to `ms` until `name`'s artifact exists and differs from
+/// Reads the manifest every 10 ms for up to `ms` until `name`'s artifact exists and differs from
 /// `old`; the new bytes land in `out`. False on timeout.
 bool wait_for_change(char const* storeDir, AssetKind kind, StrView name, Vec<u8> const& old, Vec<u8>& out,
                      int ms = 3000) {
@@ -195,7 +195,7 @@ bool wait_for_change(char const* storeDir, AssetKind kind, StrView name, Vec<u8>
     return false;
 }
 
-/// Waits up to `ms` for `name` to be in the catalog.
+/// Waits up to `ms` for `name` to be in the manifest.
 [[maybe_unused]] bool wait_for_entry(char const* storeDir, AssetKind kind, StrView name, int ms = 3000) {
     for (int waited = 0; waited < ms; waited += 10) {
         if (stored(storeDir, kind, name)) return true;
@@ -265,8 +265,8 @@ KILN_TEST(Provider, DestroyReleasesAnInstalledProvider) {
 }
 
 #if KILN_MESH
-// Disk mode publishes into the catalog; a second context without a provider loads what it wrote.
-KILN_TEST(Provider, DiskModeCooksIntoTheCatalog) {
+// Disk mode publishes into the manifest; a second context without a provider loads what it wrote.
+KILN_TEST(Provider, DiskModeCooksIntoTheManifest) {
     char storeDir[1024];
     char gltfDir[1024];
     scratch_dir("provider_store", storeDir, sizeof storeDir);
@@ -293,7 +293,7 @@ KILN_TEST(Provider, DiskModeCooksIntoTheCatalog) {
         TextureHandle const tex = request_texture(tc.ctx, "pbr_textures.glb#hull_albedo");
         KILN_REQUIRE(tex);
         KILN_CHECK_EQ(pump_until_settled(tc.ctx, tex), State::Ready);
-        cook::uninstall_provider(tc.ctx); // writes the catalog
+        cook::uninstall_provider(tc.ctx); // writes the manifest
 
         KILN_CHECK(stored(storeDir, AssetKind::Mesh, "cube_basic.glb"));
         KILN_CHECK(stored(storeDir, AssetKind::Mesh, "pbr_textures.glb"));
@@ -311,7 +311,7 @@ KILN_TEST(Provider, DiskModeCooksIntoTheCatalog) {
     }
 
     // A second context on the same store, without a provider: loads straight
-    // from the catalog the first context just wrote (cache reuse).
+    // from the manifest the first context just wrote (cache reuse).
     {
         TestContext tc2;
         if (!tc2.init(StrView(storeDir), {})) return;
@@ -614,7 +614,7 @@ KILN_TEST(Provider, SourcePollerRecooksPng) {
 }
 
 #if KILN_MESH
-// A glb re-cook publishes the mesh and the images it embeds; images it lost leave the catalog.
+// A glb re-cook publishes the mesh and the images it embeds; images it lost leave the manifest.
 KILN_TEST(Provider, SourcePollerRecooksGlbAndTextures) {
     char root[1024], storeDir[1024], khronos[1024];
     scratch_dir("provider_watch_glb_src", root, sizeof root);
@@ -645,7 +645,7 @@ KILN_TEST(Provider, SourcePollerRecooksGlbAndTextures) {
     KILN_CHECK_MSG(stored(storeDir, AssetKind::Texture, texName),
                    "cook-on-miss did not publish box.glb#image0");
 
-    // Box.glb has no textures: the mesh changes and the image leaves the catalog.
+    // Box.glb has no textures: the mesh changes and the image leaves the manifest.
     copy_file(plain, srcPath);
     Vec<u8> plainMesh(default_allocator(), Tag::Test);
     bool const meshChanged = wait_for_change(storeDir, AssetKind::Mesh, "box.glb", texturedMesh, plainMesh);
@@ -701,7 +701,7 @@ KILN_TEST(Provider, SourcePollerStopsOnUninstall) {
     KILN_CHECK(!wait_for_change(storeDir, AssetKind::Texture, "tex.png", before, after, 200));
 }
 
-// A named root: `lib:tex.png` cooks from the root's directory and keeps its name in the catalog.
+// A named root: `lib:tex.png` cooks from the root's directory and keeps its name in the manifest.
 KILN_TEST(Provider, NamedRootCooksFromItsDirectory) {
     char root[1024], libRoot[1024], storeDir[1024];
     scratch_dir("provider_root_default", root, sizeof root);

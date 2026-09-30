@@ -72,15 +72,15 @@ void poll_manifest(Context* ctx, Watch& w) noexcept {
 }
 
 /// A new manifest is in use: reload each asset whose entry names another artifact than the one it
-/// loaded or tried. An asset that left the catalog stays as it is.
-void catalog_changed(Context* ctx) noexcept {
+/// loaded or tried. An asset that left the manifest stays as it is.
+void manifest_changed(Context* ctx) noexcept {
     for (u32 i = 0; i < ctx->maxAssets; ++i) {
         Slot& s = ctx->slots[i];
         if (!s.live || s.zombie || s.source != SourceKind::File) continue;
         // A load in flight learns its key only when it completes (the provider may name it): compare then.
         if (s.phase != Phase::Done)
-            s.catalogCheck = true;
-        else if (catalog_names_other(ctx, s))
+            s.manifestCheck = true;
+        else if (manifest_names_other(ctx, s))
             reload_slot(ctx, s);
     }
 }
@@ -165,7 +165,7 @@ void watch_drain(Context* ctx) noexcept {
             newManifest   = true;
         }
     }
-    if (newManifest) catalog_changed(ctx);
+    if (newManifest) manifest_changed(ctx);
 }
 
 #else // !KILN_HOT_RELOAD

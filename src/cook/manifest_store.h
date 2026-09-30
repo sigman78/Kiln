@@ -1,5 +1,5 @@
 // src/cook/manifest_store.h — the writer of a store: immutable artifacts and the manifest, under the
-// store's lock (docs/design/store-catalog.md). A writer edits one profile and keeps the others as
+// store's lock (docs/design/store-manifest.md). A writer edits one profile and keeps the others as
 // they are. Thread-safe: cooks on several workers publish into one store.
 #pragma once
 

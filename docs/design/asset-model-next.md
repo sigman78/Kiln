@@ -87,7 +87,7 @@ K1019, K1020, K5013-K5016 (`diagnostics.md`).
 Choices made during implementation, *Proposed* until the owner signs off:
 
 - **Store layout of a named root:** *decided (owner, 2026-09-28); the named layout was removed
-  2026-09-30 (names now live in the catalog, `store-catalog.md`), the `@` rule stays.* `m:` becomes
+  2026-09-30 (names now live in the manifest, `store-manifest.md`), the `@` rule stays.* `m:` becomes
   the top-level directory `@m/` (`<store>/@pool/tex/wood.png.ktx2`). So that no default-root name maps to the
   same file, a path without a root prefix may not start with `@` (K5013). The first layout, `m#/`,
   needed no rule but read oddly and needs escaping in URLs.

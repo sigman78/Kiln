@@ -98,8 +98,8 @@ example-only. The `.mesh` blob decode loop ships with codec `None` only, which n
 - The custom-allocator API is zstd's "static linking only" part, stable within one version; the
   pin makes that safe. Both targets are in the install's export sets.
 - It is the first `kiln_runtime` dependency, so this note carries its reason.
-- Its `xxhash.h` also gives kiln XXH3-128, for build keys and catalog checksums
-  (`store-catalog.md`). zstd's copy is patched to leave XXH3 out; one local change lets
+- Its `xxhash.h` also gives kiln XXH3-128, for build keys and manifest checksums
+  (`store-manifest.md`). zstd's copy is patched to leave XXH3 out; one local change lets
   `src/formats/xxh3.cpp` keep it (`KILN_XXH3`), inlined into that file only.
 
 ### Mesh processing: meshoptimizer + MikkTSpace

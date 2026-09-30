@@ -1,4 +1,4 @@
-// Store manifest writer, format 0.1 (docs/design/store-catalog.md). The same profiles and entries
+// Store manifest writer, format 0.1 (docs/design/store-manifest.md). The same profiles and entries
 // give the same bytes, whatever their order.
 #include "formats_internal.h"
 

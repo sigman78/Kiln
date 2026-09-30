@@ -242,7 +242,7 @@ key      = hash_combine(hash_combine(hash_combine(sourceHash, settingsHash), tar
   cooker output can change for the same input.
 - Both hashes are stored inside each cooked file: the `.mesh` header's `sourceHash` and `cookHash`
   (open-questions B3), and the KTX2 key/value entries `kiln.sourceHash` / `kiln.cookHash`.
-- Since v0.6 a store is flat (`store-catalog.md`): each cooked file is an artifact named by its build
+- Since v0.6 a store is flat (`store-manifest.md`): each cooked file is an artifact named by its build
   key, XXH3-128 over the cooker version, kind, name, `hash_target`, `hash_settings` and the content
   of every input file, and the store's manifest maps each profile's names to keys. The named layout
   (`<storeDir>/<name>.mesh|.ktx2`, used while a file exists, R9) was removed on 2026-09-30.

@@ -254,7 +254,7 @@ Slot* request_slot(Context* ctx, AssetKind kind, StrView path, RequestOptions co
     s.groupAs       = State::Pending;
     s.jobStatus     = kOk;
     s.jobKeyValid   = false;
-    s.catalogCheck  = false;
+    s.manifestCheck = false;
     s.keyValid      = false;
     s.jobDiag       = 0;
     s.capture.reset();

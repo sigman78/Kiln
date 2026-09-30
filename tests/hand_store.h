@@ -107,7 +107,7 @@ private:
         return int(a->kind) - int(b->kind);
     }
 
-    /// Format 0.1 (docs/design/store-catalog.md): header, the one profile, its entries sorted by
+    /// Format 0.1 (docs/design/store-manifest.md): header, the one profile, its entries sorted by
     /// name then kind, the index sorted by (name hash, entry), then the profile name and the entry
     /// names.
     bool write_manifest() {
@@ -185,7 +185,7 @@ private:
     u64 blockFormats_ = 0;
 };
 
-/// The goldens as a catalog store at `<sample_dir()>/golden-store`: `mesh/<x>` for
+/// The goldens as a manifest store at `<sample_dir()>/golden-store`: `mesh/<x>` for
 /// tests/golden/mesh/<x>.mesh and `ktx2/<x>` for tests/golden/ktx2/<x>.ktx2. Built once per process;
 /// processes that build it at the same time write the same files.
 inline char const* golden_store_dir() {

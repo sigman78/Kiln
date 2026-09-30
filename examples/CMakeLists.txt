@@ -10,7 +10,7 @@ else()
     target_compile_definitions(kiln-headless PRIVATE KILN_HEADLESS_HAS_COOK=0)
 endif()
 
-# Smoke test against the committed golden files, which kiln_tests puts into a catalog store (the
+# Smoke test against the committed golden files, which kiln_tests puts into a manifest store (the
 # golden_store fixture, tests/CMakeLists.txt); the delays make the output show real progress.
 if(KILN_BUILD_TESTS)
     add_test(NAME example_headless
