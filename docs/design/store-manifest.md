@@ -103,11 +103,14 @@ profile once (K5018). Two profiles never share an artifact: the target is part o
 ### 4. Freshness in dev: size and time first, then content
 
 The provider takes part on **hits** too: each load asks it to **prepare** the asset
-(`CookProvider::prepare`); after the first check in a session it answers from memory.
+(`CookProvider::prepare`); after the first check in a session it answers from memory. A reload the
+host asks for (`request_reload`, for example from its own file watcher) passes
+`PrepareMode::Recheck`: the provider checks the sources again (steps 1 to 4), whatever it checked
+earlier. A reload after a manifest change does not: the store's writer checked the sources.
 
 The **input records** (`manifest.in`) keep, for each unit (a source and the outputs its cook made):
-the role, name, size, modification time and content hash of every input, the outputs, and the
-host-settings digest. They keep **no paths**: an input's file is found from the unit's source as it
+the role, name, size, modification time and content hash of every input, the outputs with the
+build key each one got, and the host-settings digest. They keep **no paths**: an input's file is found from the unit's source as it
 is found now: the source itself, `<source>.kiln`, or a buffer URI relative to the source's
 directory. So a store stays valid when the sources move (another checkout, a renamed root
 directory): only the names count.
@@ -142,7 +145,13 @@ is trusted as it is.
   them. When the manifest holds its profile cooked for another definition of it (another
   `hash_target`), those entries and records are dropped; the other profiles stay.
 - A cook first publishes its artifacts, then writes `manifest.dir`, then `manifest.in`. A crash in
-  between leaves unreferenced artifacts or old records, never a wrong entry.
+  between leaves unreferenced artifacts, or records of another cook than the manifest's entries.
+  Each record keeps its outputs' build keys, and a record whose keys differ from the entries is
+  dropped when the store opens: its unit cooks again, since its fingerprints may describe other
+  sources than the entries (the owner's audit of PR #3).
+- The entries of a unit are the unit's own name and `<unit>#<image>`. A cook removes the unit's
+  entries it did not make (a glb that lost an image), from the names alone, so a lost record
+  cannot leave them behind.
 - A mesh and its embedded images enter the manifest together.
 - The provider's source poller re-cooks all changed units of one poll round, then writes once. A
   cook on a request writes at most once a second; the poller and the provider's release write the
@@ -172,12 +181,16 @@ way. Given `--root` entries override recorded ones of the same name. A store wit
 inputs once. This matches a provider, which cooks any name a request gives.
 
 A run drops the units whose source lay under a directory it scanned and is gone: their entries and
-records leave the manifest, and `--gc` deletes their artifacts later. Units of roots a run did not
-scan stay.
+records leave the manifest, and `--gc` deletes their artifacts later. A directory counts as scanned
+only when it exists and was listed in full, and a source counts as gone only when looking it up says
+"not found" (not another IO error). A missing or unreadable root drops nothing, and the run exits 2
+after cooking the rest. Units of roots a run did not scan stay.
 
 ### 8. Export
 
-`kiln-cook --export <dir> -o <store> [--target <profile>]` writes a runtime-only store into an
+`kiln-cook --export <dir> -o <store> [--target <profile>]` (any profile of the store, not only a
+built-in one: `--target` accepts any valid profile name, and only cooking needs a built-in one)
+writes a runtime-only store into an
 empty (or new) `<dir>`: a `manifest.dir` with that profile (every profile without `--target`) and
 the artifacts it names, each checked against its checksum while it is copied. No input records and
 no lock. The manifest is written last, so a failed export never names a missing artifact. The
@@ -251,9 +264,10 @@ Size: about 1.1 MB for 10 000 entries (72 bytes per entry, plus names).
 
 ## Input records (`manifest.in`)
 
-The cook's own file, never read by the runtime: magic `KMIN`, major 0, minor 2, a record count, a
-root count, the roots (name, directory), then each record as its profile name and its body (unit name, kind, host digest, the inputs with
-role, presence, name, size, time and content hash, the outputs with kind, glTF slot and name), then
+The cook's own file, never read by the runtime: magic `KMIN`, major 0, minor 3, a record count, a
+root count, the roots (name, directory), then each record as its profile name and its body (unit
+name, kind, host digest, the inputs with role, presence, name, size, time and content hash, the
+outputs with kind, glTF slot, name and build key, zero for an output that failed), then
 an XXH3-128 of everything before it. Records are sorted by profile name, then unit name. A file
 that does not decode is dropped with an info log.
 
