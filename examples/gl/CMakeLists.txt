@@ -1,6 +1,7 @@
 # examples/gl — kiln over OpenGL 4.6 core (docs/design/integration-examples.md):
 #   kiln-gl           textures bound per draw           (KILN_EXAMPLE_GL)
 #   kiln-gl-bindless  ARB_bindless_texture handle table (KILN_EXAMPLE_GL_BINDLESS)
+#   kiln-gl-array     a texture array from separate tiles (KILN_EXAMPLE_GL)
 # No GL loader library: gl_api.cpp loads through GLFW.
 
 add_library(kiln_example_gl STATIC gl_api.h gl_api.cpp gl_adapter.h gl_adapter.cpp gl_util.h gl_util.cpp)
@@ -23,6 +24,12 @@ endfunction()
 
 if(KILN_EXAMPLE_GL)
     kiln_gl_example(kiln-gl main.cpp)
+    # kiln-gl-array: one texture array assembled from separate tiles (runtime-texture-arrays.md)
+    kiln_gl_example(kiln-gl-array main_array.cpp)
+    target_link_libraries(kiln-gl-array PRIVATE kiln_cli)
+    target_compile_definitions(kiln-gl-array PRIVATE
+        KILN_EXAMPLE_ASSETS_DIR="${CMAKE_SOURCE_DIR}/examples/assets"
+        KILN_EXAMPLE_STORE_DIR="${CMAKE_BINARY_DIR}/example-store")
 endif()
 if(KILN_EXAMPLE_GL_BINDLESS)
     kiln_gl_example(kiln-gl-bindless main_bindless.cpp)

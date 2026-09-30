@@ -15,6 +15,8 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
   beyond `kArrayTextures`. A layer's manifest change reloads the whole array. New diagnostics:
   K5020 (a bad or conflicting declaration) and K5021 (a layer that is not 2D or differs from
   layer 0). `kMaxTextureArrayLayers` is 2048.
+- **Example `kiln-gl-array`** (built with `KILN_EXAMPLE_GL`): a floor of tiles from one texture array
+  assembled from `examples/assets/tiles/tile0.png` ... `tile5.png`, with hot reload.
 
 ## [0.6.0] - 2026-09-30
 
