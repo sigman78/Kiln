@@ -131,6 +131,31 @@ KILN_API void destroy(Context* ctx) noexcept;
 KILN_API void release(Context* ctx, MeshHandle h) noexcept;
 KILN_API void release(Context* ctx, TextureHandle h) noexcept;
 
+inline constexpr u32 kMaxTextureArrayLayers = 2048;
+
+/// A texture array that kiln assembles at load time from separately cooked 2D textures
+/// (docs/design/runtime-texture-arrays.md).
+struct TextureArrayDesc {
+    /// The array's own name (check_asset_name() rules). It names no store entry; the handle, events and
+    /// find_texture() use it.
+    StrView name = {};
+    /// Texture asset names, layer 0 first; a name may repeat. Every layer must be a 2D texture with the
+    /// same format, size and level count as layer 0 (else K5021). At most kMaxTextureArrayLayers.
+    Span<StrView const> layers = {};
+    TextureKind textureKind    = TextureKind::BaseColor; ///< selects the placeholder
+    Priority priority          = Priority::Normal;
+    Group group                = {};
+};
+/// Requests the array `desc` declares: a TextureShape::Array texture with the usual states and events.
+/// kiln copies the name and the list. The same declaration again returns the same (refcounted) handle;
+/// a name another asset or another list already uses is K5020 and a null handle. Release it with
+/// release(ctx, TextureHandle). A layer that fails fails the array; a layer whose manifest entry changes
+/// reloads the whole array (the old one stays until the new one is Ready). The layers are not loaded as
+/// textures of their own, and the adapter gets one upload with every layer (it needs kArrayTextures and
+/// staging for the whole array).
+[[nodiscard]] KILN_API TextureHandle request_texture_array(Context* ctx,
+                                                           TextureArrayDesc const& desc) noexcept;
+
 /// Handle for an asset that is already registered/requested (null otherwise).
 [[nodiscard]] KILN_API MeshHandle find_mesh(Context* ctx, AssetId id) noexcept;
 [[nodiscard]] KILN_API TextureHandle find_texture(Context* ctx, AssetId id) noexcept;
@@ -382,6 +407,10 @@ enum RuntimeDiagCode : u32 {
     kDiagTextureShapeMismatch  = 5017, ///< the cooked texture's shape is not the requested one
     kDiagStoreProfileUnsampled = 5018, ///< the manifest's profile has formats the adapter cannot sample
     kDiagManifestMissing = 5019, ///< a request missed and the manifest (or the profile in it) is missing
+    kDiagArrayDeclaration =
+        5020, ///< request_texture_array(): a bad declaration, or its name is used by another asset or list
+    kDiagArrayLayerMismatch =
+        5021, ///< an array layer is not 2D or differs from layer 0 (format, size, levels)
 };
 
 } // namespace kiln

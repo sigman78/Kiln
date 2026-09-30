@@ -51,7 +51,8 @@ enum class Phase : u8 {
 };
 
 enum class Stage : u8 { Meta = 0, Upload };
-enum class SourceKind : u8 { File = 0, Memory };
+/// File: a store entry; Memory: register_*() bytes; Array: request_texture_array() layers.
+enum class SourceKind : u8 { File = 0, Memory, Array };
 
 enum class QueueId : u8 { None = 0, MetaHigh, MetaNormal, UploadHigh, UploadNormal, Await, Count };
 
@@ -90,6 +91,32 @@ struct MetaSet {
     u32 layoutLevels = 0;
     bool texZstd     = false;
     u64 uploadSize   = 0; ///< bytes handed to begin_upload
+};
+
+/// One layer of a texture array. `key` belongs to the pump thread; the job fields are written at
+/// dispatch (jobKey) and by the meta stage, and read by the upload stage.
+struct ArrayLayer {
+    u32 nameOff = 0;
+    u32 nameLen = 0;
+    Hash128 key;           ///< the artifact the settled load used
+    bool keyValid = false; ///< false: none (a miss, provider bytes, not loaded yet)
+    Hash128 jobKey;
+    bool jobKeyValid = false;
+    Vec<u8> cooked; ///< cook provider output
+    bool cookedValid = false;
+    /// Per level (srcLevels of them): [srcOffset | srcLength] in the layer's file.
+    u64* src      = nullptr;
+    u32 srcLevels = 0;
+    bool zstd     = false;
+};
+
+/// A request_texture_array() declaration, owned by its slot.
+struct ArrayDecl {
+    char* names        = nullptr; ///< the layer names, one after another
+    usize namesLen     = 0;
+    ArrayLayer* layers = nullptr;
+    u32 count          = 0;
+    [[nodiscard]] StrView name(ArrayLayer const& l) const noexcept { return {names + l.nameOff, l.nameLen}; }
 };
 
 struct Watch; // watch.cpp: store poller state
@@ -131,8 +158,9 @@ struct Slot {
     Stage jobStage    = Stage::Meta;
     u32 jobGen        = 0;
     SourceKind source = SourceKind::File;
-    Buffer memory;         ///< register_*: the copied cooked bytes
-    CookProvider provider; ///< snapshot at dispatch
+    Buffer memory;              ///< register_*: the copied cooked bytes
+    ArrayDecl* array = nullptr; ///< SourceKind::Array: the layers
+    CookProvider provider;      ///< snapshot at dispatch
     char path[kMaxPathLen] = {};
     u32 pathLen            = 0;
     Hash128 jobKey;                  ///< the artifact to load, from the manifest at dispatch or the provider
@@ -291,6 +319,13 @@ HashMap<AssetId, u32>& map_for(Context* ctx, AssetKind kind) noexcept;
 /// nullptr and emits a diagnostic on failure.
 Slot* request_slot(Context* ctx, AssetKind kind, StrView path, RequestOptions const& opt, Buffer* memory,
                    bool rejectExisting) noexcept;
+/// Allocate a texture array declaration with room for `count` layers and `namesLen` name bytes.
+ArrayDecl* new_array_decl(Allocator const* a, u32 count, usize namesLen) noexcept;
+void free_array_decl(Allocator const* a, ArrayDecl* d) noexcept;
+/// The job data of each layer (cook output, level table), after a load settles or fails.
+void free_array_job_data(Allocator const* a, ArrayDecl& d) noexcept;
+/// A load settled or failed: the artifacts it used become the ones later manifest checks compare.
+void adopt_job_keys(Slot& s) noexcept;
 void free_slot(Context* ctx, Slot& s) noexcept;
 /// kiln no longer uses `obj` (may be null) and bindless slot `bindSlot` (may be kInvalid):
 /// released now if the host reported no frame that may still use them, else in process_retired().

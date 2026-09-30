@@ -1,6 +1,7 @@
 # Runtime texture arrays from independent assets
 
-**Status:** Proposed (2026-09-30). Research and API sketch only; not implemented or benchmarked.
+**Status:** First version implemented (v0.7, 2026-09-30): one aggregate upload (owner); the other
+choices are open-questions R12. Range uploads, example renderers and benchmarks are still open.
 **Decides:** How a runtime request can assemble independently cooked 2D textures into one GPU
 array, without producing a combined cooked file or changing the one-source-file rule.
 
@@ -222,6 +223,18 @@ allocations. It would require a separate residency design and device-specific co
 6. Benchmark direct assembly against independent loads and a GPU-copy assembly prototype:
    time to Ready, CPU work, transferred bytes, GPU copy time, peak staging and peak GPU memory.
    Include cold/warm file reads and reload; do not equate allocation/copy feasibility with speed.
+
+## First version (implemented)
+
+- API: `request_texture_array(ctx, TextureArrayDesc{name, layers, textureKind, priority, group})`,
+  released with `release(ctx, TextureHandle)`; every other texture query works on it.
+- Identity: a caller-supplied name in the texture name space, K5020 on a conflict.
+- Adapter: one upload with every layer (the second row of the adapter table above). No new entry
+  point or capability: `kArrayTextures`, and staging for the whole array.
+- Scope: store-entry 2D layers of one format, size and level count (K5021); whole-array reload.
+- Hot reload: each layer keeps its artifact key; a manifest change to any layer reloads the array.
+
+The open points below record what the first version chose; R12 has the details.
 
 ## Open points
 

@@ -76,7 +76,7 @@ void poll_manifest(Context* ctx, Watch& w) noexcept {
 void manifest_changed(Context* ctx) noexcept {
     for (u32 i = 0; i < ctx->maxAssets; ++i) {
         Slot& s = ctx->slots[i];
-        if (!s.live || s.zombie || s.source != SourceKind::File) continue;
+        if (!s.live || s.zombie || s.source == SourceKind::Memory) continue;
         // A load in flight learns its key only when it completes (the provider may name it): compare then.
         if (s.phase != Phase::Done)
             s.manifestCheck = true;

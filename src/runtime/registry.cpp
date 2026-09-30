@@ -161,17 +161,64 @@ MetaSet const* shown_meta(Slot const& s) noexcept {
     return nullptr;
 }
 
+ArrayDecl* new_array_decl(Allocator const* a, u32 count, usize namesLen) noexcept {
+    auto* d     = new_object<ArrayDecl>(a, Tag::Registry);
+    d->names    = alloc_array<char>(a, max<usize>(namesLen, 1), Tag::Registry);
+    d->namesLen = namesLen;
+    d->layers   = alloc_array<ArrayLayer>(a, count, Tag::Registry);
+    d->count    = count;
+    for (u32 i = 0; i < count; ++i)
+        ::new (static_cast<void*>(d->layers + i)) ArrayLayer();
+    return d;
+}
+
+void free_array_job_data(Allocator const* a, ArrayDecl& d) noexcept {
+    for (u32 i = 0; i < d.count; ++i) {
+        ArrayLayer& l = d.layers[i];
+        l.cooked.release();
+        l.cookedValid = false;
+        if (l.src) free_array(a, l.src, usize(l.srcLevels) * 2, Tag::Payload);
+        l.src       = nullptr;
+        l.srcLevels = 0;
+        l.zstd      = false;
+    }
+}
+
+void free_array_decl(Allocator const* a, ArrayDecl* d) noexcept {
+    if (!d) return;
+    free_array_job_data(a, *d);
+    for (u32 i = 0; i < d->count; ++i)
+        d->layers[i].~ArrayLayer();
+    free_array(a, d->layers, d->count, Tag::Registry);
+    free_array(a, d->names, max<usize>(d->namesLen, 1), Tag::Registry);
+    delete_object(a, d, Tag::Registry);
+}
+
+void adopt_job_keys(Slot& s) noexcept {
+    s.key      = s.jobKey;
+    s.keyValid = s.jobKeyValid;
+    if (!s.array) return;
+    for (u32 i = 0; i < s.array->count; ++i) {
+        ArrayLayer& l = s.array->layers[i];
+        l.key         = l.jobKey;
+        l.keyValid    = l.jobKeyValid;
+    }
+}
+
 void free_load_data(Slot& s) noexcept {
     free_meta_set(s.ctx->alloc, s.cur);
     free_meta_set(s.ctx->alloc, s.next);
     s.memory.release();
     s.cooked.release();
     s.cookedValid = false;
+    if (s.array) free_array_job_data(s.ctx->alloc, *s.array);
 }
 
 void free_slot(Context* ctx, Slot& s) noexcept {
     KILN_ASSERT(!s.jobInFlight && s.queue == QueueId::None);
     free_load_data(s);
+    free_array_decl(ctx->alloc, s.array);
+    s.array                              = nullptr;
     s.live                               = false;
     s.zombie                             = false;
     s.state                              = State::Unloaded;
@@ -202,6 +249,12 @@ Slot* request_slot(Context* ctx, AssetKind kind, StrView path, RequestOptions co
         if (StrView(s.path, s.pathLen) != np)
             KILN_PANIC("asset id collision: '%.*s' and '%.*s' hash to %016llx", int(s.pathLen), s.path,
                        KILN_SV(np), static_cast<unsigned long long>(id));
+        if (s.source == SourceKind::Array && !rejectExisting) {
+            (void)diagf(&ctx->diag, make_status(Code::AlreadyExists), kDiagArrayDeclaration, Severity::Error,
+                        np, "request",
+                        "the name is a texture array: request it with request_texture_array()");
+            return nullptr;
+        }
         if (rejectExisting) {
             (void)diagf(&ctx->diag, make_status(Code::AlreadyExists), kDiagDuplicateRegister, Severity::Error,
                         np, "register", "path is already registered or requested");
@@ -417,6 +470,89 @@ MeshHandle request_mesh(Context* ctx, StrView path, RequestOptions const& opt) n
 TextureHandle request_texture(Context* ctx, StrView path, RequestOptions const& opt) noexcept {
     if (!ctx) return {};
     Slot* s = request_slot(ctx, AssetKind::Texture, path, opt, nullptr, false);
+    return s ? TextureHandle::from_bits(handle_bits(*s)) : TextureHandle{};
+}
+
+namespace {
+
+Slot* array_request_failed(Context* ctx, StrView name, Code code, char const* why) noexcept {
+    (void)diagf(&ctx->diag, make_status(code), kDiagArrayDeclaration, Severity::Error, name, "request",
+                "texture array: %s", why);
+    return nullptr;
+}
+
+bool same_layers(ArrayDecl const& d, Span<StrView const> layers) noexcept {
+    if (d.count != layers.size) return false;
+    for (u32 i = 0; i < d.count; ++i)
+        if (d.name(d.layers[i]) != layers[i]) return false;
+    return true;
+}
+
+Slot* request_array_slot(Context* ctx, TextureArrayDesc const& desc) noexcept {
+    StrView const name = desc.name;
+    if (char const* why = check_asset_name(name)) {
+        (void)diagf(&ctx->diag, make_status(Code::InvalidArgument), kDiagBadAssetName, Severity::Error, name,
+                    "request", "invalid asset name: %s", why);
+        return nullptr;
+    }
+    if (desc.layers.empty()) return array_request_failed(ctx, name, Code::InvalidArgument, "no layers");
+    if (desc.layers.size > kMaxTextureArrayLayers)
+        return array_request_failed(ctx, name, Code::InvalidArgument,
+                                    "more than kMaxTextureArrayLayers layers");
+    usize namesLen = 0;
+    for (StrView const layer : desc.layers) {
+        if (char const* why = check_asset_name(layer)) {
+            (void)diagf(&ctx->diag, make_status(Code::InvalidArgument), kDiagArrayDeclaration,
+                        Severity::Error, name, "request",
+                        "texture array: layer '%.*s' is not a valid asset name: %s", KILN_SV(layer), why);
+            return nullptr;
+        }
+        if (layer == name)
+            return array_request_failed(ctx, name, Code::InvalidArgument, "a layer names the array");
+        namesLen += layer.size;
+    }
+
+    RequestOptions const opt{.priority     = desc.priority,
+                             .group        = desc.group,
+                             .textureKind  = desc.textureKind,
+                             .textureShape = TextureShape::Array};
+    if (u32 const* found = ctx->texMap.find(fnv1a64(name))) {
+        Slot& s = ctx->slots[*found];
+        if (StrView(s.path, s.pathLen) != name)
+            return request_slot(ctx, AssetKind::Texture, name, opt, nullptr, false);
+        if (s.source != SourceKind::Array)
+            return array_request_failed(ctx, name, Code::AlreadyExists,
+                                        "the name is used by another texture");
+        if (!same_layers(*s.array, desc.layers))
+            return array_request_failed(ctx, name, Code::AlreadyExists,
+                                        "the name is declared with another list of layers");
+        ++s.refcount;
+        if (desc.priority == Priority::High) boost(ctx, s);
+        join_group(ctx, s, desc.group);
+        return &s;
+    }
+
+    Slot* s = request_slot(ctx, AssetKind::Texture, name, opt, nullptr, false);
+    if (!s) return nullptr;
+    ArrayDecl* d = new_array_decl(ctx->alloc, u32(desc.layers.size), namesLen);
+    u32 off      = 0;
+    for (u32 i = 0; i < d->count; ++i) {
+        StrView const layer = desc.layers[i];
+        std::memcpy(d->names + off, layer.data, layer.size);
+        d->layers[i].nameOff = off;
+        d->layers[i].nameLen = u32(layer.size);
+        off += u32(layer.size);
+    }
+    s->source = SourceKind::Array;
+    s->array  = d;
+    return s;
+}
+
+} // namespace
+
+TextureHandle request_texture_array(Context* ctx, TextureArrayDesc const& desc) noexcept {
+    if (!ctx) return {};
+    Slot* s = request_array_slot(ctx, desc);
     return s ? TextureHandle::from_bits(handle_bits(*s)) : TextureHandle{};
 }
 

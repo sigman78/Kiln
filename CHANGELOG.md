@@ -7,6 +7,15 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
 
 ## [Unreleased]
 
+### Added
+- **Runtime texture arrays** (docs/design/runtime-texture-arrays.md, first version):
+  `request_texture_array(ctx, TextureArrayDesc{name, layers, ...})` assembles separately cooked 2D
+  textures into one `TextureShape::Array` texture at load time, with the usual states, events,
+  groups, placeholders and bindless slot. One upload holds every layer, so adapters need no change
+  beyond `kArrayTextures`. A layer's manifest change reloads the whole array. New diagnostics:
+  K5020 (a bad or conflicting declaration) and K5021 (a layer that is not 2D or differs from
+  layer 0). `kMaxTextureArrayLayers` is 2048.
+
 ## [0.6.0] - 2026-09-30
 
 Stores that cook only what changed: artifacts named by a build key over every input, one manifest

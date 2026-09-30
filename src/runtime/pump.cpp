@@ -38,6 +38,8 @@ char const* failure_text(u32 code) noexcept {
     case kDiagCookOnMissFailed: return "cook on miss failed";
     case kDiagAdapterRejected: return "adapter rejected the asset";
     case kDiagTextureShapeMismatch: return "texture shape mismatch";
+    case kDiagArrayDeclaration: return "texture array does not fit";
+    case kDiagArrayLayerMismatch: return "texture array layers differ";
     default: return "load failed";
     }
 }
@@ -63,6 +65,7 @@ void fail_reload(Context* ctx, Slot& s, u32 code, Status st) noexcept {
     free_meta_set(ctx->alloc, s.next);
     s.cooked.release();
     s.cookedValid = false;
+    if (s.array) free_array_job_data(ctx->alloc, *s.array);
     (void)diagf(&ctx->diag, st, kDiagReloadFailed, Severity::Error, path_of(s),
                 s.kind == AssetKind::Mesh ? "mesh" : "texture",
                 "reload failed, keeping version %u: %s (%s)%s%s", s.version, failure_text(code),
@@ -93,8 +96,7 @@ void fail_slot(Context* ctx, Slot& s, u32 code, Status st) noexcept {
     s.reloading = false;
     s.state     = State::Failed;
     s.phase     = Phase::Done;
-    s.key       = s.jobKey; // the job is done: its fields are the pump thread's again
-    s.keyValid  = s.jobKeyValid;
+    adopt_job_keys(s); // the job is done: its fields are the pump thread's again
 
     (void)diagf(&ctx->diag, st, code, Severity::Error, path_of(s),
                 s.kind == AssetKind::Mesh ? "mesh" : "texture", "%s (%s)%s%s", failure_text(code),
@@ -109,8 +111,14 @@ void fail_slot(Context* ctx, Slot& s, u32 code, Status st) noexcept {
 
 bool manifest_names_other(Context const* ctx, Slot const& s) noexcept {
     ManifestEntry e;
-    if (!ctx->manifestPresent || !ctx->manifest.find(s.kind, path_of(s), &e)) return false;
-    return !(s.keyValid && s.key == e.key);
+    if (!ctx->manifestPresent) return false;
+    if (!s.array) return ctx->manifest.find(s.kind, path_of(s), &e) && !(s.keyValid && s.key == e.key);
+    for (u32 i = 0; i < s.array->count; ++i) {
+        ArrayLayer const& l = s.array->layers[i];
+        if (ctx->manifest.find(AssetKind::Texture, s.array->name(l), &e) && !(l.keyValid && l.key == e.key))
+            return true;
+    }
+    return false;
 }
 
 void reload_slot(Context* ctx, Slot& s) noexcept {
@@ -132,6 +140,7 @@ void reload_slot(Context* ctx, Slot& s) noexcept {
     s.capture.reset();
     s.cooked.release(); // look the name up again (or re-cook), never the last load's cook output
     s.cookedValid = false;
+    if (s.array) free_array_job_data(ctx->alloc, *s.array);
     queue_push(ctx, s.priority == Priority::High ? QueueId::MetaHigh : QueueId::MetaNormal, s);
 }
 
@@ -152,6 +161,15 @@ void submit_stage(Context* ctx, Slot& s, Stage stage) noexcept {
             ctx->manifest.find(s.kind, path_of(s), &e)) {
             s.jobKey      = e.key;
             s.jobKeyValid = true;
+        }
+        for (u32 i = 0; s.array && i < s.array->count; ++i) {
+            ArrayLayer& l = s.array->layers[i];
+            l.jobKeyValid = false;
+            if (!l.cookedValid && ctx->manifestPresent &&
+                ctx->manifest.find(AssetKind::Texture, s.array->name(l), &e)) {
+                l.jobKey      = e.key;
+                l.jobKeyValid = true;
+            }
         }
         s.jobManifestPresent = ctx->manifestPresent;
     }
@@ -243,10 +261,9 @@ void make_ready(Context* ctx, Slot& s) noexcept {
     s.realObj           = s.target.object;
     s.hasTarget         = false;
     free_meta_set(ctx->alloc, s.cur);
-    s.cur       = s.next;
-    s.next      = {};
-    s.key       = s.jobKey;
-    s.keyValid  = s.jobKeyValid;
+    s.cur  = s.next;
+    s.next = {};
+    adopt_job_keys(s);
     s.reloading = false;
     if (reload) ++s.version;
     s.state = State::Ready;
@@ -280,6 +297,7 @@ void make_ready(Context* ctx, Slot& s) noexcept {
     s.memory.release();
     s.cooked.release();
     s.cookedValid = false;
+    if (s.array) free_array_job_data(ctx->alloc, *s.array);
     settle(ctx, s);
 }
 

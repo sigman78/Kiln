@@ -1835,3 +1835,282 @@ KILN_TEST(GoldenStore, Build) {
     for (char const* name : kGoldenTextures)
         KILN_CHECK_MSG(p.find(AssetKind::Texture, StrView(name), &e), "%s is not in the golden store", name);
 }
+
+// ---------------------------------------------------------------------------
+// Texture arrays from separate 2D textures (docs/design/runtime-texture-arrays.md)
+// ---------------------------------------------------------------------------
+
+namespace {
+
+struct ArrayStore {
+    test::HandStore hand;
+    Vec<u8> plain{default_allocator(), Tag::Test};   ///< RGBA8 UNORM 16x16, 5 levels
+    Vec<u8> flipped{default_allocator(), Tag::Test}; ///< `plain` with other texels
+    Vec<u8> zstd{default_allocator(), Tag::Test};    ///< RGBA8 sRGB 16x16, 5 Zstd levels
+
+    bool init(char const* name) {
+        if (!hand.init(name)) return false;
+        char path[1024];
+        format(path, sizeof path, "%s/generated/rgba8_unorm_mip.ktx2", test::corpus_dir());
+        if (!KILN_CHECK(test::corpus::read_file(path, plain))) return false;
+        format(path, sizeof path, "%s/generated/rgba8_srgb_mip_zstd.ktx2", test::corpus_dir());
+        if (!KILN_CHECK(test::corpus::read_file(path, zstd))) return false;
+        flipped.resize(plain.size());
+        std::memcpy(flipped.data(), plain.data(), plain.size());
+        Result<ktx2::Ktx2View> const v = ktx2::Ktx2View::open(plain.span());
+        if (!KILN_CHECK(v.ok())) return false;
+        for (ktx2::LevelIndex const& li : v->levels())
+            for (u64 b = 0; b < li.byteLength; ++b)
+                flipped[usize(li.byteOffset + b)] ^= u8(0x5A + b);
+        Copy const files[] = {
+            {"generated/rgba8_unorm_npot_mip.ktx2", "tex/npot"},
+            {"generated/cube_rgba8_srgb_mip.ktx2",  "tex/cube"},
+        };
+        for (Copy const& c : files) {
+            format(path, sizeof path, "%s/%s", test::corpus_dir(), c.from);
+            if (!hand.put_file(StrView(c.to), AssetKind::Texture, path)) return false;
+        }
+        return hand.put("tex/a", AssetKind::Texture, plain.span()) &&
+               hand.put("tex/b", AssetKind::Texture, flipped.span()) &&
+               hand.put("tex/z", AssetKind::Texture, zstd.span());
+    }
+
+private:
+    struct Copy {
+        char const* from;
+        char const* to;
+    };
+};
+
+TextureHandle request_array(Rt& rt, char const* name, std::initializer_list<StrView> layers) {
+    return request_texture_array(
+        rt.ctx, {.name = StrView(name), .layers = Span<StrView const>(layers.begin(), layers.size())});
+}
+
+bool settled_state(Rt& rt, TextureHandle t) {
+    State const st = state(rt.ctx, t);
+    return st == State::Ready || st == State::Failed;
+}
+
+/// Layer `layer` of the array `t` holds the texels of `file`, level by level.
+void check_layer_uploaded(Rt& rt, TextureHandle t, u32 layer, Span<u8 const> file, char const* what) {
+    Result<ktx2::Ktx2View> kv = ktx2::Ktx2View::open(file);
+    KILN_REQUIRE(kv.ok());
+    TextureInfo const ti   = texture_info(rt.ctx, t);
+    Span<u8 const> payload = null_adapter_payload(rt.na, ti.gpu);
+    KILN_REQUIRE(!payload.empty());
+    KILN_REQUIRE_EQ(ti.levelOffsets.size, usize(kv->desc().levels));
+    for (u32 i = 0; i < kv->desc().levels; ++i) {
+        u64 const pitch      = ti.levelRowPitches[i];
+        u64 const rowBytes   = format_row_bytes(kv->desc().format, kv->level_width(i));
+        u32 const rows       = kv->level_height(i);
+        u64 const off        = ti.levelOffsets[i] + layer * pitch * rows;
+        Vec<u8> const texels = test::corpus::texels(*kv, i);
+        KILN_REQUIRE(off + pitch * rows <= payload.size);
+        bool same = true;
+        for (u32 r = 0; r < rows; ++r)
+            same = same &&
+                   bytes_equal(payload.data + off + r * pitch, texels.data() + r * rowBytes, usize(rowBytes));
+        KILN_CHECK_MSG(same, "%s: layer %u level %u differs", what, layer, i);
+    }
+}
+
+} // namespace
+
+// Three layers (one repeated) in one upload: each layer lands in its place, with tight and padded rows.
+KILN_TEST(Runtime, TextureArrayLoadsLayers) {
+    ArrayStore store;
+    if (!store.init("arrays")) return;
+    for (u64 pitchAlign : {u64(1), u64(256)}) {
+        Rt rt;
+        NullAdapterDesc nd;
+        nd.rowPitchAlign = pitchAlign;
+        nd.offsetAlign   = 64;
+        ContextDesc cd;
+        cd.storeDir = StrView(store.hand.dir());
+        if (!rt.init(nd, cd)) return;
+        u32 const uploads0    = null_adapter_stats(rt.na).beginUploads;
+        TextureHandle const t = request_array(rt, "arr/abc", {"tex/a", "tex/b", "tex/a"});
+        KILN_REQUIRE(!t.is_null());
+        KILN_CHECK(texture_info(rt.ctx, t).isPlaceholder);
+        KILN_CHECK(texture_info(rt.ctx, t).desc.isArray);
+        KILN_REQUIRE(rt.pump_until([&] { return settled_state(rt, t); }));
+        if (!KILN_CHECK_MSG(is_ready(rt.ctx, t), "%s", rt.diags.last)) return;
+        KILN_CHECK(rt.find_event(EventKind::MetaReady, t.bits()) >= 0);
+        KILN_CHECK_EQ(null_adapter_stats(rt.na).beginUploads - uploads0, 1u);
+        TextureInfo const ti = texture_info(rt.ctx, t);
+        KILN_CHECK(ti.desc.isArray && ti.desc.layers == 3 && ti.desc.levels == 5);
+        KILN_CHECK_EQ(ti.desc.format, Format::R8G8B8A8_UNORM);
+        check_layer_uploaded(rt, t, 0, store.plain.span(), "a");
+        check_layer_uploaded(rt, t, 1, store.flipped.span(), "b");
+        check_layer_uploaded(rt, t, 2, store.plain.span(), "a again");
+        KILN_CHECK_EQ(find_texture(rt.ctx, asset_id("arr/abc")).bits(), t.bits());
+        KILN_CHECK(find_texture(rt.ctx, asset_id("tex/a")).is_null()); // layers are not textures of their own
+        KILN_CHECK_EQ(rt.diags.count, 0u);
+        release(rt.ctx, t);
+    }
+}
+
+// Zstd layers are decoded into their place.
+KILN_TEST(Runtime, TextureArrayZstdLayers) {
+    ArrayStore store;
+    if (!store.init("arrays_zstd")) return;
+    Rt rt;
+    ContextDesc cd;
+    cd.storeDir = StrView(store.hand.dir());
+    if (!rt.init({.rowPitchAlign = 256}, cd)) return;
+    TextureHandle const t = request_array(rt, "arr/zz", {"tex/z", "tex/z"});
+    KILN_REQUIRE(rt.pump_until([&] { return settled_state(rt, t); }));
+    if (!KILN_CHECK_MSG(is_ready(rt.ctx, t), "%s", rt.diags.last)) return;
+    check_layer_uploaded(rt, t, 0, store.zstd.span(), "z0");
+    check_layer_uploaded(rt, t, 1, store.zstd.span(), "z1");
+    release(rt.ctx, t);
+}
+
+// A layer that differs from layer 0, is not 2D, or is missing fails the array and names the layer.
+KILN_TEST(Runtime, TextureArrayLayerFailures) {
+    ArrayStore store;
+    if (!store.init("arrays_bad")) return;
+    Rt rt;
+    ContextDesc cd;
+    cd.storeDir = StrView(store.hand.dir());
+    if (!rt.init({}, cd)) return;
+    struct Case {
+        char const* name;
+        StrView layers[2];
+        u32 code;
+        char const* says;
+    };
+    Case const cases[] = {
+        {"arr/size",
+         {"tex/a", "tex/npot"},
+         kDiagArrayLayerMismatch,                                      "layer 1 (tex/npot) is R8G8B8A8_UNORM 7x5"},
+        {"arr/format", {"tex/a", "tex/z"},    kDiagArrayLayerMismatch, "layer 1 (tex/z) is R8G8B8A8_SRGB"        },
+        {"arr/cube",   {"tex/cube", "tex/a"}, kDiagArrayLayerMismatch, "layer 0 (tex/cube) is cube"              },
+        {"arr/miss",   {"tex/a", "tex/none"}, kDiagStoreMiss,          "layer 1 (tex/none)"                      },
+    };
+    for (Case const& c : cases) {
+        u32 const before      = count_code(rt.diags, c.code);
+        TextureHandle const t = request_texture_array(
+            rt.ctx, {.name = StrView(c.name), .layers = Span<StrView const>(c.layers, 2)});
+        KILN_REQUIRE(!t.is_null());
+        KILN_REQUIRE(rt.pump_until([&] { return settled_state(rt, t); }));
+        KILN_CHECK_MSG(state(rt.ctx, t) == State::Failed, "%s loaded", c.name);
+        KILN_CHECK_MSG(count_code(rt.diags, c.code) > before, "%s: %s", c.name, rt.diags.last);
+        KILN_CHECK_MSG(std::strstr(rt.diags.last, c.says) != nullptr, "%s: %s", c.name, rt.diags.last);
+        KILN_CHECK(rt.find_event(EventKind::Failed, t.bits()) >= 0);
+        release(rt.ctx, t);
+    }
+}
+
+// The same declaration shares one handle; a name that another list or another texture uses, and a bad
+// declaration, are K5020 and a null handle.
+KILN_TEST(Runtime, TextureArrayDeclarations) {
+    ArrayStore store;
+    if (!store.init("arrays_decl")) return;
+    Rt rt;
+    ContextDesc cd;
+    cd.storeDir = StrView(store.hand.dir());
+    if (!rt.init({}, cd)) return;
+    TextureHandle const t = request_array(rt, "arr/ab", {"tex/a", "tex/b"});
+    KILN_REQUIRE(!t.is_null());
+    TextureHandle const again = request_array(rt, "arr/ab", {"tex/a", "tex/b"});
+    KILN_CHECK_EQ(again.bits(), t.bits());
+    KILN_CHECK_EQ(rt.diags.count, 0u);
+
+    TextureHandle const a = request_texture(rt.ctx, "tex/a");
+    KILN_CHECK(request_array(rt, "arr/ab", {"tex/b", "tex/a"}).is_null()); // another list
+    KILN_CHECK(request_texture(rt.ctx, "arr/ab").is_null());               // not a plain texture
+    KILN_CHECK(request_array(rt, "tex/a", {"tex/b"}).is_null());           // a texture's name
+    KILN_CHECK(request_texture_array(rt.ctx, {.name = "arr/none"}).is_null());
+    KILN_CHECK(request_array(rt, "arr/bad", {"tex/a", "../x"}).is_null());
+    KILN_CHECK(request_array(rt, "arr/self", {"arr/self"}).is_null());
+    KILN_CHECK_EQ(count_code(rt.diags, kDiagArrayDeclaration), 6u);
+    static StrView many[kMaxTextureArrayLayers + 1];
+    for (StrView& m : many)
+        m = "tex/a";
+    KILN_CHECK(request_texture_array(rt.ctx,
+                                     {.name = "arr/many", .layers = Span<StrView const>(many, countof(many))})
+                   .is_null());
+    KILN_CHECK_EQ(count_code(rt.diags, kDiagArrayDeclaration), 7u);
+
+    KILN_REQUIRE(rt.pump_until([&] { return is_ready(rt.ctx, t) && is_ready(rt.ctx, a); }));
+    release(rt.ctx, again);
+    KILN_CHECK(is_ready(rt.ctx, t)); // one reference left
+    release(rt.ctx, t);
+    KILN_CHECK_EQ(state(rt.ctx, t), State::Unloaded);
+    release(rt.ctx, a);
+}
+
+// Without kArrayTextures an array fails like any array request (K5004).
+KILN_TEST(Runtime, TextureArrayNeedsArrayCaps) {
+    ArrayStore store;
+    if (!store.init("arrays_caps")) return;
+    Rt rt;
+    Result<NullAdapter*> na = null_adapter_create({}, &rt.adapter);
+    KILN_REQUIRE(na.ok());
+    rt.na = *na;
+    rt.adapter.caps &= ~u32(kArrayTextures);
+    Result<Context*> c = create(
+        ContextDesc{.diag = rt.diags.sink(), .adapter = &rt.adapter, .storeDir = StrView(store.hand.dir())});
+    KILN_REQUIRE(c.ok());
+    rt.ctx                = *c;
+    TextureHandle const t = request_array(rt, "arr/ab", {"tex/a", "tex/b"});
+    KILN_REQUIRE(rt.pump_until([&] { return state(rt.ctx, t) == State::Failed; }));
+    KILN_CHECK(rt.diags.has(kDiagAdapterRejected));
+    release(rt.ctx, t);
+}
+
+// request_reload() loads the whole array again; a layer that no longer matches keeps the old array.
+KILN_TEST(Runtime, TextureArrayReload) {
+    ArrayStore store;
+    if (!store.init("arrays_reload")) return;
+    Rt rt;
+    ContextDesc cd;
+    cd.storeDir = StrView(store.hand.dir());
+    if (!rt.init({}, cd)) return;
+    TextureHandle const t = request_array(rt, "arr/ab", {"tex/a", "tex/b"});
+    KILN_REQUIRE(rt.pump_until([&] { return is_ready(rt.ctx, t); }));
+    usize const ev0 = rt.events.size();
+
+    KILN_REQUIRE(store.hand.put("tex/b", AssetKind::Texture, store.plain.span()));
+    request_reload(rt.ctx, t);
+    KILN_REQUIRE(rt.pump_until([&] { return rt.find_event(EventKind::Changed, t.bits(), ev0) >= 0; }));
+    KILN_CHECK_EQ(version(rt.ctx, t), 2u);
+    check_layer_uploaded(rt, t, 1, store.plain.span(), "b after reload");
+
+    KILN_REQUIRE(store.hand.put("tex/b", AssetKind::Texture, store.zstd.span()));
+    request_reload(rt.ctx, t);
+    KILN_REQUIRE(rt.pump_until([&] { return rt.diags.has(kDiagReloadFailed); }));
+    KILN_CHECK(is_ready(rt.ctx, t));
+    KILN_CHECK_EQ(version(rt.ctx, t), 2u);
+    release(rt.ctx, t);
+}
+
+#if defined(KILN_HOT_RELOAD) && KILN_HOT_RELOAD
+// The store poller reloads an array when a layer's entry changes, and only then.
+KILN_TEST(Runtime, TextureArrayStorePoller) {
+    ArrayStore store;
+    if (!store.init("arrays_poller")) return;
+    Rt rt;
+    ContextDesc cd;
+    cd.storeDir  = StrView(store.hand.dir());
+    cd.hotReload = {.watchStore = true, .pollMs = 20};
+    if (!rt.init({}, cd)) return;
+    TextureHandle const t = request_array(rt, "arr/ab", {"tex/a", "tex/b"});
+    KILN_REQUIRE(rt.pump_until([&] { return is_ready(rt.ctx, t); }));
+    usize const ev0 = rt.events.size();
+    KILN_REQUIRE(store.hand.put("tex/b", AssetKind::Texture, store.plain.span()));
+    KILN_REQUIRE(rt.pump_until([&] { return rt.find_event(EventKind::Changed, t.bits(), ev0) >= 0; }));
+    check_layer_uploaded(rt, t, 1, store.plain.span(), "b after the poller");
+
+    usize const ev1 = rt.events.size();
+    KILN_REQUIRE(store.hand.put("tex/other", AssetKind::Texture, store.zstd.span()));
+    for (int i = 0; i < 40; ++i) {
+        rt.pump_once();
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    KILN_CHECK_EQ(count_events(rt, EventKind::Changed, t.bits(), ev1), 0u);
+    release(rt.ctx, t);
+}
+#endif
