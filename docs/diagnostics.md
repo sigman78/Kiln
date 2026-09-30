@@ -59,7 +59,7 @@ is dropped entirely and the sink prints just `<asset> <where>: <message> (<statu
 | K3000-3999 | Settings resolution (invalid combinations, unknown keys) | M2 | populated, see §3.3 |
 | K4000-4099 | `.mesh` validation and decode | M1 | populated, see §3.4 |
 | K4100-4199 | KTX2 validation | M1 | populated, see §3.5 |
-| K4200-4299 | Store catalog validation | v0.6 | populated, see §3.5a |
+| K4200-4299 | Store manifest validation | v0.6 | populated, see §3.5a |
 | K4300-4999 | Reserved for other cooked formats | — | unassigned |
 | K5000-5999 | Runtime and store (store miss, cook-on-miss, load/validation failures, adapter rejections, registry limits, event overflow, `wait()` misuse, duplicate registration, placeholder failures) | M3 | populated, see §3.6 |
 | K6000-9999 | Unassigned | — | unassigned |
@@ -68,7 +68,7 @@ K1000-1999, K2000-2999, K3000-3999, K4000-4099, K4100-4199 and K5000-5999 all ha
 today, in `include/kiln/cook/cook.h` (`kiln::cook::GltfDiagCode`), `include/kiln/cook/image.h`
 (`kiln::cook::ImageDiagCode`), `include/kiln/cook/settings.h` (`kiln::cook::SettingsDiagCode`),
 `include/kiln/mesh.h` (`kiln::mesh::DiagCode`), `include/kiln/ktx2.h` (`kiln::ktx2::DiagCode`),
-`include/kiln/catalog.h` (`kiln::CatalogDiagCode`, K4201-4209) and,
+`include/kiln/manifest.h` (`kiln::ManifestDiagCode`, K4201-4209) and,
 for K5000-5999, both `include/kiln/assets.h` (`kiln::RuntimeDiagCode`) and
 `include/kiln/cook/provider.h` (`kiln::cook::ProviderDiagCode`). K4300-4999 is still reserved by
 `docs/design/error-model.md` for work that has not landed yet; when it does, its codes are added
@@ -163,7 +163,7 @@ check failed.
 | K3006 | `kDiagSidecarKey` | InvalidArgument | Error | A `.kiln` sidecar key is unknown for the asset kind, its value has the wrong type or an unknown enum name, a number is out of range, or a key sits inside a table. `where` is `<file>:<line>`. | Use a key and value from the tables in `docs/design/settings.md`, "Sidecar files". |
 | K3007 | `kDiagPolicyRefused` | The status the policy returned | Error | The host's `CookPolicy` (`kiln/cook/settings.h`, resolution layer 6) refused the asset. The host's policy may emit its own diagnostic with the reason first. | Change the asset, or the policy's rule. |
 | K3008 | `kDiagStoreProfileMismatch` | InvalidArgument | Error | `install_provider`: the provider's target profile is not the context's (`ContextDesc::profile`). Nothing is installed or written. (Until 2026-09-30 also a store whose `kiln-store.txt` named another profile; the named layout is gone.) | Give the provider the context's profile, or create the context with the provider's. |
-| K3009 | `kDiagCatalogLocked` | Busy | Error | Another writer (a cook provider in disk mode, `kiln-cook`) holds `<store>/catalogs/<profile>.lock`. One process writes a profile's catalog at a time; the lock ends with its process. | Stop the other writer, or use another store. |
+| K3009 | `kDiagStoreLocked` | Busy | Error | Another process writes the store: a cook provider in disk mode or `kiln-cook` holds `<store>/manifest.lock`. One process writes a store at a time, whatever its profile; the lock ends with its process. | Stop the other writer, or use another store. A read-only app (no provider) may run next to the writer. |
 | K3010 | `kDiagNondeterministicCook` | ValidationFailed | Error | A cook made other bytes for a build key whose artifact exists: the same inputs, settings and cooker gave another result. The artifact keeps its bytes; the asset's new outputs are not published. | A cooker bug (report it); or the artifact was edited by hand: delete it, then cook again. |
 
 ### 3.4 K4000-4099 — `.mesh` validation and decode
@@ -226,25 +226,26 @@ validate; those are captured and folded into K5002/K5003 (§3.6).
 | K4108 | `kDiagKtxDfd` | Corrupt (Error), kOk (Warning) | Malformed data format descriptor: `dfdByteLength` too small, `dfdByteOffset` misaligned or overlapping the level index, `totalSize` field disagreeing with `dfdByteLength`, or a basic block size that does not fit (Corrupt/Error) — a DFD reaching past the supplied span is K4102 instead. Separately, a non-failing Warning is emitted when the DFD's `transferFunction` disagrees with the sRGB-ness implied by `vkFormat`; the reader trusts `vkFormat` and continues. | Error case: recook from source. Warning case: informational only; the cooker/writer that produced the DFD should be checked for sRGB-flag consistency, but the file loads fine. |
 | K4109 | `kDiagKtxKvd` | Corrupt | `kvdByteOffset`/`kvdByteLength` misaligned or overlapping the DFD or level index, or the key/value entries themselves are malformed — a KVD reaching past the supplied span is K4102 instead. | Corrupted file or a writer bug. Recook from source. |
 
-### 3.5a K4200-4299 — Store catalog validation
+### 3.5a K4200-4299 — Store manifest validation
 
-Source: `kiln::CatalogDiagCode` in `include/kiln/catalog.h`. Emitted at `Severity::Error` by
-`CatalogView::open()` (`src/formats/catalog_read.cpp`), which checks a catalog in this order, and
-K4205/K4207 also by the cook's `write_catalog()` (InvalidArgument). The format is in
-`docs/design/store-catalog.md`. A catalog is written whole by the cook; every one of these means a
-damaged file or a writer bug: delete the catalog and cook the store again.
+Source: `kiln::ManifestDiagCode` in `include/kiln/manifest.h`. Emitted at `Severity::Error` by
+`ManifestView::open()` (`src/formats/manifest_read.cpp`), which checks `manifest.dir` in this
+order, and K4205/K4207 also by the cook's `write_manifest()` (InvalidArgument). The format is in
+`docs/design/store-catalog.md`. The manifest is written whole by the cook; every one of these means
+a damaged file or a writer bug: delete `manifest.dir` and cook the store again. (The cook's
+`manifest.in` has no codes: a damaged one is dropped with an info log.)
 
 | Code | Name | Status | Meaning |
 |---|---|---|---|
-| K4201 | `kDiagCatalogMagic` | Corrupt | Shorter than the header, or the magic is not `KCAT`. |
-| K4202 | `kDiagCatalogVersion` | VersionMismatch | Another major or minor format version. |
-| K4203 | `kDiagCatalogSizes` | Corrupt | The header size, total size, entry count or a section offset does not match the file: sections out of order, overlapping, misaligned, or past the end. |
-| K4204 | `kDiagCatalogReserved` | Corrupt | Flags, reserved fields or padding are not zero. |
-| K4205 | `kDiagCatalogName` | Corrupt, InvalidArgument | A name lies outside the string section or is not a valid asset name (or profile name), or an entry's kind is neither 1 (mesh) nor 2 (texture). |
-| K4206 | `kDiagCatalogOrder` | Corrupt | Entries are not sorted by name bytes, then kind. |
-| K4207 | `kDiagCatalogDuplicate` | Corrupt, InvalidArgument | Two entries have the same name and kind. |
-| K4208 | `kDiagCatalogIndex` | Corrupt | An index record names an entry out of range, carries another hash than its entry's name, or breaks the (hash, entry) order. |
-| K4209 | `kDiagCatalogChecksum` | Corrupt | The XXH3-128 checksum does not match the bytes. |
+| K4201 | `kDiagManifestMagic` | Corrupt | Shorter than the header, or the magic is not `KMAN`. |
+| K4202 | `kDiagManifestVersion` | VersionMismatch | Another major or minor format version. |
+| K4203 | `kDiagManifestSizes` | Corrupt | The header size, total size, a count or a section offset does not match the file: sections out of order, overlapping, misaligned, or past the end; or the profiles' entry ranges do not cover the entries in order. |
+| K4204 | `kDiagManifestReserved` | Corrupt | Flags, reserved fields or padding are not zero. |
+| K4205 | `kDiagManifestName` | Corrupt, InvalidArgument | A name lies outside the string section or is not a valid asset name (or profile name), or an entry's kind is neither 1 (mesh) nor 2 (texture). |
+| K4206 | `kDiagManifestOrder` | Corrupt | Profiles are not sorted by name, or a profile's entries are not sorted by name bytes, then kind. |
+| K4207 | `kDiagManifestDuplicate` | Corrupt, InvalidArgument | A profile name twice, or two entries of one profile with the same name and kind. |
+| K4208 | `kDiagManifestIndex` | Corrupt | An index record names an entry outside its profile's range, carries another hash than its entry's name, or breaks the (hash, entry) order. |
+| K4209 | `kDiagManifestChecksum` | Corrupt | The XXH3-128 checksum does not match the bytes. |
 
 ### 3.6 K5000-5999 — Runtime and store
 
@@ -279,8 +280,8 @@ also panic instead of reaching the `DiagSink` in one sub-case (see its row).
 | K5015 | `kDiagUnknownRoot` | `InvalidArgument` | Error | The cook provider (`include/kiln/cook/provider.h`) was asked for a name whose root is not one of `ContextDesc::roots`, or the name has no `root:` prefix and the context has no default root. Folded into K5002. | Add the root to `ContextDesc::roots`, or fix the name's root prefix. |
 | K5016 | `kDiagSourceCase` | `InvalidArgument` | Error | The cook provider (`include/kiln/cook/provider.h`) found the source file, but its name on disk differs from the requested name in case (checked on Windows only, via `cook::source_case_matches`; on case-sensitive systems a wrong-case name is just a store miss, K5001). Folded into K5002. | Fix the requested name's case to match the file on disk. |
 | K5017 | `kDiagTextureShapeMismatch` | ValidationFailed | Error | The cooked texture's shape (2D, cube, array; a cube array is unsupported) is not the one the request expects (`RequestOptions::textureShape`, first request wins). Checked at the meta stage; a hot reload that changes the shape fails with K5010 instead. | Request the texture with its shape, or cook it with the shape the host expects (`docs/design/texture-shapes.md`). |
-| K5018 | `kDiagStoreProfileUnsampled` | Unsupported | Error (Warning with `allowUnsampledFormats`) | At `create()`: the catalog's profile has block formats the adapter cannot sample (`supports_format`). `create()` fails unless `ContextDesc::allowUnsampledFormats` is set; then each such asset fails on its own (K5004). | Cook the store with a profile the adapter samples (`compat` covers every example backend), or define a narrower host profile. |
-| K5019 | `kDiagCatalogMissing` | NotFound, InvalidArgument | Error | A request missed and the store has no catalog for `ContextDesc::profile` (`<store>/catalogs/<profile>.kcat`), and no cook provider filled the miss. At `create()`: the catalog cannot be read. A malformed catalog fails `create()` with its K42xx. | Cook the store for this profile (`kiln-cook`, or a cook provider in disk mode), or set `ContextDesc::profile` to the profile the store was cooked for. |
+| K5018 | `kDiagStoreProfileUnsampled` | Unsupported | Error (Warning with `allowUnsampledFormats`) | At `create()`: the context's profile in the store's manifest has block formats the adapter cannot sample (`supports_format`). `create()` fails unless `ContextDesc::allowUnsampledFormats` is set; then each such asset fails on its own (K5004). | Cook the store with a profile the adapter samples (`compat` covers every example backend), or define a narrower host profile. |
+| K5019 | `kDiagCatalogMissing` | NotFound, InvalidArgument | Error | A request missed, and the store has no `manifest.dir` or no entries for `ContextDesc::profile` in it, and no cook provider filled the miss. At `create()`: the manifest cannot be read. A malformed manifest fails `create()` with its K42xx. | Cook the store for this profile (`kiln-cook`, or a cook provider in disk mode), or set `ContextDesc::profile` to the profile the store was cooked for. |
 
 `kDiagCookOnMissFailed` (K5002) and `kDiagAssetLoadFailed` (K5003) are the two codes that can carry
 a nested diagnostic: the worker-side reader (`.mesh`/KTX2, K4xxx) or cook provider (K1xxx-K3xxx, or

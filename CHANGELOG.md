@@ -8,6 +8,21 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
 ## [Unreleased]
 
 ### Changed
+- **Breaking (format, runtime, cook, tools): one flat store with a shared manifest** (owner,
+  2026-09-30; store-catalog.md). A store is `manifest.dir` (what the runtime reads: every target
+  profile's entries and index, format `KMAN` 0.1), `manifest.in` (the cook's input records of every
+  profile, never shipped), `manifest.lock` (one writer per store, K3009) and the artifacts at
+  `<store>/<26>`: the build key in base32 (`hash128_base32()`), no extension, no subdirectories. Profiles share the store; a writer edits its own profile and keeps the others, and
+  drops only its own when it was cooked for another definition of it. Input records keep no paths
+  (inputs are found next to the unit's source as it is found now), so a store survives moved
+  sources. A file whose size or time changed is hashed before it counts as changed: unchanged
+  content updates the record and cooks nothing. Renamed: `kiln/catalog.h` is `kiln/manifest.h`
+  (`ManifestView`, `ManifestProfile`, `ManifestEntry`, `manifest_file_path()`, `kDiagManifest*`),
+  `kiln/cook/catalog.h` is `kiln/cook/manifest.h` (`write_manifest()`, `kDiagStoreLocked`);
+  `artifact_file_path()` takes no kind; `kiln-info` reads `manifest.dir`; the fuzz target is
+  `kiln_fuzz_manifest_read`.
+  - Migration: delete the store and cook again (`catalogs/`, `inputs/` and `artifacts/` are not
+    read any more). Code that named the old types uses the new names above.
 - **Breaking (runtime, cook, tools): the named store layout is removed** (owner, 2026-09-30); the
   catalog store is the only one. Gone: `StoreLayout` and `ContextDesc::storeLayout`,
   `store_layout()`, `store_file_path()`, `kiln-store.txt` (`StoreProfile`, `parse_store_profile`,
@@ -22,18 +37,13 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
     bytes with a zero key, or Ok with nothing to use the catalog). Tests and tools that read
     `tests/golden` as a store use `<build>/tests/samples/golden-store`, which `kiln_tests
     GoldenStore.Build` (the ctest fixture `golden_store`) writes.
-- **Breaking (runtime, tools): stores are catalog stores by default** (store-catalog.md, Phase A
-  step 6). `ContextDesc::storeLayout` defaults to `StoreLayout::Catalog` (profile `compat`), and
-  `kiln-cook` writes artifacts and `catalogs/<target>.kcat` unless given `--layout named`. `kiln-cook`
-  cooks only the sources whose recorded inputs changed (size and time); `--verify` compares their
-  content instead, for CI and shipping builds. `--hashed` is gone; `--map` prints
-  `<name>\t<file>\t<build key>`. `cook_cli_main` takes a `policyVersion`. `kiln-info` reads a
-  catalog (`--check` verifies every artifact); `kiln-headless --layout named` reads a named store.
-  - Migration: a host that reads a named store sets `storeLayout = StoreLayout::Named`, and cooks it
-    with `kiln-cook --layout named`. Otherwise cook the store again into a new directory: a named
-    store is refused by the catalog writer (K3008), and a catalog store by the named layout. kiln
-    deletes no store; remove the old one by hand. A cook provider in the Catalog layout needs its
-    `target` to be the context's profile.
+- **Breaking (runtime, tools): `kiln-cook` writes the store** (store-catalog.md, Phase A step 6):
+  artifacts and the manifest. It cooks only the sources whose recorded inputs changed; `--verify`
+  compares every input's content, for CI and shipping builds. `--hashed` is gone; `--map` prints
+  `<name>\t<file>\t<build key>`. `cook_cli_main` takes a `policyVersion`. `kiln-info` reads the
+  manifest (`--check` verifies every artifact).
+  - Migration: cook the store again into a new directory; kiln deletes no store. A cook provider
+    needs its `target` to be the context's profile.
 - **Breaking (cook): target profiles replace `blockFamily`.** `TargetProfile::blockFamily` and the
   `BlockFamily` enum are gone (`blockFormats` replaces them); the default target is `compat`, not
   `desktop`, so one-channel masks are BC5 instead of BC4 by default. `kiln-cook --block` is gone
@@ -68,50 +78,48 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
   diagnostic sink. `unsampled_block_formats(adapter)` (`kiln/adapter.h`) reads the set an adapter
   cannot sample.
 - Examples: every integration example cooks with the default profile into one `example-store`.
-- Examples: `example-store` and the viewer's stores are catalog stores (store-catalog phase A step 7):
-  the backends share the artifacts cooked by the first one to run. `kiln-viewer --layout named`
-  opens a named store such as `tests/golden`. Delete a build tree's old `example-store` once.
+- Examples: `example-store` and the viewer's stores are manifest stores (store-catalog phase A step
+  7): the backends share the artifacts cooked by the first one to run. Delete a build tree's old
+  `example-store` once.
 - Examples: every renderer (the viewer, `kiln-gl`, `kiln-gl-bindless`, `kiln-sokol`,
   `kiln-vk-basic`, `kiln-nga`) shades with the `MaterialSlot` PBR factors: a texture times its
   factor, the factor alone without the texture (glTF's rules), so untextured materials get their
   authored color. `ex::material_factors()` and `vkx::material_uniforms()` pack them; the Vulkan
   examples read them from a material table in the frame uniforms (`DrawPush::material`), the others
   per draw. Scenes with all factors at 1 render as before (WaterBottle: identical pixels).
-- **Build keys** (store-catalog.md, Phase A step 1): `Hash128`, `xxh3_128()` and `hash128_hex()`
-  (`kiln/catalog.h`, from the xxhash zstd vendors); `build_key()` (`kiln/cook/catalog.h`) hashes
+- **Build keys** (store-catalog.md, Phase A step 1): `Hash128`, `xxh3_128()`, `hash128_hex()` and
+  `hash128_base32()` (`kiln/manifest.h`, from the xxhash zstd vendors); `build_key()`
+  (`kiln/cook/manifest.h`) hashes
   the cooker version, asset kind and name, target, resolved settings and the content of every
   input file a cook read: the source, its sidecar (or its absence), a `.gltf`'s buffers. The cook
   provider and `kiln-cook` share one cook path that records those inputs.
-- **Store catalog format 0.1** (step 2): `CatalogView` validates and looks up a catalog in memory
-  (binary search, no allocation), `write_catalog()` writes one, `catalog_file_path()` and
-  `artifact_file_path()` name the files, `check_profile_name()`. Diagnostics K4201-K4209; fuzz
-  target `kiln_fuzz_catalog_read`.
-- **Catalog store writing** (step 3, cook-internal for now): artifacts under
-  `artifacts/<2 hex>/<32 hex>.mesh|.ktx2`, written once (K3010 when a cook gives other bytes for an
-  existing key); the profile's catalog and input records (`inputs/<profile>.kin`) rewritten by a
-  temporary file and a rename; one writer per profile, an OS lock on `catalogs/<profile>.lock`
-  (K3009). The named layout refuses a catalog store and the reverse (K3008).
-- **The runtime reads catalog stores** (step 4): `StoreLayout::Catalog` with `ContextDesc::profile`
-  (default `compat`). `create()` reads and validates `catalogs/<profile>.kcat` (a malformed one
-  fails with its K42xx) and checks the profile's formats against the adapter (K5018). A request
-  looks its name up at dispatch and loads the artifact; a miss goes to the cook provider, else
-  K5001, or K5019 when the profile has no catalog. The store poller (`HotReloadDesc::watchStore`)
-  watches the catalog file and reloads the assets whose entry names another artifact.
-  `store_layout()` and `store_profile()` give the context's choice.
+- **Store manifest format 0.1** (step 2): `ManifestView` validates a manifest in memory and
+  `ManifestProfile` looks names up in one profile (binary search, no allocation); `write_manifest()`
+  writes one, `manifest_file_path()` and `artifact_file_path()` name the files,
+  `check_profile_name()`. Diagnostics K4201-K4209; fuzz target `kiln_fuzz_manifest_read`.
+- **Store writing** (step 3, cook-internal): artifacts written once (K3010 when a cook gives other
+  bytes for an existing key); the manifest and the input records rewritten by a temporary file and
+  a rename; one writer per store, an OS lock on `manifest.lock` (K3009).
+- **The runtime reads the store** (step 4): `ContextDesc::profile` (default `compat`). `create()`
+  reads and validates `manifest.dir` (a malformed one fails with its K42xx) and checks the
+  profile's formats against the adapter (K5018). A request looks its name up at dispatch and loads
+  the artifact; a miss goes to the cook provider, else K5001, or K5019 when there is no manifest or
+  no such profile in it. The store poller (`HotReloadDesc::watchStore`) watches the manifest and
+  reloads the assets whose entry names another artifact. `store_profile()` gives the profile.
 - `kiln-cook --watch [--timeout <s>]`: after cooking, keeps cooking the sources that change or
-  appear, twice a second, and writes the catalog once per round. With a read-only app that watches
+  appear, twice a second, and writes the manifest once per round. With a read-only app that watches
   the store (`HotReloadDesc::watchStore`, no cook provider), this is a dev loop with the cooker in
   another process. A failed source is reported once and cooked again when it changes; the exit
-  code counts the sources still failing. Every `kiln-cook` run also writes the catalog at most once
+  code counts the sources still failing. Every `kiln-cook` run also writes the manifest at most once
   a second while it cooks, so a watching app fills in during a long run.
-- **The cook provider on catalog stores** (step 5): `CookProvider::prepare`, called before every
-  load of a file asset in the Catalog layout (hit or miss), names the asset's artifact or returns
-  freshly cooked bytes. `install_provider` in that layout checks the context's profile (K3008),
-  takes the catalog lock in Disk mode (K3009) and installs `prepare`. Each source is checked once
-  per session: every recorded input keeps its size and modification time, nothing is hashed; a
-  changed host setting (`ProviderDesc::policyVersion` for the policy) only re-checks the keys from
-  the recorded hashes; a changed input cooks again. The source poller watches the checked sources,
-  including a `.gltf`'s buffers, and rewrites the catalog once per round.
+- **The cook provider on the store** (step 5): `CookProvider::prepare`, called before every load of
+  a file asset (hit or miss), names the asset's artifact or returns freshly cooked bytes.
+  `install_provider` checks the context's profile (K3008), takes the store lock in Disk mode
+  (K3009) and installs `prepare`. Each source is checked once per session by the size and time of
+  its recorded inputs (a differing file is hashed; only a content change cooks); a changed host
+  setting (`ProviderDesc::policyVersion` for the policy) only re-checks the keys from the recorded
+  hashes. The source poller watches the checked sources, including a `.gltf`'s buffers, and
+  rewrites the manifest once per round.
 
 ## [0.5.0] - 2026-09-29
 
