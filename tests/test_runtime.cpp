@@ -692,8 +692,8 @@ struct FakeProvider {
 
     /// Cooks `virtual/cube`, has no source for `virtual/none`, and leaves every other name to the
     /// manifest.
-    static Status prepare(void* user, AssetKind kind, StrView path, Allocator const* alloc, Vec<u8>* out,
-                          Hash128*, DiagSink const* diag) {
+    static Status prepare(void* user, AssetKind kind, StrView path, PrepareMode, Allocator const* alloc,
+                          Vec<u8>* out, Hash128*, DiagSink const* diag) {
         auto* self = static_cast<FakeProvider*>(user);
         self->calls.fetch_add(1);
         if (path == "virtual/none")

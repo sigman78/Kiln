@@ -101,11 +101,11 @@ struct SlowCook {
     double latencyMs = 0;
 
     /// Only a cook (bytes in `out`) is slowed; a check that the store is fresh is not.
-    static Status prepare(void* u, AssetKind kind, StrView path, Allocator const* alloc, Vec<u8>* out,
-                          Hash128* key, DiagSink const* diag) {
+    static Status prepare(void* u, AssetKind kind, StrView path, PrepareMode mode, Allocator const* alloc,
+                          Vec<u8>* out, Hash128* key, DiagSink const* diag) {
         auto* s           = static_cast<SlowCook*>(u);
         double const t0   = now_ms();
-        Status const st   = s->inner.prepare(s->inner.user, kind, path, alloc, out, key, diag);
+        Status const st   = s->inner.prepare(s->inner.user, kind, path, mode, alloc, out, key, diag);
         bool const cooked = st.ok() && !out->empty();
         double const ms   = cooked ? s->latencyMs + s->msPerMiB * double(out->size()) / kMiB : 0.0;
         KILN_INFO("slow-cook", "%s %.*s: %s in %.1f ms, %llu bytes (+%.1f ms)",

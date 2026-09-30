@@ -29,7 +29,7 @@ namespace {
 
 constexpr u32 kInputsMagic = fourcc('K', 'M', 'I', 'N');
 constexpr u16 kInputsMajor = 0;
-constexpr u16 kInputsMinor = 2; ///< 2: the root table
+constexpr u16 kInputsMinor = 3; ///< 2: the root table; 3: outputs carry their build keys
 
 // ---------------------------------------------------------------------------
 // Paths and the lock
@@ -132,6 +132,12 @@ struct NameIndex {
 
 u64 entry_hash(AssetKind kind, StrView name) noexcept { return hash_combine(hash_name(name), u64(kind)); }
 
+/// True if the unit `unit` makes the asset `name`: the unit itself, or `<unit>#<image>`.
+bool owns(StrView unit, StrView name) noexcept {
+    return name == unit ||
+           (name.size > unit.size && name[unit.size] == '#' && name.substr(0, unit.size) == unit);
+}
+
 struct Entry {
     u32 nameOff = 0, nameLen = 0; ///< into ManifestStore::names
     AssetKind kind = AssetKind::Mesh;
@@ -145,6 +151,7 @@ struct RecordOutput {
     u32 nameOff = 0, nameLen = 0; ///< into Record::strings
     AssetKind kind = AssetKind::Mesh;
     SlotHint slot  = SlotHint::None;
+    Hash128 key; ///< the build key the cook gave it; zero when it failed
 };
 
 struct Record {
@@ -376,6 +383,7 @@ void encode_record(Out& o, Record const& r) noexcept {
         o.u(u8(out.kind), 1);
         o.u(u8(out.slot), 1);
         o.str(r.str(out.nameOff, out.nameLen));
+        o.hash(out.key);
     }
 }
 
@@ -412,6 +420,7 @@ bool decode_record(In& in, Record& r) noexcept {
         u64 const k2    = in.u(1);
         u64 const slot  = in.u(1);
         StrView const n = in.str();
+        x.key           = in.hash();
         if (k2 > u64(AssetKind::Texture) || slot > u64(SlotHint::Emissive) || check_asset_name(n))
             return false;
         x.kind    = AssetKind(k2);
@@ -515,6 +524,30 @@ Status publish_artifact(StrView storeDir, Hash128 const& key, Span<u8 const> byt
     return store_write(StrView(path, slash), pathView.substr(slash + 1), bytes, diag, false);
 }
 
+/// Drops the writer's records whose outputs name other artifacts than the manifest's entries: a
+/// crash between the manifest.dir and manifest.in writes leaves records of another cook. Their
+/// units are checked by cooking again.
+void drop_foreign_records(ManifestStore& s) noexcept {
+    u32 dropped = 0;
+    for (Record& r : s.records) {
+        if (!r.live) continue;
+        for (RecordOutput const& o : r.outputs) {
+            if (o.key.is_zero()) continue; // a failed output: the record is not current anyway
+            u32 const e = s.find_entry(o.kind, r.str(o.nameOff, o.nameLen));
+            if (e != kInvalid && s.entries[e].live && s.entries[e].key == o.key) continue;
+            r.live = false;
+            ++dropped;
+            break;
+        }
+    }
+    if (dropped) {
+        s.dirty = true;
+        KILN_INFO("cook",
+                  "%u input record(s) do not match the manifest; their sources are checked by cooking",
+                  dropped);
+    }
+}
+
 /// Loads `<store>/manifest.dir`, then `<store>/manifest.in`, if there are.
 Status load_manifest(ManifestStore& s, DiagSink const* diag) noexcept {
     char path[1024];
@@ -572,8 +605,10 @@ Status load_manifest(ManifestStore& s, DiagSink const* diag) noexcept {
     if (!io_file_exists(StrView(path))) return kOk;
     bytes.clear();
     if (io_read_file(compat_io_backend(), StrView(path), s.alloc, &bytes).ok() &&
-        load_records(s, bytes.span(), ownDropped))
+        load_records(s, bytes.span(), ownDropped)) {
+        drop_foreign_records(s);
         return kOk;
+    }
     clear_records(s);
     KILN_INFO("cook", "%s is not readable; the inputs of the entries are checked again", path);
     return kOk;
@@ -650,11 +685,10 @@ Status publish_unit(ManifestStore* s, CookUnit& unit, u64 hostDigest, DiagSink c
     std::lock_guard<std::mutex> const lock(s->mutex);
     StrView const unitName = unit.name(unit.outputs[0]);
     Record& r              = s->record_slot(unitName);
-    // Entries of the last cook that this one did not make leave the manifest.
-    if (r.live)
-        for (RecordOutput const& old : r.outputs)
-            if (!unit.find(old.kind, r.str(old.nameOff, old.nameLen)))
-                s->remove_entry(old.kind, r.str(old.nameOff, old.nameLen));
+    // Entries of the unit that this cook did not make leave the manifest. Ownership comes from the
+    // names, not from the last record, which may be lost or belong to another manifest.
+    for (Entry& e : s->entries)
+        if (e.live && owns(unitName, s->name_of(e)) && !unit.find(e.kind, s->name_of(e))) e.live = false;
 
     Record next(s->alloc);
     next.nameOff             = next.add(unitName);
@@ -684,6 +718,7 @@ Status publish_unit(ManifestStore* s, CookUnit& unit, u64 hostDigest, DiagSink c
         ro.nameLen = u32(name.size);
         ro.kind    = o.kind;
         ro.slot    = o.slot;
+        if (o.status.ok()) ro.key = o.key;
         next.outputs.push_back(ro);
     }
     r        = std::move(next);
@@ -816,15 +851,17 @@ bool copy_input_record(ManifestStore* s, StrView name, CookUnit* out, u64* hostD
     out->inputs.append(r->inputs.span());
     for (RecordOutput const& ro : r->outputs) {
         UnitOutput o;
-        o.nameOff   = ro.nameOff;
-        o.nameLen   = ro.nameLen;
-        o.kind      = ro.kind;
-        o.slot      = ro.slot;
+        o.nameOff = ro.nameOff;
+        o.nameLen = ro.nameLen;
+        o.kind    = ro.kind;
+        o.slot    = ro.slot;
+        // The record describes the entry only if both name the same artifact: after a crash between
+        // the manifest.dir and manifest.in writes they may come from different cooks.
         u32 const e = s->find_entry(ro.kind, r->str(ro.nameOff, ro.nameLen));
-        if (e == kInvalid || !s->entries[e].live)
+        if (e == kInvalid || !s->entries[e].live || !(s->entries[e].key == ro.key))
             o.status = make_status(Code::NotFound);
         else
-            o.key = s->entries[e].key;
+            o.key = ro.key;
         out->outputs.push_back(std::move(o));
     }
     *hostDigest = r->hostDigest;

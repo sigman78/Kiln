@@ -194,8 +194,8 @@ Status cook_and_publish(Provider& p, UnitDesc d, DiagSink const* diag, CookUnit*
     return kOk;
 }
 
-Status provider_prepare(void* user, AssetKind kind, StrView name, Allocator const* alloc, Vec<u8>* out,
-                        Hash128* key, DiagSink const* diag) noexcept {
+Status provider_prepare(void* user, AssetKind kind, StrView name, PrepareMode mode, Allocator const* alloc,
+                        Vec<u8>* out, Hash128* key, DiagSink const* diag) noexcept {
     auto* p = static_cast<Provider*>(user);
     UnitRequest r;
     KILN_TRY(resolve_request(*p, kind, name, &r, diag));
@@ -204,7 +204,9 @@ Status provider_prepare(void* user, AssetKind kind, StrView name, Allocator cons
     std::lock_guard<std::mutex> const lock(source_lock(*p, sourcePath));
     UnitDesc const d = unit_desc(*p, r.unitKind, r.owner, sourcePath, alloc, diag);
 
-    if (p->store && (is_fresh(p->store, r.owner) || record_is_current(p->store, d, p->hostDigest, false))) {
+    // Recheck: the host saw a change the session's earlier check cannot know of.
+    bool const fresh = p->store && mode == PrepareMode::Normal && is_fresh(p->store, r.owner);
+    if (p->store && (fresh || record_is_current(p->store, d, p->hostDigest, false))) {
         mark_fresh(p->store, r.owner, sourcePath);
         if (manifest_find(p->store, kind, name, key)) return kOk;
         // Fresh, but without this output (an image that failed): cook again and report why.

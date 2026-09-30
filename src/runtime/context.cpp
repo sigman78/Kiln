@@ -502,11 +502,19 @@ Adapter const* adapter(Context* ctx) noexcept { return ctx ? &ctx->adapter : nul
 
 namespace kiln {
 
+// A host's reload may follow an edit the provider has not seen: the load checks the sources again.
+// A reload after a manifest change does not: the store's writer checked them.
 void request_reload(Context* ctx, MeshHandle h) noexcept {
-    if (rt::Slot* s = rt::resolve(ctx, h.bits(), AssetKind::Mesh)) rt::reload_slot(ctx, *s);
+    if (rt::Slot* s = rt::resolve(ctx, h.bits(), AssetKind::Mesh)) {
+        s->recheck = true;
+        rt::reload_slot(ctx, *s);
+    }
 }
 void request_reload(Context* ctx, TextureHandle h) noexcept {
-    if (rt::Slot* s = rt::resolve(ctx, h.bits(), AssetKind::Texture)) rt::reload_slot(ctx, *s);
+    if (rt::Slot* s = rt::resolve(ctx, h.bits(), AssetKind::Texture)) {
+        s->recheck = true;
+        rt::reload_slot(ctx, *s);
+    }
 }
 
 } // namespace kiln
