@@ -69,14 +69,10 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
   `kDesktopTarget` (adds BC4 and BC1) and `kUncompressedTarget`; `target_profile(name)`;
   `kiln-cook --target compat|desktop|uncompressed`. The usage table picks the first format a usage
   prefers from the profile (a 1-channel mask: BC4, else BC5).
-- **Store profiles.** A store records its profile in `<store>/kiln-store.txt` (`StoreProfile`,
-  `read_store_profile`, `parse_store_profile`). `bind_store_profile()` writes it into an empty store;
-  `install_provider` (disk mode) and `kiln-cook` refuse a store of another profile, or one with
-  cooked files and no profile, with K3008 and write nothing. `create()` checks the store's profile
-  against the adapter and fails with K5018 when the adapter cannot sample one of its formats
-  (`ContextDesc::allowUnsampledFormats` makes it a warning). `diag_sink(ctx)` returns the context's
-  diagnostic sink. `unsampled_block_formats(adapter)` (`kiln/adapter.h`) reads the set an adapter
-  cannot sample.
+- `create()` checks the store's profile against the adapter and fails with K5018 when the adapter
+  cannot sample one of its formats (`ContextDesc::allowUnsampledFormats` makes it a warning).
+  `diag_sink(ctx)` returns the context's diagnostic sink. `unsampled_block_formats(adapter)`
+  (`kiln/adapter.h`) reads the set an adapter cannot sample.
 - Examples: every integration example cooks with the default profile into one `example-store`.
 - Examples: `example-store` and the viewer's stores are manifest stores (store-manifest phase A step
   7): the backends share the artifacts cooked by the first one to run. Delete a build tree's old

@@ -1076,9 +1076,14 @@ Status collect_store_garbage(StrView storeDir, bool dryRun, GcReportFn report, v
     Vec<u8> bytes(alloc, Tag::Cook);
     ManifestView view;
     Status const read = read_manifest(storeDir, alloc, &bytes, &view, diag);
-    if (read.failed() && read.code != Code::NotFound) {
+    // No manifest would make every artifact unreferenced: a lost manifest must not empty the store.
+    if (read.failed()) {
         lock.release();
-        return read;
+        if (read.code != Code::NotFound) return read;
+        return diagf(diag, make_status(Code::NotFound), 0, Severity::Error, storeDir, "gc",
+                     "the store has no %s, so nothing tells which files are in use; delete the directory to "
+                     "remove the store",
+                     kManifestFile);
     }
     struct Name {
         char c[26];
