@@ -795,7 +795,14 @@ Hash128 catalog_key(char const* store, AssetKind kind, StrView name) {
     char path[1024];
     (void)catalog_file_path(StrView(store), "compat"_sv, path, sizeof path);
     Vec<u8> bytes(default_allocator(), Tag::Test);
-    if (!read_file(path, bytes)) return {};
+    // On Windows an open can fail while a writer renames a new catalog over the file: try again.
+    bool read = false;
+    for (int i = 0; i < 50 && !read; ++i) {
+        bytes.clear();
+        read = read_file(path, bytes);
+        if (!read) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    if (!read) return {};
     Result<CatalogView> v = CatalogView::open(bytes.span());
     CatalogEntry e;
     return v.ok() && v->find(kind, name, &e) ? e.key : Hash128{};
