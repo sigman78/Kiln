@@ -942,7 +942,10 @@ KILN_TEST(CatalogProvider, SourceEditsReachLoadedAssets) {
     KILN_CHECK(changed);
     KILN_CHECK_EQ(version(p.c.ctx, m), u32(2));
     Hash128 const after = catalog_key(store, AssetKind::Mesh, "external_uri.gltf"_sv);
-    KILN_CHECK(!after.is_zero() && !(after == before));
+    char hb[33], ha[33];
+    hash128_hex(before, hb);
+    hash128_hex(after, ha);
+    KILN_CHECK_MSG(!after.is_zero() && !(after == before), "before %s, after %s", hb, ha);
 }
 
 // ---------------------------------------------------------------------------
