@@ -1,5 +1,5 @@
 // tests/test_runtime.cpp — runtime (kiln/assets.h) through the null adapter.
-// Tests that leave ContextDesc::storeDir empty use golden_store_dir(), the goldens as a catalog store.
+// Tests that leave ContextDesc::storeDir empty use golden_store_dir(), the goldens as a manifest store.
 // RuntimePanic.* cases abort on purpose; they run only when selected by exact name (own CTest entries).
 #include "kiln_test.h"
 
@@ -691,7 +691,7 @@ struct FakeProvider {
     Vec<u8> bytes{default_allocator(), Tag::Test};
 
     /// Cooks `virtual/cube`, has no source for `virtual/none`, and leaves every other name to the
-    /// catalog.
+    /// manifest.
     static Status prepare(void* user, AssetKind kind, StrView path, Allocator const* alloc, Vec<u8>* out,
                           Hash128*, DiagSink const* diag) {
         auto* self = static_cast<FakeProvider*>(user);
@@ -723,7 +723,7 @@ KILN_TEST(Runtime, CookProviderOnMiss) {
         Span<u8 const> got = null_adapter_payload(rt.na, gpu_object(rt.ctx, m));
         KILN_CHECK(got.size == decoded.size() && bytes_equal(got.data, decoded.data(), got.size));
     }
-    // A catalog hit asks the provider too; with no answer, the catalog entry is used.
+    // A manifest hit asks the provider too; with no answer, the manifest entry is used.
     MeshHandle hit = request_mesh(rt.ctx, "mesh/Box");
     KILN_REQUIRE(rt.pump_until([&] { return is_ready(rt.ctx, hit); }));
     KILN_CHECK_EQ(fp.calls.load(), 3u);
@@ -978,7 +978,7 @@ KILN_TEST(Runtime, SteadyStateNoAllocation) {
 
 namespace {
 
-/// A scratch catalog store `<samples>/reload_<name>`; the tests replace the files of `mesh/thing`
+/// A scratch manifest store `<samples>/reload_<name>`; the tests replace the files of `mesh/thing`
 /// and `ktx2/thing` in it.
 struct ReloadStore {
     test::HandStore hand;
@@ -1537,7 +1537,7 @@ KILN_TEST(RuntimePanic, WaitNotSelfSubmitting) {
 
 namespace {
 
-/// A scratch catalog store with KTX2 corpus files under short names: sky (cube), layers (array
+/// A scratch manifest store with KTX2 corpus files under short names: sky (cube), layers (array
 /// of 7), vol (volume) and flat (2D).
 struct ShapeStore {
     test::HandStore hand;
@@ -1785,7 +1785,7 @@ namespace {
 bool no_bc5(void*, Format f, FormatUsage) { return f != Format::BC5_UNORM; }
 } // namespace
 
-// create() checks the catalog's profile against the adapter once (docs/design/target-profiles.md).
+// create() checks the manifest's profile against the adapter once (docs/design/target-profiles.md).
 KILN_TEST(Runtime, CreateChecksStoreProfile) {
     test::HandStore store;
     if (!store.init("runtime_store_profile")) return;

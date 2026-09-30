@@ -1,5 +1,5 @@
 // kiln/cook/manifest.h — build keys of cooked artifacts and the manifest writer
-// (docs/design/store-catalog.md). kiln_cook only.
+// (docs/design/store-manifest.md). kiln_cook only.
 #pragma once
 
 #include "kiln/containers.h"
@@ -56,7 +56,7 @@ struct ManifestDesc {
 };
 
 /// `<store>/manifest.in`: the input records of every profile, cook only (never shipped). Its format
-/// is the cook's own (docs/design/store-catalog.md); a damaged one only costs time.
+/// is the cook's own (docs/design/store-manifest.md); a damaged one only costs time.
 inline constexpr char kInputRecordsFile[] = "manifest.in";
 /// `<store>/manifest.lock`: held by the one process that writes the store.
 inline constexpr char kStoreLockFile[] = "manifest.lock";

@@ -88,7 +88,7 @@ struct ContextDesc {
     Adapter const* adapter = nullptr; ///< required
 
     /// The store root (read-only for the runtime): `manifest.dir`, which lists the entries of each
-    /// target profile, and the artifacts (docs/design/store-catalog.md).
+    /// target profile, and the artifacts (docs/design/store-manifest.md).
     StrView storeDir       = {};
     Span<Root const> roots = {}; ///< where the cook provider looks for sources (dev)
     /// The target profile whose entries the context reads from the manifest (check_profile_name()).
@@ -376,7 +376,7 @@ enum RuntimeDiagCode : u32 {
     kDiagBadAssetName          = 5013, ///< a request, registration or root breaks the name rules
     kDiagTextureShapeMismatch  = 5017, ///< the cooked texture's shape is not the requested one
     kDiagStoreProfileUnsampled = 5018, ///< the manifest's profile has formats the adapter cannot sample
-    kDiagCatalogMissing = 5019, ///< a request missed and the manifest (or the profile in it) is missing
+    kDiagManifestMissing = 5019, ///< a request missed and the manifest (or the profile in it) is missing
 };
 
 } // namespace kiln

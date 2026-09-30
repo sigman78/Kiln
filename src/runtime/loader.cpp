@@ -116,7 +116,7 @@ Status prepare_source(Context* ctx, Slot& s, Source& src) noexcept {
         }
         return s.jobStatus = st;
     }
-    // Neither bytes nor a key: the catalog entry chosen at dispatch stands (or the miss).
+    // Neither bytes nor a key: the manifest entry chosen at dispatch stands (or the miss).
     if (!key.is_zero()) {
         s.jobKey      = key;
         s.jobKeyValid = true;
@@ -131,7 +131,7 @@ Status prepare_source(Context* ctx, Slot& s, Source& src) noexcept {
     return kOk;
 }
 
-/// Resolve the slot's source: the artifact the catalog named at dispatch, or the one the cook
+/// Resolve the slot's source: the artifact the manifest named at dispatch, or the one the cook
 /// provider names (the meta stage asks it first when one is installed).
 Status open_source(Context* ctx, Slot& s, Source& src, bool allowCook) noexcept {
     if (s.cookedValid || s.source == SourceKind::Memory) {
@@ -145,11 +145,11 @@ Status open_source(Context* ctx, Slot& s, Source& src, bool allowCook) noexcept 
         if (src.memory) return kOk;
     }
     if (!s.jobKeyValid) {
-        if (s.jobCatalogPresent)
+        if (s.jobManifestPresent)
             note(s.capture, "not in profile '%s' of the store's manifest", ctx->profile);
         else
             note(s.capture, "the store has no manifest, or no profile '%s' in it", ctx->profile);
-        s.jobDiag          = s.jobCatalogPresent ? kDiagStoreMiss : kDiagCatalogMissing;
+        s.jobDiag          = s.jobManifestPresent ? kDiagStoreMiss : kDiagManifestMissing;
         return s.jobStatus = make_status(Code::NotFound);
     }
 

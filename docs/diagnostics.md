@@ -149,7 +149,7 @@ under K2002 when the texture cooker wraps them. Where a code is emitted with mor
 
 Source: `kiln::cook::SettingsDiagCode` in `include/kiln/cook/settings.h`. Emitted by
 `resolve_texture()` and `resolve_mesh()` in `src/cook/settings.cpp`. K3008-K3010 are about the
-store: K3009 and K3010 are `kiln::cook::CatalogStoreDiagCode` in `include/kiln/cook/catalog.h`. Where a code is emitted with
+store: K3009 and K3010 are `kiln::cook::StoreDiagCode` in `include/kiln/cook/manifest.h`. Where a code is emitted with
 more than one `Status`/`Severity` pair, both are listed; which one applies depends on which
 check failed.
 
@@ -231,7 +231,7 @@ validate; those are captured and folded into K5002/K5003 (§3.6).
 Source: `kiln::ManifestDiagCode` in `include/kiln/manifest.h`. Emitted at `Severity::Error` by
 `ManifestView::open()` (`src/formats/manifest_read.cpp`), which checks `manifest.dir` in this
 order, and K4205/K4207 also by the cook's `write_manifest()` (InvalidArgument). The format is in
-`docs/design/store-catalog.md`. The manifest is written whole by the cook; every one of these means
+`docs/design/store-manifest.md`. The manifest is written whole by the cook; every one of these means
 a damaged file or a writer bug: delete `manifest.dir` and cook the store again. (The cook's
 `manifest.in` has no codes: a damaged one is dropped with an info log.)
 
@@ -281,7 +281,7 @@ also panic instead of reaching the `DiagSink` in one sub-case (see its row).
 | K5016 | `kDiagSourceCase` | `InvalidArgument` | Error | The cook provider (`include/kiln/cook/provider.h`) found the source file, but its name on disk differs from the requested name in case (checked on Windows only, via `cook::source_case_matches`; on case-sensitive systems a wrong-case name is just a store miss, K5001). Folded into K5002. | Fix the requested name's case to match the file on disk. |
 | K5017 | `kDiagTextureShapeMismatch` | ValidationFailed | Error | The cooked texture's shape (2D, cube, array; a cube array is unsupported) is not the one the request expects (`RequestOptions::textureShape`, first request wins). Checked at the meta stage; a hot reload that changes the shape fails with K5010 instead. | Request the texture with its shape, or cook it with the shape the host expects (`docs/design/texture-shapes.md`). |
 | K5018 | `kDiagStoreProfileUnsampled` | Unsupported | Error (Warning with `allowUnsampledFormats`) | At `create()`: the context's profile in the store's manifest has block formats the adapter cannot sample (`supports_format`). `create()` fails unless `ContextDesc::allowUnsampledFormats` is set; then each such asset fails on its own (K5004). | Cook the store with a profile the adapter samples (`compat` covers every example backend), or define a narrower host profile. |
-| K5019 | `kDiagCatalogMissing` | NotFound, InvalidArgument | Error | A request missed, and the store has no `manifest.dir` or no entries for `ContextDesc::profile` in it, and no cook provider filled the miss. At `create()`: the manifest cannot be read. A malformed manifest fails `create()` with its K42xx. | Cook the store for this profile (`kiln-cook`, or a cook provider in disk mode), or set `ContextDesc::profile` to the profile the store was cooked for. |
+| K5019 | `kDiagManifestMissing` | NotFound, InvalidArgument | Error | A request missed, and the store has no `manifest.dir` or no entries for `ContextDesc::profile` in it, and no cook provider filled the miss. At `create()`: the manifest cannot be read. A malformed manifest fails `create()` with its K42xx. | Cook the store for this profile (`kiln-cook`, or a cook provider in disk mode), or set `ContextDesc::profile` to the profile the store was cooked for. |
 
 `kDiagCookOnMissFailed` (K5002) and `kDiagAssetLoadFailed` (K5003) are the two codes that can carry
 a nested diagnostic: the worker-side reader (`.mesh`/KTX2, K4xxx) or cook provider (K1xxx-K3xxx, or

@@ -135,14 +135,14 @@ struct Slot {
     CookProvider provider; ///< snapshot at dispatch
     char path[kMaxPathLen] = {};
     u32 pathLen            = 0;
-    Hash128 jobKey;                 ///< the artifact to load, from the catalog at dispatch or the provider
-    bool jobKeyValid       = false; ///< false: the name missed the catalog
-    bool jobCatalogPresent = false; ///< Context::catalogPresent at dispatch
+    Hash128 jobKey;                  ///< the artifact to load, from the manifest at dispatch or the provider
+    bool jobKeyValid        = false; ///< false: the name missed the manifest
+    bool jobManifestPresent = false; ///< Context::manifestPresent at dispatch
 
     // --- keys (pump thread) ---------------------------------------------------------
-    bool catalogCheck = false; ///< a new catalog came during the load: compare keys when it settles
-    Hash128 key;               ///< the build key `cur` came from, or that a failed load tried
-    bool keyValid = false;     ///< false: no artifact (provider bytes, a miss) or not loaded
+    bool manifestCheck = false; ///< a new manifest came during the load: compare keys when it settles
+    Hash128 key;                ///< the build key `cur` came from, or that a failed load tried
+    bool keyValid = false;      ///< false: no artifact (provider bytes, a miss) or not loaded
 
     // --- metadata (docs/design/hot-reload.md) ----------------------------------------
     // Queries answer from `cur` once Ready. The meta stage (worker) writes only `next`;
@@ -217,15 +217,15 @@ struct Context {
     usize storeDirLen = 0;
     char* profile     = nullptr; ///< owned copy of ContextDesc::profile
     usize profileLen  = 0;
-    // Pump thread: the manifest in memory and the profile's part of it (its catalog). The store
+    // Pump thread: the manifest in memory and the profile's entries in it (`manifest`). The store
     // poller swaps in a new one.
     Vec<u8> manifestBytes; ///< empty: no manifest file (yet)
-    ManifestProfile catalog;
-    bool catalogPresent = false;   ///< false: the manifest has no entries for the profile (or no manifest)
-    Root* roots         = nullptr; ///< owned copies of ContextDesc::roots
-    u32 rootCount       = 0;
-    char* rootChars     = nullptr;
-    usize rootCharsLen  = 0;
+    ManifestProfile manifest;
+    bool manifestPresent = false;   ///< false: the manifest has no entries for the profile (or no manifest)
+    Root* roots          = nullptr; ///< owned copies of ContextDesc::roots
+    u32 rootCount        = 0;
+    char* rootChars      = nullptr;
+    usize rootCharsLen   = 0;
 
     u32 maxAssets = 0, maxGroups = 0, maxEvents = 0, maxIoJobs = 0;
     u64 ioBudget = 0;
@@ -339,9 +339,9 @@ u64 texture_layout(ktx2::TextureDesc const& d, u64 pitchAlign, u64 offsetAlign, 
                    u64* outPitch) noexcept;
 
 // --- context.cpp ------------------------------------------------------------------------
-/// A reload starts and no store poller runs: read the catalog again, and use it if it changed (IO
+/// A reload starts and no store poller runs: read the manifest again, and use it if it changed (IO
 /// on the pump thread; reloads are a dev action). A malformed one is reported and not used.
-void refresh_catalog(Context* ctx) noexcept;
+void refresh_manifest(Context* ctx) noexcept;
 
 // --- pump.cpp -------------------------------------------------------------------------
 void push_event(Context* ctx, EventKind kind, AssetKind asset, u64 bits, u32 version, Status st) noexcept;
@@ -351,9 +351,9 @@ PumpStats pump_impl(Context* ctx, PumpOptions const& opt, bool keepEvents) noexc
 /// request_reload(): start a reload of a settled file-source slot, or remember it
 /// (reloadPending) until the slot settles. Memory sources: K5012.
 void reload_slot(Context* ctx, Slot& s) noexcept;
-/// True if the catalog in use has an entry for the settled file-source `s` that names another
+/// True if the manifest in use has an entry for the settled file-source `s` that names another
 /// artifact than the one it loaded or tried (or it had none).
-[[nodiscard]] bool catalog_names_other(Context const* ctx, Slot const& s) noexcept;
+[[nodiscard]] bool manifest_names_other(Context const* ctx, Slot const& s) noexcept;
 /// Poll non-self-submitting placeholder uploads (create() and pump()).
 void poll_placeholders(Context* ctx) noexcept;
 /// Poll abandoned uploads; a completed one is retired.
@@ -362,13 +362,13 @@ void poll_orphans(Context* ctx) noexcept;
 void process_retired(Context* ctx) noexcept;
 
 // --- watch.cpp (store poller; stubs without KILN_HOT_RELOAD) ----------------------------
-/// create(): start the catalog poller if `desc.watchStore`; K5011 (Warning) if it cannot run.
+/// create(): start the manifest poller if `desc.watchStore`; K5011 (Warning) if it cannot run.
 void watch_start(Context* ctx, HotReloadDesc const& desc) noexcept;
 /// destroy(): stop and join the poller. Safe when not started.
 void watch_stop(Context* ctx) noexcept;
 /// destroy(), after the jobs drained: free the poller's state (the poller is joined).
 void watch_free(Context* ctx) noexcept;
-/// pump(): swap in a catalog the poller loaded and reload the assets whose key changed.
+/// pump(): swap in a manifest the poller loaded and reload the assets whose key changed.
 void watch_drain(Context* ctx) noexcept;
 
 } // namespace rt

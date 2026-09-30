@@ -1,5 +1,5 @@
 // kiln/manifest.h — XXH3-128 hashes and the store manifest, format 0.1: for each target profile, a
-// sorted map from asset names to the build keys of their artifacts (docs/design/store-catalog.md).
+// sorted map from asset names to the build keys of their artifacts (docs/design/store-manifest.md).
 #pragma once
 
 #include "kiln/assets.h"

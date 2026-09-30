@@ -8,7 +8,7 @@ check fails `create()`, with an escape hatch; the full-BC profile stays `desktop
 its profile, what happens on a mismatch, and what replaces the per-adapter format sets and the
 cook-time fallback chain.
 **Related:** [bcn-encoding.md](bcn-encoding.md), [settings.md](settings.md),
-[store-catalog.md](store-catalog.md), [adapter.md](adapter.md).
+[store-manifest.md](store-manifest.md), [adapter.md](adapter.md).
 
 ## Summary
 
@@ -106,8 +106,8 @@ struct TargetProfile {
 
 ### 3. A store belongs to one profile
 
-*Superseded (2026-09-30):* the store catalog (`store-catalog.md`) records the profile in each
-catalog, one per profile; `kiln-store.txt` and `bind_store_profile()` are gone. K3008 is now a
+*Superseded (2026-09-30):* the store manifest (`store-manifest.md`) records the profile in each
+manifest, one per profile; `kiln-store.txt` and `bind_store_profile()` are gone. K3008 is now a
 provider whose target is not the context's profile. The text below is the first version.
 
 - The store directory holds a descriptor, `kiln-store.txt`, written by the first cook into an
@@ -124,8 +124,8 @@ provider whose target is not the context's profile. The text below is the first 
     differ.
   - `formats` lists the VkFormat values the profile may write, so the runtime can check them
     without the cook library.
-  - Text, one key per line: the runtime parses it with a few lines of code. The store catalog
-    (`store-catalog.md`) can take it over later.
+  - Text, one key per line: the runtime parses it with a few lines of code. The store manifest
+    (`store-manifest.md`) can take it over later.
 - **Mismatch:** a cook provider (`install_provider`) or a `kiln-cook` run whose profile hash
   differs from the descriptor's does not write to the store. `install_provider` returns
   `InvalidArgument` with a new diagnostic (K3008, "store cooked for profile X, this cook is Y");

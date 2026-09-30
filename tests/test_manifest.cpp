@@ -1,5 +1,5 @@
-// tests/test_catalog.cpp — build keys, cook units, the manifest format, store writers, the runtime,
-// the provider and kiln-cook on a store (docs/design/store-catalog.md); cook-only.
+// tests/test_manifest.cpp — build keys, cook units, the manifest format, store writers, the runtime,
+// the provider and kiln-cook on a store (docs/design/store-manifest.md); cook-only.
 #include "kiln_test.h"
 
 #include "../src/cook/manifest_store.h"
@@ -471,9 +471,9 @@ bool read_file(char const* path, Vec<u8>& out) {
 
 } // namespace
 
-KILN_TEST(CatalogStore, PublishCommitReopen) {
+KILN_TEST(ManifestStore, PublishCommitReopen) {
     char dir[1024];
-    fresh_dir("catalog-store", dir, sizeof dir);
+    fresh_dir("manifest-store", dir, sizeof dir);
     CookUnit unit(default_allocator());
     KILN_REQUIRE(cook_corpus("pbr_textures.glb", AssetKind::Mesh, &unit).ok());
     KILN_REQUIRE(unit.outputs.size() > usize(1));
@@ -532,9 +532,9 @@ KILN_TEST(CatalogStore, PublishCommitReopen) {
     close_manifest_store(s);
 }
 
-KILN_TEST(CatalogStore, OneWriterAtATime) {
+KILN_TEST(ManifestStore, OneWriterAtATime) {
     char dir[1024];
-    fresh_dir("catalog-lock", dir, sizeof dir);
+    fresh_dir("manifest-lock", dir, sizeof dir);
     ManifestStore* a = nullptr;
     ManifestStore* b = nullptr;
     KILN_REQUIRE(open_store(dir, &a).ok());
@@ -549,9 +549,9 @@ KILN_TEST(CatalogStore, OneWriterAtATime) {
     close_manifest_store(b);
 }
 
-KILN_TEST(CatalogStore, OtherBytesForAKeyAreReported) {
+KILN_TEST(ManifestStore, OtherBytesForAKeyAreReported) {
     char dir[1024];
-    fresh_dir("catalog-nondet", dir, sizeof dir);
+    fresh_dir("manifest-nondet", dir, sizeof dir);
     CookUnit unit(default_allocator());
     KILN_REQUIRE(cook_corpus("cube_basic.glb", AssetKind::Mesh, &unit).ok());
     ManifestStore* s = nullptr;
@@ -581,9 +581,9 @@ KILN_TEST(CatalogStore, OtherBytesForAKeyAreReported) {
     close_manifest_store(s);
 }
 
-KILN_TEST(CatalogStore, OutputsTheCookNoLongerMakesLeave) {
+KILN_TEST(ManifestStore, OutputsTheCookNoLongerMakesLeave) {
     char dir[1024];
-    fresh_dir("catalog-drop", dir, sizeof dir);
+    fresh_dir("manifest-drop", dir, sizeof dir);
     CookUnit unit(default_allocator());
     KILN_REQUIRE(cook_corpus("pbr_textures.glb", AssetKind::Mesh, &unit).ok());
     KILN_REQUIRE(unit.outputs.size() > usize(2));
@@ -612,10 +612,10 @@ KILN_TEST(CatalogStore, OutputsTheCookNoLongerMakesLeave) {
     KILN_CHECK_EQ(v.size(), u64(unit.outputs.size() - 2));
 }
 
-KILN_TEST(CatalogStore, SurvivesLostRecords) {
+KILN_TEST(ManifestStore, SurvivesLostRecords) {
     char dir[1024];
     ManifestStore* s = nullptr;
-    fresh_dir("catalog-lost", dir, sizeof dir);
+    fresh_dir("manifest-lost", dir, sizeof dir);
     CookUnit unit(default_allocator());
     KILN_REQUIRE(cook_corpus("cube_basic.glb", AssetKind::Mesh, &unit).ok());
     KILN_REQUIRE(open_store(dir, &s).ok());
@@ -654,15 +654,15 @@ struct FirstCode {
 };
 
 /// A null adapter and a context over the store `dir` (profile `profile`).
-struct CatalogContext {
+struct ManifestContext {
     Adapter adapter{};
     NullAdapter* na = nullptr;
     Context* ctx    = nullptr;
     FirstCode diag;
 
-    CatalogContext(CatalogContext const&)            = delete;
-    CatalogContext& operator=(CatalogContext const&) = delete;
-    CatalogContext() noexcept                        = default;
+    ManifestContext(ManifestContext const&)            = delete;
+    ManifestContext& operator=(ManifestContext const&) = delete;
+    ManifestContext() noexcept                         = default;
 
     Status init(char const* dir, bool hotReload = false, StrView profile = "compat") noexcept {
         Result<NullAdapter*> n = null_adapter_create({}, &adapter);
@@ -679,7 +679,7 @@ struct CatalogContext {
         ctx = *c;
         return kOk;
     }
-    ~CatalogContext() noexcept {
+    ~ManifestContext() noexcept {
         if (ctx) destroy(ctx);
         if (na) null_adapter_destroy(na);
     }
@@ -720,14 +720,14 @@ void publish(char const* dir, char const* source, char const* name, CookUnit* ou
 
 } // namespace
 
-KILN_TEST(CatalogRuntime, LoadsArtifactsByName) {
+KILN_TEST(ManifestRuntime, LoadsArtifactsByName) {
     char dir[1024];
-    fresh_dir("catalog-rt", dir, sizeof dir);
+    fresh_dir("manifest-rt", dir, sizeof dir);
     CookUnit unit(default_allocator());
     publish(dir, "pbr_textures.glb", "pbr_textures.glb", &unit);
     KILN_REQUIRE(unit.outputs.size() > usize(1));
 
-    CatalogContext c;
+    ManifestContext c;
     KILN_REQUIRE(c.init(dir).ok());
     KILN_CHECK(store_profile(c.ctx) == "compat"_sv);
     MeshHandle const m = request_mesh(c.ctx, "pbr_textures.glb"_sv);
@@ -750,15 +750,15 @@ KILN_TEST(CatalogRuntime, LoadsArtifactsByName) {
     KILN_CHECK_EQ(c.diag.code, u32(kDiagStoreMiss));
 }
 
-KILN_TEST(CatalogRuntime, MissingAndBrokenManifests) {
+KILN_TEST(ManifestRuntime, MissingAndBrokenManifests) {
     char dir[1024];
-    fresh_dir("catalog-rt-none", dir, sizeof dir);
+    fresh_dir("manifest-rt-none", dir, sizeof dir);
     {
-        CatalogContext c;
+        ManifestContext c;
         KILN_REQUIRE(c.init(dir).ok()); // no manifest yet: a provider may write one
         MeshHandle const m = request_mesh(c.ctx, "a.glb"_sv);
         KILN_CHECK(settle(c.ctx, m) == State::Failed);
-        KILN_CHECK_EQ(c.diag.code, u32(kDiagCatalogMissing));
+        KILN_CHECK_EQ(c.diag.code, u32(kDiagManifestMissing));
     }
     std::error_code ec;
     std::filesystem::create_directories(dir, ec);
@@ -768,17 +768,17 @@ KILN_TEST(CatalogRuntime, MissingAndBrokenManifests) {
     KILN_REQUIRE(f != nullptr);
     std::fputs("not a manifest", f);
     std::fclose(f);
-    CatalogContext c;
+    ManifestContext c;
     KILN_CHECK(c.init(dir).code == Code::Corrupt);
     KILN_CHECK_EQ(c.diag.code, u32(kDiagManifestMagic));
 }
 
-KILN_TEST(CatalogRuntime, HotReloadFollowsTheCatalog) {
+KILN_TEST(ManifestRuntime, HotReloadFollowsTheManifest) {
     char dir[1024];
-    fresh_dir("catalog-rt-reload", dir, sizeof dir);
+    fresh_dir("manifest-rt-reload", dir, sizeof dir);
     publish(dir, "cube_basic.glb", "model.glb");
 
-    CatalogContext c;
+    ManifestContext c;
     KILN_REQUIRE(c.init(dir, true).ok());
     MeshHandle const m = request_mesh(c.ctx, "model.glb"_sv);
     KILN_REQUIRE(settle(c.ctx, m) == State::Ready);
@@ -821,7 +821,7 @@ struct PolicyCount {
 
 /// A context with a provider over the root `sources`.
 struct ProviderContext {
-    CatalogContext c;
+    ManifestContext c;
     Root root{};
 
     Status init(char const* store, char const* sources, cook::ProviderDesc desc, bool hotReload = false) {
@@ -843,7 +843,7 @@ struct ProviderContext {
 };
 
 /// The key of `name` in profile `profile` of the store's manifest on disk; zero if absent.
-Hash128 catalog_key(char const* store, AssetKind kind, StrView name, StrView profile = "compat") {
+Hash128 manifest_key(char const* store, AssetKind kind, StrView name, StrView profile = "compat") {
     char path[1024];
     (void)manifest_file_path(StrView(store), path, sizeof path);
     Vec<u8> bytes(default_allocator(), Tag::Test);
@@ -890,10 +890,10 @@ void edit_first_byte(char const* path, bool keepTime, int bit = 1) {
 
 } // namespace
 
-KILN_TEST(CatalogProvider, ChecksOncePerSessionAndCooksOnlyWhatChanged) {
+KILN_TEST(ManifestProvider, ChecksOncePerSessionAndCooksOnlyWhatChanged) {
     char store[1024], sources[1024], bin[1100];
-    fresh_dir("catalog-prov-store", store, sizeof store);
-    fresh_dir("catalog-prov-src", sources, sizeof sources);
+    fresh_dir("manifest-prov-store", store, sizeof store);
+    fresh_dir("manifest-prov-src", sources, sizeof sources);
     copy_sources(sources);
     format(bin, sizeof bin, "%s/external_uri.bin", sources);
     PolicyCount count;
@@ -907,7 +907,7 @@ KILN_TEST(CatalogProvider, ChecksOncePerSessionAndCooksOnlyWhatChanged) {
         KILN_REQUIRE(settle(p.c.ctx, m) == State::Ready);
         KILN_CHECK(count.meshes.load() > 0u);
     }
-    Hash128 const k1 = catalog_key(store, AssetKind::Mesh, "external_uri.gltf"_sv);
+    Hash128 const k1 = manifest_key(store, AssetKind::Mesh, "external_uri.gltf"_sv);
     KILN_REQUIRE(!k1.is_zero());
 
     // Session 2: nothing changed; the size-and-time check passes without a cook.
@@ -931,7 +931,7 @@ KILN_TEST(CatalogProvider, ChecksOncePerSessionAndCooksOnlyWhatChanged) {
         KILN_REQUIRE(settle(p.c.ctx, m) == State::Ready);
         KILN_CHECK_EQ(count.meshes.load(), 1u); // one resolution, no cook
     }
-    KILN_CHECK(catalog_key(store, AssetKind::Mesh, "external_uri.gltf"_sv) == k1);
+    KILN_CHECK(manifest_key(store, AssetKind::Mesh, "external_uri.gltf"_sv) == k1);
 
     // Session 4: the buffer's time moves: a re-cook with the new content.
     edit_first_byte(bin, false, 2);
@@ -943,14 +943,14 @@ KILN_TEST(CatalogProvider, ChecksOncePerSessionAndCooksOnlyWhatChanged) {
         KILN_REQUIRE(settle(p.c.ctx, m) == State::Ready);
         KILN_CHECK(count.meshes.load() > 0u);
     }
-    Hash128 const k4 = catalog_key(store, AssetKind::Mesh, "external_uri.gltf"_sv);
+    Hash128 const k4 = manifest_key(store, AssetKind::Mesh, "external_uri.gltf"_sv);
     KILN_CHECK(!k4.is_zero() && !(k4 == k1));
 }
 
-KILN_TEST(CatalogProvider, ProfileAndLock) {
+KILN_TEST(ManifestProvider, ProfileAndLock) {
     char store[1024], sources[1024];
-    fresh_dir("catalog-prov-lock", store, sizeof store);
-    fresh_dir("catalog-prov-lock-src", sources, sizeof sources);
+    fresh_dir("manifest-prov-lock", store, sizeof store);
+    fresh_dir("manifest-prov-lock-src", sources, sizeof sources);
     copy_sources(sources);
 
     ProviderContext wrongProfile;
@@ -971,10 +971,10 @@ KILN_TEST(CatalogProvider, ProfileAndLock) {
     KILN_CHECK(settle(memory.c.ctx, m) == State::Ready);
 }
 
-KILN_TEST(CatalogProvider, SourceEditsReachLoadedAssets) {
+KILN_TEST(ManifestProvider, SourceEditsReachLoadedAssets) {
     char store[1024], sources[1024], bin[1100];
-    fresh_dir("catalog-prov-hot", store, sizeof store);
-    fresh_dir("catalog-prov-hot-src", sources, sizeof sources);
+    fresh_dir("manifest-prov-hot", store, sizeof store);
+    fresh_dir("manifest-prov-hot-src", sources, sizeof sources);
     copy_sources(sources);
     format(bin, sizeof bin, "%s/external_uri.bin", sources);
 
@@ -995,7 +995,7 @@ KILN_TEST(CatalogProvider, SourceEditsReachLoadedAssets) {
     };
     pump_for(600);
     KILN_CHECK_EQ(changes, 0u);
-    Hash128 const before = catalog_key(store, AssetKind::Mesh, "external_uri.gltf"_sv);
+    Hash128 const before = manifest_key(store, AssetKind::Mesh, "external_uri.gltf"_sv);
     KILN_REQUIRE(!before.is_zero());
 
     edit_first_byte(bin, false);
@@ -1003,7 +1003,7 @@ KILN_TEST(CatalogProvider, SourceEditsReachLoadedAssets) {
         pump_for(100);
     KILN_CHECK_EQ(changes, 1u);
     KILN_CHECK_EQ(version(p.c.ctx, m), u32(2));
-    Hash128 const after = catalog_key(store, AssetKind::Mesh, "external_uri.gltf"_sv);
+    Hash128 const after = manifest_key(store, AssetKind::Mesh, "external_uri.gltf"_sv);
     char hb[33], ha[33];
     hash128_hex(before, hb);
     hash128_hex(after, ha);
@@ -1040,16 +1040,16 @@ u64 recorded_mtime(char const* store, StrView name, InputRole role) {
 
 } // namespace
 
-KILN_TEST(CatalogCli, CooksOnlyWhatChangedAndVerifies) {
+KILN_TEST(ManifestCli, CooksOnlyWhatChangedAndVerifies) {
     char store[1024], sources[1024], bin[1100];
-    fresh_dir("catalog-cli-store", store, sizeof store);
-    fresh_dir("catalog-cli-src", sources, sizeof sources);
+    fresh_dir("manifest-cli-store", store, sizeof store);
+    fresh_dir("manifest-cli-src", sources, sizeof sources);
     copy_sources(sources);
     format(bin, sizeof bin, "%s/external_uri.bin", sources);
 
     KILN_REQUIRE_EQ(run_cook(sources, store), 0);
-    Hash128 const mesh = catalog_key(store, AssetKind::Mesh, "external_uri.gltf"_sv);
-    Hash128 const tex  = catalog_key(store, AssetKind::Texture, "external_uri_albedo.png"_sv);
+    Hash128 const mesh = manifest_key(store, AssetKind::Mesh, "external_uri.gltf"_sv);
+    Hash128 const tex  = manifest_key(store, AssetKind::Texture, "external_uri_albedo.png"_sv);
     KILN_REQUIRE(!mesh.is_zero() && !tex.is_zero());
     char path[1024];
     (void)artifact_file_path(StrView(store), mesh, path, sizeof path);
@@ -1060,35 +1060,35 @@ KILN_TEST(CatalogCli, CooksOnlyWhatChangedAndVerifies) {
     KILN_REQUIRE_EQ(run_cook(sources, store), 0);
     edit_first_byte(bin, true);
     KILN_REQUIRE_EQ(run_cook(sources, store), 0);
-    KILN_CHECK(catalog_key(store, AssetKind::Mesh, "external_uri.gltf"_sv) == mesh);
+    KILN_CHECK(manifest_key(store, AssetKind::Mesh, "external_uri.gltf"_sv) == mesh);
     KILN_REQUIRE_EQ(run_cook(sources, store, "--verify"), 0);
-    KILN_CHECK(!(catalog_key(store, AssetKind::Mesh, "external_uri.gltf"_sv) == mesh));
-    KILN_CHECK(catalog_key(store, AssetKind::Texture, "external_uri_albedo.png"_sv) == tex);
+    KILN_CHECK(!(manifest_key(store, AssetKind::Mesh, "external_uri.gltf"_sv) == mesh));
+    KILN_CHECK(manifest_key(store, AssetKind::Texture, "external_uri_albedo.png"_sv) == tex);
 
     // A provider uses what kiln-cook wrote without cooking: an edit it cannot see stays unseen.
-    Hash128 const verified = catalog_key(store, AssetKind::Mesh, "external_uri.gltf"_sv);
+    Hash128 const verified = manifest_key(store, AssetKind::Mesh, "external_uri.gltf"_sv);
     edit_first_byte(bin, true, 2);
     ProviderContext p;
     KILN_REQUIRE(p.init(store, sources, {}).ok());
     MeshHandle const m = request_mesh(p.c.ctx, "external_uri.gltf"_sv);
     KILN_REQUIRE(settle(p.c.ctx, m) == State::Ready);
-    KILN_CHECK(catalog_key(store, AssetKind::Mesh, "external_uri.gltf"_sv) == verified);
+    KILN_CHECK(manifest_key(store, AssetKind::Mesh, "external_uri.gltf"_sv) == verified);
 }
 
-KILN_TEST(CatalogCli, LostManifestOrArtifactCooksAgain) {
+KILN_TEST(ManifestCli, LostManifestOrArtifactCooksAgain) {
     char store[1024], sources[1024], path[1100];
-    fresh_dir("catalog-cli-lost", store, sizeof store);
-    fresh_dir("catalog-cli-lost-src", sources, sizeof sources);
+    fresh_dir("manifest-cli-lost", store, sizeof store);
+    fresh_dir("manifest-cli-lost-src", sources, sizeof sources);
     copy_sources(sources);
     KILN_REQUIRE_EQ(run_cook(sources, store), 0);
-    Hash128 const mesh = catalog_key(store, AssetKind::Mesh, "external_uri.gltf"_sv);
+    Hash128 const mesh = manifest_key(store, AssetKind::Mesh, "external_uri.gltf"_sv);
     KILN_REQUIRE(!mesh.is_zero());
 
     // The input records survive a deleted manifest; they must not make the sources look done.
     (void)manifest_file_path(StrView(store), path, sizeof path);
     KILN_REQUIRE(std::remove(path) == 0);
     KILN_REQUIRE_EQ(run_cook(sources, store), 0);
-    KILN_CHECK(catalog_key(store, AssetKind::Mesh, "external_uri.gltf"_sv) == mesh);
+    KILN_CHECK(manifest_key(store, AssetKind::Mesh, "external_uri.gltf"_sv) == mesh);
 
     (void)artifact_file_path(StrView(store), mesh, path, sizeof path);
     KILN_REQUIRE(std::remove(path) == 0);
@@ -1097,10 +1097,10 @@ KILN_TEST(CatalogCli, LostManifestOrArtifactCooksAgain) {
 }
 
 // kiln-cook --watch next to a read-only app: edits and new sources reach the manifest it watches.
-KILN_TEST(CatalogCli, WatchCooksEditsAndNewSources) {
+KILN_TEST(ManifestCli, WatchCooksEditsAndNewSources) {
     char store[1024], sources[1024], bin[1100], png[1100];
-    fresh_dir("catalog-cli-watch", store, sizeof store);
-    fresh_dir("catalog-cli-watch-src", sources, sizeof sources);
+    fresh_dir("manifest-cli-watch", store, sizeof store);
+    fresh_dir("manifest-cli-watch-src", sources, sizeof sources);
     copy_sources(sources);
     format(bin, sizeof bin, "%s/external_uri.bin", sources);
     format(png, sizeof png, "%s/external_uri_albedo.png", sources);
@@ -1115,7 +1115,7 @@ KILN_TEST(CatalogCli, WatchCooksEditsAndNewSources) {
     Hash128 first;
     for (int i = 0; i < 3000 && first.is_zero(); ++i) {
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
-        first = catalog_key(store, AssetKind::Mesh, "external_uri.gltf"_sv);
+        first = manifest_key(store, AssetKind::Mesh, "external_uri.gltf"_sv);
     }
     edit_first_byte(bin, false);
     char copy[1100];
@@ -1126,22 +1126,22 @@ KILN_TEST(CatalogCli, WatchCooksEditsAndNewSources) {
 
     KILN_CHECK_EQ(code, 0);
     KILN_REQUIRE(!first.is_zero());
-    Hash128 const after = catalog_key(store, AssetKind::Mesh, "external_uri.gltf"_sv);
+    Hash128 const after = manifest_key(store, AssetKind::Mesh, "external_uri.gltf"_sv);
     KILN_CHECK(!after.is_zero() && !(after == first));
-    KILN_CHECK(!catalog_key(store, AssetKind::Texture, "second.png"_sv).is_zero());
+    KILN_CHECK(!manifest_key(store, AssetKind::Texture, "second.png"_sv).is_zero());
 }
 
 // Two profiles in one store: each writer edits its own and keeps the other's entries and records;
 // each context reads its own profile; a profile cooked for another definition of it goes alone.
-KILN_TEST(CatalogCli, TwoProfilesShareOneStore) {
+KILN_TEST(ManifestCli, TwoProfilesShareOneStore) {
     char store[1024], sources[1024];
-    fresh_dir("catalog-two-profiles", store, sizeof store);
-    fresh_dir("catalog-two-profiles-src", sources, sizeof sources);
+    fresh_dir("manifest-two-profiles", store, sizeof store);
+    fresh_dir("manifest-two-profiles-src", sources, sizeof sources);
     copy_sources(sources);
     KILN_REQUIRE_EQ(run_cook(sources, store), 0);
     KILN_REQUIRE_EQ(run_cook(sources, store, "--target=desktop"), 0);
-    Hash128 const compat  = catalog_key(store, AssetKind::Mesh, "external_uri.gltf"_sv, "compat");
-    Hash128 const desktop = catalog_key(store, AssetKind::Mesh, "external_uri.gltf"_sv, "desktop");
+    Hash128 const compat  = manifest_key(store, AssetKind::Mesh, "external_uri.gltf"_sv, "compat");
+    Hash128 const desktop = manifest_key(store, AssetKind::Mesh, "external_uri.gltf"_sv, "desktop");
     KILN_REQUIRE(!compat.is_zero() && !desktop.is_zero());
     KILN_CHECK(!(compat == desktop)); // the target is part of the key
 
@@ -1152,17 +1152,17 @@ KILN_TEST(CatalogCli, TwoProfilesShareOneStore) {
     KILN_CHECK_EQ(count.meshes.load(), 0u);
 
     for (char const* profile : {"compat", "desktop"}) {
-        CatalogContext c;
+        ManifestContext c;
         KILN_REQUIRE(c.init(store, false, StrView(profile)).ok());
         MeshHandle const m = request_mesh(c.ctx, "external_uri.gltf"_sv);
         KILN_CHECK_MSG(settle(c.ctx, m) == State::Ready, "profile %s", profile);
     }
     {
-        CatalogContext c;
+        ManifestContext c;
         KILN_REQUIRE(c.init(store, false, "mobile").ok()); // no such profile: like no manifest
         MeshHandle const m = request_mesh(c.ctx, "external_uri.gltf"_sv);
         KILN_CHECK(settle(c.ctx, m) == State::Failed);
-        KILN_CHECK_EQ(c.diag.code, u32(kDiagCatalogMissing));
+        KILN_CHECK_EQ(c.diag.code, u32(kDiagManifestMissing));
     }
 
     // Another definition of `compat` (another hash_target) drops compat's entries only.
@@ -1172,21 +1172,21 @@ KILN_TEST(CatalogCli, TwoProfilesShareOneStore) {
     KILN_REQUIRE(open_manifest_store({.storeDir = StrView(store), .target = &other}, &s).ok());
     KILN_REQUIRE(commit_manifest(s, nullptr).ok());
     close_manifest_store(s);
-    KILN_CHECK(catalog_key(store, AssetKind::Mesh, "external_uri.gltf"_sv, "compat").is_zero());
-    KILN_CHECK(catalog_key(store, AssetKind::Mesh, "external_uri.gltf"_sv, "desktop") == desktop);
+    KILN_CHECK(manifest_key(store, AssetKind::Mesh, "external_uri.gltf"_sv, "compat").is_zero());
+    KILN_CHECK(manifest_key(store, AssetKind::Mesh, "external_uri.gltf"_sv, "desktop") == desktop);
     KILN_REQUIRE_EQ(run_cook(sources, store, "--target=desktop", count.policy()), 0);
     KILN_CHECK_EQ(count.meshes.load(), 0u); // desktop's records survived
 }
 
 // Records keep no paths: the same sources at another place, with their times, cook nothing.
-KILN_TEST(CatalogCli, RecordsSurviveMovedSources) {
+KILN_TEST(ManifestCli, RecordsSurviveMovedSources) {
     char store[1024], a[1024], b[1024];
-    fresh_dir("catalog-moved", store, sizeof store);
-    fresh_dir("catalog-moved-a", a, sizeof a);
-    fresh_dir("catalog-moved-b", b, sizeof b);
+    fresh_dir("manifest-moved", store, sizeof store);
+    fresh_dir("manifest-moved-a", a, sizeof a);
+    fresh_dir("manifest-moved-b", b, sizeof b);
     copy_sources(a);
     KILN_REQUIRE_EQ(run_cook(a, store), 0);
-    Hash128 const key = catalog_key(store, AssetKind::Mesh, "external_uri.gltf"_sv);
+    Hash128 const key = manifest_key(store, AssetKind::Mesh, "external_uri.gltf"_sv);
 
     std::error_code ec;
     std::filesystem::create_directories(b, ec);
@@ -1199,19 +1199,19 @@ KILN_TEST(CatalogCli, RecordsSurviveMovedSources) {
     PolicyCount count;
     KILN_REQUIRE_EQ(run_cook(b, store, nullptr, count.policy()), 0);
     KILN_CHECK_EQ(count.meshes.load(), 0u);
-    KILN_CHECK(catalog_key(store, AssetKind::Mesh, "external_uri.gltf"_sv) == key);
+    KILN_CHECK(manifest_key(store, AssetKind::Mesh, "external_uri.gltf"_sv) == key);
 }
 
 // A new time on unchanged content is no change: the file is hashed, its record takes the new stat,
 // and nothing cooks. A content change cooks.
-KILN_TEST(CatalogCli, HashBeforeCook) {
+KILN_TEST(ManifestCli, HashBeforeCook) {
     char store[1024], sources[1024], bin[1100];
-    fresh_dir("catalog-touch", store, sizeof store);
-    fresh_dir("catalog-touch-src", sources, sizeof sources);
+    fresh_dir("manifest-touch", store, sizeof store);
+    fresh_dir("manifest-touch-src", sources, sizeof sources);
     copy_sources(sources);
     format(bin, sizeof bin, "%s/external_uri.bin", sources);
     KILN_REQUIRE_EQ(run_cook(sources, store), 0);
-    Hash128 const key = catalog_key(store, AssetKind::Mesh, "external_uri.gltf"_sv);
+    Hash128 const key = manifest_key(store, AssetKind::Mesh, "external_uri.gltf"_sv);
 
     std::error_code ec;
     std::filesystem::last_write_time(bin, std::filesystem::last_write_time(bin, ec) + std::chrono::seconds(3),
@@ -1222,13 +1222,13 @@ KILN_TEST(CatalogCli, HashBeforeCook) {
     PolicyCount count;
     KILN_REQUIRE_EQ(run_cook(sources, store, nullptr, count.policy()), 0);
     KILN_CHECK_EQ(count.meshes.load(), 0u);
-    KILN_CHECK(catalog_key(store, AssetKind::Mesh, "external_uri.gltf"_sv) == key);
+    KILN_CHECK(manifest_key(store, AssetKind::Mesh, "external_uri.gltf"_sv) == key);
     KILN_CHECK_EQ(recorded_mtime(store, "external_uri.gltf"_sv, InputRole::Buffer), touched.mtimeNs);
 
     edit_first_byte(bin, false);
     KILN_REQUIRE_EQ(run_cook(sources, store, nullptr, count.policy()), 0);
     KILN_CHECK(count.meshes.load() > 0u);
-    KILN_CHECK(!(catalog_key(store, AssetKind::Mesh, "external_uri.gltf"_sv) == key));
+    KILN_CHECK(!(manifest_key(store, AssetKind::Mesh, "external_uri.gltf"_sv) == key));
 }
 
 #endif // KILN_MESH

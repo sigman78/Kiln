@@ -44,9 +44,9 @@ char const* failure_text(u32 code) noexcept {
 
 /// A slot reached Ready or Failed with no job and no queue: run the reload requested meanwhile.
 void settle(Context* ctx, Slot& s) noexcept {
-    if (s.catalogCheck) {
-        s.catalogCheck = false;
-        if (catalog_names_other(ctx, s)) s.reloadPending = true;
+    if (s.manifestCheck) {
+        s.manifestCheck = false;
+        if (manifest_names_other(ctx, s)) s.reloadPending = true;
     }
     if (!s.reloadPending) return;
     s.reloadPending = false;
@@ -107,9 +107,9 @@ void fail_slot(Context* ctx, Slot& s, u32 code, Status st) noexcept {
     settle(ctx, s);
 }
 
-bool catalog_names_other(Context const* ctx, Slot const& s) noexcept {
+bool manifest_names_other(Context const* ctx, Slot const& s) noexcept {
     ManifestEntry e;
-    if (!ctx->catalogPresent || !ctx->catalog.find(s.kind, path_of(s), &e)) return false;
+    if (!ctx->manifestPresent || !ctx->manifest.find(s.kind, path_of(s), &e)) return false;
     return !(s.keyValid && s.key == e.key);
 }
 
@@ -125,7 +125,7 @@ void reload_slot(Context* ctx, Slot& s) noexcept {
     }
     KILN_ASSERT(!s.jobInFlight && s.queue == QueueId::None);
     KILN_ASSERT(s.state == State::Ready || s.state == State::Failed);
-    refresh_catalog(ctx);
+    refresh_manifest(ctx);
     s.reloading  = true;
     s.phase      = Phase::MetaQueued;
     s.retryAfter = 0;
@@ -144,14 +144,14 @@ void submit_stage(Context* ctx, Slot& s, Stage stage) noexcept {
     if (stage == Stage::Meta) {
         s.provider    = ctx->provider;
         s.jobKeyValid = false;
-        // The artifact is chosen here, so a catalog swapped in later leaves this load alone.
+        // The artifact is chosen here, so a manifest swapped in later leaves this load alone.
         ManifestEntry e;
-        if (s.source == SourceKind::File && !s.cookedValid && ctx->catalogPresent &&
-            ctx->catalog.find(s.kind, path_of(s), &e)) {
+        if (s.source == SourceKind::File && !s.cookedValid && ctx->manifestPresent &&
+            ctx->manifest.find(s.kind, path_of(s), &e)) {
             s.jobKey      = e.key;
             s.jobKeyValid = true;
         }
-        s.jobCatalogPresent = ctx->catalogPresent;
+        s.jobManifestPresent = ctx->manifestPresent;
     }
     ++ctx->jobsOutstanding;
     ctx->jobsInFlight.fetch_add(1, std::memory_order_acq_rel);

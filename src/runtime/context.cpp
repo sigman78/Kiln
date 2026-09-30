@@ -273,7 +273,7 @@ Status load_manifest(ContextDesc const& desc, Allocator const* a, Vec<u8>* bytes
     Status const st     = io_read_file(io, StrView(path, n), a, bytes);
     if (st.code == Code::NotFound) return kOk;
     if (st.failed())
-        return diagf(&desc.diag, st, kDiagCatalogMissing, Severity::Error, StrView(path, n), "create",
+        return diagf(&desc.diag, st, kDiagManifestMissing, Severity::Error, StrView(path, n), "create",
                      "cannot read the manifest");
     Result<ManifestView> v = ManifestView::open(bytes->span(), &desc.diag, StrView(path, n));
     if (v.failed()) return v.status();
@@ -286,11 +286,11 @@ Status load_manifest(ContextDesc const& desc, Allocator const* a, Vec<u8>* bytes
 } // namespace
 
 void adopt_manifest(Context* ctx, Vec<u8>&& bytes, ManifestView const& v) noexcept {
-    ctx->manifestBytes  = std::move(bytes); // the view's bytes stay where they are
-    ctx->catalogPresent = v.find_profile(StrView(ctx->profile, ctx->profileLen), &ctx->catalog);
+    ctx->manifestBytes   = std::move(bytes); // the view's bytes stay where they are
+    ctx->manifestPresent = v.find_profile(StrView(ctx->profile, ctx->profileLen), &ctx->manifest);
 }
 
-void refresh_catalog(Context* ctx) noexcept {
+void refresh_manifest(Context* ctx) noexcept {
     if (ctx->watch || ctx->storeDirLen == 0) return;
     char path[1024];
     usize const n = manifest_path(ctx, path, sizeof path);

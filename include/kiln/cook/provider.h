@@ -20,7 +20,7 @@ struct ProviderDesc {
     /// Copied at install; empty means such textures are cooked as Color.
     Span<NameRule const> nameRules = kDefaultNameRules;
     bool fastPreview               = false;
-    /// Catalog layout: the version of the host's `policy`. A policy is code, so the provider cannot
+    /// Manifest layout: the version of the host's `policy`. A policy is code, so the provider cannot
     /// see it change: bump this when it does, and every entry's key is checked again.
     u32 policyVersion = 0;
     /// Dev builds: poll the source files of cooked assets and re-cook them into the store when

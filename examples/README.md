@@ -100,7 +100,7 @@ build/win-msvc-debug/examples/gl/kiln-gl                       # or any of the o
 On first run the model and the textures cook into the build tree's `example-store`, so the first
 frames show placeholders. All the examples cook with the default target profile, `compat`, whose
 block formats every example backend samples, so they share that one store
-(docs/design/target-profiles.md). A store from before the flat layout of `store-catalog.md` (named
+(docs/design/target-profiles.md). A store from before the flat layout of `store-manifest.md` (named
 files and `kiln-store.txt`, or `catalogs/` and `artifacts/`) is not read; delete it once. Left-drag orbits, the wheel zooms, + and - change the exposure, Esc
 quits. Hot reload is on: re-export or edit a file under `examples/assets` and the view updates.
 `--dump <file.png>` waits until everything has loaded, writes the frame and exits (the window is
