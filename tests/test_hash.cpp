@@ -1,7 +1,7 @@
 #include "kiln_test.h"
 
-#include "kiln/catalog.h"
 #include "kiln/hash.h"
+#include "kiln/manifest.h"
 
 #include <cstring>
 
@@ -169,4 +169,20 @@ KILN_TEST(Hash, Xxh3_128KnownVector) {
     KILN_CHECK(std::strcmp(hex, "99aa06d3014798d86001c324468d497f") == 0);
     KILN_CHECK(xxh3_128(Span<u8 const>(kAbc, 3)) == xxh3_128(Span<u8 const>(kAbc, 3)));
     KILN_CHECK(!(xxh3_128(Span<u8 const>(kAbc, 3)) == xxh3_128(Span<u8 const>(kAbc, 2))));
+}
+
+KILN_TEST(Hash, Hash128Base32KnownVectors) {
+    // Python: base64.b32encode(bytes).decode().lower().rstrip('=')
+    char out[27];
+    Hash128 h;
+    hash128_base32(h, out);
+    KILN_CHECK(std::strcmp(out, "aaaaaaaaaaaaaaaaaaaaaaaaaa") == 0);
+    for (u8 i = 0; i < 16; ++i)
+        h.bytes[i] = u8(0xa0 + i);
+    hash128_base32(h, out);
+    KILN_CHECK(std::strcmp(out, "ucq2fi5euwtkpkfjvkv2zlnov4") == 0);
+    for (u8& b : h.bytes)
+        b = 0xff;
+    hash128_base32(h, out);
+    KILN_CHECK(std::strcmp(out, "77777777777777777777777774") == 0);
 }

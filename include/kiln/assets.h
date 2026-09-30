@@ -67,9 +67,9 @@ struct PlaceholderDesc {
     Span<u8 const> pixels = {}; ///< width * height * 4 bytes
 };
 
-/// Dev builds: reload an asset when its catalog entry changes (docs/design/hot-reload.md).
+/// Dev builds: reload an asset when its manifest entry changes (docs/design/hot-reload.md).
 struct HotReloadDesc {
-    bool watchStore = false; ///< poll the store's catalog; needs KILN_HOT_RELOAD
+    bool watchStore = false; ///< poll the store's manifest; needs KILN_HOT_RELOAD
     u32 pollMs      = 250;
 };
 
@@ -87,11 +87,11 @@ struct ContextDesc {
     IoBackend const* io    = nullptr; ///< nullptr = compat backend
     Adapter const* adapter = nullptr; ///< required
 
-    /// The store root (read-only for the runtime): artifacts and a catalog per target profile
-    /// (docs/design/store-catalog.md).
+    /// The store root (read-only for the runtime): `manifest.dir`, which lists the entries of each
+    /// target profile, and the artifacts (docs/design/store-catalog.md).
     StrView storeDir       = {};
     Span<Root const> roots = {}; ///< where the cook provider looks for sources (dev)
-    /// The target profile whose catalog create() reads (check_profile_name()).
+    /// The target profile whose entries the context reads from the manifest (check_profile_name()).
     StrView profile      = "compat";
     bool devPlaceholders = KILN_DEBUG != 0; ///< Failed textures show the magenta checker
     /// A store whose profile has formats the adapter cannot sample makes create() fail (K5018).
@@ -283,8 +283,8 @@ KILN_API void release(Context* ctx, Group g) noexcept; ///< frees the group reco
 // Hot reload
 // ---------------------------------------------------------------------------
 
-/// Reload the asset: look its name up in the catalog again (through the cook provider, if one is
-/// installed). Without the store poller, the catalog file is read again first when the reload
+/// Reload the asset: look its name up in the manifest again (through the cook provider, if one is
+/// installed). Without the store poller, the manifest is read again first when the reload
 /// starts. A Ready asset keeps serving its current payload until the new one is
 /// ready: then version + 1, bind() for a bindless slot, the old object released after the frames
 /// that use it, a Changed event.
@@ -311,11 +311,11 @@ KILN_API void request_reload(Context* ctx, TextureHandle h) noexcept;
 // ---------------------------------------------------------------------------
 
 /// Called on a worker before every load of a file asset, hit or miss. The provider brings the
-/// asset's catalog entry up to date (it cooks again when an input changed) and puts its
+/// asset's manifest entry up to date (it cooks again when an input changed) and puts its
 /// artifact's build key in `*key`; when it cooked, also the bytes in `out`, which the load then
 /// uses. A zero key with bytes: they have no artifact (memory mode). Neither bytes nor a key: the
-/// catalog entry is used as it is (a miss if there is none), so a wrapper may handle some names
-/// only. NotFound: no source for the name. Without a provider the catalog is used as it is.
+/// manifest entry is used as it is (a miss if there is none), so a wrapper may handle some names
+/// only. NotFound: no source for the name. Without a provider the manifest is used as it is.
 struct CookProvider {
     Status (*prepare)(void* user, AssetKind kind, StrView assetPath, Allocator const* alloc, Vec<u8>* out,
                       Hash128* key, DiagSink const* diag) = nullptr;
@@ -359,7 +359,8 @@ struct ContextStats {
 // ---------------------------------------------------------------------------
 
 enum RuntimeDiagCode : u32 {
-    kDiagStoreMiss        = 5001, ///< not in the catalog (or no artifact) and no provider fills it (NotFound)
+    kDiagStoreMiss =
+        5001, ///< not in the profile's entries (or no artifact) and no provider fills it (NotFound)
     kDiagCookOnMissFailed = 5002, ///< provider returned an error (its own K1-K3 diagnostics precede this)
     kDiagAssetLoadFailed  = 5003, ///< IO or validation failure while loading (status from the reader)
     kDiagAdapterRejected =
@@ -374,8 +375,8 @@ enum RuntimeDiagCode : u32 {
     kDiagReloadMemorySource    = 5012, ///< reload requested for a memory-registered asset (Warning)
     kDiagBadAssetName          = 5013, ///< a request, registration or root breaks the name rules
     kDiagTextureShapeMismatch  = 5017, ///< the cooked texture's shape is not the requested one
-    kDiagStoreProfileUnsampled = 5018, ///< the catalog's profile has formats the adapter cannot sample
-    kDiagCatalogMissing        = 5019, ///< a request missed and the profile has no catalog (NotFound)
+    kDiagStoreProfileUnsampled = 5018, ///< the manifest's profile has formats the adapter cannot sample
+    kDiagCatalogMissing = 5019, ///< a request missed and the manifest (or the profile in it) is missing
 };
 
 } // namespace kiln

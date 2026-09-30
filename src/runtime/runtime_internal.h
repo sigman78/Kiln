@@ -4,7 +4,7 @@
 #pragma once
 
 #include "kiln/assets.h"
-#include "kiln/catalog.h"
+#include "kiln/manifest.h"
 
 #include <atomic>
 #include <mutex>
@@ -217,10 +217,11 @@ struct Context {
     usize storeDirLen = 0;
     char* profile     = nullptr; ///< owned copy of ContextDesc::profile
     usize profileLen  = 0;
-    // Pump thread: the catalog in memory. The store poller swaps in a new one.
-    Vec<u8> catalogBytes;
-    CatalogView catalog;
-    bool catalogPresent = false;   ///< false: the profile has no catalog file (yet)
+    // Pump thread: the manifest in memory and the profile's part of it (its catalog). The store
+    // poller swaps in a new one.
+    Vec<u8> manifestBytes; ///< empty: no manifest file (yet)
+    ManifestProfile catalog;
+    bool catalogPresent = false;   ///< false: the manifest has no entries for the profile (or no manifest)
     Root* roots         = nullptr; ///< owned copies of ContextDesc::roots
     u32 rootCount       = 0;
     char* rootChars     = nullptr;
@@ -327,9 +328,11 @@ void boost_group(Context* ctx, Group g) noexcept;
 
 // --- loader.cpp (worker side) -------------------------------------------------------
 void run_job(void* arg) noexcept;
-/// `<store>/catalogs/<profile>.kcat`. Returns the length `format` reports (>= cap - 1 means
+/// `<store>/manifest.dir`. Returns the length `format` reports (>= cap - 1 means
 /// truncated). Reads only fields fixed at create().
-usize catalog_path(Context const* ctx, char* out, usize cap) noexcept;
+usize manifest_path(Context const* ctx, char* out, usize cap) noexcept;
+/// Takes `bytes`, a validated manifest `v`, as the one in use, with the context's profile of it.
+void adopt_manifest(Context* ctx, Vec<u8>&& bytes, ManifestView const& v) noexcept;
 /// Texture upload layout: levels ascending, each at `offsetAlign`, rows padded to
 /// `pitchAlign`. Writes [dstOffset] and [rowPitch] per level; returns the total size.
 u64 texture_layout(ktx2::TextureDesc const& d, u64 pitchAlign, u64 offsetAlign, u64* outOffset,

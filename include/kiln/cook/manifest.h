@@ -1,9 +1,9 @@
-// kiln/cook/catalog.h — build keys of cooked artifacts and the catalog writer
+// kiln/cook/manifest.h — build keys of cooked artifacts and the manifest writer
 // (docs/design/store-catalog.md). kiln_cook only.
 #pragma once
 
-#include "kiln/catalog.h"
 #include "kiln/containers.h"
+#include "kiln/manifest.h"
 
 namespace kiln::cook {
 
@@ -37,22 +37,34 @@ struct BuildKeyDesc {
 /// The same key means the same cooked bytes.
 [[nodiscard]] KILN_API Hash128 build_key(BuildKeyDesc const& d) noexcept;
 
-/// Diagnostics of catalog stores (K3009, K3010; the K3000 range of settings.h).
-enum CatalogStoreDiagCode : u32 {
-    kDiagCatalogLocked = 3009, ///< another writer holds the profile's catalog lock (Busy)
+/// Diagnostics of store writers (K3009, K3010; the K3000 range of settings.h).
+enum StoreDiagCode : u32 {
+    kDiagStoreLocked = 3009, ///< another process writes the store (Busy)
     kDiagNondeterministicCook =
         3010, ///< a cook made other bytes for an existing build key (ValidationFailed)
 };
 
-struct CatalogDesc {
-    CatalogProfile profile;
-    Span<CatalogEntry const> entries = {}; ///< any order
+struct ManifestProfileDesc {
+    StrView name                      = {};
+    u64 hash                          = 0;  ///< hash_target
+    u64 blockFormats                  = 0;  ///< block_format_bit() set
+    Span<ManifestEntry const> entries = {}; ///< any order
 };
 
-/// Writes a catalog (format 0.1) into `out`, replacing its contents. The same entries in any order
-/// give the same bytes. InvalidArgument for a bad profile or asset name (K4205) or a name and kind
-/// given twice (K4207).
-[[nodiscard]] KILN_API Status write_catalog(CatalogDesc const& d, Vec<u8>* out,
-                                            DiagSink const* diag = nullptr) noexcept;
+struct ManifestDesc {
+    Span<ManifestProfileDesc const> profiles = {}; ///< any order
+};
+
+/// `<store>/manifest.in`: the input records of every profile, cook only (never shipped). Its format
+/// is the cook's own (docs/design/store-catalog.md); a damaged one only costs time.
+inline constexpr char kInputRecordsFile[] = "manifest.in";
+/// `<store>/manifest.lock`: held by the one process that writes the store.
+inline constexpr char kStoreLockFile[] = "manifest.lock";
+
+/// Writes a manifest (format 0.1) into `out`, replacing its contents. The same profiles and entries
+/// in any order give the same bytes. InvalidArgument for a bad profile or asset name (K4205), or a
+/// profile name, or a name and kind in one profile, given twice (K4207).
+[[nodiscard]] KILN_API Status write_manifest(ManifestDesc const& d, Vec<u8>* out,
+                                             DiagSink const* diag = nullptr) noexcept;
 
 } // namespace kiln::cook

@@ -105,9 +105,9 @@ add_library(kiln_runtime STATIC
     src/formats/formats_internal.h
     src/formats/ktx2_read.cpp
     src/formats/zstd_decode.cpp
-    include/kiln/catalog.h
+    include/kiln/manifest.h
     src/formats/xxh3.cpp
-    src/formats/catalog_read.cpp
+    src/formats/manifest_read.cpp
     include/kiln/assets.h
     src/runtime/runtime_internal.h
     src/runtime/context.cpp
@@ -149,7 +149,7 @@ if(KILN_BUILD_COOK)
         src/formats/mesh_write.cpp
         include/kiln/cook/ktx2_writer.h
         src/formats/ktx2_write.cpp
-        src/formats/catalog_write.cpp
+        src/formats/manifest_write.cpp
         include/kiln/cook/settings.h
         src/cook/settings.cpp
         include/kiln/cook/sidecar.h
@@ -173,9 +173,9 @@ if(KILN_BUILD_COOK)
         src/cook/provider.cpp
         src/cook/unit.h
         src/cook/unit.cpp
-        src/cook/catalog_store.h
-        src/cook/catalog_store.cpp
-        include/kiln/cook/catalog.h
+        src/cook/manifest_store.h
+        src/cook/manifest_store.cpp
+        include/kiln/cook/manifest.h
         src/cook/build_key.cpp
         include/kiln/cook/cli.h
         src/cook/cli_main.cpp

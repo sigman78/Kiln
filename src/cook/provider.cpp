@@ -1,5 +1,5 @@
 // src/cook/provider.cpp — the cook provider: checks each asset against its recorded inputs, cooks
-// what changed into the catalog store, and polls the sources for hot reload
+// what changed into the store, and polls the sources for hot reload
 // (docs/design/store-catalog.md, docs/design/hot-reload.md).
 //
 // provider_prepare() runs on workers, concurrently. A published Provider's settings never change;
@@ -13,7 +13,7 @@
 // own, never the other way.
 #include "kiln/cook/provider.h"
 
-#include "catalog_store.h"
+#include "manifest_store.h"
 #include "unit.h"
 
 #include "kiln/cook/cook.h"
@@ -37,7 +37,7 @@ namespace kiln::cook {
 namespace {
 
 constexpr usize kSourceLockStripes = 64;
-/// A cook on a request rewrites the catalog at most this often.
+/// A cook on a request rewrites the manifest at most this often.
 constexpr u32 kCommitIntervalMs = 1000;
 
 /// Allocated once by install_provider(); its settings are immutable once published.
@@ -54,9 +54,9 @@ struct Provider {
     JobSystem const* jobs  = nullptr; ///< the context's pool; provider_prepare runs on its workers
     Context* ctx           = nullptr; ///< the registry key
 
-    // Disk mode: the profile's catalog writer (it holds the lock). Null in Memory mode.
-    CatalogStore* store = nullptr;
-    u64 hostDigest      = 0; ///< host_digest() of desc
+    // Disk mode: the store writer for the profile (it holds the store lock). Null in Memory mode.
+    ManifestStore* store = nullptr;
+    u64 hostDigest       = 0; ///< host_digest() of desc
 
     std::mutex sourceLocks[kSourceLockStripes];
 
@@ -180,17 +180,17 @@ Status resolve_request(Provider const& p, AssetKind kind, StrView name, UnitRequ
 // Prepare
 // ---------------------------------------------------------------------------
 
-/// Cooks a unit and, with a store, publishes it and rewrites the catalog. `unit` keeps the outputs.
+/// Cooks a unit and, with a store, publishes it and rewrites the manifest. `unit` keeps the outputs.
 Status cook_and_publish(Provider& p, UnitDesc d, DiagSink const* diag, CookUnit* unit) noexcept {
     d.statInputs = true;
     KILN_TRY(cook_unit(d, unit));
     if (!p.store) return kOk;
     KILN_TRY(publish_unit(p.store, *unit, p.hostDigest, diag));
-    // The entry is in memory and `prepare` answers from it. Rewriting the catalog at most once a
+    // The entry is in memory and `prepare` answers from it. Rewriting the manifest at most once a
     // second keeps a first session's many misses from rewriting it per cook; the poller and
     // release write the rest. A failed rewrite is retried later.
-    if (Status const st = commit_catalog(p.store, diag, kCommitIntervalMs); st.failed())
-        KILN_WARN("cook", "cannot rewrite the catalog (%s); retrying later", code_name(st.code));
+    if (Status const st = commit_manifest(p.store, diag, kCommitIntervalMs); st.failed())
+        KILN_WARN("cook", "cannot rewrite the manifest (%s); retrying later", code_name(st.code));
     return kOk;
 }
 
@@ -205,8 +205,8 @@ Status provider_prepare(void* user, AssetKind kind, StrView name, Allocator cons
     UnitDesc const d = unit_desc(*p, r.unitKind, r.owner, sourcePath, alloc, diag);
 
     if (p->store && (is_fresh(p->store, r.owner) || record_is_current(p->store, d, p->hostDigest, false))) {
-        mark_fresh(p->store, r.owner);
-        if (catalog_find(p->store, kind, name, key)) return kOk;
+        mark_fresh(p->store, r.owner, sourcePath);
+        if (manifest_find(p->store, kind, name, key)) return kOk;
         // Fresh, but without this output (an image that failed): cook again and report why.
     }
     CookUnit unit(alloc);
@@ -243,36 +243,41 @@ struct FailedUnit {
     bool retry = false; ///< an IO failure: retry every round
 };
 
-/// The size and time (or absence) of every recorded input, as they are now.
-u64 inputs_digest(CookUnit const& rec) noexcept {
+/// The size and time (or absence) of every recorded input next to `sourcePath`, as they are now.
+u64 inputs_digest(CookUnit const& rec, StrView sourcePath) noexcept {
     Xxh64State h;
     for (UnitInput const& in : rec.inputs) {
+        char path[1200];
+        usize const n = input_path(sourcePath, in.role, rec.str(in.nameOff, in.nameLen), path, sizeof path);
         IoStat now{};
-        h.update_value(u8(stat_file(rec.str(in.pathOff, in.pathLen), &now).ok()));
+        h.update_value(u8(n < sizeof path - 1 && stat_file(StrView(path, n), &now).ok()));
         h.update_value(now.size);
         h.update_value(now.mtimeNs);
     }
     return h.digest();
 }
 
-/// Re-cooks every fresh unit whose inputs changed, then rewrites the catalog once.
+/// Re-cooks every fresh unit whose inputs changed, then rewrites the manifest once.
 /// False when asked to stop.
-bool poll_catalog_round(Provider* p, Vec<char>& units, HashMap<u64, FailedUnit>& failed) noexcept {
+bool poll_round(Provider* p, Vec<char>& units, HashMap<u64, FailedUnit>& failed) noexcept {
     fresh_units(p->store, &units);
     CookUnit rec(p->alloc);
     for (usize at = 0; at < units.size();) {
         if (p->stopping.load()) return false;
         StrView const name(units.data() + at, std::strlen(units.data() + at));
         at += name.size + 1;
+        StrView const sourcePath(units.data() + at, std::strlen(units.data() + at));
+        at += sourcePath.size + 1;
         u64 digest = 0;
-        if (!copy_input_record(p->store, name, &rec, &digest) || rec.outputs.empty() || rec.inputs.empty() ||
-            recorded_inputs_unchanged(rec))
+        if (!copy_input_record(p->store, name, &rec, &digest) || rec.outputs.empty() || rec.inputs.empty())
             continue;
-        u64 const now          = inputs_digest(rec);
+        InputsCheck const inputs = check_recorded_inputs(rec, sourcePath);
+        if (inputs == InputsCheck::Touched) set_record_stats(p->store, name, rec);
+        if (inputs != InputsCheck::Changed) continue;
+        u64 const now          = inputs_digest(rec, sourcePath);
         FailedUnit const* last = failed.find(hash_name(name));
         if (last && !last->retry && last->inputs == now) continue;
 
-        StrView const sourcePath = rec.str(rec.inputs[0].pathOff, rec.inputs[0].pathLen);
         std::lock_guard<std::mutex> const lock(source_lock(*p, sourcePath));
         LogDiag logDiag;
         logDiag.quiet = last && last->inputs == now;
@@ -295,13 +300,13 @@ bool poll_catalog_round(Provider* p, Vec<char>& units, HashMap<u64, FailedUnit>&
         // source still being written) retries every round; a cook failure waits for the next edit.
         bool const retry = s.code == Code::IoError || s.code == Code::IoEof || s.code == Code::NotFound;
         if (!logDiag.quiet)
-            KILN_ERROR("cook", "re-cook of %.*s failed (%s); the catalog keeps the previous entry, %s",
+            KILN_ERROR("cook", "re-cook of %.*s failed (%s); the manifest keeps the previous entry, %s",
                        KILN_SV(name), code_name(s.code), retry ? "retrying" : "waiting for the next change");
         failed.insert(hash_name(name), FailedUnit{now, retry});
     }
     // Once per round: this round's re-cooks and any records whose keys were checked again.
-    if (Status const st = commit_catalog(p->store, nullptr); st.failed())
-        KILN_WARN("cook", "cannot rewrite the catalog (%s); retrying", code_name(st.code));
+    if (Status const st = commit_manifest(p->store, nullptr); st.failed())
+        KILN_WARN("cook", "cannot rewrite the manifest (%s); retrying", code_name(st.code));
     return true;
 }
 
@@ -315,7 +320,7 @@ void poller_main(Provider* p) noexcept {
             std::unique_lock<std::mutex> lock(p->pollMutex);
             if (p->pollWake.wait_for(lock, period, [p] { return p->stopping.load(); })) return;
         }
-        if (!poll_catalog_round(p, units, failed)) return;
+        if (!poll_round(p, units, failed)) return;
     }
 }
 
@@ -389,9 +394,9 @@ void provider_release(void* user) noexcept {
     }
     stop_poller(p); // joined before anything it reads is freed
     if (p->store) {
-        if (Status const st = commit_catalog(p->store, nullptr); st.failed())
-            KILN_WARN("cook", "cannot rewrite the catalog (%s)", code_name(st.code));
-        close_catalog_store(p->store);
+        if (Status const st = commit_manifest(p->store, nullptr); st.failed())
+            KILN_WARN("cook", "cannot rewrite the manifest (%s)", code_name(st.code));
+        close_manifest_store(p->store);
     }
     delete_object(p->alloc, p, Tag::Cook);
 }
@@ -471,13 +476,13 @@ Status install_provider(Context* ctx, ProviderDesc const& desc) noexcept {
         delete_object(alloc, p, Tag::Cook);
         return diagf(diag_sink(ctx), make_status(Code::InvalidArgument), kDiagStoreProfileMismatch,
                      Severity::Error, profile, "install",
-                     "the context reads the catalog of profile '%.*s'; the provider cooks for '%.*s'",
-                     KILN_SV(profile), KILN_SV(effective.target.name));
+                     "the context reads profile '%.*s'; the provider cooks for '%.*s'", KILN_SV(profile),
+                     KILN_SV(effective.target.name));
     }
     p->hostDigest =
         host_digest(unit_desc(*p, AssetKind::Mesh, {}, {}, alloc, nullptr), effective.policyVersion);
     if (effective.storeMode == StoreMode::Disk) {
-        Status const opened = open_catalog_store(
+        Status const opened = open_manifest_store(
             {.storeDir = p->storeDir, .target = &p->desc.target, .alloc = alloc, .diag = diag_sink(ctx)},
             &p->store);
         if (opened.failed()) {

@@ -1,4 +1,4 @@
-// kiln/cook/provider.h — the cook provider for dev builds: keeps a Context's catalog store up to
+// kiln/cook/provider.h — the cook provider for dev builds: keeps a Context's store up to
 // date from the context's roots (or cooks only into memory, cache-less). kiln_cook only.
 #pragma once
 
@@ -8,7 +8,7 @@
 namespace kiln::cook {
 
 struct ProviderDesc {
-    StoreMode storeMode  = StoreMode::Disk; ///< Disk: publish into the catalog store; Memory: cache-less
+    StoreMode storeMode  = StoreMode::Disk; ///< Disk: publish into the store; Memory: cache-less
     TargetProfile target = {};
     /// The host's settings (resolution layer 2): the base that sidecars, inference and the
     /// policy build on (docs/design/settings.md, "Resolution layers").
@@ -35,9 +35,10 @@ struct ProviderDesc {
 /// writes all of its embedded images. Images a mesh references by URI are not cooked with
 /// it; the host requests them by name. Returns InvalidArgument if the context has no roots.
 /// The context's profile must be `desc.target`'s (K3008). Each asset is checked once per session
-/// by the size and time of its recorded inputs, and cooked again when they changed. In Disk mode
-/// the provider writes the profile's catalog and holds its lock until it is released (K3009 for a
-/// second writer); in Memory mode it cooks every load and writes nothing.
+/// by the size and time of its recorded inputs (a new time is hashed first), and cooked again when
+/// their content changed. In Disk mode the provider writes the profile's entries in the store's
+/// manifest and holds the store's lock until it is released (K3009 for a second writer); in Memory
+/// mode it cooks every load and writes nothing.
 /// Call install_provider and uninstall_provider on the pump thread. destroy(ctx) frees a provider
 /// that is still installed, so uninstall_provider is needed only to remove it earlier.
 KILN_API Status install_provider(Context* ctx, ProviderDesc const& desc) noexcept;

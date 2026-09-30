@@ -2,7 +2,7 @@
 #pragma once
 
 #include "kiln/alloc.h"
-#include "kiln/catalog.h"
+#include "kiln/manifest.h"
 
 struct ZSTD_DCtx_s;
 

@@ -146,16 +146,15 @@ Status open_source(Context* ctx, Slot& s, Source& src, bool allowCook) noexcept 
     }
     if (!s.jobKeyValid) {
         if (s.jobCatalogPresent)
-            note(s.capture, "not in the catalog of profile '%s'", ctx->profile);
+            note(s.capture, "not in profile '%s' of the store's manifest", ctx->profile);
         else
-            note(s.capture, "the store has no catalog for profile '%s'", ctx->profile);
+            note(s.capture, "the store's manifest has no profile '%s'", ctx->profile);
         s.jobDiag          = s.jobCatalogPresent ? kDiagStoreMiss : kDiagCatalogMissing;
         return s.jobStatus = make_status(Code::NotFound);
     }
 
     char file[1024];
-    usize const n =
-        artifact_file_path(StrView(ctx->storeDir, ctx->storeDirLen), s.kind, s.jobKey, file, sizeof file);
+    usize const n = artifact_file_path(StrView(ctx->storeDir, ctx->storeDirLen), s.jobKey, file, sizeof file);
     if (n + 1 >= sizeof file) {
         note(s.capture, "store path too long");
         s.jobDiag          = kDiagAssetLoadFailed;
@@ -175,7 +174,7 @@ Status open_source(Context* ctx, Slot& s, Source& src, bool allowCook) noexcept 
         return kOk;
     }
     if (st.code == Code::NotFound)
-        note(s.capture, "the catalog names '%s', which is missing", file);
+        note(s.capture, "the manifest names '%s', which is missing", file);
     else
         note(s.capture, "cannot open '%s'", file);
     s.jobDiag          = st.code == Code::NotFound ? kDiagStoreMiss : kDiagAssetLoadFailed;
@@ -496,9 +495,8 @@ void post(Context* ctx, Completion const& c) noexcept {
 
 } // namespace
 
-usize catalog_path(Context const* ctx, char* out, usize cap) noexcept {
-    return catalog_file_path(StrView(ctx->storeDir, ctx->storeDirLen), StrView(ctx->profile, ctx->profileLen),
-                             out, cap);
+usize manifest_path(Context const* ctx, char* out, usize cap) noexcept {
+    return manifest_file_path(StrView(ctx->storeDir, ctx->storeDirLen), out, cap);
 }
 
 u64 texture_layout(ktx2::TextureDesc const& d, u64 pitchAlign, u64 offsetAlign, u64* outOffset,

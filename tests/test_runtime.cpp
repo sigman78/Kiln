@@ -7,7 +7,7 @@
 #include "ktx2_corpus.h" // corpus::read_file
 
 #include "kiln/assets.h"
-#include "kiln/catalog.h"
+#include "kiln/manifest.h"
 #include "kiln/null_adapter.h"
 #include "kiln/placeholders.h"
 
@@ -1819,17 +1819,19 @@ KILN_TEST(Runtime, CreateChecksStoreProfile) {
     null_adapter_destroy(*na);
 }
 
-// The goldens as a catalog store (hand_store.h), also the ctest fixture for kiln-headless.
+// The goldens as a store (hand_store.h), also the ctest fixture for kiln-headless.
 KILN_TEST(GoldenStore, Build) {
     char path[1200];
-    (void)catalog_file_path(StrView(test::golden_store_dir()), "compat", path, sizeof path);
+    (void)manifest_file_path(StrView(test::golden_store_dir()), path, sizeof path);
     Vec<u8> bytes(default_allocator(), Tag::Test);
     KILN_REQUIRE(test::corpus::read_file(path, bytes));
-    Result<CatalogView> v = CatalogView::open(bytes.span());
+    Result<ManifestView> v = ManifestView::open(bytes.span());
     KILN_REQUIRE(v.ok());
-    CatalogEntry e;
+    ManifestProfile p;
+    KILN_REQUIRE(v->find_profile("compat", &p));
+    ManifestEntry e;
     for (char const* name : kGoldenMeshes)
-        KILN_CHECK_MSG(v->find(AssetKind::Mesh, StrView(name), &e), "%s is not in the golden store", name);
+        KILN_CHECK_MSG(p.find(AssetKind::Mesh, StrView(name), &e), "%s is not in the golden store", name);
     for (char const* name : kGoldenTextures)
-        KILN_CHECK_MSG(v->find(AssetKind::Texture, StrView(name), &e), "%s is not in the golden store", name);
+        KILN_CHECK_MSG(p.find(AssetKind::Texture, StrView(name), &e), "%s is not in the golden store", name);
 }

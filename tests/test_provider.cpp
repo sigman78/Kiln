@@ -8,10 +8,10 @@
 #include "png_writer.h"
 
 #include "kiln/assets.h"
-#include "kiln/catalog.h"
 #include "kiln/cook/cli.h"
 #include "kiln/cook/provider.h"
 #include "kiln/ktx2.h"
+#include "kiln/manifest.h"
 #include "kiln/null_adapter.h"
 
 #include <cerrno>
@@ -41,21 +41,23 @@ bool file_exists(char const* path) {
 
 bool read_file(char const* path, Vec<u8>& out);
 
-/// The artifact of `name` in the store's catalog on disk: false when the catalog (or the entry) is
-/// missing. `out` (optional) gets its bytes, `key` its build key. The provider writes the catalog on
-/// release, on each poller round, and at most once a second on a request.
+/// The artifact of `name` in profile `compat` of the store's manifest on disk: false when the
+/// manifest (or the entry) is missing. `out` (optional) gets its bytes, `key` its build key. The
+/// provider writes the manifest on release, on each poller round, and at most once a second on a
+/// request.
 bool stored(char const* storeDir, AssetKind kind, StrView name, Vec<u8>* out = nullptr,
             Hash128* key = nullptr) {
     char path[1100];
-    (void)catalog_file_path(StrView(storeDir), "compat", path, sizeof path);
+    (void)manifest_file_path(StrView(storeDir), path, sizeof path);
     Vec<u8> bytes(default_allocator(), Tag::Test);
     if (!read_file(path, bytes)) return false;
-    Result<CatalogView> v = CatalogView::open(bytes.span());
-    CatalogEntry e;
-    if (!v.ok() || !v->find(kind, name, &e)) return false;
+    Result<ManifestView> v = ManifestView::open(bytes.span());
+    ManifestProfile p;
+    ManifestEntry e;
+    if (!v.ok() || !v->find_profile("compat", &p) || !p.find(kind, name, &e)) return false;
     if (key) *key = e.key;
     if (!out) return true;
-    (void)artifact_file_path(StrView(storeDir), kind, e.key, path, sizeof path);
+    (void)artifact_file_path(StrView(storeDir), e.key, path, sizeof path);
     return read_file(path, *out);
 }
 
@@ -372,7 +374,7 @@ KILN_TEST(Provider, MemoryModeNeverWritesTheStore) {
     cook::uninstall_provider(tc.ctx);
 
     char path[1100];
-    (void)catalog_file_path(StrView(storeDir), "compat", path, sizeof path);
+    (void)manifest_file_path(StrView(storeDir), path, sizeof path);
     KILN_CHECK_MSG(!file_exists(path), "Memory mode must not write %s", path);
 }
 #else
@@ -1010,6 +1012,6 @@ KILN_TEST(Provider, RefusesAnotherProfile) {
     KILN_CHECK_EQ(cap.firstCode, u32(cook::kDiagStoreProfileMismatch));
     KILN_CHECK(cook_provider(tc.ctx).prepare == nullptr);
     char path[1100];
-    (void)catalog_file_path(StrView(storeDir), "compat", path, sizeof path);
+    (void)manifest_file_path(StrView(storeDir), path, sizeof path);
     KILN_CHECK(!file_exists(path));
 }

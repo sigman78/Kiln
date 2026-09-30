@@ -3,8 +3,8 @@
 // errors.
 #include "kiln/cook/cli.h"
 
-#include "catalog_store.h"
 #include "cli.h"
+#include "manifest_store.h"
 #include "unit.h"
 
 #include "kiln/assets.h"
@@ -38,7 +38,7 @@ using namespace kiln::cook;
 
 namespace {
 
-/// A run rewrites the catalog at most this often while it cooks.
+/// A run rewrites the manifest at most this often while it cooks.
 constexpr u32 kCommitIntervalMs = 1000;
 /// --watch: the pause between two scans of the sources.
 constexpr u32 kWatchPollMs = 500;
@@ -282,7 +282,7 @@ struct Ctx {
     JobSystem const* jobs = nullptr; ///< null: single-threaded
     u32 maxThreads        = 0;       ///< CookEnv::maxThreads; 0 = no cap
     CookPolicy policy     = {};
-    CatalogStore* store   = nullptr; ///< the catalog writer; null with --check
+    ManifestStore* store  = nullptr; ///< the store writer; null with --check
     u64 hostDigest        = 0;
     bool rescan           = false; ///< a --watch round: quiet about sources that did not change
     /// --watch: sources whose cook failed, by path hash: the stats they failed with.
@@ -329,7 +329,7 @@ bool emit_unit(Ctx& c, CookUnit& unit) {
         }
         if (c.store) {
             char file[1200];
-            (void)artifact_file_path(StrView(c.opt.store), o.kind, o.key, file, sizeof file);
+            (void)artifact_file_path(StrView(c.opt.store), o.key, file, sizeof file);
             report(c, unit.name(o), file, o.key, o.bytes.size());
         }
         if (!c.opt.verbose) continue;
@@ -396,7 +396,7 @@ void cook_file(Ctx& c, char const* path, char const* root) {
         ++c.cooked;
         c.failedSources.erase(pathHash);
         // A long run publishes as it goes, so an app watching the store fills in meanwhile.
-        if (c.store) (void)commit_catalog(c.store, &c.sink, kCommitIntervalMs);
+        if (c.store) (void)commit_manifest(c.store, &c.sink, kCommitIntervalMs);
         return;
     }
     ++c.failed;
@@ -442,7 +442,7 @@ void cook_inputs(Ctx& c) {
 }
 
 /// --watch: cooks what changed or appeared, twice a second, until the timeout (or forever). Each
-/// round writes the catalog once, so an app with a store poller reloads the round together.
+/// round writes the manifest once, so an app with a store poller reloads the round together.
 void watch_inputs(Ctx& c) {
     auto const start = std::chrono::steady_clock::now();
     c.rescan         = true;
@@ -454,8 +454,8 @@ void watch_inputs(Ctx& c) {
             return;
         u32 const cooked = c.cooked, failed = c.failed;
         cook_inputs(c);
-        if (Status const st = commit_catalog(c.store, &c.sink); st.failed())
-            std::fprintf(stderr, "kiln-cook: cannot write the catalog (%s); retrying\n", code_name(st.code));
+        if (Status const st = commit_manifest(c.store, &c.sink); st.failed())
+            std::fprintf(stderr, "kiln-cook: cannot write the manifest (%s); retrying\n", code_name(st.code));
         if (!c.opt.quiet && (c.cooked != cooked || c.failed != failed)) {
             std::printf("watch: %u cooked, %u failed\n", c.cooked - cooked, c.failed - failed);
             std::fflush(stdout);
@@ -625,7 +625,7 @@ int kiln::cook::cook_cli_main(int argc, char** argv, CookPolicy const& policy, u
         return 1;
     }
     if (!o.check) {
-        Status const opened = open_catalog_store(
+        Status const opened = open_manifest_store(
             {.storeDir = StrView(o.store), .target = &o.target, .diag = &c.sink}, &c.store);
         if (opened.failed()) return 2;
         UnitDesc const host{.meshDefaults    = &o.mesh,
@@ -655,18 +655,18 @@ int kiln::cook::cook_cli_main(int argc, char** argv, CookPolicy const& policy, u
         if (!o.quiet)
             std::printf("cook: %u cooked, %u up to date, %u failed, %u warning(s)\n", c.cooked, c.skipped,
                         c.failed, ds.warnings);
-        if (Status const st = commit_catalog(c.store, &c.sink); st.failed())
-            std::fprintf(stderr, "kiln-cook: cannot write the catalog (%s); retrying\n", code_name(st.code));
+        if (Status const st = commit_manifest(c.store, &c.sink); st.failed())
+            std::fprintf(stderr, "kiln-cook: cannot write the manifest (%s); retrying\n", code_name(st.code));
         std::fflush(stdout);
         watch_inputs(c);
     }
     if (c.map) std::fclose(c.map);
     if (c.jobs) destroy_thread_pool(pool);
     if (c.store) {
-        Status const committed = commit_catalog(c.store, &c.sink);
-        close_catalog_store(c.store);
+        Status const committed = commit_manifest(c.store, &c.sink);
+        close_manifest_store(c.store);
         if (committed.failed()) {
-            std::fprintf(stderr, "kiln-cook: cannot write the catalog of %s (%s)\n", o.store,
+            std::fprintf(stderr, "kiln-cook: cannot write the manifest of %s (%s)\n", o.store,
                          code_name(committed.code));
             return 2;
         }
