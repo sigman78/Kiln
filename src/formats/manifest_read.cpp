@@ -252,7 +252,7 @@ usize manifest_file_path(StrView storeDir, char* out, usize cap) noexcept {
 usize artifact_file_path(StrView storeDir, Hash128 const& key, char* out, usize cap) noexcept {
     char b32[27];
     hash128_base32(key, b32);
-    return format(out, cap, "%.*s/%.2s/%s", KILN_SV(storeDir), b32, b32);
+    return format(out, cap, "%.*s/%s", KILN_SV(storeDir), b32);
 }
 
 } // namespace kiln

@@ -414,7 +414,7 @@ KILN_TEST(Manifest, Paths) {
     for (u8 i = 0; i < 16; ++i)
         k.bytes[i] = u8(0xa0 + i);
     (void)artifact_file_path("store"_sv, k, out, sizeof out);
-    KILN_CHECK(std::strcmp(out, "store/uc/ucq2fi5euwtkpkfjvkv2zlnov4") == 0);
+    KILN_CHECK(std::strcmp(out, "store/ucq2fi5euwtkpkfjvkv2zlnov4") == 0);
     KILN_CHECK(check_profile_name("compat"_sv) == nullptr);
     KILN_CHECK(check_profile_name("my-profile_2"_sv) == nullptr);
     KILN_CHECK(check_profile_name(""_sv) != nullptr);
