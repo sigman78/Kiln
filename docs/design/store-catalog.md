@@ -1,6 +1,7 @@
 # Cooked artifacts and a store catalog
 
-**Status:** Decided (owner, 2026-09-29); phase A implemented (branch `store-catalog`, choices made
+**Status:** Decided (owner, 2026-09-29); the named layout removed (owner, 2026-09-30, no
+backward compatibility); phase A implemented (branch `store-catalog`, choices made
 on the way in open-questions R11). The owner asked for hashed artifacts and a
 binary catalog with its own lookup index, then chose: XXH3-128 keys, no source re-hashing for
 freshness, one catalog per profile rewritten in place (not a new file per change), and a single
@@ -72,19 +73,17 @@ A pass-through KTX2 source is published unchanged under its build key; it needs 
 
 `<store>/catalogs/<profile>.kcat` maps `(asset name, kind)` to a build key. A store may hold
 catalogs of several profiles: each profile's keys differ, so their artifacts never mix, and
-two profiles may share an artifact whose key is the same. (The named layout keeps its one-profile
-rule and `kiln-store.txt`.)
+two profiles may share an artifact whose key is the same.
 
 The catalog records the profile's name, `hash_target` and block formats, so `create()` checks the
-adapter against it once (K5018, as for `kiln-store.txt`).
+adapter against it once (K5018).
 
 The catalog is written as a new temporary file and renamed over the old one. Readers load it into
 memory, so a rename never disturbs them. Nothing keeps old catalogs.
 
 ### 3. The runtime
 
-- `ContextDesc::storeLayout = StoreLayout::Catalog` and `ContextDesc::profile` (a name) select
-  `catalogs/<profile>.kcat`. `create()` reads it into one buffer and validates it fully.
+- `ContextDesc::profile` (a name) selects `catalogs/<profile>.kcat`. `create()` reads it into one buffer and validates it fully.
 - A request looks the name up (a binary search of the index, no allocation). The path of the
   artifact comes from the key. The loader resolves the path on the pump thread when it dispatches
   the job and copies it into the job, so a later catalog swap does not affect jobs in flight.
@@ -199,7 +198,7 @@ No timestamps or absolute paths: the same contents give the same bytes. Size: ab
 | K3010 | a new cook produced other bytes for an existing build key (a nondeterministic cook) |
 | K4201-K4209 | malformed catalog: magic, version, sizes and offsets, order, duplicates, index, checksum |
 | K5018 | (exists) the catalog's profile has formats the adapter cannot sample |
-| K5019 | `StoreLayout::Catalog` and the profile's catalog is missing |
+| K5019 | a request missed and the profile's catalog is missing |
 
 ## Alternatives considered
 
@@ -239,8 +238,8 @@ and its artifacts for shipping.
 
 **Phase C, if needed:** memory-mapped catalogs through the IO backend; several writers.
 
-The named layout stays available (`StoreLayout::Named`) for hosts that want plain files. There is no
-automatic migration: a named store is cooked again into a catalog store, and never deleted by kiln.
+The named layout was removed after phase A (owner, 2026-09-30): the catalog store is the only one.
+A named store is cooked again into a new directory; kiln deletes no store.
 
 ## Open points
 

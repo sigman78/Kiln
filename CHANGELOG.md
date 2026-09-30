@@ -8,6 +8,20 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
 ## [Unreleased]
 
 ### Changed
+- **Breaking (runtime, cook, tools): the named store layout is removed** (owner, 2026-09-30); the
+  catalog store is the only one. Gone: `StoreLayout` and `ContextDesc::storeLayout`,
+  `store_layout()`, `store_file_path()`, `kiln-store.txt` (`StoreProfile`, `parse_store_profile`,
+  `read_store_profile`, `bind_store_profile`), `store_key()` and `store_file_name()`,
+  `CookProvider::cook` (the provider always installs `prepare`), and `--layout` in `kiln-cook`,
+  `kiln-headless` and `kiln-viewer`. The store poller watches only the catalog; a reload without
+  it reads the catalog again when it starts. A `prepare` that returns Ok with neither bytes nor a
+  key leaves the catalog entry as it is. K3008 now means a provider whose target is not the
+  context's profile. An empty `ContextDesc::storeDir` is a context without a store.
+  - Migration: cook named stores again into a new directory (`kiln-cook <sources> -o <store>`);
+    kiln deletes no store. A host `CookProvider` implements `prepare` instead of `cook` (return the
+    bytes with a zero key, or Ok with nothing to use the catalog). Tests and tools that read
+    `tests/golden` as a store use `<build>/tests/samples/golden-store`, which `kiln_tests
+    GoldenStore.Build` (the ctest fixture `golden_store`) writes.
 - **Breaking (runtime, tools): stores are catalog stores by default** (store-catalog.md, Phase A
   step 6). `ContextDesc::storeLayout` defaults to `StoreLayout::Catalog` (profile `compat`), and
   `kiln-cook` writes artifacts and `catalogs/<target>.kcat` unless given `--layout named`. `kiln-cook`
