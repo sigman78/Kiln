@@ -11,6 +11,10 @@
 #include "kiln/null_adapter.h"
 #include "kiln/placeholders.h"
 
+#if defined(KILN_TEST_HAS_COOK) && KILN_TEST_HAS_COOK
+#include "kiln/cook/ktx2_writer.h" // TextureArrayBcLayers, TextureArrayMixedSupercompression
+#endif
+
 #include <atomic>
 #include <chrono>
 #include <cstdio>
@@ -1892,7 +1896,8 @@ bool settled_state(Rt& rt, TextureHandle t) {
     return st == State::Ready || st == State::Failed;
 }
 
-/// Layer `layer` of the array `t` holds the texels of `file`, level by level.
+/// Layer `layer` of the array `t` holds the texels of `file`, level by level. Rows and the layer
+/// stride are counted in block rows for a compressed format, so a level under one block rounds up.
 void check_layer_uploaded(Rt& rt, TextureHandle t, u32 layer, Span<u8 const> file, char const* what) {
     Result<ktx2::Ktx2View> kv = ktx2::Ktx2View::open(file);
     KILN_REQUIRE(kv.ok());
@@ -1900,10 +1905,12 @@ void check_layer_uploaded(Rt& rt, TextureHandle t, u32 layer, Span<u8 const> fil
     Span<u8 const> payload = null_adapter_payload(rt.na, ti.gpu);
     KILN_REQUIRE(!payload.empty());
     KILN_REQUIRE_EQ(ti.levelOffsets.size, usize(kv->desc().levels));
+    FormatInfo const* fi = format_info(kv->desc().format);
+    KILN_REQUIRE(fi != nullptr);
     for (u32 i = 0; i < kv->desc().levels; ++i) {
         u64 const pitch      = ti.levelRowPitches[i];
         u64 const rowBytes   = format_row_bytes(kv->desc().format, kv->level_width(i));
-        u32 const rows       = kv->level_height(i);
+        u32 const rows       = (kv->level_height(i) + fi->blockHeight - 1) / fi->blockHeight;
         u64 const off        = ti.levelOffsets[i] + layer * pitch * rows;
         Vec<u8> const texels = test::corpus::texels(*kv, i);
         KILN_REQUIRE(off + pitch * rows <= payload.size);
@@ -2042,6 +2049,24 @@ KILN_TEST(Runtime, TextureArrayDeclarations) {
     release(rt.ctx, a);
 }
 
+// destroy() frees the declarations of arrays the host never released.
+KILN_TEST(Runtime, TextureArrayDestroyWithLiveArray) {
+    ArrayStore store;
+    if (!store.init("arrays_destroy")) return;
+    u64 const reg0 = default_alloc_stats(Tag::Registry).bytesCurrent;
+    {
+        Rt rt;
+        ContextDesc cd;
+        cd.storeDir = StrView(store.hand.dir());
+        if (!rt.init({}, cd)) return;
+        TextureHandle const t = request_array(rt, "arr/ab", {"tex/a", "tex/b"});
+        KILN_REQUIRE(rt.pump_until([&] { return is_ready(rt.ctx, t); }));
+        KILN_REQUIRE(!request_array(rt, "arr/loading", {"tex/b", "tex/a", "tex/z"}).is_null());
+        rt.pump_once();
+    }
+    KILN_CHECK_EQ(default_alloc_stats(Tag::Registry).bytesCurrent, reg0);
+}
+
 // Without kArrayTextures an array fails like any array request (K5004).
 KILN_TEST(Runtime, TextureArrayNeedsArrayCaps) {
     ArrayStore store;
@@ -2114,3 +2139,250 @@ KILN_TEST(Runtime, TextureArrayStorePoller) {
     release(rt.ctx, t);
 }
 #endif
+
+// release() while an array is still loading frees its slot and declaration at once: no leak, no
+// event for the released handle, and the name is free for a fresh, even different, declaration.
+KILN_TEST(Runtime, TextureArrayReleaseWhileLoading) {
+    ArrayStore store;
+    if (!store.init("arrays_release_loading")) return;
+    u64 const reg0 = default_alloc_stats(Tag::Registry).bytesCurrent;
+    {
+        Rt rt;
+        ContextDesc cd;
+        cd.storeDir = StrView(store.hand.dir());
+        if (!rt.init({}, cd)) return;
+        for (int round = 0; round < 4; ++round) {
+            usize const ev0       = rt.events.size();
+            TextureHandle const t = request_array(rt, "arr/ab", {"tex/a", "tex/b"});
+            KILN_REQUIRE(!t.is_null());
+            for (int i = 0; i < round; ++i)
+                rt.pump_once(); // 0: right after the request; 1..3: meta or upload job in flight
+            release(rt.ctx, t);
+            KILN_CHECK_EQ(state(rt.ctx, t), State::Unloaded);
+            KILN_REQUIRE(rt.pump_until([&] { return stats(rt.ctx).ioJobsInFlight == 0; }));
+            for (EventKind k :
+                 {EventKind::MetaReady, EventKind::Ready, EventKind::Failed, EventKind::Changed})
+                KILN_CHECK(rt.find_event(k, t.bits(), ev0) < 0);
+
+            // A different list under the same name succeeds once the old declaration is truly gone.
+            TextureHandle const again = request_array(rt, "arr/ab", {"tex/b", "tex/a"});
+            KILN_REQUIRE(!again.is_null());
+            KILN_REQUIRE(rt.pump_until([&] { return settled_state(rt, again); }));
+            KILN_CHECK(is_ready(rt.ctx, again));
+            release(rt.ctx, again);
+            KILN_REQUIRE(rt.pump_until([&] { return stats(rt.ctx).ioJobsInFlight == 0; }));
+        }
+    }
+    KILN_CHECK_EQ(default_alloc_stats(Tag::Registry).bytesCurrent, reg0);
+}
+
+// release() during a reload frees the slot the same way: no leak, no event past the release, and
+// the name is free again once the abandoned reload drains.
+KILN_TEST(Runtime, TextureArrayReleaseDuringReload) {
+    ArrayStore store;
+    if (!store.init("arrays_release_reload")) return;
+    u64 const reg0 = default_alloc_stats(Tag::Registry).bytesCurrent;
+    {
+        Rt rt;
+        ContextDesc cd;
+        cd.storeDir = StrView(store.hand.dir());
+        if (!rt.init({}, cd)) return;
+        TextureHandle const t = request_array(rt, "arr/ab", {"tex/a", "tex/b"});
+        KILN_REQUIRE(rt.pump_until([&] { return is_ready(rt.ctx, t); }));
+        usize const ev0 = rt.events.size();
+
+        // `plain` keeps tex/b's format, so the abandoned reload (and later requests) stay valid.
+        KILN_REQUIRE(store.hand.put("tex/b", AssetKind::Texture, store.plain.span()));
+        request_reload(rt.ctx, t);
+        rt.pump_once(); // dispatches the reload's meta job
+        KILN_CHECK(stats(rt.ctx).ioJobsInFlight > 0);
+        release(rt.ctx, t);
+        KILN_CHECK_EQ(state(rt.ctx, t), State::Unloaded);
+        KILN_REQUIRE(rt.pump_until([&] { return stats(rt.ctx).ioJobsInFlight == 0; }));
+        for (EventKind k : {EventKind::MetaReady, EventKind::Ready, EventKind::Failed, EventKind::Changed})
+            KILN_CHECK(rt.find_event(k, t.bits(), ev0) < 0);
+
+        TextureHandle const again = request_array(rt, "arr/ab", {"tex/a", "tex/a"}); // a different list
+        KILN_REQUIRE(!again.is_null());
+        KILN_REQUIRE(rt.pump_until([&] { return settled_state(rt, again); }));
+        KILN_CHECK(is_ready(rt.ctx, again));
+        release(rt.ctx, again);
+        KILN_REQUIRE(rt.pump_until([&] { return stats(rt.ctx).ioJobsInFlight == 0; }));
+    }
+    KILN_CHECK_EQ(default_alloc_stats(Tag::Registry).bytesCurrent, reg0);
+}
+
+// An array bigger than the adapter's staging cap fails with K5004 within a bounded number of
+// pumps; it never stays Busy forever (docs/design/runtime-texture-arrays.md).
+KILN_TEST(Runtime, TextureArrayExceedsStaging) {
+    ArrayStore store;
+    if (!store.init("arrays_staging")) return;
+    Rt rt;
+    NullAdapterDesc nd;
+    // Comfortably above any placeholder create() uploads (the largest is the cube Failed checker,
+    // 8x8 x 6 faces = 1536 bytes), far below the two-layer, 5-level RGBA8 16x16 array (~2.7 KiB).
+    nd.maxUploadBytes = 2048;
+    ContextDesc cd;
+    cd.storeDir = StrView(store.hand.dir());
+    if (!rt.init(nd, cd)) return;
+    TextureHandle const t = request_array(rt, "arr/ab", {"tex/a", "tex/b"});
+    KILN_REQUIRE(rt.pump_until([&] { return state(rt.ctx, t) == State::Failed; }));
+    KILN_CHECK(rt.diags.has(kDiagAdapterRejected));
+    KILN_CHECK_EQ(null_adapter_stats(rt.na).busyReturned, 0u);
+    release(rt.ctx, t);
+}
+
+// Several request_reload() calls while one is already running coalesce into exactly one more
+// reload, and the version that lands reflects the store's latest content, not an intermediate one.
+KILN_TEST(Runtime, TextureArrayReloadMerging) {
+    ArrayStore store;
+    if (!store.init("arrays_reload_merge")) return;
+    Rt rt;
+    ContextDesc cd;
+    cd.storeDir = StrView(store.hand.dir());
+    if (!rt.init({}, cd)) return;
+    TextureHandle const t = request_array(rt, "arr/ab", {"tex/a", "tex/b"});
+    KILN_REQUIRE(rt.pump_until([&] { return is_ready(rt.ctx, t); }));
+    usize const ev0 = rt.events.size();
+
+    // tex/b starts as `flipped`; both `plain` and `flipped` are R8G8B8A8_UNORM like tex/a, so
+    // either reload succeeds (unlike `zstd`, which TextureArrayReload uses to make one fail).
+    KILN_REQUIRE(store.hand.put("tex/b", AssetKind::Texture, store.plain.span()));
+    request_reload(rt.ctx, t);
+    rt.pump_once(); // dispatches the first reload's meta job
+    KILN_CHECK(stats(rt.ctx).ioJobsInFlight > 0);
+    for (int i = 0; i < 3; ++i)
+        request_reload(rt.ctx, t); // coalesced into one pending flag, not a queue of three
+    KILN_REQUIRE(store.hand.put("tex/b", AssetKind::Texture, store.flipped.span())); // the content that lands
+
+    KILN_REQUIRE(rt.pump_until([&] { return count_events(rt, EventKind::Changed, t.bits(), ev0) == 2; }));
+    for (int i = 0; i < 5; ++i)
+        rt.pump_once();
+    KILN_CHECK_EQ(count_events(rt, EventKind::Changed, t.bits(), ev0), 2u);
+    KILN_CHECK_EQ(version(rt.ctx, t), 3u);
+    check_layer_uploaded(rt, t, 1, store.flipped.span(), "b after the merged reload");
+    KILN_CHECK_EQ(rt.diags.count, 0u);
+    release(rt.ctx, t);
+}
+
+#if defined(KILN_TEST_HAS_COOK) && KILN_TEST_HAS_COOK
+
+namespace {
+
+/// A synthetic BC7_UNORM 16x16 image with its full mip chain down to 1x1 (5 levels), written with
+/// the KTX2 writer: no corpus file has a full BC mip chain.
+struct BcImage {
+    static constexpr u32 kWidth  = 16;
+    static constexpr u32 kHeight = 16;
+    static constexpr u32 kLevels = 5;
+
+    Vec<u8> data[kLevels];
+    Span<u8 const> spans[kLevels];
+
+    explicit BcImage(u8 seed) {
+        for (u32 i = 0; i < kLevels; ++i) {
+            u64 const n = format_image_bytes(Format::BC7_UNORM, max(kWidth >> i, 1u), max(kHeight >> i, 1u));
+            data[i].init(default_allocator(), Tag::Test);
+            data[i].resize(usize(n));
+            for (usize k = 0; k < data[i].size(); ++k)
+                data[i][k] = u8(seed + i * 41u + k * 11u);
+            spans[i] = data[i].span();
+        }
+    }
+
+    Vec<u8> write() const {
+        ktx2::WriteDesc const wd{.format = Format::BC7_UNORM,
+                                 .width  = kWidth,
+                                 .height = kHeight,
+                                 .levels = Span<Span<u8 const> const>(spans, kLevels)};
+        Result<Vec<u8>> r = ktx2::write(wd, default_allocator());
+        KILN_CHECK(r.ok());
+        return r.ok() ? std::move(r).value() : Vec<u8>(default_allocator(), Tag::Test);
+    }
+};
+
+/// A Zstd-supercompressed copy of `plainFile`'s exact content (same format/size/levels): mixing
+/// with a plain layer needs two files that agree on everything but supercompression.
+Vec<u8> zstd_copy(Span<u8 const> plainFile) {
+    Result<ktx2::Ktx2View> v = ktx2::Ktx2View::open(plainFile);
+    KILN_CHECK(v.ok());
+    if (!v.ok()) return Vec<u8>(default_allocator(), Tag::Test);
+    u32 const levels = v->desc().levels;
+    Vec<u8> data[ktx2::kMaxLevels];
+    Span<u8 const> spans[ktx2::kMaxLevels];
+    for (u32 i = 0; i < levels; ++i) {
+        data[i]  = test::corpus::texels(*v, i);
+        spans[i] = data[i].span();
+    }
+    ktx2::WriteDesc const wd{.format    = v->desc().format,
+                             .width     = v->desc().width,
+                             .height    = v->desc().height,
+                             .levels    = Span<Span<u8 const> const>(spans, levels),
+                             .zstdLevel = 6};
+    Result<Vec<u8>> r = ktx2::write(wd, default_allocator());
+    KILN_CHECK(r.ok());
+    return r.ok() ? std::move(r).value() : Vec<u8>(default_allocator(), Tag::Test);
+}
+
+} // namespace
+
+// A full BC mip chain, with tail levels under one block rounded up to one, loads byte-exactly
+// with tight and padded rows.
+KILN_TEST(Runtime, TextureArrayBcLayers) {
+    test::HandStore hand;
+    if (!hand.init("arrays_bc")) return;
+    BcImage const a(11), b(97);
+    Vec<u8> const fileA = a.write();
+    Vec<u8> const fileB = b.write();
+    if (fileA.empty() || fileB.empty()) return;
+    KILN_REQUIRE(hand.put("bc/a", AssetKind::Texture, fileA.span()));
+    KILN_REQUIRE(hand.put("bc/b", AssetKind::Texture, fileB.span()));
+
+    for (u64 pitchAlign : {u64(1), u64(256)}) {
+        Rt rt;
+        NullAdapterDesc nd;
+        nd.rowPitchAlign = pitchAlign;
+        ContextDesc cd;
+        cd.storeDir = StrView(hand.dir());
+        if (!rt.init(nd, cd)) return;
+        TextureHandle const t = request_array(rt, "arr/bc", {"bc/a", "bc/b"});
+        KILN_REQUIRE(rt.pump_until([&] { return settled_state(rt, t); }));
+        if (!KILN_CHECK_MSG(is_ready(rt.ctx, t), "%s", rt.diags.last)) return;
+        TextureInfo const ti = texture_info(rt.ctx, t);
+        KILN_CHECK_EQ(ti.desc.levels, BcImage::kLevels);
+        KILN_CHECK(ti.desc.format == Format::BC7_UNORM);
+        check_layer_uploaded(rt, t, 0, fileA.span(), "bc a");
+        check_layer_uploaded(rt, t, 1, fileB.span(), "bc b");
+        release(rt.ctx, t);
+    }
+}
+
+// A plain layer and a Zstd layer of the same format/size/levels mix in one array; each decodes
+// into its place. Also covers Zstd rows with no padding (rowPitchAlign 1).
+KILN_TEST(Runtime, TextureArrayMixedSupercompression) {
+    ArrayStore store;
+    if (!store.init("arrays_mixed_sc")) return;
+    Vec<u8> const zstdOfPlain = zstd_copy(store.plain.span());
+    if (zstdOfPlain.empty()) return;
+    Result<ktx2::Ktx2View> const check = ktx2::Ktx2View::open(zstdOfPlain.span());
+    KILN_REQUIRE(check.ok());
+    KILN_CHECK_EQ(check->header().supercompressionScheme, u32(ktx2::Supercompression::Zstd));
+    KILN_REQUIRE(store.hand.put("tex/a_zstd", AssetKind::Texture, zstdOfPlain.span()));
+
+    for (u64 pitchAlign : {u64(1), u64(256)}) {
+        Rt rt;
+        NullAdapterDesc nd;
+        nd.rowPitchAlign = pitchAlign;
+        ContextDesc cd;
+        cd.storeDir = StrView(store.hand.dir());
+        if (!rt.init(nd, cd)) return;
+        TextureHandle const t = request_array(rt, "arr/mixed", {"tex/a", "tex/a_zstd"});
+        KILN_REQUIRE(rt.pump_until([&] { return settled_state(rt, t); }));
+        if (!KILN_CHECK_MSG(is_ready(rt.ctx, t), "%s", rt.diags.last)) return;
+        check_layer_uploaded(rt, t, 0, store.plain.span(), "plain");
+        check_layer_uploaded(rt, t, 1, store.plain.span(), "zstd copy");
+        release(rt.ctx, t);
+    }
+}
+
+#endif // KILN_TEST_HAS_COOK

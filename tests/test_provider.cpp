@@ -102,16 +102,18 @@ struct TestContext {
     TestContext& operator=(TestContext const&) = delete;
     TestContext() noexcept                     = default;
 
-    bool init(StrView storeDir, Span<Root const> roots, DiagSink diag = {}) noexcept {
+    bool init(StrView storeDir, Span<Root const> roots, DiagSink diag = {},
+              HotReloadDesc hotReload = {}) noexcept {
         Result<NullAdapter*> na_ = null_adapter_create({}, &adapter);
         if (!KILN_CHECK_MSG(na_.ok(), "null_adapter_create failed")) return false;
         na = na_.value();
 
         ContextDesc desc{};
-        desc.adapter  = &adapter;
-        desc.storeDir = storeDir;
-        desc.roots    = roots;
-        desc.diag     = diag;
+        desc.adapter   = &adapter;
+        desc.storeDir  = storeDir;
+        desc.roots     = roots;
+        desc.diag      = diag;
+        desc.hotReload = hotReload;
 
         Result<Context*> c = create(desc);
         if (!KILN_CHECK_MSG(c.ok(), "create() failed (%s)", code_name(c.code()))) return false;
@@ -1015,3 +1017,103 @@ KILN_TEST(Provider, RefusesAnotherProfile) {
     (void)manifest_file_path(StrView(storeDir), path, sizeof path);
     KILN_CHECK(!file_exists(path));
 }
+
+// Two source PNGs cook on miss into one array (docs/design/runtime-texture-arrays.md); its layers
+// are not textures of their own.
+KILN_TEST(Provider, ArrayCookedOnMiss) {
+    char root[1024], storeDir[1024];
+    scratch_dir("provider_array_src", root, sizeof root);
+    scratch_dir("provider_array_store", storeDir, sizeof storeDir);
+    make_dir(root);
+
+    u8 rgbaA[4 * 4 * 4], rgbaB[4 * 4 * 4];
+    test_pixels(rgbaA, 10);
+    test_pixels(rgbaB, 20);
+    char path[1100];
+    format(path, sizeof path, "%s/tileA.png", root);
+    replace_file(path, test_png(rgbaA).span());
+    format(path, sizeof path, "%s/tileB.png", root);
+    replace_file(path, test_png(rgbaB).span());
+
+    Root const roots[] = {
+        {{}, StrView(root)}
+    };
+    TestContext tc;
+    if (!tc.init(StrView(storeDir), Span<Root const>(roots, 1))) return;
+    KILN_REQUIRE(cook::install_provider(tc.ctx, cook::ProviderDesc{.storeMode = cook::StoreMode::Disk,
+                                                                   .target    = {.blockFormats = 0}})
+                     .ok());
+
+    StrView const layers[] = {"tileA.png", "tileB.png"};
+    TextureHandle const arr =
+        request_texture_array(tc.ctx, {.name = "arr/tiles", .layers = Span<StrView const>(layers, 2)});
+    KILN_REQUIRE(arr);
+    KILN_CHECK_EQ(pump_until_settled(tc.ctx, arr), State::Ready);
+    TextureInfo const ti = texture_info(tc.ctx, arr);
+    KILN_CHECK(ti.desc.isArray && ti.desc.layers == 2);
+    cook::uninstall_provider(tc.ctx);
+
+    KILN_CHECK(stored(storeDir, AssetKind::Texture, "tileA.png"));
+    KILN_CHECK(stored(storeDir, AssetKind::Texture, "tileB.png"));
+    KILN_CHECK(find_texture(tc.ctx, asset_id("tileA.png")).is_null()); // a layer is not a texture of its own
+    release(tc.ctx, arr);
+}
+
+#if defined(KILN_HOT_RELOAD) && KILN_HOT_RELOAD
+// With the cook provider's source poller and the runtime's store poller both on, editing a source
+// PNG re-cooks it and the array gets a Changed event, the array's side of hot-reload.md.
+KILN_TEST(Provider, ArrayReloadsWhenASourceChanges) {
+    char root[1024], storeDir[1024];
+    scratch_dir("provider_array_watch_src", root, sizeof root);
+    scratch_dir("provider_array_watch_store", storeDir, sizeof storeDir);
+    make_dir(root);
+
+    u8 rgbaA[4 * 4 * 4], rgbaB[4 * 4 * 4], rgbaB2[4 * 4 * 4];
+    test_pixels(rgbaA, 30);
+    test_pixels(rgbaB, 40);
+    test_pixels(rgbaB2, 50);
+    char pathA[1100], pathB[1100];
+    format(pathA, sizeof pathA, "%s/tileA.png", root);
+    format(pathB, sizeof pathB, "%s/tileB.png", root);
+    replace_file(pathA, test_png(rgbaA).span());
+    replace_file(pathB, test_png(rgbaB).span());
+
+    Root const roots[] = {
+        {{}, StrView(root)}
+    };
+    TestContext tc;
+    if (!tc.init(StrView(storeDir), Span<Root const>(roots, 1), {}, {.watchStore = true, .pollMs = 20}))
+        return;
+    KILN_REQUIRE(cook::install_provider(tc.ctx, kWatchDesc).ok());
+
+    StrView const layers[] = {"tileA.png", "tileB.png"};
+    TextureHandle const arr =
+        request_texture_array(tc.ctx, {.name = "arr/tiles", .layers = Span<StrView const>(layers, 2)});
+    KILN_REQUIRE(arr);
+    KILN_CHECK_EQ(pump_until_settled(tc.ctx, arr), State::Ready);
+
+    Vec<Event> seen(default_allocator(), Tag::Test);
+    auto pump_and_collect = [&] {
+        pump(tc.ctx, {});
+        for (Event const& e : kiln::events(tc.ctx))
+            seen.push_back(e);
+    };
+    for (int i = 0; i < 5; ++i)
+        pump_and_collect();
+    usize const ev0 = seen.size();
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(50)); // past file-time granularity
+    replace_file(pathB, test_png(rgbaB2).span());
+
+    bool changed = false;
+    for (int i = 0; i < 500 && !changed; ++i) {
+        pump_and_collect();
+        for (usize k = ev0; k < seen.size() && !changed; ++k)
+            changed = seen[k].kind == EventKind::Changed && seen[k].handle == arr.bits();
+        if (!changed) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    cook::uninstall_provider(tc.ctx);
+    KILN_CHECK_MSG(changed, "the array did not get a Changed event after tileB.png changed");
+    release(tc.ctx, arr);
+}
+#endif

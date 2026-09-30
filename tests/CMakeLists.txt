@@ -51,6 +51,15 @@ target_compile_definitions(kiln_tests PRIVATE
     KILN_TEST_GOLDEN_DIR="${KILN_GOLDEN_DIR}"
     KILN_TEST_SAMPLES_DIR="${CMAKE_CURRENT_BINARY_DIR}/samples")
 
+# Always defined (0 or 1), so a file that always builds (test_runtime.cpp) can guard the few
+# cases that need the KTX2 writer or the cook provider; the shipping (KILN_BUILD_COOK=OFF)
+# configuration still runs the rest.
+if(TARGET kiln_cook)
+    target_compile_definitions(kiln_tests PRIVATE KILN_TEST_HAS_COOK=1)
+else()
+    target_compile_definitions(kiln_tests PRIVATE KILN_TEST_HAS_COOK=0)
+endif()
+
 if(TARGET kiln_cook)
     target_sources(kiln_tests PRIVATE test_mesh.cpp test_ktx2.cpp test_ktx2_corpus_rt.cpp
                                        test_settings.cpp test_sidecar.cpp test_store.cpp

@@ -68,6 +68,8 @@ Status null_begin_upload(void* user, UploadDesc const& desc, UploadTarget* out) 
     std::lock_guard<std::mutex> lock(na->mutex);
     ++na->stats.beginUploads;
 
+    if (na->desc.maxUploadBytes != 0 && desc.size > na->desc.maxUploadBytes)
+        return make_status(Code::Unsupported); // can never fit: not Busy
     if (na->desc.busyEveryN != 0 && busyCallNo % na->desc.busyEveryN == 0) {
         ++na->stats.busyReturned;
         return make_status(Code::Busy);

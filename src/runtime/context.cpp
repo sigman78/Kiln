@@ -208,7 +208,9 @@ void teardown(Context* ctx) noexcept {
             if (!s.realObj.is_null()) a.destroy(a.user, s.realObj);
             s.realObj = {};
             free_load_data(s);
-            s.live = false;
+            free_array_decl(ctx->alloc, s.array);
+            s.array = nullptr;
+            s.live  = false;
         }
     }
     for (Placeholder& p : ctx->ph) {

@@ -16,6 +16,9 @@ struct NullAdapterDesc {
     u64 rowPitchAlign      = 1;       ///< reported copy constraint
     u64 offsetAlign        = 16;
     u32 maxObjects         = 4096;
+    /// 0 = unlimited. A begin_upload() over this fails with Unsupported (never Busy), like a
+    /// real adapter's staging limit (docs/design/runtime-texture-arrays.md).
+    u64 maxUploadBytes = 0;
 };
 
 struct NullAdapterStats {
