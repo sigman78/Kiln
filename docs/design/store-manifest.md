@@ -154,8 +154,8 @@ is trusted as it is.
 lock (K3009 while a writer runs), reads `manifest.dir`, and deletes the artifacts no profile
 references. Artifacts have no directory of their own, so it deletes only files in the store's root
 whose names are exactly 26 base32 characters, and the temporary files a store write leaves after a
-crash (`<name>.tmp.<16 hex digits>`); it never touches other files. A store without a manifest
-references no artifact. Retiring a profile is dropping it from the manifest, then running `--gc`.
+crash (`<name>.tmp.<16 hex digits>`); it never touches other files. A store without a manifest is
+refused: a lost manifest must not empty the store. Retiring a profile is dropping it from the manifest, then running `--gc`.
 
 ### 7. Roots, and runs without inputs
 

@@ -1369,6 +1369,22 @@ KILN_TEST(ManifestProvider, RecordsTheContextRoots) {
     KILN_CHECK(!manifest_key(store, AssetKind::Texture, "external_uri_albedo.png"_sv).is_zero()); // scanned
 }
 
+// A lost manifest must not empty the store: --gc refuses and deletes nothing.
+KILN_TEST(ManifestCli, GcRefusesAStoreWithoutManifest) {
+    char store[1024], sources[1024], path[1200];
+    fresh_dir("manifest-gc-lost", store, sizeof store);
+    fresh_dir("manifest-gc-lost-src", sources, sizeof sources);
+    copy_sources(sources);
+    KILN_REQUIRE_EQ(run_args({sources, "-o", store, "-q"}), 0);
+    Hash128 const mesh = manifest_key(store, AssetKind::Mesh, "external_uri.gltf"_sv);
+    KILN_REQUIRE(!mesh.is_zero());
+    (void)manifest_file_path(StrView(store), path, sizeof path);
+    KILN_REQUIRE(std::remove(path) == 0);
+    KILN_CHECK_EQ(run_args({"--gc", "-o", store, "-q"}), 2);
+    (void)artifact_file_path(StrView(store), mesh, path, sizeof path);
+    KILN_CHECK(io_file_exists(StrView(path)));
+}
+
 KILN_TEST(ManifestCli, GcDeletesOnlyUnreferencedArtifacts) {
     char store[1024], sources[1024], path[1200];
     fresh_dir("manifest-gc", store, sizeof store);
