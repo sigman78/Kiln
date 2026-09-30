@@ -115,8 +115,26 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
   `kiln-cook --gc -o <store> [--dry-run]` deletes the artifacts no profile references and leftover
   temporary files, and nothing else (K3009 while a writer runs). `kiln-cook --export <dir> -o
   <store> [--target <profile>]` writes a runtime-only store (`manifest.dir` and its artifacts,
-  checked while copied) into an empty directory. `manifest.in` is minor 2: an older one is dropped
+  checked while copied) into an empty directory. `manifest.in` is minor 3: an older one is dropped
   once (its sources are checked again).
+- **Store recovery and consistency** (owner's audit of PR #3):
+  - Input records keep their outputs' build keys; a record whose keys differ from `manifest.dir`
+    (a crash between the two writes) is dropped when the store opens, so its unit cooks again
+    instead of reading as up to date, with or without `--verify`.
+  - A cook removes the entries of its unit it did not make (the unit's name and `<unit>#...`),
+    from the names alone: a lost `manifest.in` no longer leaves a glb's old images addressable.
+  - A root that is missing or cannot be listed in full drops nothing, and `kiln-cook` exits 2; a
+    source is gone only when looking it up says "not found".
+  - `kiln-cook --watch` retries a failed source when any file the failed cook read changes (a
+    `.gltf`'s buffer too), not only the source and its sidecar.
+  - `--target` accepts any valid profile name; cooking still needs a built-in one (exit 1
+    otherwise), and `--export --target <name>` exports a custom profile of the store.
+- **Breaking (runtime API): `CookProvider::prepare` takes a `PrepareMode`.** `request_reload()`
+  passes `PrepareMode::Recheck`: the provider checks the asset's sources again even when it checked
+  them earlier in the session, so a host with its own file watcher gets an edit by calling
+  `request_reload()`. Loads and reloads after a manifest change pass `Normal`.
+  - Migration: a host's own `prepare` (or a wrapper of the installed one) takes the new parameter
+    after `assetPath`, and passes it on when it wraps.
 - **The cook provider on the store** (step 5): `CookProvider::prepare`, called before every load of
   a file asset (hit or miss), names the asset's artifact or returns freshly cooked bytes.
   `install_provider` checks the context's profile (K3008), takes the store lock in Disk mode
