@@ -142,6 +142,8 @@ void submit_stage(Context* ctx, Slot& s, Stage stage) noexcept {
     s.jobInFlight = true;
     s.phase       = stage == Stage::Meta ? Phase::MetaJob : Phase::UploadJob;
     if (stage == Stage::Meta) {
+        s.jobRecheck  = s.recheck;
+        s.recheck     = false;
         s.provider    = ctx->provider;
         s.jobKeyValid = false;
         // The artifact is chosen here, so a manifest swapped in later leaves this load alone.

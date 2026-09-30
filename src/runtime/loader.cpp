@@ -105,7 +105,9 @@ Status prepare_source(Context* ctx, Slot& s, Source& src) noexcept {
     Hash128 key;
     DiagSink sink{&capture_fn, &s.capture};
     // May take seconds when it cooks; we are on a worker.
-    Status const st = s.provider.prepare(s.provider.user, s.kind, path_of(s), ctx->alloc, &out, &key, &sink);
+    PrepareMode const mode = s.jobRecheck ? PrepareMode::Recheck : PrepareMode::Normal;
+    Status const st =
+        s.provider.prepare(s.provider.user, s.kind, path_of(s), mode, ctx->alloc, &out, &key, &sink);
     if (st.failed()) {
         if (st.code == Code::NotFound) {
             note(s.capture, "the cook provider found no source");

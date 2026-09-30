@@ -1486,6 +1486,207 @@ KILN_TEST(ManifestCli, ExportWritesARuntimeOnlyStore) {
     KILN_CHECK_EQ(run_args({sources, "-o", store, "-q", "--export", one}), 1); // inputs make no sense
 }
 
+// ---------------------------------------------------------------------------
+// Audit of PR #3: recovery and consistency between the manifest files
+// ---------------------------------------------------------------------------
+
+namespace {
+
+bool copy_file_to(char const* from, char const* to) {
+    std::error_code ec;
+    std::filesystem::copy_file(from, to, std::filesystem::copy_options::overwrite_existing, ec);
+    return !ec;
+}
+
+} // namespace
+
+// A crash between the manifest.dir and manifest.in writes pairs new entries with old input records.
+// Reverting the source to the old content must then cook again, not read as up to date.
+KILN_TEST(ManifestCli, RecordsFromAnotherManifestAreNotTrusted) {
+    char store[1024], sources[1024], bin[1100], in[1100], oldIn[1100], oldBin[1100];
+    fresh_dir("audit-pairing", store, sizeof store);
+    fresh_dir("audit-pairing-src", sources, sizeof sources);
+    copy_sources(sources);
+    format(bin, sizeof bin, "%s/external_uri.bin", sources);
+    format(in, sizeof in, "%s/manifest.in", store);
+    format(oldIn, sizeof oldIn, "%s/manifest.in.old", sources);
+    format(oldBin, sizeof oldBin, "%s/external_uri.bin.old", sources);
+
+    KILN_REQUIRE_EQ(run_args({sources, "-o", store, "-q"}), 0);
+    Hash128 const original = manifest_key(store, AssetKind::Mesh, "external_uri.gltf"_sv);
+    KILN_REQUIRE(!original.is_zero());
+    KILN_REQUIRE(copy_file_to(in, oldIn));
+    KILN_REQUIRE(copy_file_to(bin, oldBin));
+
+    edit_first_byte(bin, false);
+    KILN_REQUIRE_EQ(run_args({sources, "-o", store, "-q"}), 0);
+    Hash128 const edited = manifest_key(store, AssetKind::Mesh, "external_uri.gltf"_sv);
+    KILN_REQUIRE(!edited.is_zero() && !(edited == original));
+
+    // The crash: manifest.dir has the edited entry, manifest.in still the original's inputs.
+    KILN_REQUIRE(copy_file_to(oldIn, in));
+    // The source goes back to its original content (with a new time).
+    KILN_REQUIRE(copy_file_to(oldBin, bin));
+    std::error_code ec;
+    std::filesystem::last_write_time(bin, std::filesystem::file_time_type::clock::now(), ec);
+
+    KILN_REQUIRE_EQ(run_args({sources, "-o", store, "-q"}), 0);
+    KILN_CHECK(manifest_key(store, AssetKind::Mesh, "external_uri.gltf"_sv) == original);
+
+    // Same with --verify.
+    edit_first_byte(bin, false);
+    KILN_REQUIRE_EQ(run_args({sources, "-o", store, "-q"}), 0);
+    KILN_REQUIRE(copy_file_to(oldIn, in));
+    KILN_REQUIRE(copy_file_to(oldBin, bin));
+    KILN_REQUIRE_EQ(run_args({sources, "-o", store, "-q", "--verify"}), 0);
+    KILN_CHECK(manifest_key(store, AssetKind::Mesh, "external_uri.gltf"_sv) == original);
+}
+
+// A root that cannot be scanned drops nothing: its entries and artifacts stay, and the run fails.
+KILN_TEST(ManifestCli, AnUnavailableRootDropsNothing) {
+    char project[1024], store[1100], sources[1100], moved[1100], path[1200];
+    fresh_dir("audit-root", project, sizeof project);
+    format(store, sizeof store, "%s/store", project);
+    format(sources, sizeof sources, "%s/src", project);
+    format(moved, sizeof moved, "%s/src-moved", project);
+    copy_sources(sources);
+    KILN_REQUIRE_EQ(run_args({sources, "-o", store, "-q"}), 0);
+    Hash128 const mesh = manifest_key(store, AssetKind::Mesh, "external_uri.gltf"_sv);
+    KILN_REQUIRE(!mesh.is_zero());
+
+    std::error_code ec;
+    std::filesystem::rename(sources, moved, ec);
+    KILN_REQUIRE(!ec);
+    KILN_CHECK_EQ(run_args({"-o", store, "-q"}), 2);
+    KILN_CHECK(manifest_key(store, AssetKind::Mesh, "external_uri.gltf"_sv) == mesh);
+    KILN_REQUIRE_EQ(run_args({"--gc", "-o", store, "-q"}), 0);
+    (void)artifact_file_path(StrView(store), mesh, path, sizeof path);
+    KILN_CHECK(io_file_exists(StrView(path)));
+}
+
+// Entries a unit no longer makes leave the manifest even when its input record is lost.
+KILN_TEST(ManifestCli, OutputsLeaveWithoutTheirRecord) {
+    char store[1024], sources[1024], glb[1100], in[1100], from[1100];
+    fresh_dir("audit-owner", store, sizeof store);
+    fresh_dir("audit-owner-src", sources, sizeof sources);
+    std::error_code ec;
+    std::filesystem::create_directories(sources, ec);
+    format(glb, sizeof glb, "%s/model.glb", sources);
+    format(from, sizeof from, "%s/../gltf/generated/pbr_textures.glb", kiln::test::corpus_dir());
+    KILN_REQUIRE(copy_file_to(from, glb));
+    KILN_REQUIRE_EQ(run_args({sources, "-o", store, "-q"}), 0);
+    ManifestProfile before;
+    Vec<u8> bytes(default_allocator(), Tag::Test);
+    KILN_REQUIRE(read_profile(store, "compat"_sv, bytes, &before));
+    KILN_REQUIRE(before.size() > u64(1)); // the mesh and its embedded images
+
+    format(in, sizeof in, "%s/manifest.in", store);
+    KILN_REQUIRE(std::remove(in) == 0);
+    format(from, sizeof from, "%s/../gltf/generated/cube_basic.glb", kiln::test::corpus_dir());
+    KILN_REQUIRE(copy_file_to(from, glb));
+    std::filesystem::last_write_time(glb, std::filesystem::file_time_type::clock::now(), ec);
+    KILN_REQUIRE_EQ(run_args({sources, "-o", store, "-q"}), 0);
+
+    ManifestProfile after;
+    KILN_REQUIRE(read_profile(store, "compat"_sv, bytes, &after));
+    KILN_CHECK_EQ(after.size(), u64(1));
+    for (u64 i = 0; i < after.size(); ++i)
+        KILN_CHECK_MSG(after.entry(i).name.find('#') == StrView::kNpos, "left over: %.*s",
+                       KILN_SV(after.entry(i).name));
+}
+
+// --watch retries a failed source when any file its cook read changes, not only the source.
+KILN_TEST(ManifestCli, WatchRetriesWhenABufferIsRepaired) {
+    char store[1024], sources[1024], bin[1100], good[1100];
+    fresh_dir("audit-watch", store, sizeof store);
+    fresh_dir("audit-watch-src", sources, sizeof sources);
+    copy_sources(sources);
+    format(bin, sizeof bin, "%s/external_uri.bin", sources);
+    format(good, sizeof good, "%s/good.bin.keep", store);
+    std::error_code ec;
+    std::filesystem::create_directories(store, ec);
+    KILN_REQUIRE(copy_file_to(bin, good));
+    std::filesystem::resize_file(bin, 16, ec); // truncated: the glTF's buffer is too short
+    KILN_REQUIRE(!ec);
+
+    int code = -1;
+    std::thread cook([&] { code = run_args({sources, "-o", store, "-q", "--watch", "--timeout", "4"}); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+    KILN_CHECK(manifest_key(store, AssetKind::Mesh, "external_uri.gltf"_sv).is_zero());
+    KILN_CHECK(copy_file_to(good, bin));
+    std::filesystem::last_write_time(bin, std::filesystem::file_time_type::clock::now(), ec);
+    cook.join();
+    KILN_CHECK_EQ(code, 0);
+    KILN_CHECK(!manifest_key(store, AssetKind::Mesh, "external_uri.gltf"_sv).is_zero());
+}
+
+// --target names any profile for --export; cooking still needs a built-in one.
+KILN_TEST(ManifestCli, ExportsACustomProfile) {
+    char store[1024], sources[1024], out[1024], missing[1024], source[1100];
+    fresh_dir("audit-studio", store, sizeof store);
+    fresh_dir("audit-studio-src", sources, sizeof sources);
+    fresh_dir("audit-studio-out", out, sizeof out);
+    fresh_dir("audit-studio-missing", missing, sizeof missing);
+    copy_sources(sources);
+    format(source, sizeof source, "%s/external_uri_albedo.png", sources);
+
+    TargetProfile const studio{.name = "studio", .blockFormats = 0};
+    static MeshCookSettings const mesh;
+    static TextureCookSettings const tex;
+    CookUnit unit(default_allocator());
+    KILN_REQUIRE(cook_unit({.kind            = AssetKind::Texture,
+                            .name            = "external_uri_albedo.png",
+                            .sourcePath      = StrView(source),
+                            .meshDefaults    = &mesh,
+                            .textureDefaults = &tex,
+                            .target          = &studio,
+                            .statInputs      = true},
+                           &unit)
+                     .ok());
+    ManifestStore* s = nullptr;
+    KILN_REQUIRE(open_manifest_store({.storeDir = StrView(store), .target = &studio}, &s).ok());
+    KILN_REQUIRE(publish_unit(s, unit, 0, nullptr).ok());
+    KILN_REQUIRE(commit_manifest(s, nullptr).ok());
+    close_manifest_store(s);
+
+    KILN_CHECK_EQ(run_args({"-o", store, "-q", "--export", out, "--target=studio"}), 0);
+    KILN_CHECK(manifest_key(out, AssetKind::Texture, "external_uri_albedo.png"_sv, "studio") ==
+               unit.outputs[0].key);
+    KILN_CHECK_EQ(run_args({"-o", store, "-q", "--export", missing, "--target=nothere"}), 2);
+    KILN_CHECK_EQ(run_args({sources, "-o", store, "-q", "--target=studio"}), 1); // cooking: built-ins only
+}
+
+// request_reload checks the source again, even for a unit the provider already checked this session.
+KILN_TEST(ManifestProvider, RequestReloadChecksTheSourceAgain) {
+    char store[1024], sources[1024], bin[1100];
+    fresh_dir("audit-recheck", store, sizeof store);
+    fresh_dir("audit-recheck-src", sources, sizeof sources);
+    copy_sources(sources);
+    format(bin, sizeof bin, "%s/external_uri.bin", sources);
+    Hash128 before;
+    {
+        ProviderContext p;
+        KILN_REQUIRE(p.init(store, sources, {}).ok());
+        MeshHandle const m = request_mesh(p.c.ctx, "external_uri.gltf"_sv);
+        KILN_REQUIRE(settle(p.c.ctx, m) == State::Ready);
+        before = manifest_key(store, AssetKind::Mesh, "external_uri.gltf"_sv);
+        KILN_REQUIRE(!before.is_zero());
+
+        edit_first_byte(bin, false);
+        request_reload(p.c.ctx, m);
+        bool changed = false;
+        for (int i = 0; i < 3000 && !changed; ++i) {
+            (void)pump(p.c.ctx, {});
+            for (Event const& e : events(p.c.ctx))
+                if (e.kind == EventKind::Changed && e.handle == m.bits()) changed = true;
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        KILN_CHECK(changed);
+    } // the provider's release writes the manifest
+    Hash128 const after = manifest_key(store, AssetKind::Mesh, "external_uri.gltf"_sv);
+    KILN_CHECK(!after.is_zero() && !(after == before));
+}
+
 #endif // KILN_MESH
 
 KILN_TEST(StorePaths, RelativeAndAbsolute) {

@@ -284,13 +284,12 @@ KILN_API void release(Context* ctx, Group g) noexcept; ///< frees the group reco
 // ---------------------------------------------------------------------------
 
 /// Reload the asset: look its name up in the manifest again (through the cook provider, if one is
-/// installed). Without the store poller, the manifest is read again first when the reload
-/// starts. A Ready asset keeps serving its current payload until the new one is
-/// ready: then version + 1, bind() for a bindless slot, the old object released after the frames
-/// that use it, a Changed event.
-/// A failed reload keeps the old version and emits K5010. Memory-registered assets
-/// cannot be reloaded (K5012). Works without KILN_HOT_RELOAD; the store poller
-/// (ContextDesc::hotReload) calls this for you.
+/// installed; it checks the asset's sources again, PrepareMode::Recheck, so a host with its own
+/// file watcher calls this after an edit). Without the store poller, the manifest is read again first when
+/// the reload starts. A Ready asset keeps serving its current payload until the new one is ready: then
+/// version + 1, bind() for a bindless slot, the old object released after the frames that use it, a Changed
+/// event. A failed reload keeps the old version and emits K5010. Memory-registered assets cannot be reloaded
+/// (K5012). Works without KILN_HOT_RELOAD; the store poller (ContextDesc::hotReload) calls this for you.
 KILN_API void request_reload(Context* ctx, MeshHandle h) noexcept;
 KILN_API void request_reload(Context* ctx, TextureHandle h) noexcept;
 
@@ -310,6 +309,12 @@ KILN_API void request_reload(Context* ctx, TextureHandle h) noexcept;
 // Cook provider (dev builds; installed by kiln_cook, see kiln/cook/provider.h)
 // ---------------------------------------------------------------------------
 
+/// How much CookProvider::prepare checks.
+enum class PrepareMode : u8 {
+    Normal = 0, ///< the provider may answer from what it checked earlier this session
+    Recheck,    ///< check the asset's sources again (request_reload(): a host's own watcher saw a change)
+};
+
 /// Called on a worker before every load of a file asset, hit or miss. The provider brings the
 /// asset's manifest entry up to date (it cooks again when an input changed) and puts its
 /// artifact's build key in `*key`; when it cooked, also the bytes in `out`, which the load then
@@ -317,9 +322,9 @@ KILN_API void request_reload(Context* ctx, TextureHandle h) noexcept;
 /// manifest entry is used as it is (a miss if there is none), so a wrapper may handle some names
 /// only. NotFound: no source for the name. Without a provider the manifest is used as it is.
 struct CookProvider {
-    Status (*prepare)(void* user, AssetKind kind, StrView assetPath, Allocator const* alloc, Vec<u8>* out,
-                      Hash128* key, DiagSink const* diag) = nullptr;
-    void* user                                            = nullptr;
+    Status (*prepare)(void* user, AssetKind kind, StrView assetPath, PrepareMode mode, Allocator const* alloc,
+                      Vec<u8>* out, Hash128* key, DiagSink const* diag) = nullptr;
+    void* user                                                          = nullptr;
     /// destroy() calls it for the provider still installed, after the last load has finished,
     /// so the provider can free itself. Null: nothing to free.
     void (*release)(void* user) = nullptr;

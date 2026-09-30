@@ -137,7 +137,10 @@ struct Slot {
     u32 pathLen            = 0;
     Hash128 jobKey;                  ///< the artifact to load, from the manifest at dispatch or the provider
     bool jobKeyValid        = false; ///< false: the name missed the manifest
-    bool jobManifestPresent = false; ///< Context::manifestPresent at dispatch
+    bool jobManifestPresent = false;
+    bool jobRecheck         = false; ///< the provider checks the sources again (PrepareMode::Recheck)
+    bool recheck = false; ///< pump thread: request_reload() asked for it; the next load takes it ///<
+                          ///< Context::manifestPresent at dispatch
 
     // --- keys (pump thread) ---------------------------------------------------------
     bool manifestCheck = false; ///< a new manifest came during the load: compare keys when it settles

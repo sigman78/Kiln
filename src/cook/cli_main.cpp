@@ -18,6 +18,7 @@
 #include "kiln/io.h"
 #include "kiln/log.h"
 
+#include <cerrno>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -165,7 +166,9 @@ void sort_names(Vec<char>& names, Vec<usize>& offs) {
     }
 }
 
-void scan_dir(char const* dir, FileList& out) {
+/// Adds the sources under `dir`, recursively; false when a directory could not be listed in full
+/// (the list is then partial).
+bool scan_dir(char const* dir, FileList& out) {
     Vec<char> names{default_allocator(), Tag::General};
     Vec<usize> offs{default_allocator(), Tag::General};
     auto push = [&](char const* name) {
@@ -179,16 +182,22 @@ void scan_dir(char const* dir, FileList& out) {
     format(pattern, sizeof pattern, "%s/*", dir);
     WIN32_FIND_DATAA fd;
     HANDLE h = FindFirstFileA(pattern, &fd);
-    if (h == INVALID_HANDLE_VALUE) return;
+    if (h == INVALID_HANDLE_VALUE) return false;
     do {
         if (std::strcmp(fd.cFileName, ".") != 0 && std::strcmp(fd.cFileName, "..") != 0) push(fd.cFileName);
     } while (FindNextFileA(h, &fd));
+    bool complete = GetLastError() == ERROR_NO_MORE_FILES;
     FindClose(h);
 #else
     DIR* d = opendir(dir);
-    if (!d) return;
-    while (dirent* e = readdir(d))
+    if (!d) return false;
+    for (;;) {
+        errno           = 0;
+        dirent* const e = readdir(d);
+        if (!e) break;
         if (std::strcmp(e->d_name, ".") != 0 && std::strcmp(e->d_name, "..") != 0) push(e->d_name);
+    }
+    bool complete = errno == 0;
     closedir(d);
 #endif
     sort_names(names, offs);
@@ -196,10 +205,11 @@ void scan_dir(char const* dir, FileList& out) {
         char path[1024];
         format(path, sizeof path, "%s/%s", dir, names.data() + offs[i]);
         if (is_dir(path))
-            scan_dir(path, out);
+            complete &= scan_dir(path, out);
         else if (is_source_ext(extension(StrView(path))))
             out.add(path);
     }
+    return complete;
 }
 
 /// True if `path` lies under the directory `root`.
@@ -258,22 +268,38 @@ void diag_fn(void* user, Diagnostic const& d) {
 // ---------------------------------------------------------------------------
 
 struct FailedSource {
-    u64 stats  = 0;     ///< source_stats() when it failed
+    Vec<char> paths{default_allocator(), Tag::General}; ///< the files it depends on, NUL-separated
+    u64 stats  = 0;                                     ///< files_stats(paths) when it failed
     bool retry = false; ///< an IO failure (a file still being written): try every round, quietly
 };
 
-/// The size and time of a source and its sidecar, hashed: a failed source waits for a change.
-u64 source_stats(char const* path) {
+/// The size and time of every file in `paths` (NUL-separated), hashed: a failed source waits for
+/// a change to one of them.
+u64 files_stats(Vec<char> const& paths) {
     Xxh64State h;
-    char side[1100];
-    for (StrView const p :
-         {StrView(path), StrView(side, format(side, sizeof side, "%s%.*s", path, KILN_SV(kSidecarExt)))}) {
+    for (usize at = 0; at < paths.size();) {
+        StrView const p(paths.data() + at, std::strlen(paths.data() + at));
+        at += p.size + 1;
         IoStat st{};
         h.update_value(u8(stat_file(p, &st).ok()));
         h.update_value(st.size);
         h.update_value(st.mtimeNs);
     }
     return h.digest();
+}
+
+/// The files a failed cook of the source `path` depends on: the source, its sidecar, and every
+/// input the attempt read (a `.gltf`'s buffers).
+void failed_paths(char const* path, CookUnit const& unit, Vec<char>& out) {
+    auto const add = [&out](StrView p) {
+        out.append(Span<char const>(p.data, p.size));
+        out.push_back('\0');
+    };
+    char side[1100];
+    add(StrView(path));
+    add(StrView(side, format(side, sizeof side, "%s%.*s", path, KILN_SV(kSidecarExt))));
+    for (UnitInput const& in : unit.inputs)
+        if (in.role == InputRole::Buffer) add(unit.str(in.pathOff, in.pathLen));
 }
 
 struct Ctx {
@@ -289,8 +315,11 @@ struct Ctx {
     u64 hostDigest             = 0;
     char const* defaultRootDir = nullptr;                 ///< the default root of this run, if one is known
     Vec<char> scanned{default_allocator(), Tag::General}; ///< inputs scanned this round, NUL-separated
-    u32 dropped = 0;                                      ///< units whose source is gone
-    bool rescan = false; ///< a --watch round: quiet about sources that did not change
+    u32 dropped     = 0;                                  ///< units whose source is gone
+    bool scanFailed = false; ///< a root or input could not be scanned in full this round
+    bool scanWarned = false; ///< --watch: that was reported in an earlier round
+    bool fromTable  = false; ///< the inputs came from the store's root table
+    bool rescan     = false; ///< a --watch round: quiet about sources that did not change
     /// --watch: sources whose cook failed, by path hash: the stats they failed with.
     HashMap<u64, FailedSource> failedSources{default_allocator(), Tag::General};
     u32 cooked = 0, skipped = 0, failed = 0;
@@ -388,10 +417,10 @@ void cook_file(Ctx& c, char const* path, char const* root) {
     // --watch: a source that failed is cooked again when it changes, or every round after an IO
     // failure, reporting only the first failure of one version.
     u64 const pathHash      = hash_name(StrView(path));
-    u64 const stats         = c.opt.watch ? source_stats(path) : 0;
     FailedSource const* was = c.failedSources.find(pathHash);
-    if (was && was->stats == stats && !was->retry) return;
-    c.ds.mute = was && was->stats == stats;
+    bool const same         = was && files_stats(was->paths) == was->stats;
+    if (same && !was->retry) return;
+    c.ds.mute = same;
 
     Status st = cook_unit(d, &unit);
     if (st.failed() && unit.inputs.empty() && !c.ds.mute)
@@ -408,7 +437,18 @@ void cook_file(Ctx& c, char const* path, char const* root) {
     ++c.failed;
     if (st.ok()) st = unit.first_failure();
     bool const retry = st.code == Code::IoError || st.code == Code::IoEof || st.code == Code::NotFound;
-    if (c.opt.watch) c.failedSources.insert(pathHash, FailedSource{stats, retry});
+    if (!c.opt.watch) return;
+    FailedSource f;
+    failed_paths(path, unit, f.paths);
+    f.stats = files_stats(f.paths);
+    f.retry = retry;
+    c.failedSources.insert(pathHash, std::move(f));
+}
+
+/// An input could not be scanned in full: the run fails and drops nothing under it.
+void scan_failed(Ctx& c, char const* input, char const* why) {
+    c.scanFailed = true;
+    if (!c.scanWarned) std::fprintf(stderr, "kiln-cook: %s: %s; nothing under it is dropped\n", input, why);
 }
 
 /// Drops the units whose source lay under a scanned input and is gone. Their artifacts stay for --gc.
@@ -432,7 +472,9 @@ void drop_vanished(Ctx& c) {
             inScan         = std::strcmp(src, in) == 0 || under(src, in);
             s += std::strlen(in) + 1;
         }
-        if (!inScan || file_exists(src)) continue;
+        // Only a source known to be gone drops its unit; an unreadable one (IO error) keeps it.
+        IoStat st;
+        if (!inScan || stat_file(StrView(src), &st).code != Code::NotFound) continue;
         drop_unit(c.store, name);
         ++c.dropped;
         if (!c.opt.quiet) std::printf("  %-48.*s    source gone, dropped\n", KILN_SV(name));
@@ -443,6 +485,8 @@ void drop_vanished(Ctx& c) {
 /// the units whose source under a scanned input is gone.
 void cook_inputs(Ctx& c) {
     c.scanned.clear();
+    c.scanWarned = c.scanFailed && c.rescan; // a watch reports an unscannable input once
+    c.scanFailed = false;
     for (char const* input : c.opt.inputs) {
         char in[1024];
         format(in, sizeof in, "%s", input);
@@ -465,15 +509,23 @@ void cook_inputs(Ctx& c) {
                 root[0] = '\0';
         }
 
-        c.scanned.append(Span<char const>(in, std::strlen(in) + 1));
         if (is_dir(in)) {
             FileList files;
-            scan_dir(in, files);
+            // A directory counts as scanned, so its gone sources drop, only when listed in full.
+            if (scan_dir(in, files))
+                c.scanned.append(Span<char const>(in, std::strlen(in) + 1));
+            else
+                scan_failed(c, in, "cannot be listed in full");
             if (files.size() == 0 && !c.rescan) std::fprintf(stderr, "kiln-cook: no sources under %s\n", in);
             for (usize i = 0; i < files.size(); ++i)
                 cook_file(c, files.at(i), root);
-        } else if (!c.rescan || file_exists(in)) {
+        } else if (file_exists(in)) {
+            c.scanned.append(Span<char const>(in, std::strlen(in) + 1));
             cook_file(c, in, root);
+        } else if (c.rescan || c.fromTable) {
+            scan_failed(c, in, "missing");
+        } else {
+            cook_file(c, in, root); // reports that it cannot be read
         }
     }
     drop_vanished(c);
@@ -561,7 +613,6 @@ bool add_root(void* user, char const* arg) {
 }
 
 char const* const kProfiles[]  = {"default", "precise", "float", nullptr};
-char const* const kTargets[]   = {"compat", "desktop", "uncompressed", nullptr};
 char const* const kQualities[] = {"fast", "normal", "high", nullptr};
 
 } // namespace
@@ -603,11 +654,10 @@ int kiln::cook::cook_cli_main(int argc, char** argv, CookPolicy const& policy, u
          .arg  = "<file>",
          .help = "append \"<assetPath>\\t<file>\\t<build key>\" per written output",
          .str  = &o.map},
-        {.name    = "--target",
-         .arg     = "<name>",
-         .help    = "target profile: the block formats it samples (default compat); with --export, the "
-                    "profile to export", .str     = &o.targetName,
-         .choices = kTargets},
+        {.name = "--target",
+         .arg  = "<name>",
+         .help = "target profile: compat, desktop or uncompressed to cook (default compat); with "
+                 "--export, any profile of the store", .str  = &o.targetName},
         {.name    = "--quality",
          .arg     = "<level>",
          .help    = "block encoder effort (default normal)",
@@ -645,6 +695,7 @@ int kiln::cook::cook_cli_main(int argc, char** argv, CookPolicy const& policy, u
         .footer =
             "Inputs are source files or directories. The store records the roots a run used; with no\n"
             "inputs, kiln-cook scans those roots again (new and changed sources cook, gone ones leave).\n"
+            "A root that is missing or cannot be listed in full drops nothing and makes the run exit 2.\n"
             "Exit codes: 0 all inputs cooked, 1 usage, 2 IO failure, 3 one or more cook errors (--watch: "
             "sources still failing at the end).",
         .positional = &add_input,
@@ -657,6 +708,20 @@ int kiln::cook::cook_cli_main(int argc, char** argv, CookPolicy const& policy, u
         (o.check && o.inputs.empty())) {
         cli::usage(spec, stderr);
         return 1;
+    }
+    if (o.targetName) {
+        if (char const* why = check_profile_name(StrView(o.targetName))) {
+            std::fprintf(stderr, "kiln-cook: --target '%s': %s\n", o.targetName, why);
+            return 1;
+        }
+        // Cooking needs the profile's definition: only the built-in ones have one here.
+        if (!o.gc && !o.exportDir && !target_profile(StrView(o.targetName))) {
+            std::fprintf(stderr,
+                         "kiln-cook: --target '%s' is not a built-in profile (compat, desktop, "
+                         "uncompressed); a custom profile cooks through the host's own tool\n",
+                         o.targetName);
+            return 1;
+        }
     }
     DiagState ds{o.quiet, o.verbose};
     DiagSink const sink{&diag_fn, &ds};
@@ -686,10 +751,10 @@ int kiln::cook::cook_cli_main(int argc, char** argv, CookPolicy const& policy, u
     o.mesh.optimize        = !noOptimize;
     o.mesh.useAuthoredLods = !noLods;
     o.tex.genMips          = !noMips;
-    o.target               = *target_profile(StrView(o.targetName ? o.targetName : "compat")); // kTargets
-    o.tex.quality          = std::strcmp(o.quality, "fast") == 0   ? EncodeQuality::Fast
-                             : std::strcmp(o.quality, "high") == 0 ? EncodeQuality::High
-                                                                   : EncodeQuality::Normal;
+    o.target      = *target_profile(StrView(o.targetName ? o.targetName : "compat")); // checked above
+    o.tex.quality = std::strcmp(o.quality, "fast") == 0   ? EncodeQuality::Fast
+                    : std::strcmp(o.quality, "high") == 0 ? EncodeQuality::High
+                                                          : EncodeQuality::Normal;
     o.tex.supercompression = o.zstd != 0 ? Supercompression::Zstd : Supercompression::None;
     o.tex.zstdLevel        = u8(o.zstd);
     o.mesh.profile         = std::strcmp(o.profile, "float") == 0     ? VertexProfile::Float
@@ -744,6 +809,7 @@ int kiln::cook::cook_cli_main(int argc, char** argv, CookPolicy const& policy, u
                 format(r.dir, sizeof r.dir, "%s", dir);
                 o.roots.push_back(r);
             }
+            c.fromTable = true;
             if (o.defaultRoot) o.inputs.push_back(o.defaultRoot);
             for (NamedRoot const& r : o.roots)
                 o.inputs.push_back(r.dir);
@@ -826,11 +892,12 @@ int kiln::cook::cook_cli_main(int argc, char** argv, CookPolicy const& policy, u
         // What counts at the end of a watch is what still fails, not what failed on the way.
         u32 const failing = u32(c.failedSources.size());
         if (!o.quiet) std::printf("watch: %u source(s) failing\n", failing);
-        return failing ? 3 : 0;
+        return c.scanFailed ? 2 : failing ? 3 : 0;
     }
     if (!o.quiet)
         std::printf("%s: %u cooked, %u up to date, %u dropped, %u failed, %u warning(s)\n",
                     o.check ? "check" : "cook", c.cooked, c.skipped, c.dropped, c.failed, ds.warnings);
+    if (c.scanFailed) return 2;
     if (c.failed) return 3;
     return 0;
 }
