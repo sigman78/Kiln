@@ -148,7 +148,7 @@ Status open_source(Context* ctx, Slot& s, Source& src, bool allowCook) noexcept 
         if (s.jobCatalogPresent)
             note(s.capture, "not in profile '%s' of the store's manifest", ctx->profile);
         else
-            note(s.capture, "the store's manifest has no profile '%s'", ctx->profile);
+            note(s.capture, "the store has no manifest, or no profile '%s' in it", ctx->profile);
         s.jobDiag          = s.jobCatalogPresent ? kDiagStoreMiss : kDiagCatalogMissing;
         return s.jobStatus = make_status(Code::NotFound);
     }
