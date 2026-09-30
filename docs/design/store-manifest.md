@@ -1,13 +1,15 @@
 # Cooked artifacts and a store manifest
 
-**Status:** Decided (owner, 2026-09-29, revised 2026-09-30); phase A implemented (branch
+**Status:** Decided (owner, 2026-09-29, revised 2026-09-30); phases A and B implemented (branch
 `store-catalog`, choices made on the way in open-questions R11). The owner asked for hashed
 artifacts and a binary index with its own lookup, then chose: XXH3-128 keys, no source re-hashing
 for freshness, an index rewritten in place (not a new file per change), and a single writer. On
 2026-09-30 the owner removed the named layout (no backward compatibility), flattened the store,
 and chose one manifest shared by every profile, input records without paths in a file of their
 own, one lock per store, artifacts named by the key in base32 with no extension and no
-subdirectories, and hashing a file before a new time counts as a change. Phase A (below) is the last step of v0.6.
+subdirectories, and hashing a file before a new time counts as a change. Then (2026-09-30) a root
+table in the input records, so `kiln-cook` can run without inputs and scans the recorded roots by
+default. Phase A (below) is the last step of v0.6.
 **Decides:** How cooked files are named, how the runtime finds them, how a dev cook knows a file is
 still fresh, and how the store is written and cleaned. Replaces the named store's "a file is used
 while it exists" rule (open-questions R9).
@@ -36,7 +38,7 @@ while it exists" rule (open-questions R9).
 
 ```
 <store>/manifest.dir     the runtime reads it: profiles, entries, index (ships)
-<store>/manifest.in      input records of every profile (cook only, never ships)
+<store>/manifest.in      the root table and the input records of every profile (cook only, never ships)
 <store>/manifest.lock    held by the one process that writes the store
 <store>/2x3ukt7xoax4fpn5ueaazr6h4i       an artifact: the build key in base32, no extension
 ```
@@ -148,11 +150,39 @@ is trusted as it is.
 
 ### 6. Cleanup
 
-`kiln-cook --gc <store>` (with `--dry-run`) takes the store's lock, reads the manifest, and deletes
-the artifacts no profile references. Artifacts have no directory of their own, so it deletes only
-files in the store's root whose names are exactly 26 base32 characters; it never touches other
-files. It runs while no program uses
-the store. Retiring a profile is dropping it from the manifest, then running `--gc`.
+`kiln-cook --gc -o <store>` (with `--dry-run`, which lists and deletes nothing) takes the store's
+lock (K3009 while a writer runs), reads `manifest.dir`, and deletes the artifacts no profile
+references. Artifacts have no directory of their own, so it deletes only files in the store's root
+whose names are exactly 26 base32 characters, and the temporary files a store write leaves after a
+crash (`<name>.tmp.<16 hex digits>`); it never touches other files. A store without a manifest
+references no artifact. Retiring a profile is dropping it from the manifest, then running `--gc`.
+
+### 7. Roots, and runs without inputs
+
+`manifest.in` also holds a **root table**: for each root a writer used, its name (empty for the
+default root) and its directory. The directory is stored relative to the store when there is a
+relative path (the same drive), else absolute, so a project that moves as a whole keeps its table.
+Every writer records its roots: `kiln-cook` its `--root` entries and its default root (`--root
+<dir>`, or the one directory its inputs imply; inputs in different directories record none), the
+cook provider the context's roots. A writer's entries replace those of the same name.
+
+`kiln-cook -o <store>` with no inputs scans every recorded root, as a first run scans its inputs:
+new and changed sources cook, unchanged ones are checked by size and time. `--watch` works the same
+way. Given `--root` entries override recorded ones of the same name. A store with no table needs
+inputs once. This matches a provider, which cooks any name a request gives.
+
+A run drops the units whose source lay under a directory it scanned and is gone: their entries and
+records leave the manifest, and `--gc` deletes their artifacts later. Units of roots a run did not
+scan stay.
+
+### 8. Export
+
+`kiln-cook --export <dir> -o <store> [--target <profile>]` writes a runtime-only store into an
+empty (or new) `<dir>`: a `manifest.dir` with that profile (every profile without `--target`) and
+the artifacts it names, each checked against its checksum while it is copied. No input records and
+no lock. The manifest is written last, so a failed export never names a missing artifact. The
+export only reads the store and takes no lock; a `--gc` at the same time can make it fail, never
+make it wrong.
 
 ## Manifest format 0.1 (`manifest.dir`)
 
@@ -221,8 +251,8 @@ Size: about 1.1 MB for 10 000 entries (72 bytes per entry, plus names).
 
 ## Input records (`manifest.in`)
 
-The cook's own file, never read by the runtime: magic `KMIN`, major 0, minor 1, a record count,
-then each record as its profile name and its body (unit name, kind, host digest, the inputs with
+The cook's own file, never read by the runtime: magic `KMIN`, major 0, minor 2, a record count, a
+root count, the roots (name, directory), then each record as its profile name and its body (unit name, kind, host digest, the inputs with
 role, presence, name, size, time and content hash, the outputs with kind, glTF slot and name), then
 an XXH3-128 of everything before it. Records are sorted by profile name, then unit name. A file
 that does not decode is dropped with an info log.
@@ -274,8 +304,9 @@ that does not decode is dropped with an info log.
 6. `kiln-cook` writes the store; `--verify`; `--watch`.
 7. The examples and the viewer use it.
 
-**Phase B:** `kiln-cook --gc` and `--dry-run`; an export command that copies `manifest.dir` (one
-profile or all) and the artifacts it names, for shipping.
+**Phase B (done):** `kiln-cook --gc` and `--dry-run`; `kiln-cook --export`, which copies
+`manifest.dir` (one profile or all) and the artifacts it names, for shipping. With them, the root
+table and runs without inputs (decision 7).
 
 **Phase C, if needed:** a memory-mapped manifest through the IO backend; several writers.
 

@@ -112,6 +112,15 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
   another process. A failed source is reported once and cooked again when it changes; the exit
   code counts the sources still failing. Every `kiln-cook` run also writes the manifest at most once
   a second while it cooks, so a watching app fills in during a long run.
+- **Store maintenance** (store-manifest phase B): `manifest.in` records the roots its writers used
+  (a directory relative to the store when it can be), so `kiln-cook -o <store>` without inputs
+  scans them again: new and changed sources cook, and units whose source under a scanned
+  directory is gone leave the manifest. The cook provider records the context's roots too.
+  `kiln-cook --gc -o <store> [--dry-run]` deletes the artifacts no profile references and leftover
+  temporary files, and nothing else (K3009 while a writer runs). `kiln-cook --export <dir> -o
+  <store> [--target <profile>]` writes a runtime-only store (`manifest.dir` and its artifacts,
+  checked while copied) into an empty directory. `manifest.in` is minor 2: an older one is dropped
+  once (its sources are checked again).
 - **The cook provider on the store** (step 5): `CookProvider::prepare`, called before every load of
   a file asset (hit or miss), names the asset's artifact or returns freshly cooked bytes.
   `install_provider` checks the context's profile (K3008), takes the store lock in Disk mode

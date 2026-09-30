@@ -97,7 +97,9 @@ All programs print their options with `--help`.
 
 - `kiln-cook <input>... -o <store>` cooks files or directories into a store: artifacts named by
   their build key and the store's manifest (docs/design/store-manifest.md). It cooks only the
-  sources whose inputs changed; `--verify` compares their content instead of size and time.
+  sources whose inputs changed; `--verify` compares their content instead of size and time. The
+  store records its roots, so `kiln-cook -o <store>` alone scans them again. `--gc` deletes the
+  artifacts nothing references; `--export <dir>` writes a runtime-only copy for shipping.
   `--watch` keeps cooking what changes; an app that watches the store (no cook provider) reloads
   it. `--check` validates
   only, `--target compat|desktop|uncompressed` picks the target profile (the block formats its
