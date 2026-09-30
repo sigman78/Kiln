@@ -1,5 +1,5 @@
 #version 460
-// examples/vk-array/shaders/floor.vert — one triangle that covers the screen; no vertex buffers.
+// examples/vk/shaders/array/floor.vert — one triangle that covers the screen; no vertex buffers.
 
 layout(location = 0) out vec2 vUv; // 0..1, top left first
 

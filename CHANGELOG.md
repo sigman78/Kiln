@@ -20,6 +20,14 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
 - **Example `kiln-vk-array`** (built with `KILN_EXAMPLE_VK_BASIC`): the same floor through Vulkan,
   with a descriptor set rewritten on kiln's events or, with `--bindless`, through kiln's slot.
 
+### Changed
+- **Examples layout:** `examples/vk/` holds the shared Vulkan code (`kiln_example_vk`: device,
+  adapter, frame plumbing, now `vk_render.{h,cpp}`) and the Vulkan integration examples
+  (`main_basic.cpp`, `main_array.cpp`), as `examples/gl/` does for GL; shaders live in
+  `examples/vk/shaders/<set>/`. `examples/viewer/` keeps `kiln-viewer` and `kiln-vk-smoke`.
+  `examples/vk-basic/` is gone. The shader targets `viewer-shaders` and `vk-basic-shaders` are one
+  target, `vk-shaders`. CMake options are unchanged.
+
 ## [0.6.0] - 2026-09-30
 
 Stores that cook only what changed: artifacts named by a build key over every input, one manifest

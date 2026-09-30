@@ -1,5 +1,5 @@
 #version 460
-// examples/viewer/shaders/mesh.vert — spec §8 model A: attributes at fixed locations by
+// examples/vk/shaders/bindless/mesh.vert — spec §8 model A: attributes at fixed locations by
 // semantic; specialization constants say which are real and whether the normal is octahedral.
 
 layout(constant_id = 0) const bool kNormalOct  = true;  // R16G16_SNORM octahedral vs xyz

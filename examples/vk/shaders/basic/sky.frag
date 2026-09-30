@@ -1,5 +1,5 @@
 #version 460
-// examples/vk-basic/shaders/sky.frag — the cube at set 1, binding 5 of the sky's own descriptor
+// examples/vk/shaders/basic/sky.frag — the cube at set 1, binding 5 of the sky's own descriptor
 // set, along the camera ray through this pixel. The target is sRGB: the output stays linear.
 
 layout(set = 0, binding = 0) uniform Frame {

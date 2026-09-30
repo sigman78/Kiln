@@ -1,5 +1,5 @@
 #version 460
-// examples/vk-basic/shaders/mesh.vert — float vertex data (VertexProfile::Float) at the viewer's
+// examples/vk/shaders/basic/mesh.vert — float vertex data (VertexProfile::Float) at the viewer's
 // fixed locations. Set 0 is the frame, set 1 the material (mesh.frag).
 
 layout(location = 0) in vec3 inPosition;

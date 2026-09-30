@@ -1,7 +1,7 @@
 # Dependencies for v0.5
 
 **Status:** Proposed (awaiting owner sign-off). The owner chose cgltf and wuffs. Implemented in M2
-(`third_party/`, pins in `third_party/README.md`) and M4 (`examples/viewer/CMakeLists.txt`).
+(`third_party/`, pins in `third_party/README.md`) and M4 (`examples/vk/CMakeLists.txt`).
 **Decides:** Which third-party libraries kiln uses in v0.5, how each is pinned, and which target
 links it.
 

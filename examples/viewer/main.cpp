@@ -12,9 +12,9 @@
 #include "cli.h"
 #include "png_writer.h"
 #include "viewer_math.h"
-#include "viewer_render.h"
 #include "vk_adapter.h"
 #include "vk_device.h"
+#include "vk_render.h"
 
 // volk (through vk_device.h) comes first so GLFW sees the Vulkan types; GLFW_INCLUDE_NONE is set.
 #include <GLFW/glfw3.h>

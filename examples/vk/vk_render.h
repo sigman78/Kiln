@@ -1,7 +1,7 @@
-// examples/viewer/viewer_render.h — the viewer's render target and frame loop plumbing on
+// examples/vk/vk_render.h — the render target and frame loop plumbing of the Vulkan examples, on
 // raw Vulkan 1.4: a swapchain or an offscreen image, depth, frames in flight, the frame
 // uniform buffer, and one pipeline per mesh::VertexLayout (spec §8 model A). What is drawn
-// is up to main.cpp. Design: docs/design/viewer.md.
+// is up to each example. Design: docs/design/viewer.md.
 #pragma once
 
 #include <kiln/alloc.h>

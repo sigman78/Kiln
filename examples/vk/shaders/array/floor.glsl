@@ -1,4 +1,4 @@
-// examples/vk-array/shaders/floor.glsl — the floor both fragment shaders draw: a grid of tiles, each
+// examples/vk/shaders/array/floor.glsl — the floor both fragment shaders draw: a grid of tiles, each
 // sampling one layer of the array. Included after `sample_tile(uv, layer)` is defined. The target is
 // sRGB: the output stays linear.
 

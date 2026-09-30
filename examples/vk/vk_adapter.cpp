@@ -1,4 +1,4 @@
-// examples/viewer/vk_adapter.cpp — the example kiln::Adapter on raw Vulkan 1.4
+// examples/vk/vk_adapter.cpp — the example kiln::Adapter on raw Vulkan 1.4
 // (docs/design/viewer.md, "Adapter design"). Keep it readable: this file is the reference
 // for adapters written outside kiln.
 #include "vk_adapter.h"

@@ -1,6 +1,6 @@
-// examples/viewer/viewer_render.cpp — swapchain or offscreen target, frames in flight and
-// per-layout pipelines for the viewer (docs/design/viewer.md, "Viewer design").
-#include "viewer_render.h"
+// examples/vk/vk_render.cpp — swapchain or offscreen target, frames in flight and
+// per-layout pipelines for the Vulkan examples (docs/design/viewer.md, "Viewer design").
+#include "vk_render.h"
 
 #include <kiln/formats.h>
 #include <kiln/log.h>

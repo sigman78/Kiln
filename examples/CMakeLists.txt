@@ -47,11 +47,10 @@ if(KILN_BUILD_VIEWER OR KILN_EXAMPLE_GL OR KILN_EXAMPLE_GL_BINDLESS OR KILN_EXAM
     add_subdirectory(common)
 endif()
 if(KILN_BUILD_VIEWER OR KILN_EXAMPLE_VK_BASIC)
-    add_subdirectory(viewer) # kiln_example_vk, and kiln-viewer with KILN_BUILD_VIEWER
+    add_subdirectory(vk) # kiln_example_vk, and kiln-vk-basic, kiln-vk-array with KILN_EXAMPLE_VK_BASIC
 endif()
-if(KILN_EXAMPLE_VK_BASIC)
-    add_subdirectory(vk-basic)
-    add_subdirectory(vk-array) # kiln-vk-array: a texture array from separate tiles
+if(KILN_BUILD_VIEWER)
+    add_subdirectory(viewer)
 endif()
 if(KILN_EXAMPLE_NGA)
     add_subdirectory(nga)

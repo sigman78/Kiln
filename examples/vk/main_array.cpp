@@ -1,15 +1,15 @@
-// examples/vk-array/main.cpp — kiln-vk-array: one texture array that kiln assembles at load time from
+// examples/vk/main_array.cpp — kiln-vk-array: one texture array that kiln assembles at load time from
 // six separately cooked PNG tiles (docs/design/runtime-texture-arrays.md), drawn through Vulkan 1.4 as
 // a floor of tiles. Default: a descriptor set per frame in flight, rewritten on kiln's events (as
 // kiln-vk-basic). --bindless: kiln's slot in the adapter's sampler2DArray binding (as the viewer).
 // The floor is the frame plumbing's full-screen pass with this example's shaders.
 #include "cli.h"
 #include "example_app.h"
-#include "viewer_render.h"
+#include "vk_render.h"
 
 #include <kiln/assets.h>
 #include <kiln/log.h>
-#if KILN_VK_ARRAY_HAS_COOK
+#if KILN_VK_HAS_COOK
 #include <kiln/cook/provider.h>
 #endif
 
@@ -17,7 +17,7 @@
 #include "shaders/array_floor_sets_frag_spv.h"
 #include "shaders/array_floor_vert_spv.h"
 
-// volk (through viewer_render.h) comes first so GLFW sees the Vulkan types.
+// volk (through vk_render.h) comes first so GLFW sees the Vulkan types.
 #include <GLFW/glfw3.h>
 
 using namespace kiln;
@@ -223,7 +223,7 @@ int main(int argc, char** argv) {
     Result<Context*> created = create(cd);
     if (created.failed()) return 2;
     Context* const ctx = *created;
-#if KILN_VK_ARRAY_HAS_COOK
+#if KILN_VK_HAS_COOK
     bool provider = false;
     {
         cook::ProviderDesc pd{};
@@ -308,7 +308,7 @@ int main(int argc, char** argv) {
 
     // 7. Teardown: kiln first (it hands every object back through Adapter::destroy), then Vulkan.
     release(ctx, tiles);
-#if KILN_VK_ARRAY_HAS_COOK
+#if KILN_VK_HAS_COOK
     if (provider) cook::uninstall_provider(ctx);
 #endif
     destroy(ctx);

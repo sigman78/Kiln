@@ -1,5 +1,5 @@
 #version 460
-// examples/vk-basic/shaders/mesh.frag — the material's textures from set 1, one descriptor set per
+// examples/vk/shaders/basic/mesh.frag — the material's textures from set 1, one descriptor set per
 // material, lit like the other integration examples. The target is sRGB: the output stays linear.
 
 struct Material {

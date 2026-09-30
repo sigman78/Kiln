@@ -1,6 +1,6 @@
 #version 460
 #extension GL_EXT_nonuniform_qualifier : require
-// examples/viewer/shaders/mesh.frag — bindless base color (slot from the adapter) with a
+// examples/vk/shaders/bindless/mesh.frag — bindless base color (slot from the adapter) with a
 // simple directional light. Placeholders arrive through the same slots, so nothing here
 // knows whether the real texture has landed.
 

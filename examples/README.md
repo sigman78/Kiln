@@ -19,11 +19,11 @@ The second run is fast: the models are cached and the store is already cooked.
 | Program | Needs | What it does |
 |---|---|---|
 | `kiln-headless` | nothing | Loads assets through the null adapter and logs every request, event and diagnostic. `--slow` and `--latency` simulate slow IO and cooking. `--watch` keeps pumping until `--timeout` and logs hot reloads. |
-| `kiln-viewer` | Vulkan 1.4 driver | Draws cooked meshes through the example Vulkan adapter (`viewer/vk_adapter.cpp`). `--watch` turns on hot reload. |
+| `kiln-viewer` | Vulkan 1.4 driver | Draws cooked meshes through the example Vulkan adapter (`vk/vk_adapter.cpp`). `--watch` turns on hot reload. |
 | `kiln-gl` | OpenGL 4.6 driver | One model and a cube sky through the example GL adapter (`gl/gl_adapter.cpp`): textures bound per draw, uploads flushed by the host on the GL thread. The integration example for GL users (`docs/design/integration-examples.md`). |
 | `kiln-gl-bindless` | OpenGL 4.6 + `ARB_bindless_texture` | The same scene with bindless textures: each texture gets a slot in a table of resident handles at request time, and materials store slot numbers once. Renders the same pixels as `kiln-gl`. |
 | `kiln-gl-array` | OpenGL 4.6 driver | A texture array that kiln assembles at load time from six separately cooked PNG tiles (`request_texture_array`, `docs/design/runtime-texture-arrays.md`), drawn as a floor of tiles through one `sampler2DArray`; each tile shows its layer number. The adapter gets one upload with every layer. Edit a tile under `examples/assets/tiles/` and the array reloads. Built with `KILN_EXAMPLE_GL`; needs no downloaded model. |
-| `kiln-vk-array` | Vulkan 1.4 driver | The same floor of tiles through Vulkan, in both binding models: by default a descriptor set per frame in flight, rewritten when kiln's events say the array's GPU object changed (as `kiln-vk-basic`); with `--bindless`, the array's kiln slot in the adapter's `sampler2DArray` binding (as the viewer). Both draw the same pixels. The floor is the frame plumbing's full-screen pass with this example's shaders (`vk-array/shaders/`). Built with `KILN_EXAMPLE_VK_BASIC`; needs no downloaded model. |
+| `kiln-vk-array` | Vulkan 1.4 driver | The same floor of tiles through Vulkan, in both binding models: by default a descriptor set per frame in flight, rewritten when kiln's events say the array's GPU object changed (as `kiln-vk-basic`); with `--bindless`, the array's kiln slot in the adapter's `sampler2DArray` binding (as the viewer). Both draw the same pixels. The floor is the frame plumbing's full-screen pass with this example's shaders (`vk/shaders/array/`). Built with `KILN_EXAMPLE_VK_BASIC`; needs no downloaded model. |
 | `kiln-sokol` | D3D11 (Windows), GL 4.3 (Linux) or Metal (macOS) | The same scene through sokol_gfx, with sokol_app owning the main loop: kiln's `create()`, `pump()` and `destroy()` live in the app callbacks. `--offscreen` shows the window until the scene settles (sokol_app has no hidden windows). |
 | `kiln-vk-basic` | Vulkan 1.4 driver | The same scene on Vulkan without bindless: a descriptor set per material and frame slot, rewritten when kiln's events say a texture's object changed. Shares the viewer's device, adapter (bindless off) and frame plumbing. |
 | `kiln-nga` | Vulkan 1.4 with `VK_EXT_descriptor_heap` (RTX 30+, RDNA 3+) | The same scene through NoGraphicsAPI: vertices pulled through GPU pointers from the payload kiln wrote in place, textures as descriptor heap indices. Only with `-DKILN_EXAMPLE_NGA=ON` (fetches NoGraphicsAPI, builds the Vulkan loader, downloads Slang). Headless on Linux (`--offscreen`). |
@@ -137,16 +137,17 @@ every asset still reached Ready.
 ## Where things are
 
 - `headless/main.cpp`: the runtime API walkthrough, numbered step by step.
-- `gl/main.cpp` and `gl/main_bindless.cpp`: the GL integration examples, numbered step by step (compare
+- `gl/main.cpp`, `gl/main_bindless.cpp` and `gl/main_array.cpp`: the GL integration examples, numbered step by step (compare
   the two to see what bindless changes); `gl/gl_adapter.cpp`: their adapter, bound or bindless;
   `gl/gl_util.cpp`: what the two share; `gl/gl_api.cpp`: a GL loader of about 75 functions over GLFW.
 - `nga/main.cpp`, `nga/nga_adapter.cpp`, `nga/scene.slang`: the NoGraphicsAPI example.
-- `vk-basic/main.cpp`: the non-bindless Vulkan example (compare `viewer/main.cpp` for bindless).
+- `vk/main_basic.cpp`: the non-bindless Vulkan example (compare `viewer/main.cpp` for bindless);
+  `vk/main_array.cpp`: a texture array with descriptor sets or bindless.
 - `sokol/main.cpp`: the sokol integration example; `sokol/sokol_adapter.cpp`: its adapter;
   `sokol/scene.glsl`: its shaders, compiled by sokol-shdc at build time.
 - What each integration example showed about kiln's API: `docs/api-friction.md`. `common/`: window, camera and logging
   shared by the windowed examples.
-- `viewer/vk_adapter.cpp`: the example adapter. `viewer/main.cpp` and `viewer/viewer_render.cpp`: the
-  viewer. `viewer/shaders/`: GLSL plus the committed SPIR-V.
+- `vk/vk_adapter.cpp`: the example Vulkan adapter; `vk/vk_render.cpp`: the frame plumbing every Vulkan
+  example shares; `vk/shaders/<set>/`: GLSL plus the committed SPIR-V. `viewer/main.cpp`: the viewer.
 - `assets/README.md`: the demo models, their licenses and the pinned commit.
 - Design: `docs/design/viewer.md`.

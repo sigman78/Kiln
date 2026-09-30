@@ -1,14 +1,14 @@
-// examples/vk-basic/main.cpp — kiln-vk-basic: one model and a cube sky through Vulkan 1.4 without
+// examples/vk/main_basic.cpp — kiln-vk-basic: one model and a cube sky through Vulkan 1.4 without
 // bindless (docs/design/integration-examples.md). Each material has a descriptor set per frame in
 // flight; kiln's events say when a texture's GPU object changed, and the host rewrites the sets that
 // use it. The frame plumbing (swapchain, frames, offscreen target) is the viewer's (kiln_example_vk).
 // Meshes are cooked with VertexProfile::Float. The steps a host takes are numbered.
 #include "example_app.h"
-#include "viewer_render.h"
+#include "vk_render.h"
 
 #include <kiln/assets.h>
 #include <kiln/log.h>
-#if KILN_VK_BASIC_HAS_COOK
+#if KILN_VK_HAS_COOK
 #include <kiln/cook/provider.h>
 #endif
 
@@ -17,7 +17,7 @@
 #include "shaders/basic_sky_frag_spv.h"
 #include "shaders/basic_sky_vert_spv.h"
 
-// volk (through viewer_render.h) comes first so GLFW sees the Vulkan types.
+// volk (through vk_render.h) comes first so GLFW sees the Vulkan types.
 #include <GLFW/glfw3.h>
 
 #include <cmath>
@@ -406,7 +406,7 @@ int main(int argc, char** argv) {
     Result<Context*> created = create(cd);
     if (created.failed()) return 2;
     s.ctx = *created;
-#if KILN_VK_BASIC_HAS_COOK
+#if KILN_VK_HAS_COOK
     bool provider = false;
     if (o.rootCount) {
         cook::ProviderDesc pd{};
@@ -518,7 +518,7 @@ int main(int argc, char** argv) {
     ex::log_adapter_stats("vk-basic", vkx::adapter_stats(s.va));
 
     // 7. Teardown: kiln first (it hands every object back through Adapter::destroy), then Vulkan.
-#if KILN_VK_BASIC_HAS_COOK
+#if KILN_VK_HAS_COOK
     if (provider) cook::uninstall_provider(s.ctx);
 #endif
     destroy(s.ctx);

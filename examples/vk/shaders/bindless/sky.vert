@@ -1,5 +1,5 @@
 #version 460
-// examples/viewer/shaders/sky.vert — one triangle that covers the screen; no vertex buffers.
+// examples/vk/shaders/bindless/sky.vert — one triangle that covers the screen; no vertex buffers.
 
 layout(location = 0) out vec2 vNdc;
 

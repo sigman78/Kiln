@@ -1,4 +1,4 @@
-// examples/viewer/vk_adapter.h — the example kiln::Adapter on raw Vulkan 1.4: self-submitting
+// examples/vk/vk_adapter.h — the example kiln::Adapter on raw Vulkan 1.4: self-submitting
 // uploads on a transfer queue with a timeline semaphore, bindless texture slots.
 // Design: docs/design/viewer.md.
 #pragma once

@@ -1,4 +1,4 @@
-// examples/viewer/vk_device.cpp — Vulkan 1.4 instance and device bring-up (docs/design/viewer.md).
+// examples/vk/vk_device.cpp — Vulkan 1.4 instance and device bring-up (docs/design/viewer.md).
 #include "vk_device.h"
 
 #include <kiln/alloc.h>

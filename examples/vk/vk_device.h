@@ -1,5 +1,5 @@
-// examples/viewer/vk_device.h — Vulkan 1.4 instance and device bring-up shared by the
-// viewer and the adapter smoke test. Example code only; the library never sees Vulkan.
+// examples/vk/vk_device.h — Vulkan 1.4 instance and device bring-up shared by the
+// Vulkan examples and the adapter smoke test. Example code only; the library never sees Vulkan.
 #pragma once
 
 #include <kiln/core.h>

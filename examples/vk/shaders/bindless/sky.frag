@@ -1,6 +1,6 @@
 #version 460
 #extension GL_EXT_nonuniform_qualifier : require
-// examples/viewer/shaders/sky.frag — the cube map in the bindless cube binding, seen along
+// examples/vk/shaders/bindless/sky.frag — the cube map in the bindless cube binding, seen along
 // the camera ray through this pixel.
 
 layout(set = 0, binding = 1) uniform samplerCube cubes[];

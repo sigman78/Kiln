@@ -1,7 +1,7 @@
 # Example Vulkan adapter and viewer (M4)
 
 **Status:** Proposed (awaiting owner sign-off). Implemented in M4 (2026-09-27) in
-`examples/viewer/`; the M4 done-when criteria were met on a GTX 1080 Ti. Owner decisions taken at
+`examples/vk/` and `examples/viewer/`; the M4 done-when criteria were met on a GTX 1080 Ti. Owner decisions taken at
 M4: Vulkan headers and volk through FetchContent (no SDK required), GLFW for the window, SPIR-V
 committed next to the GLSL and regenerated when a compiler is found, CI compiles the viewer but
 does not run it.
@@ -10,7 +10,7 @@ offscreen mode.
 
 ## Decision
 
-`examples/viewer/` holds two things with a hard line between them:
+`examples/vk/` and `examples/viewer/` hold two things with a hard line between them:
 
 - **`vk_adapter.{h,cpp}`: the example adapter** (namespace `kiln::vkx`). A `kiln::Adapter` on raw
   Vulkan 1.4 that is self-submitting (dedicated transfer queue, one timeline semaphore; an
@@ -19,14 +19,16 @@ offscreen mode.
   bindless (one descriptor array per `TextureShape`: 2D, cube, array, sharing one slot index;
   `bind` writes the image kiln names into kiln's slot, in the binding of its shape). It declares `kCubeTextures` and `kArrayTextures`. It shows that an adapter is a few hundred lines. It knows
   nothing about windows, swapchains, pipelines or drawing.
-- **The viewer:** `vk_device.{h,cpp}` (instance and device bring-up, shared with the smoke test),
-  `viewer_render.{h,cpp}` (swapchain or offscreen image, frames in flight, one pipeline per vertex
-  layout), `viewer_math.h`, and `main.cpp` (scene, camera, streaming, draws per spec §8).
+- **The frame plumbing and the viewer:** in `examples/vk/`, `vk_device.{h,cpp}` (instance and device
+  bring-up) and `vk_render.{h,cpp}` (swapchain or offscreen image, frames in flight, one pipeline per
+  vertex layout); in `examples/viewer/`, `viewer_math.h` and `main.cpp` (scene, camera, streaming,
+  draws per spec §8), and the smoke test.
 
-The adapter, the device code and `viewer_render` form the library `kiln_example_vk`, which
-`kiln-vk-basic` (`examples/vk-basic`, the non-bindless integration example) links too: its adapter
-runs with `AdapterDesc::bindless = false`, and `RendererDesc` takes its SPIR-V and material set
-layout.
+The adapter, the device code and `vk_render` form the library `kiln_example_vk` in `examples/vk/`,
+which every Vulkan executable links, as `examples/gl/` holds the GL ones: `kiln-vk-basic` (the
+non-bindless integration example) and `kiln-vk-array` (a texture array) live there, `kiln-viewer`
+and `kiln-vk-smoke` in `examples/viewer/`. Without bindless the adapter runs with
+`AdapterDesc::bindless = false`, and `RendererDesc` takes the example's SPIR-V and material set layout.
 
 Targets, all built only with `KILN_BUILD_VIEWER=ON` (ON in every preset):
 
@@ -108,14 +110,15 @@ The library never sees a Vulkan header.
 
 ### Shaders
 
-`shaders/mesh.vert`, `shaders/mesh.frag`, `shaders/sky.vert` and `shaders/sky.frag` (GLSL 460,
-Vulkan) with their `.spv` committed next to them and embedded into the executable as `uint32_t` arrays at configure time. The `viewer-shaders`
-target rebuilds the `.spv` when `glslang` or `glslc` is on `PATH`; it is never part of `ALL`, and
+`examples/vk/shaders/<set>/` (GLSL 460, Vulkan): `bindless/` holds the viewer's mesh and sky
+shaders, which are also `kiln_example_vk`'s defaults; `basic/` and `array/` hold the other examples'.
+Their `.spv` are committed next to them and embedded as `uint32_t` arrays at configure time. The
+`vk-shaders` target rebuilds the `.spv` when `glslang` or `glslc` is on `PATH`; it is never part of `ALL`, and
 the build needs no shader compiler.
 
 ### Dependencies
 
-Example-only, pinned in `examples/viewer/CMakeLists.txt` and listed in `third_party/README.md`:
+Example-only, pinned in `examples/vk/CMakeLists.txt` and listed in `third_party/README.md`:
 Vulkan-Headers (`vulkan-sdk-1.4.357.0`), volk (1.4.364), GLFW 3.5.1.
 
 ## Rationale

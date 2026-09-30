@@ -22,7 +22,7 @@ The adapter is a **POD struct of function pointers plus `void* user`**, the same
   stores vertex formats as `VkFormat`, so both on-disk formats agree with the enum, and the Vulkan
   adapter is a `static_cast<VkFormat>`.
 - kiln never includes `vulkan.h`. The numbers are written by hand and checked by `static_assert`
-  against `VK_FORMAT_*` in `examples/viewer/vk_adapter.cpp`.
+  against `VK_FORMAT_*` in `examples/vk/vk_adapter.cpp`.
 - Other backends (sokol, bgfx, D3D12) map through their own table, keyed by `Format`.
 - Properties come from a constexpr table (`FormatInfo`, `format_info()`, which returns nullptr for
   an unknown format), checked by `static_assert(format_table_ok())`.
