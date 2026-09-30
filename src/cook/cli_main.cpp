@@ -38,7 +38,7 @@ using namespace kiln::cook;
 
 namespace {
 
-/// Catalog layout: a run rewrites the catalog at most this often while it cooks.
+/// A run rewrites the catalog at most this often while it cooks.
 constexpr u32 kCommitIntervalMs = 1000;
 /// --watch: the pause between two scans of the sources.
 constexpr u32 kWatchPollMs = 500;
@@ -56,10 +56,9 @@ struct Options {
     char const* defaultRoot = nullptr; ///< --root without a name; null: the input directory
     char const* map         = nullptr;
     bool check              = false;
-    char const* layout      = "catalog"; ///< StoreLayout: catalog or named
-    bool verify             = false;     ///< catalog: compare input content, not size and time
-    bool watch              = false;     ///< catalog: keep cooking what changes until --timeout
-    u32 timeoutS            = 0;         ///< --watch: stop after this many seconds; 0 = never
+    bool verify             = false; ///< compare input content, not size and time
+    bool watch              = false; ///< keep cooking what changes until --timeout
+    u32 timeoutS            = 0;     ///< --watch: stop after this many seconds; 0 = never
     bool quiet              = false;
     bool verbose            = false;
     u32 threads             = 0; ///< cooking threads including the main one; 0 = auto, 1 = no pool
@@ -283,7 +282,7 @@ struct Ctx {
     JobSystem const* jobs = nullptr; ///< null: single-threaded
     u32 maxThreads        = 0;       ///< CookEnv::maxThreads; 0 = no cap
     CookPolicy policy     = {};
-    CatalogStore* store   = nullptr; ///< the catalog layout's writer; null: named layout or --check
+    CatalogStore* store   = nullptr; ///< the catalog writer; null with --check
     u64 hostDigest        = 0;
     bool rescan           = false; ///< a --watch round: quiet about sources that did not change
     /// --watch: sources whose cook failed, by path hash: the stats they failed with.
@@ -299,28 +298,6 @@ void report(Ctx& c, StrView assetPath, char const* file, Hash128 const& key, u64
     if (!c.opt.quiet)
         std::printf("  %-48.*s -> %s (%llu B)\n", KILN_SV(assetPath), file,
                     static_cast<unsigned long long>(bytes));
-}
-
-/// Named layout: writes `<store>/<name>.<ext>`.
-bool emit(Ctx& c, StrView assetPath, AssetKind kind, Hash128 const& key, Span<u8 const> bytes) {
-    if (c.opt.check) return true;
-    char dir[1200];
-    if (store_file_path(StrView(c.opt.store), kind, assetPath, dir, sizeof dir) >= sizeof dir - 1) {
-        std::fprintf(stderr, "kiln-cook: %.*s: store path too long\n", KILN_SV(assetPath));
-        return false;
-    }
-    char* slash = std::strrchr(dir, '/');
-    char name[1200];
-    format(name, sizeof name, "%s", slash + 1);
-    *slash = '\0';
-    make_dirs(dir);
-    Status st = store_write(StrView(dir), StrView(name), bytes, &c.sink);
-    if (st.failed()) {
-        std::fprintf(stderr, "kiln-cook: cannot write %s/%s (%s)\n", dir, name, code_name(st.code));
-        return false;
-    }
-    report(c, assetPath, name, key, bytes.size);
-    return true;
 }
 
 // --verbose per-stage timings (rollout step 1, docs/design/cook-kernels.md). Zero
@@ -340,23 +317,20 @@ void print_mesh_stats(CookStats const& s) {
                 double(s.totalUs) / 1000.0);
 }
 
-/// Writes the outputs of `unit` that cooked; false if any failed. The catalog layout publishes
-/// them as artifacts.
+/// Publishes the outputs of `unit` that cooked as artifacts (nothing with --check); false if any
+/// failed.
 bool emit_unit(Ctx& c, CookUnit& unit) {
     if (c.store && publish_unit(c.store, unit, c.hostDigest, &c.sink).failed()) return false;
     bool ok = true;
     for (UnitOutput const& o : unit.outputs) {
-        bool written = o.status.ok();
-        if (written && c.store) {
+        if (o.status.failed()) {
+            ok = false;
+            continue;
+        }
+        if (c.store) {
             char file[1200];
             (void)artifact_file_path(StrView(c.opt.store), o.kind, o.key, file, sizeof file);
             report(c, unit.name(o), file, o.key, o.bytes.size());
-        } else if (written) {
-            written = emit(c, unit.name(o), o.kind, o.key, o.bytes.span());
-        }
-        if (!written) {
-            ok = false;
-            continue;
         }
         if (!c.opt.verbose) continue;
         if (o.kind == AssetKind::Mesh)
@@ -532,7 +506,6 @@ bool add_root(void* user, char const* arg) {
 char const* const kProfiles[]  = {"default", "precise", "float", nullptr};
 char const* const kTargets[]   = {"compat", "desktop", "uncompressed", nullptr};
 char const* const kQualities[] = {"fast", "normal", "high", nullptr};
-char const* const kLayouts[]   = {"catalog", "named", nullptr};
 
 } // namespace
 
@@ -551,20 +524,15 @@ int kiln::cook::cook_cli_main(int argc, char** argv, CookPolicy const& policy, u
          .each = &add_root,
          .user = &o},
         {.name = "--check", .help = "validate only: cook in memory, write nothing", .flag = &o.check},
-        {.name    = "--layout",
-         .arg     = "<layout>",
-         .help    = "catalog (default): artifacts and catalogs/<target>.kcat; named: <store>/<name>.<ext>",
-         .str     = &o.layout,
-         .choices = kLayouts},
         {.name = "--watch",
-         .help = "catalog: after cooking, keep cooking sources that change or appear (Ctrl+C stops)",
+         .help = "after cooking, keep cooking sources that change or appear (Ctrl+C stops)",
          .flag = &o.watch},
         {.name   = "--timeout",
          .arg    = "<s>",
          .help   = "--watch: stop after this many seconds (default: never)",
          .number = &o.timeoutS},
         {.name = "--verify",
-         .help = "catalog: check sources by their content, not by size and time (CI, shipping)",
+         .help = "check sources by their content, not by size and time (CI, shipping)",
          .flag = &o.verify},
         {.name = "--map",
          .arg  = "<file>",
@@ -652,24 +620,14 @@ int kiln::cook::cook_cli_main(int argc, char** argv, CookPolicy const& policy, u
         std::fprintf(stderr, "kiln-cook: cannot create store directory %s\n", o.store);
         return 2;
     }
-    bool const catalog = std::strcmp(o.layout, "catalog") == 0;
-    if ((o.verify || o.watch) && !catalog) {
-        std::fprintf(stderr, "kiln-cook: --verify and --watch need the catalog layout\n");
-        return 1;
-    }
     if (o.watch && o.check) {
         std::fprintf(stderr, "kiln-cook: --watch writes the store; it does not go with --check\n");
         return 1;
     }
-    if (!o.check && catalog) {
+    if (!o.check) {
         Status const opened = open_catalog_store(
             {.storeDir = StrView(o.store), .target = &o.target, .diag = &c.sink}, &c.store);
-        if (opened.failed()) {
-            if (opened.code == Code::InvalidArgument)
-                std::fprintf(stderr, "kiln-cook: %s is not a catalog store; --layout named cooks into it\n",
-                             o.store);
-            return 2;
-        }
+        if (opened.failed()) return 2;
         UnitDesc const host{.meshDefaults    = &o.mesh,
                             .textureDefaults = &o.tex,
                             .nameRules       = kDefaultNameRules,
@@ -678,8 +636,6 @@ int kiln::cook::cook_cli_main(int argc, char** argv, CookPolicy const& policy, u
                             .session         = c.session};
         c.hostDigest = host_digest(host, policyVersion);
     }
-    // A named store holds files of one profile (docs/design/target-profiles.md).
-    if (!o.check && !catalog && bind_store_profile(StrView(o.store), o.target, &c.sink).failed()) return 2;
 
     // The main thread cooks too, so the pool gets one worker fewer than --threads.
     JobSystem pool;

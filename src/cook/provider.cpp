@@ -1,17 +1,16 @@
-// src/cook/provider.cpp — cook-on-miss provider and its source poller (hot reload, see
-// docs/design/hot-reload.md). Threading: see docs/design/threading-and-io.md.
+// src/cook/provider.cpp — the cook provider: checks each asset against its recorded inputs, cooks
+// what changed into the catalog store, and polls the sources for hot reload
+// (docs/design/store-catalog.md, docs/design/hot-reload.md).
 //
-// provider_cook() and provider_prepare() run on workers, concurrently. A published Provider's
-// settings never change; the mutable state is the source record table (under recordMutex, Named
-// layout), the CatalogStore (its own mutexes, Catalog layout) and the poller's stop flag. Only
+// provider_prepare() runs on workers, concurrently. A published Provider's settings never change;
+// the mutable state is the CatalogStore (its own mutexes) and the poller's stop flag. Only
 // install/uninstall touch the registry.
 //
-// Locks. Per-source work (stat and read the source, cook, write the store, record) runs under
-// one of kSourceLockStripes mutexes picked by the hash of the source path: in the Named layout
-// while the source poller runs, in the Catalog layout always (a mesh and its images are often
-// requested together). So the poller never re-cooks a source while a request cooks it, and
-// different sources still cook in parallel unless their paths share a stripe. recordMutex and
-// the CatalogStore mutexes are taken inside a stripe lock or on their own, never the other way.
+// Locks. Per-source work (check, cook, publish) runs under one of kSourceLockStripes mutexes picked
+// by the hash of the source path, so a mesh and its images requested together, or a request and
+// the poller, never cook one source twice at once; different sources still cook in parallel unless
+// their paths share a stripe. The CatalogStore mutexes are taken inside a stripe lock or on their
+// own, never the other way.
 #include "kiln/cook/provider.h"
 
 #include "catalog_store.h"
@@ -19,12 +18,10 @@
 
 #include "kiln/cook/cook.h"
 #include "kiln/cook/image.h"
-#include "kiln/cook/sidecar.h"
 #include "kiln/io.h"
 #include "kiln/log.h"
 
 #include <atomic>
-#include <cerrno>
 #include <chrono>
 #include <condition_variable>
 #include <cwchar>
@@ -32,50 +29,16 @@
 #include <thread>
 
 #if defined(KILN_OS_WINDOWS)
-#include <direct.h>  // _mkdir
 #include <windows.h> // FindFirstFileW; WIN32_LEAN_AND_MEAN/NOMINMAX set by kiln_apply_defaults
-#else
-#include <sys/stat.h> // mkdir, stat
 #endif
 
 namespace kiln::cook {
 
 namespace {
 
-/// Sources the provider remembers at most. The tables are sized once at install; sources
-/// past this are cooked but not watched (one warning).
-constexpr usize kMaxSources = 4096;
-/// Initial size of the record string pool. It may still grow: records hold offsets.
-constexpr usize kRecordStringBytes = kMaxSources * 96;
 constexpr usize kSourceLockStripes = 64;
-/// Catalog layout: a cook on miss rewrites the catalog at most this often.
+/// A cook on a request rewrites the catalog at most this often.
 constexpr u32 kCommitIntervalMs = 1000;
-
-/// A source file and its `.kiln` sidecar, which is part of the source: editing, adding or
-/// removing it re-cooks. A missing sidecar reads as zeros.
-struct SourceStat {
-    IoStat file;
-    IoStat sidecar;
-};
-
-/// One source file that produced store files. Paths are offsets into Provider::strings.
-struct SourceRecord {
-    u32 pathOff = 0, pathLen = 0;     ///< the source file, as find_source() built it
-    u32 assetOff = 0, assetLen = 0;   ///< the asset to re-cook: the mesh for a glb/gltf (even
-                                      ///< when a texture request created the record), the
-                                      ///< texture for a png/ktx2 of its own
-    AssetKind kind = AssetKind::Mesh; ///< the unit: a mesh source, or a texture of its own
-    SourceStat stat;                  ///< the source as last cooked successfully
-    SourceStat failedStat;            ///< the source version whose re-cook last failed
-    bool failed      = false;
-    bool retryFailed = false; ///< that failure was IO (source read, store write): retry every round
-};
-
-/// A texture asset path that a glb record wrote to the store.
-struct EmittedTexture {
-    u32 record = 0;
-    u32 off = 0, len = 0; ///< into Provider::strings
-};
 
 /// Allocated once by install_provider(); its settings are immutable once published.
 struct Provider {
@@ -88,25 +51,15 @@ struct Provider {
     Vec<char> ruleStrings;   ///< owned copies of the name rule suffixes
     Vec<NameRule> nameRules; ///< suffixes point into ruleStrings
     Allocator const* alloc = nullptr;
-    JobSystem const* jobs  = nullptr; ///< the context's pool; provider_cook runs on one of its workers
+    JobSystem const* jobs  = nullptr; ///< the context's pool; provider_prepare runs on its workers
     Context* ctx           = nullptr; ///< the registry key
 
-    // Catalog layout, Disk mode: the profile's catalog writer (it holds the lock).
+    // Disk mode: the profile's catalog writer (it holds the lock). Null in Memory mode.
     CatalogStore* store = nullptr;
     u64 hostDigest      = 0; ///< host_digest() of desc
 
-    // Source records (Disk mode), under recordMutex. They never shrink, so indices are stable.
-    std::mutex recordMutex;
-    Vec<SourceRecord> records;
-    Vec<EmittedTexture> emitted;
-    Vec<char> strings;
-    bool overflowWarned = false;
-
     std::mutex sourceLocks[kSourceLockStripes];
 
-    // Source poller. `watching` is set before the provider is published and never changes;
-    // on-miss cooks read it to decide whether to take the stripe lock.
-    bool watching = false;
     std::thread poller;
     std::mutex pollMutex;
     std::condition_variable pollWake;
@@ -114,8 +67,7 @@ struct Provider {
 
     explicit Provider(Allocator const* a) noexcept
         : storeDirBuf(a, Tag::Cook), rootsBuf(a, Tag::Cook), roots(a, Tag::Cook), ruleStrings(a, Tag::Cook),
-          nameRules(a, Tag::Cook), alloc(a), records(a, Tag::Cook), emitted(a, Tag::Cook),
-          strings(a, Tag::Cook) {}
+          nameRules(a, Tag::Cook), alloc(a) {}
 };
 
 // Context* -> Provider* registry, under registry_mutex().
@@ -127,45 +79,6 @@ std::mutex& registry_mutex() noexcept {
 HashMap<Context*, Provider*>& registry() noexcept {
     static HashMap<Context*, Provider*> reg(default_allocator(), Tag::Cook);
     return reg;
-}
-
-// Path helpers. kiln-cook has its own copy of make_dirs.
-
-bool mkdir_one(char const* path) noexcept {
-#if defined(KILN_OS_WINDOWS)
-    if (_mkdir(path) == 0) return true;
-#else
-    if (::mkdir(path, 0755) == 0) return true;
-#endif
-    return errno == EEXIST;
-}
-
-/// mkdir -p over the forward-slash path in `buf[0..n)` (NUL-terminated at `n`).
-void make_dirs(char* buf, usize n) noexcept {
-    for (usize i = 1; i <= n; ++i) {
-        if (i == n || buf[i] == '/') {
-            char const saved = buf[i];
-            buf[i]           = '\0';
-            if (!(i == 2 && buf[1] == ':')) // skip a bare "C:" drive letter on Windows
-                mkdir_one(buf);
-            buf[i] = saved;
-        }
-    }
-}
-
-/// Writes `bytes` to the store file of `name` (store_file_path), creating its directories.
-/// `overwrite`: replace an existing file (re-cook) instead of leaving it (cook-on-miss).
-Status write_to_store(StrView storeDir, StrView name, AssetKind kind, Span<u8 const> bytes, bool overwrite,
-                      DiagSink const* diag) noexcept {
-    char path[1024];
-    usize const n = store_file_path(storeDir, kind, name, path, sizeof path);
-    if (n >= sizeof path - 1) return make_status(Code::InvalidArgument);
-    usize const slash = StrView(path, n).rfind('/');
-    if (slash == StrView::kNpos) return store_write(StrView("."), StrView(path, n), bytes, diag, overwrite);
-    path[slash] = '\0';
-    make_dirs(path, slash);
-    return store_write(StrView(path, slash), StrView(path + slash + 1, n - slash - 1), bytes, diag,
-                       overwrite);
 }
 
 /// A source file found in one of the provider's roots.
@@ -218,10 +131,6 @@ Status find_source(Provider const& p, StrView owner, FoundSource& out, DiagSink 
     return kOk;
 }
 
-void sidecar_path(StrView sourcePath, char (&buf)[1100], StrView& out) noexcept {
-    out = StrView(buf, format(buf, sizeof buf, "%.*s%.*s", KILN_SV(sourcePath), KILN_SV(kSidecarExt)));
-}
-
 /// The unit of the source `sourcePath`, named `name` (a mesh, or a texture of its own).
 UnitDesc unit_desc(Provider const& p, AssetKind kind, StrView name, StrView sourcePath,
                    Allocator const* alloc, DiagSink const* diag) noexcept {
@@ -239,165 +148,8 @@ UnitDesc unit_desc(Provider const& p, AssetKind kind, StrView name, StrView sour
     };
 }
 
-/// Cooks a source and, in Disk mode, writes every output that cooked to the store. A texture that
-/// cannot be written keeps the failure in its output; the first output failing fails the call.
-/// `emitted` (optional) gets the names of the textures written, NUL-separated.
-Status cook_to_store(Provider const& p, UnitDesc const& d, bool overwrite, CookUnit* unit,
-                     Vec<char>* emitted) noexcept {
-    KILN_TRY(cook_unit(d, unit));
-    if (p.desc.storeMode != StoreMode::Disk) return kOk;
-    for (usize i = 0; i < unit->outputs.size(); ++i) {
-        UnitOutput& o = unit->outputs[i];
-        if (o.status.failed()) continue;
-        StrView const name = unit->name(o);
-        Status const st    = write_to_store(p.storeDir, name, o.kind, o.bytes.span(), overwrite, d.env.diag);
-        if (st.failed()) {
-            if (i == 0) return st;
-            o.status = st;
-            continue;
-        }
-        if (emitted && o.kind == AssetKind::Texture) {
-            emitted->append(Span<char const>(name.data, name.size));
-            emitted->push_back('\0');
-        }
-    }
-    return kOk;
-}
-
-/// Moves the bytes of the output `name` into `out`, or returns why there are none.
-Status take_output(CookUnit& unit, AssetKind kind, StrView name, Vec<u8>* out) noexcept {
-    UnitOutput* o = unit.find(kind, name);
-    if (!o) return make_status(Code::NotFound);
-    if (o->status.failed()) return o->status;
-    *out = std::move(o->bytes);
-    return kOk;
-}
-
-// ---------------------------------------------------------------------------
-// Source records
-// ---------------------------------------------------------------------------
-
-/// Fails only if the source itself cannot be stat'ed.
-Status stat_source(StrView path, SourceStat* out) noexcept {
-    KILN_TRY(stat_file(path, &out->file));
-    char buf[1100];
-    StrView side;
-    sidecar_path(path, buf, side);
-    if (stat_file(side, &out->sidecar).failed()) out->sidecar = {};
-    return kOk;
-}
-
-bool same_stat(IoStat const& a, IoStat const& b) noexcept {
-    return a.size == b.size && a.mtimeNs == b.mtimeNs;
-}
-bool same_stat(SourceStat const& a, SourceStat const& b) noexcept {
-    return same_stat(a.file, b.file) && same_stat(a.sidecar, b.sidecar);
-}
-
 std::mutex& source_lock(Provider& p, StrView sourcePath) noexcept {
     return p.sourceLocks[fnv1a64(sourcePath) % kSourceLockStripes];
-}
-
-StrView pool_view(Vec<char> const& pool, u32 off, u32 len) noexcept {
-    return StrView(pool.data() + off, len);
-}
-
-/// Appends `s` to the string pool and returns its offset. Under recordMutex.
-u32 pool_add(Provider& p, StrView s) noexcept {
-    u32 const off = u32(p.strings.size());
-    p.strings.append(Span<char const>(s.data, s.size));
-    return off;
-}
-
-/// Adds the NUL-separated texture asset paths in `list` to record `idx`. With `replace`,
-/// entries of that record not in `list` are dropped first (a re-cook: the glb may have lost
-/// textures). Under recordMutex.
-void set_emitted(Provider& p, u32 idx, Vec<char> const& list, bool replace) noexcept {
-    auto const inList = [&list](StrView path) noexcept {
-        for (usize at = 0; at < list.size();) {
-            usize const n = std::strlen(list.data() + at);
-            if (StrView(list.data() + at, n) == path) return true;
-            at += n + 1;
-        }
-        return false;
-    };
-    if (replace) {
-        for (usize i = p.emitted.size(); i-- > 0;) {
-            EmittedTexture const& e = p.emitted[i];
-            if (e.record == idx && !inList(pool_view(p.strings, e.off, e.len))) p.emitted.erase_unordered(i);
-        }
-    }
-    for (usize at = 0; at < list.size();) {
-        usize const n = std::strlen(list.data() + at);
-        StrView const path(list.data() + at, n);
-        at += n + 1;
-        bool known = false;
-        for (EmittedTexture const& e : p.emitted)
-            if (e.record == idx && pool_view(p.strings, e.off, e.len) == path) known = true;
-        if (!known) p.emitted.push_back(EmittedTexture{idx, pool_add(p, path), u32(n)});
-    }
-}
-
-/// After a successful cook-on-miss in Disk mode: remember the source and its stat from
-/// before the cook read it. A source already recorded (a texture of a glb whose mesh was
-/// cooked before) joins its record; the stat stays, since this cook left existing store
-/// files untouched.
-void record_source(Provider& p, StrView sourcePath, SourceStat const& st, AssetKind kind, StrView assetPath,
-                   Vec<char> const* emittedTextures) noexcept {
-    std::lock_guard<std::mutex> const lock(p.recordMutex);
-    for (usize i = 0; i < p.records.size(); ++i) {
-        SourceRecord const& r = p.records[i];
-        if (pool_view(p.strings, r.pathOff, r.pathLen) != sourcePath) continue;
-        if (emittedTextures) set_emitted(p, u32(i), *emittedTextures, false);
-        return;
-    }
-    if (p.records.size() >= kMaxSources) {
-        if (!p.overflowWarned) {
-            KILN_WARN("cook", "more than %zu cooked sources: %.*s and later ones are not watched for changes",
-                      kMaxSources, KILN_SV(sourcePath));
-            p.overflowWarned = true;
-        }
-        return;
-    }
-    SourceRecord r;
-    r.pathOff  = pool_add(p, sourcePath);
-    r.pathLen  = u32(sourcePath.size);
-    r.assetOff = pool_add(p, assetPath);
-    r.assetLen = u32(assetPath.size);
-    r.kind     = kind;
-    r.stat     = st;
-    p.records.push_back(r);
-    if (emittedTextures) set_emitted(p, u32(p.records.size() - 1), *emittedTextures, false);
-}
-
-// ---------------------------------------------------------------------------
-// Cook on miss
-// ---------------------------------------------------------------------------
-
-/// The stripe lock for `sourcePath` while the poller runs, else nothing.
-std::unique_lock<std::mutex> lock_source_if_watching(Provider& p, StrView sourcePath) noexcept {
-    if (!p.watching) return {};
-    return std::unique_lock<std::mutex>(source_lock(p, sourcePath));
-}
-
-/// Cooks the source of a missed request and returns the output `name` of `kind`.
-Status cook_on_miss(Provider& p, AssetKind unitKind, StrView unitName, StrView sourcePath, AssetKind kind,
-                    StrView name, Allocator const* alloc, Vec<u8>* out, DiagSink const* diag) noexcept {
-    std::unique_lock<std::mutex> const lock = lock_source_if_watching(p, sourcePath);
-
-    // Stat before the cook reads the source, so an edit during the cook is seen later.
-    bool const disk = p.desc.storeMode == StoreMode::Disk;
-    SourceStat st{};
-    bool const haveStat = disk && stat_source(sourcePath, &st).ok();
-    CookUnit unit(alloc);
-    Vec<char> emitted(alloc, Tag::Cook);
-    KILN_TRY(cook_to_store(p, unit_desc(p, unitKind, unitName, sourcePath, alloc, diag), false, &unit,
-                           disk ? &emitted : nullptr));
-    Status const s = take_output(unit, kind, name, out);
-    if (s.ok() && haveStat)
-        record_source(p, sourcePath, st, unitKind, unitName,
-                      unitKind == AssetKind::Mesh ? &emitted : nullptr);
-    return s;
 }
 
 /// A request, resolved to the source whose cook makes it (the unit).
@@ -424,16 +176,8 @@ Status resolve_request(Provider const& p, AssetKind kind, StrView name, UnitRequ
     return find_source(p, out->owner, out->src, diag);
 }
 
-Status provider_cook(void* user, AssetKind kind, StrView name, Allocator const* alloc, Vec<u8>* out,
-                     DiagSink const* diag) noexcept {
-    auto* p = static_cast<Provider*>(user);
-    UnitRequest r;
-    KILN_TRY(resolve_request(*p, kind, name, &r, diag));
-    return cook_on_miss(*p, r.unitKind, r.owner, r.source_path(), kind, name, alloc, out, diag);
-}
-
 // ---------------------------------------------------------------------------
-// Catalog layout: prepare
+// Prepare
 // ---------------------------------------------------------------------------
 
 /// Cooks a unit and, with a store, publishes it and rewrites the catalog. `unit` keeps the outputs.
@@ -493,48 +237,6 @@ struct LogDiag {
     }
 };
 
-/// Re-cooks one changed source into the store, overwriting, and updates record `idx`.
-/// `rec` and `strings` are the poller's snapshot of the record table.
-void recook_source(Provider& p, u32 idx, SourceRecord const& rec, Vec<char> const& strings,
-                   SourceStat const& now) noexcept {
-    StrView const sourcePath = pool_view(strings, rec.pathOff, rec.pathLen);
-    StrView const assetPath  = pool_view(strings, rec.assetOff, rec.assetLen);
-
-    std::lock_guard<std::mutex> const lock(source_lock(p, sourcePath));
-
-    LogDiag logDiag;
-    logDiag.quiet = rec.failed && same_stat(now, rec.failedStat);
-    DiagSink const sink{&LogDiag::fn, &logDiag};
-
-    CookUnit unit(p.alloc);
-    Vec<char> emitted(p.alloc, Tag::Cook);
-    Status s = cook_to_store(p, unit_desc(p, rec.kind, assetPath, sourcePath, p.alloc, &sink), true, &unit,
-                             &emitted);
-    if (s.ok()) s = unit.first_failure();
-
-    std::lock_guard<std::mutex> const rlock(p.recordMutex);
-    SourceRecord& r = p.records[idx];
-    if (rec.kind == AssetKind::Mesh) set_emitted(p, idx, emitted, true);
-    if (s.ok()) {
-        r.stat   = now;
-        r.failed = false;
-        KILN_INFO("cook", "re-cooked %.*s from %.*s", KILN_SV(assetPath), KILN_SV(sourcePath));
-        return;
-    }
-    // The record's stat stays, so the source still reads as changed. An IO failure (a
-    // blocked rename, a source still being written) retries every round; a cook failure
-    // waits for the next edit instead of re-cooking a broken file four times a second.
-    bool const retry = s.code == Code::IoError || s.code == Code::IoEof || s.code == Code::NotFound;
-    if (!logDiag.quiet) {
-        KILN_ERROR("cook", "re-cook of %.*s from %.*s failed (%s); the store keeps the previous files, %s",
-                   KILN_SV(assetPath), KILN_SV(sourcePath), code_name(s.code),
-                   retry ? "retrying" : "waiting for the next change");
-    }
-    r.failed      = true;
-    r.failedStat  = now;
-    r.retryFailed = retry;
-}
-
 /// A unit whose last re-cook failed, by name hash: `inputs` digests the input stats it failed on.
 struct FailedUnit {
     u64 inputs = 0;
@@ -553,7 +255,7 @@ u64 inputs_digest(CookUnit const& rec) noexcept {
     return h.digest();
 }
 
-/// Catalog layout: re-cooks every fresh unit whose inputs changed, then rewrites the catalog once.
+/// Re-cooks every fresh unit whose inputs changed, then rewrites the catalog once.
 /// False when asked to stop.
 bool poll_catalog_round(Provider* p, Vec<char>& units, HashMap<u64, FailedUnit>& failed) noexcept {
     fresh_units(p->store, &units);
@@ -604,8 +306,7 @@ bool poll_catalog_round(Provider* p, Vec<char>& units, HashMap<u64, FailedUnit>&
 }
 
 void poller_main(Provider* p) noexcept {
-    Vec<SourceRecord> snap(p->alloc, Tag::Cook);
-    Vec<char> snapStrings(p->alloc, Tag::Cook);
+    Vec<char> units(p->alloc, Tag::Cook);
     HashMap<u64, FailedUnit> failed(p->alloc, Tag::Cook);
     auto const period = std::chrono::milliseconds(p->desc.pollMs > 0 ? p->desc.pollMs : 1u);
 
@@ -614,27 +315,7 @@ void poller_main(Provider* p) noexcept {
             std::unique_lock<std::mutex> lock(p->pollMutex);
             if (p->pollWake.wait_for(lock, period, [p] { return p->stopping.load(); })) return;
         }
-        if (p->store) {
-            if (!poll_catalog_round(p, snapStrings, failed)) return;
-            continue;
-        }
-        {
-            std::lock_guard<std::mutex> const lock(p->recordMutex);
-            snap.clear();
-            snap.append(p->records.span());
-            snapStrings.clear();
-            snapStrings.append(p->strings.span());
-        }
-        for (usize i = 0; i < snap.size(); ++i) {
-            if (p->stopping.load()) return;
-            SourceRecord const& rec = snap[i];
-            SourceStat now{};
-            // Missing (an editor mid-save) or unreadable: look again next round.
-            if (stat_source(pool_view(snapStrings, rec.pathOff, rec.pathLen), &now).failed()) continue;
-            if (same_stat(now, rec.stat)) continue;
-            if (rec.failed && !rec.retryFailed && same_stat(now, rec.failedStat)) continue;
-            recook_source(*p, u32(i), rec, snapStrings, now);
-        }
+        if (!poll_catalog_round(p, units, failed)) return;
     }
 }
 
@@ -785,52 +466,30 @@ Status install_provider(Context* ctx, ProviderDesc const& desc) noexcept {
         return rm.status();
     }
 
-    bool const catalog = store_layout(ctx) == StoreLayout::Catalog;
-    if (catalog) {
-        StrView const profile = store_profile(ctx);
-        if (profile != effective.target.name) {
-            delete_object(alloc, p, Tag::Cook);
-            return diagf(diag_sink(ctx), make_status(Code::InvalidArgument), kDiagStoreProfileMismatch,
-                         Severity::Error, profile, "install",
-                         "the context reads the catalog of profile '%.*s'; the provider cooks for '%.*s'",
-                         KILN_SV(profile), KILN_SV(effective.target.name));
-        }
-        p->hostDigest =
-            host_digest(unit_desc(*p, AssetKind::Mesh, {}, {}, alloc, nullptr), effective.policyVersion);
-        if (effective.storeMode == StoreMode::Disk) {
-            Status const opened = open_catalog_store(
-                {.storeDir = p->storeDir, .target = &p->desc.target, .alloc = alloc, .diag = diag_sink(ctx)},
-                &p->store);
-            if (opened.failed()) {
-                delete_object(alloc, p, Tag::Cook);
-                return opened;
-            }
-        }
-    } else if (effective.storeMode == StoreMode::Disk) {
-        // A store holds files of one profile (docs/design/target-profiles.md).
-        Status const bound = bind_store_profile(p->storeDir, effective.target, diag_sink(ctx));
-        if (bound.failed()) {
-            delete_object(alloc, p, Tag::Cook);
-            return bound;
-        }
+    StrView const profile = store_profile(ctx);
+    if (profile != effective.target.name) {
+        delete_object(alloc, p, Tag::Cook);
+        return diagf(diag_sink(ctx), make_status(Code::InvalidArgument), kDiagStoreProfileMismatch,
+                     Severity::Error, profile, "install",
+                     "the context reads the catalog of profile '%.*s'; the provider cooks for '%.*s'",
+                     KILN_SV(profile), KILN_SV(effective.target.name));
     }
-
-    if (effective.storeMode == StoreMode::Disk && !catalog) {
-        p->records.reserve(kMaxSources);
-        p->emitted.reserve(kMaxSources);
-        p->strings.reserve(kRecordStringBytes);
+    p->hostDigest =
+        host_digest(unit_desc(*p, AssetKind::Mesh, {}, {}, alloc, nullptr), effective.policyVersion);
+    if (effective.storeMode == StoreMode::Disk) {
+        Status const opened = open_catalog_store(
+            {.storeDir = p->storeDir, .target = &p->desc.target, .alloc = alloc, .diag = diag_sink(ctx)},
+            &p->store);
+        if (opened.failed()) {
+            delete_object(alloc, p, Tag::Cook);
+            return opened;
+        }
     }
     if (effective.watchSources) {
-        if (effective.storeMode != StoreMode::Disk) {
+        if (effective.storeMode != StoreMode::Disk)
             KILN_WARN("cook", "ProviderDesc.watchSources needs StoreMode::Disk; sources are not watched");
-        } else {
-            // Set before the thread starts and before the provider is published.
-            p->watching = true;
-            if (!start_poller(p)) {
-                p->watching = false;
-                KILN_WARN("cook", "could not start the source poller thread; sources are not watched");
-            }
-        }
+        else if (!start_poller(p))
+            KILN_WARN("cook", "could not start the source poller thread; sources are not watched");
     }
 
     {
@@ -839,12 +498,9 @@ Status install_provider(Context* ctx, ProviderDesc const& desc) noexcept {
     }
 
     CookProvider provider{};
+    provider.prepare = &provider_prepare;
     provider.user    = p;
     provider.release = &provider_release;
-    if (catalog)
-        provider.prepare = &provider_prepare;
-    else
-        provider.cook = &provider_cook;
     set_cook_provider(ctx, provider);
     return kOk;
 }

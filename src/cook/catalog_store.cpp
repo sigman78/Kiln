@@ -23,10 +23,9 @@ namespace kiln::cook {
 
 namespace {
 
-constexpr u32 kInputsMagic         = fourcc('K', 'K', 'I', 'N');
-constexpr u16 kInputsMajor         = 0;
-constexpr u16 kInputsMinor         = 1;
-constexpr char kNamedStoreMarker[] = "kiln-store.txt";
+constexpr u32 kInputsMagic = fourcc('K', 'K', 'I', 'N');
+constexpr u16 kInputsMajor = 0;
+constexpr u16 kInputsMinor = 1;
 
 // ---------------------------------------------------------------------------
 // Paths and the lock
@@ -480,13 +479,6 @@ Status open_catalog_store(CatalogStoreDesc const& d, CatalogStore** out) noexcep
         return diagf(d.diag, make_status(Code::InvalidArgument), kDiagCatalogName, Severity::Error,
                      d.target->name, "store", "bad profile name for a catalog: %s", why);
     char path[1024];
-    if (format(path, sizeof path, "%.*s/%s", KILN_SV(d.storeDir), kNamedStoreMarker) >= sizeof path - 1)
-        return make_status(Code::InvalidArgument);
-    if (io_file_exists(StrView(path)))
-        return diagf(d.diag, make_status(Code::InvalidArgument), kDiagStoreProfileMismatch, Severity::Error,
-                     d.storeDir, "store",
-                     "the store has the named layout (%s); a catalog store needs another directory",
-                     kNamedStoreMarker);
 
     Allocator const* alloc = d.alloc ? d.alloc : default_allocator();
     CatalogStore* s        = new_object<CatalogStore>(alloc, Tag::Cook, alloc);

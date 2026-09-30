@@ -185,9 +185,8 @@ enum SettingsDiagCode : u32 {
     kDiagSidecarSyntax           = 3005, ///< a `.kiln` sidecar is outside the TOML subset (ParseError)
     kDiagSidecarKey =
         3006, ///< a sidecar key is unknown, or its value has the wrong type or range (InvalidArgument)
-    kDiagPolicyRefused = 3007, ///< the CookPolicy refused the asset (its status)
-    kDiagStoreProfileMismatch =
-        3008, ///< the store was cooked for another profile, or has cooked files but no kiln-store.txt
+    kDiagPolicyRefused        = 3007, ///< the CookPolicy refused the asset (its status)
+    kDiagStoreProfileMismatch = 3008, ///< the provider's target is not the context's profile
 };
 
 // ---------------------------------------------------------------------------
