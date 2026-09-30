@@ -1,29 +1,23 @@
 # Hot reload (M5)
 
-Status: **Proposed** (2026-09-27; landed the same day: `src/runtime/watch.cpp`, the reload path in `pump.cpp`, the source poller in `src/cook/provider.cpp`; verified end to end with `kiln-viewer --watch`). Implements the reload rows of `handles-and-states.md`. Done when
+Status: **Proposed** (2026-09-27; landed the same day: `src/runtime/watch.cpp`, the reload path in `pump.cpp`, the source poller in `src/cook/provider.cpp`; verified end to end with `kiln-viewer --watch`). Updated 2026-09-30: the store is a catalog store (`store-catalog.md`); the runtime watches the catalog, not store files. Implements the reload rows of `handles-and-states.md`. Done when
 editing a glb or PNG updates the viewer in about a second without leaks or crashes.
 
 ## Decision
 
 Hot reload is two independent pollers joined by the store on disk:
 
-1. **`kiln_runtime` watches the store.** For every loaded file-backed asset it remembers the size
-   and modification time of the cooked file it loaded. A poll thread stats those files; when one
-   changes, the asset reloads from the store. This alone covers "someone re-ran `kiln-cook`" and any
-   external pipeline, and needs no cook code.
-2. **`kiln_cook`'s provider watches sources.** The cook-on-miss provider remembers which source file
-   produced each asset it cooked (a glb produces the mesh and its embedded textures; a PNG, JPEG, WebP or KTX2
-   produces one texture). A poll thread stats those sources and their `.kiln` sidecars; when one changes it re-cooks through the
-   same functions as cook-on-miss and rewrites the store files, which the runtime poller then sees.
+1. **`kiln_runtime` watches the catalog.** Artifacts never change, so a poll thread stats the
+   profile's catalog file. When a new valid catalog appears, the pump thread swaps it in and reloads
+   each loaded asset whose entry names another artifact than the one it loaded or tried. This alone
+   covers "someone re-ran `kiln-cook`" and any external pipeline, and needs no cook code.
+2. **`kiln_cook`'s provider watches sources.** The provider watches every input file its cooks
+   recorded this session (sources, sidecars, a `.gltf`'s buffers). A poll thread stats them; it
+   re-cooks the changed sources of one round, publishes their artifacts and rewrites the catalog
+   once, which the runtime poller then sees.
 
 Neither poller knows about the other. Dependencies exist only on the cook side and only for the
 v0.5 relation: glb to its embedded textures.
-
-In the **Catalog layout** (`store-catalog.md`) artifacts never change, so the runtime watches the
-catalog file instead: when a new valid catalog appears, it swaps it in on the pump thread and
-reloads each loaded asset whose entry names another artifact (or that failed and has an entry
-now). The provider watches every input file its cooks recorded (sources, sidecars, a `.gltf`'s
-buffers), re-cooks the changed units of one poll round, and rewrites the catalog once.
 
 The cooker may also run in another process: `kiln-cook` (once, or `--watch` to keep cooking what
 changes) writes the store while a read-only app (no provider) watches the catalog. One writer per
@@ -56,21 +50,21 @@ profile holds the lock, so an app with a disk-mode provider and `kiln-cook` do n
   implements it; a host backend that leaves it null gets K5011 when `watchStore` is on. The compat
   backend opens files with `FILE_SHARE_DELETE` on Windows so a rewrite by rename can replace a file
   the loader is reading.
-- The poller stats only settled slots (`Ready` or `Failed`, file source), sleeps `pollMs` between
-  rounds, and hands changed slot indices to `pump()` through a mutex-protected list; the pump thread
-  calls `request_reload`. It is joined by `destroy()`.
+- The poller stats the catalog file, sleeps `pollMs` between rounds, reads and validates a changed
+  catalog, and hands it to `pump()` under a mutex; the pump thread swaps it in and reloads. It is
+  joined by `destroy()`. Without the poller, a reload reads the catalog again when it starts, so
+  `request_reload` sees a catalog rewritten meanwhile.
 
 ### Cook side
 
 - `ProviderDesc::watchSources` and `pollMs` start the source poller in `install_provider`.
-- The provider records per cooked asset: source path, its `IoStat` at cook time, and the asset paths
-  it produced. Re-cook happens on the poller thread through the existing cook-on-miss functions with
-  `storeMode` Disk, so a glb rewrites its mesh and its embedded textures; an image rewrites its texture.
+- The provider's input records (`store-catalog.md`) hold, per source, every input with its size,
+  time and content hash, and the outputs. A re-cook runs on the poller thread, so a glb publishes
+  its mesh and its embedded images again; an image its texture.
   Diagnostics from a re-cook go to the log (`KILN_WARN` / `KILN_ERROR`), since there is no pump
   thread to replay them on.
-- `store_write` gains an `overwrite` flag. Cook-on-miss keeps the existing leave-if-present rule;
-  re-cook overwrites. On Windows a rename over a file that a reader still holds open without
-  `FILE_SHARE_DELETE` fails; the poller keeps the source marked dirty and tries again next round.
+- Artifacts are written once; only the catalog is replaced (a temporary file, then a rename). A
+  failed rewrite is tried again next round.
 - The poller is joined by `uninstall_provider`, which the host calls before `destroy(ctx)`.
 
 ### Viewer and examples
@@ -89,7 +83,7 @@ are created the same way. `kiln-headless --watch` does the same without a GPU.
 
 ## Rationale
 
-- Two pollers joined by the store keep `kiln_runtime` free of any notion of sources and keep the
+- Two pollers joined by the catalog keep `kiln_runtime` free of any notion of sources and keep the
   cook side free of any notion of slots. Either half is useful alone.
 - Swapping through a `next` metadata set makes first load and reload one code path and guarantees
   the old view stays valid until `Changed`.

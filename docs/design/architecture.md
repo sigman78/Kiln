@@ -55,8 +55,9 @@ The rules behind the picture:
   shipping build has no `kiln_cook` and no third-party code (`shipping-split.md`).
 - The runtime reaches the GPU only through the host's `Adapter` (`adapter.md`). The null adapter
   serves tests and `kiln-headless`.
-- The cook side joins the runtime through one function pointer, `CookProvider`. The runtime
-  asks it for bytes on a store miss and knows nothing else about sources.
+- The cook side joins the runtime through one function pointer, `CookProvider::prepare`. The runtime
+  asks it before each load which artifact to load (or for cooked bytes) and knows nothing else
+  about sources.
 - One source file gives one cooked asset (`asset-model-next.md`). The store is the only thing the
   runtime reads.
 
@@ -81,15 +82,16 @@ sequenceDiagram
     Ctx-->>Host: handle (state Pending)
 
     Host->>Ctx: pump()
+    Ctx->>Ctx: look the name up in the catalog (the artifact's build key)
     Ctx->>Worker: dispatch meta stage (High before Normal, up to maxIoJobs)
-    Worker->>Store: open props/chair.glb.mesh
-    opt store miss and a provider is installed
-        Worker->>Prov: cook(Mesh, name)
-        Prov->>Prov: find the source in its root, check the kind and case
-        Prov->>Store: write the .mesh and its embedded .ktx2 files
-        Prov-->>Worker: cooked bytes
+    opt a provider is installed
+        Worker->>Prov: prepare(Mesh, name)
+        Prov->>Prov: find the source in its root, check the kind, case and recorded inputs
+        Prov->>Store: when an input changed: cook, publish the artifacts, rewrite the catalog
+        Prov-->>Worker: the build key (and the cooked bytes, if it cooked)
     end
-    Note over Worker,Store: no store file and no cooked bytes: completion Failed (K5001), the load stops
+    Worker->>Store: open artifacts/<key>.mesh
+    Note over Worker,Store: no entry and no cooked bytes: completion Failed (K5001 or K5019), the load stops
     Worker->>Worker: validate the header, read the metadata
     Worker-->>Ctx: completion MetaReady (queued under a mutex)
 
@@ -118,7 +120,7 @@ A texture serves its placeholder until `Ready`, and after `Failed`.
 
 ## Hot reload
 
-Two pollers that do not know each other, joined by the store on disk (`hot-reload.md`). The
+Two pollers that do not know each other, joined by the catalog on disk (`hot-reload.md`). The
 source poller exists only with a cook provider and `ProviderDesc::watchSources`; the store poller
 only with `KILN_HOT_RELOAD` and `ContextDesc::hotReload.watchStore`. Either one also works alone.
 
@@ -136,17 +138,17 @@ sequenceDiagram
 
     Artist->>Src: save chair.glb (or its .kiln sidecar)
     loop every pollMs
-        SP->>Src: stat source and sidecar
+        SP->>Src: stat the recorded inputs (source, sidecar, buffers)
     end
     SP->>SP: size or mtime changed, re-cook
-    SP->>Store: overwrite chair.glb.mesh and its embedded textures
-    Note over SP,Store: a failed re-cook logs an error and keeps the old store files
+    SP->>Store: publish the new artifacts, rewrite the catalog once per round
+    Note over SP,Store: a failed re-cook logs an error and keeps the old catalog entry
 
     loop every pollMs
-        RP->>Store: stat the files of loaded assets
+        RP->>Store: stat the catalog file
     end
-    RP->>Host: changed slot index (mutex list)
-    Host->>Host: pump() calls request_reload(handle)
+    RP->>Host: a new catalog (mutex)
+    Host->>Host: pump() swaps it in and reloads the assets whose key changed
     Note over Host: the asset stays Ready, gpu_object() still returns the old object
 
     Host->>Worker: meta stage into the next metadata set

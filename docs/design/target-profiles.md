@@ -106,6 +106,10 @@ struct TargetProfile {
 
 ### 3. A store belongs to one profile
 
+*Superseded (2026-09-30):* the store catalog (`store-catalog.md`) records the profile in each
+catalog, one per profile; `kiln-store.txt` and `bind_store_profile()` are gone. K3008 is now a
+provider whose target is not the context's profile. The text below is the first version.
+
 - The store directory holds a descriptor, `kiln-store.txt`, written by the first cook into an
   empty store:
 
@@ -185,11 +189,9 @@ struct TargetProfile {
 - `include/kiln/cook/settings.h`: `TargetProfile::blockFormats`, `kCompatBlockFormats`,
   `kDesktopBlockFormats`, `kCompatTarget` / `kDesktopTarget` / `kUncompressedTarget`,
   `target_profile()`, K3008. The usage table is `block_format()` in `src/cook/texture_cook.cpp`.
-- `include/kiln/cook/cook.h`: `bind_store_profile()` (`src/cook/store.cpp`), called by
-  `install_provider` (disk mode) and `kiln-cook`.
-- `include/kiln/assets.h`: `StoreProfile`, `kStoreProfileFile`, `parse_store_profile()`,
-  `read_store_profile()` (`src/runtime/store_profile.cpp`), `ContextDesc::allowUnsampledFormats`,
-  K5018, `diag_sink()`. The check is `check_store_profile()` in `src/runtime/context.cpp`.
+- The store descriptor (`bind_store_profile()`, `StoreProfile`, `read_store_profile()`) was replaced
+  by the catalog's profile fields (2026-09-30). `ContextDesc::allowUnsampledFormats`, K5018 and
+  `diag_sink()` stay; the check is `check_formats()` in `src/runtime/context.cpp`.
 - `kiln-cook --target compat|desktop|uncompressed` (default `compat`).
 
 ## Rollout

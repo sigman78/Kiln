@@ -71,8 +71,7 @@ Reserved: indexWidthPolicy, unit/axis override, name prefixes to strip.
   maxVertexProfile = Float; maxArrayLayers = 2048; }`: a **profile** (`target-profiles.md`).
   `blockFormats` is the set of block formats the target samples; the built-in profiles are
   `kCompatTarget` (the default), `kDesktopTarget` and `kUncompressedTarget`, found by name with
-  `target_profile()` and selected with `kiln-cook --target`. A catalog store has a catalog per
-  profile; a named store holds files of one profile (`kiln-store.txt`).
+  `target_profile()` and selected with `kiln-cook --target`. A store has a catalog per profile.
 - `StoreMode { Disk, Memory, None }`: store, cache-less, validate only.
 - `CookSession { storeMode = Disk; fastPreview = false; }`. `fastPreview` turns off `optimize` and
   `genTangents` for meshes and sets texture `quality` to `Fast` when something is encoded. It changes resolved values, so it
@@ -244,9 +243,8 @@ key      = hash_combine(hash_combine(hash_combine(sourceHash, settingsHash), tar
   (open-questions B3), and the KTX2 key/value entries `kiln.sourceHash` / `kiln.cookHash`.
 - Since v0.6 a store is a catalog store (`store-catalog.md`): each cooked file is an artifact named
   by its build key, XXH3-128 over the cooker version, kind, name, `hash_target`, `hash_settings` and
-  the content of every input file, and a catalog per profile maps names to keys. The named layout,
-  `<storeDir>/<name>.mesh|.ktx2` (a named root's `m:` prefix becomes the directory `@m/`), stays
-  as `StoreLayout::Named`; it uses a file while it exists (R9).
+  the content of every input file, and a catalog per profile maps names to keys. The named layout
+  (`<storeDir>/<name>.mesh|.ktx2`, used while a file exists, R9) was removed on 2026-09-30.
 
 ## Rationale
 
