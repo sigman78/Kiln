@@ -16,8 +16,8 @@ KILN_API void hash128_hex(Hash128 const& h, char (&out)[33]) noexcept;
 KILN_API void hash128_base32(Hash128 const& h, char (&out)[27]) noexcept;
 
 // ---------------------------------------------------------------------------
-// Store layout: <store>/manifest.dir (the runtime reads it) and each artifact at <store>/<2>/<26>, the
-// build key in base32 (the key covers the kind, so names never clash; the manifest gives the kind);
+// Store layout, flat: <store>/manifest.dir (the runtime reads it) and each artifact at <store>/<26>,
+// the build key in base32 (the key covers the kind, so names never clash; the manifest gives it);
 // the cook also keeps <store>/manifest.in (input records) and <store>/manifest.lock (one writer).
 // ---------------------------------------------------------------------------
 
@@ -25,7 +25,7 @@ inline constexpr char kManifestFile[] = "manifest.dir";
 
 /// `<storeDir>/manifest.dir`. Returns what `format()` returns (>= cap - 1: truncated).
 [[nodiscard]] KILN_API usize manifest_file_path(StrView storeDir, char* out, usize cap) noexcept;
-/// `<storeDir>/<first 2 characters>/<hash128_base32(key)>`, no extension, as manifest_file_path().
+/// `<storeDir>/<hash128_base32(key)>`, no extension, as manifest_file_path().
 [[nodiscard]] KILN_API usize artifact_file_path(StrView storeDir, Hash128 const& key, char* out,
                                                 usize cap) noexcept;
 /// Null if `name` is a valid profile name (`[a-z0-9_-]`, 1 to 63 characters), else a reason.
