@@ -58,17 +58,20 @@ out vec4 outColor;
 void main() { outColor = vec4(to_srgb(texture(uTiles, vec3(vUv, float(vLayer))).rgb), 1.0); }
 )";
 
-/// --dump <file.png> and --help. Returns -1 to run, else the exit code.
-int parse(int argc, char** argv, GlOptions* o) noexcept {
+/// --dump <file.png>, --verify and --help. Returns -1 to run, else the exit code.
+int parse(int argc, char** argv, GlOptions* o, bool* verify) noexcept {
     cli::Option const opts[] = {
         {.name = "--dump",
          .arg  = "<file.png>",
          .help = "no window interaction: wait until the array has loaded, write the frame, exit",
          .str  = &o->dump},
+        {.name = "--verify",
+         .help = "no window interaction: read the array back and compare every layer and level with the tile "
+                 "loaded as a texture of its own; exit 1 on a difference", .flag = verify},
     };
     cli::Spec const spec{
         .program  = "kiln-gl-array",
-        .synopsis = "[--dump <file.png>]",
+        .synopsis = "[--dump <file.png>] [--verify]",
         .options  = {opts, countof(opts)},
         .footer   = "Draws a floor of tiles from one texture array that kiln assembles from\n"
                     "examples/assets/tiles/tile0.png ... tile5.png. Edit a tile (or rerun make_tiles.py)\n"
@@ -83,7 +86,7 @@ int parse(int argc, char** argv, GlOptions* o) noexcept {
     o->store     = kStore;
     o->roots[0]  = Root{StrView("tiles"), StrView(kTilesDir)};
     o->rootCount = 1;
-    o->offscreen = o->dump != nullptr;
+    o->offscreen = o->dump != nullptr || *verify;
     return -1;
 }
 
@@ -97,7 +100,8 @@ void log_array(Context* ctx, TextureHandle h) noexcept {
 
 int main(int argc, char** argv) {
     GlOptions o;
-    if (int const code = parse(argc, argv, &o); code >= 0) return code;
+    bool verify = false;
+    if (int const code = parse(argc, argv, &o, &verify); code >= 0) return code;
     ex::install_stdout_log();
 
     // 1. A GL 4.6 core context; create() and pump() run on its thread.
@@ -144,6 +148,14 @@ int main(int argc, char** argv) {
     glSamplerParameteri(sampler, GL_TEXTURE_MAG_FILTER, GLint(GL_LINEAR));
     glBindSampler(0, sampler);
 
+    // --verify: once the array is Ready, each tile again as a texture of its own, to compare with.
+    TextureHandle own[countof(kLayers)] = {};
+    auto own_settled                    = [&] {
+        for (TextureHandle h : own)
+            if (h.is_null() || !ex::settled(state(ctx, h))) return false;
+        return true;
+    };
+
     // 5. The frame loop: pump, then draw with whatever gpu_object() returns now.
     Target target;
     OffscreenRun run;
@@ -156,6 +168,9 @@ int main(int argc, char** argv) {
             if (e.handle == tiles.bits() && (e.kind == EventKind::Ready || e.kind == EventKind::Changed))
                 log_array(ctx, tiles);
         }
+        if (verify && own[0].is_null() && is_ready(ctx, tiles))
+            for (usize i = 0; i < countof(kLayers); ++i)
+                own[i] = request_texture(ctx, kLayers[i]);
 
         Frame f;
         if (!begin_frame(window, camera, target, &f)) continue;
@@ -171,13 +186,21 @@ int main(int argc, char** argv) {
             glDrawArrays(GL_TRIANGLES, 0, GLsizei(kCols * kRows * 6));
         }
         end_frame(window, target, o.offscreen);
-        if (o.offscreen && offscreen_done(o, target, ex::settled(state(ctx, tiles)),
-                                          state(ctx, tiles) == State::Failed, run, &exitCode))
+        bool const settled = ex::settled(state(ctx, tiles)) &&
+                             (!verify || own_settled() || state(ctx, tiles) == State::Failed);
+        if (o.offscreen &&
+            offscreen_done(o, target, settled, state(ctx, tiles) == State::Failed, run, &exitCode))
             break;
     }
+    if (verify && exitCode == 0 &&
+        !ex::verify_array_layers(ctx, tiles, Span<TextureHandle const>(own, countof(own)), &gl_read_texture,
+                                 *gla))
+        exitCode = 1;
 
     // 6. Teardown: kiln first (it hands every GPU object back through Adapter::destroy), then GL.
     release(ctx, tiles);
+    for (TextureHandle h : own)
+        if (!h.is_null()) release(ctx, h);
 #if KILN_GL_HAS_COOK
     if (provider) cook::uninstall_provider(ctx);
 #endif

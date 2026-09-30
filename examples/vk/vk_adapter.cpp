@@ -7,6 +7,7 @@
 #include <kiln/log.h>
 
 #include <atomic>
+#include <cstring>
 #include <mutex>
 
 // kiln::Format values equal VkFormat (docs/design/adapter.md); this is the check that says so.
@@ -431,15 +432,17 @@ Status create_image(VkAdapter* a, Object& o, TextureDesc const& t) noexcept {
     Sharing const sh = sharing(a);
     bool const is3d  = t.depth > 1;
     VkImageCreateInfo info{};
-    info.sType                 = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-    info.imageType             = is3d ? VK_IMAGE_TYPE_3D : VK_IMAGE_TYPE_2D;
-    info.format                = static_cast<VkFormat>(t.format);
-    info.extent                = {t.width, t.height, t.depth};
-    info.mipLevels             = t.levels;
-    info.arrayLayers           = t.layers;
-    info.samples               = VK_SAMPLE_COUNT_1_BIT;
-    info.tiling                = VK_IMAGE_TILING_OPTIMAL;
-    info.usage                 = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    info.sType       = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    info.imageType   = is3d ? VK_IMAGE_TYPE_3D : VK_IMAGE_TYPE_2D;
+    info.format      = static_cast<VkFormat>(t.format);
+    info.extent      = {t.width, t.height, t.depth};
+    info.mipLevels   = t.levels;
+    info.arrayLayers = t.layers;
+    info.samples     = VK_SAMPLE_COUNT_1_BIT;
+    info.tiling      = VK_IMAGE_TILING_OPTIMAL;
+    // TRANSFER_SRC only for adapter_read_texture.
+    info.usage =
+        VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
     info.sharingMode           = sh.mode;
     info.queueFamilyIndexCount = sh.count;
     info.pQueueFamilyIndices   = sh.families;
@@ -978,6 +981,131 @@ TextureView adapter_texture(VkAdapter* a, GpuObject obj) noexcept {
     Object const* o = object_of(a, obj);
     if (!o || !o->view) return {};
     return TextureView{.view = o->view, .shape = o->texture.shape};
+}
+
+bool adapter_read_texture(void* user, GpuObject obj, TextureDesc const& desc, Vec<u8>* out) noexcept {
+    VkAdapter* const a = static_cast<VkAdapter*>(user);
+    std::lock_guard<std::mutex> lock(a->mutex);
+    Object const* o = object_of(a, obj);
+    if (!o || !o->image || desc.levels > kMaxLevels || o->value == 0 || timeline_value(a) < o->value)
+        return false;
+
+    VkBufferImageCopy2 regions[kMaxLevels];
+    u64 total = 0;
+    for (u32 i = 0; i < desc.levels; ++i) {
+        u32 const w           = max(desc.width >> i, 1u);
+        u32 const h           = max(desc.height >> i, 1u);
+        VkBufferImageCopy2& r = regions[i];
+        r                     = VkBufferImageCopy2{};
+        r.sType               = VK_STRUCTURE_TYPE_BUFFER_IMAGE_COPY_2;
+        r.bufferOffset        = total;
+        r.imageSubresource    = {VK_IMAGE_ASPECT_COLOR_BIT, i, 0, desc.layers};
+        r.imageExtent         = {w, h, 1};
+        total += format_image_bytes(desc.format, w, h) * desc.layers;
+    }
+
+    VkBufferCreateInfo bi{};
+    bi.sType        = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    bi.size         = total;
+    bi.usage        = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    bi.sharingMode  = VK_SHARING_MODE_EXCLUSIVE;
+    VkBuffer buffer = VK_NULL_HANDLE;
+    VKX_CHECK(vkCreateBuffer(a->device, &bi, nullptr, &buffer));
+    VkMemoryRequirements req;
+    vkGetBufferMemoryRequirements(a->device, buffer, &req);
+    VkMemoryAllocateInfo mi{};
+    mi.sType          = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    mi.allocationSize = req.size;
+    mi.memoryTypeIndex =
+        find_memory_type(*a->dev, req.memoryTypeBits,
+                         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    VkDeviceMemory memory = VK_NULL_HANDLE;
+    bool ok =
+        mi.memoryTypeIndex != kInvalid && vkAllocateMemory(a->device, &mi, nullptr, &memory) == VK_SUCCESS;
+    if (ok) VKX_CHECK(vkBindBufferMemory(a->device, buffer, memory, 0));
+
+    VkCommandBufferAllocateInfo ci{};
+    ci.sType              = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    ci.commandPool        = a->pool;
+    ci.level              = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    ci.commandBufferCount = 1;
+    VkCommandBuffer cmd   = VK_NULL_HANDLE;
+    VkFence fence         = VK_NULL_HANDLE;
+    if (ok) {
+        VKX_CHECK(vkAllocateCommandBuffers(a->device, &ci, &cmd));
+        VkCommandBufferBeginInfo begin{};
+        begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+        begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+        VKX_CHECK(vkBeginCommandBuffer(cmd, &begin));
+        VkImageMemoryBarrier2 toSrc{};
+        toSrc.sType            = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
+        toSrc.srcStageMask     = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+        toSrc.srcAccessMask    = VK_ACCESS_2_NONE;
+        toSrc.dstStageMask     = VK_PIPELINE_STAGE_2_COPY_BIT;
+        toSrc.dstAccessMask    = VK_ACCESS_2_TRANSFER_READ_BIT;
+        toSrc.oldLayout        = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        toSrc.newLayout        = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        toSrc.image            = o->image;
+        toSrc.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, desc.levels, 0, desc.layers};
+        VkDependencyInfo dep{};
+        dep.sType                   = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+        dep.imageMemoryBarrierCount = 1;
+        dep.pImageMemoryBarriers    = &toSrc;
+        vkCmdPipelineBarrier2(cmd, &dep);
+        VkCopyImageToBufferInfo2 copy{};
+        copy.sType          = VK_STRUCTURE_TYPE_COPY_IMAGE_TO_BUFFER_INFO_2;
+        copy.srcImage       = o->image;
+        copy.srcImageLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        copy.dstBuffer      = buffer;
+        copy.regionCount    = desc.levels;
+        copy.pRegions       = regions;
+        vkCmdCopyImageToBuffer2(cmd, &copy);
+        VkImageMemoryBarrier2 back = toSrc;
+        back.srcStageMask          = VK_PIPELINE_STAGE_2_COPY_BIT;
+        back.srcAccessMask         = VK_ACCESS_2_NONE;
+        back.dstStageMask          = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+        back.dstAccessMask         = VK_ACCESS_2_NONE;
+        back.oldLayout             = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        back.newLayout             = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        VkBufferMemoryBarrier2 toHost{};
+        toHost.sType                 = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2;
+        toHost.srcStageMask          = VK_PIPELINE_STAGE_2_COPY_BIT;
+        toHost.srcAccessMask         = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+        toHost.dstStageMask          = VK_PIPELINE_STAGE_2_HOST_BIT;
+        toHost.dstAccessMask         = VK_ACCESS_2_HOST_READ_BIT;
+        toHost.buffer                = buffer;
+        toHost.size                  = VK_WHOLE_SIZE;
+        dep.pImageMemoryBarriers     = &back;
+        dep.bufferMemoryBarrierCount = 1;
+        dep.pBufferMemoryBarriers    = &toHost;
+        vkCmdPipelineBarrier2(cmd, &dep);
+        VKX_CHECK(vkEndCommandBuffer(cmd));
+
+        VkFenceCreateInfo fi{};
+        fi.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+        VKX_CHECK(vkCreateFence(a->device, &fi, nullptr, &fence));
+        VkCommandBufferSubmitInfo cbi{};
+        cbi.sType         = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO;
+        cbi.commandBuffer = cmd;
+        VkSubmitInfo2 submit{};
+        submit.sType                  = VK_STRUCTURE_TYPE_SUBMIT_INFO_2;
+        submit.commandBufferInfoCount = 1;
+        submit.pCommandBufferInfos    = &cbi;
+        VKX_CHECK(vkQueueSubmit2(a->dev->transferQueue, 1, &submit, fence));
+        ok = vkWaitForFences(a->device, 1, &fence, VK_TRUE, ~u64(0)) == VK_SUCCESS;
+    }
+    if (ok) {
+        void* mapped = nullptr;
+        VKX_CHECK(vkMapMemory(a->device, memory, 0, VK_WHOLE_SIZE, 0, &mapped));
+        out->resize(usize(total));
+        std::memcpy(out->data(), mapped, usize(total));
+        vkUnmapMemory(a->device, memory);
+    }
+    if (fence) vkDestroyFence(a->device, fence, nullptr);
+    if (cmd) vkFreeCommandBuffers(a->device, a->pool, 1, &cmd);
+    vkDestroyBuffer(a->device, buffer, nullptr);
+    if (memory) vkFreeMemory(a->device, memory, nullptr);
+    return ok;
 }
 
 ex::AdapterStats adapter_stats(VkAdapter* a) noexcept {

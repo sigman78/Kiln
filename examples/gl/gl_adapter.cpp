@@ -514,6 +514,33 @@ GlTexture gl_texture(GlAdapter const* a, GpuObject obj) noexcept {
     return o.used ? GlTexture{o.name, o.target} : GlTexture{};
 }
 
+bool gl_read_texture(void* user, GpuObject obj, TextureDesc const& desc, Vec<u8>* out) noexcept {
+    GlAdapter const* a    = static_cast<GlAdapter const*>(user);
+    GlTexture const tex   = gl_texture(a, obj);
+    TexFormat const f     = tex_format(desc.format, a->s3tc);
+    bool const compressed = is_compressed_format(desc.format);
+    if (!tex.name || (!compressed && f.format == 0)) return false;
+    u64 total = 0;
+    for (u32 i = 0; i < desc.levels; ++i)
+        total += format_image_bytes(desc.format, max(desc.width >> i, 1u), max(desc.height >> i, 1u)) *
+                 desc.layers;
+    out->resize(usize(total));
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    u64 off = 0;
+    for (u32 i = 0; i < desc.levels; ++i) {
+        u32 const w = max(desc.width >> i, 1u), h = max(desc.height >> i, 1u);
+        u64 const n = format_image_bytes(desc.format, w, h) * desc.layers;
+        if (compressed)
+            glGetCompressedTextureSubImage(tex.name, GLint(i), 0, 0, 0, GLsizei(w), GLsizei(h),
+                                           GLsizei(desc.layers), GLsizei(n), out->data() + off);
+        else
+            glGetTextureSubImage(tex.name, GLint(i), 0, 0, 0, GLsizei(w), GLsizei(h), GLsizei(desc.layers),
+                                 f.format, f.type, GLsizei(n), out->data() + off);
+        off += n;
+    }
+    return glGetError() == GL_NO_ERROR;
+}
+
 GlBufferRange gl_handle_table(GlAdapter* a, u64 frame) noexcept {
     u64 const offset = (frame % a->tableFrames) * a->tableStride;
     std::memcpy(a->tableMapped + offset, a->handles.data(), usize(a->slotsUsed) * sizeof(u64));

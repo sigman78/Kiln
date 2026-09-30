@@ -5,6 +5,7 @@
 
 #include <kiln/adapter.h>
 #include <kiln/alloc.h>
+#include <kiln/containers.h>
 
 #include "adapter_stats.h"
 #include "vk_device.h"
@@ -61,6 +62,11 @@ struct TextureView {
     TextureShape shape = TextureShape::Tex2D;
 };
 [[nodiscard]] TextureView adapter_texture(VkAdapter* a, GpuObject obj) noexcept;
+
+/// An ex::ReadTextureFn (`user` is the VkAdapter), for --verify: copies the image on the transfer
+/// queue and waits. Call when no frame is in flight; the queue must be free for this thread.
+[[nodiscard]] bool adapter_read_texture(void* user, GpuObject obj, TextureDesc const& desc,
+                                        Vec<u8>* out) noexcept;
 
 /// The counters shared by every example adapter; any thread. A submitted copy never fails, and the
 /// only Busy is a full staging ring (a full object table is OutOfMemory).

@@ -2,7 +2,7 @@
 
 **Status:** First version implemented and decided (v0.7, 2026-09-30; owner): one aggregate upload; the
 other choices are open-questions R12. `kiln-gl-array` and `kiln-vk-array` (descriptor sets or bindless)
-show it. Range uploads (v0.8) and benchmarks are still open.
+show it, and their `--verify` checks it on the GPU. Range uploads (v0.8) and benchmarks are still open.
 **Decides:** How a runtime request can assemble independently cooked 2D textures into one GPU
 array, without producing a combined cooked file or changing the one-source-file rule.
 
@@ -149,7 +149,7 @@ Current backend implications:
 
 | Backend | Direct assembly | Existing-resident copy alternative |
 |---|---|---|
-| Vulkan | One array image; buffer-to-image copies select destination layers/mips | `vkCmdCopyImage`; current sampled images lack transfer-source usage, so creation flags and synchronization must change |
+| Vulkan | One array image; buffer-to-image copies select destination layers/mips | `vkCmdCopyImage`; the example adapter's images have transfer-source usage (for `--verify`), but synchronization must change |
 | OpenGL | Array storage and subimage uploads; current adapter already uploads complete arrays | `glCopyImageSubData`; add entry point and completion/lifetime handling |
 | sokol | Current adapter supplies all mip/layer bytes together to `sg_make_image`; aggregate staging fits this path | Native API support does not establish support through sokol; investigate before exposing this capability |
 | NoGraphicsAPI | Current adapter supports arrays; inspect range-copy interface and barriers in the implementation spike | Needs a separate capability audit |
@@ -181,7 +181,8 @@ existing runtime error catalogue.
 This policy temporarily needs both old and new arrays, plus staging. In-place layer replacement
 would save memory but introduces writes to resources sampled by frames in flight; defer it until
 there is an explicit synchronization and visibility contract. Layer count and order cannot be
-edited through reload; a new declaration is required.
+edited through reload; a new declaration is required. Reloading only the changed layers (copy-on-write
+by default, in place as an opt-in) is open for v0.8 with range uploads: open-questions R12.
 
 ## Alternatives and GPU constraints
 
@@ -236,6 +237,13 @@ allocations. It would require a separate residency design and device-specific co
 - Hot reload: each layer keeps its artifact key; a manifest change to any layer reloads the array.
 
 The open points below record what the first version chose; R12 has the details.
+
+**Validation (2026-09-30).** Null-adapter tests cover the layout (including BC tail levels and
+padded rows), mixed Zstd and plain layers, release during a load, `destroy()` with a live array,
+an array larger than staging, reload merging and layers cooked on a miss. On the GPU,
+`kiln-gl-array --verify` and `kiln-vk-array --verify [--bindless]` read the array back and compare
+every layer and level with the tile loaded on its own: byte-exact for 6 BC7 layers of 8 levels on
+an NVIDIA GTX 1080 Ti, with a warm and a cold store. Not run with the Vulkan validation layer.
 
 ## Open points
 

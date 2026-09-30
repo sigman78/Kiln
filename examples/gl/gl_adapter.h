@@ -6,6 +6,7 @@
 
 #include <kiln/adapter.h>
 #include <kiln/alloc.h>
+#include <kiln/containers.h>
 
 #include "adapter_stats.h"
 
@@ -40,6 +41,8 @@ struct GlTexture {
 };
 /// The GL texture behind a GpuObject that gpu_object() returned.
 [[nodiscard]] GlTexture gl_texture(GlAdapter const* a, GpuObject obj) noexcept;
+/// An ex::ReadTextureFn (`user` is the GlAdapter), for --verify; on the GL thread.
+[[nodiscard]] bool gl_read_texture(void* user, GpuObject obj, TextureDesc const& desc, Vec<u8>* out) noexcept;
 struct GlBufferRange {
     unsigned buffer = 0;
     u64 offset = 0, size = 0;

@@ -83,4 +83,13 @@ struct View {
 /// Writes RGBA8 pixels, top row first.
 bool write_png(char const* path, Span<u8 const> rgba, u32 width, u32 height) noexcept;
 
+/// Reads a texture back from the GPU for a check: level by level, each level's layers in order, rows
+/// tightly packed (whole blocks). Waits for the GPU. False when it cannot.
+using ReadTextureFn = bool (*)(void* user, GpuObject obj, TextureDesc const& desc, Vec<u8>* out);
+
+/// --verify for texture arrays: true when every level of layer i of `array` has the same bytes as
+/// the Ready texture `layers[i]`, loaded on its own. Logs each difference.
+[[nodiscard]] bool verify_array_layers(Context* ctx, TextureHandle array, Span<TextureHandle const> layers,
+                                       ReadTextureFn read, void* user) noexcept;
+
 } // namespace kiln::ex

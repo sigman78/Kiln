@@ -36,9 +36,10 @@ constexpr u32 kFif = vkx::kFramesInFlight;
 struct Options {
     ex::Options base;
     bool bindless = false;
+    bool verify   = false;
 };
 
-/// --dump <file.png>, --bindless and --help. Returns -1 to run, else the exit code.
+/// --dump <file.png>, --bindless, --verify and --help. Returns -1 to run, else the exit code.
 int parse(int argc, char** argv, Options* o) noexcept {
     cli::Option const opts[] = {
         {.name = "--dump",
@@ -48,10 +49,13 @@ int parse(int argc, char** argv, Options* o) noexcept {
         {.name = "--bindless",
          .help = "sample the array through kiln's bindless slot instead of a descriptor set of our own",
          .flag = &o->bindless},
+        {.name = "--verify",
+         .help = "no window: read the array back and compare every layer and level with the tile loaded as a "
+                 "texture of its own; exit 1 on a difference", .flag = &o->verify},
     };
     cli::Spec const spec{
         .program  = "kiln-vk-array",
-        .synopsis = "[--bindless] [--dump <file.png>]",
+        .synopsis = "[--bindless] [--dump <file.png>] [--verify]",
         .options  = {opts, countof(opts)},
         .footer   = "Draws a floor of tiles from one texture array that kiln assembles from\n"
                     "examples/assets/tiles/tile0.png ... tile5.png. Edit a tile (or rerun make_tiles.py)\n"
@@ -66,7 +70,7 @@ int parse(int argc, char** argv, Options* o) noexcept {
     o->base.store     = kStore;
     o->base.roots[0]  = Root{StrView("tiles"), StrView(kTilesDir)};
     o->base.rootCount = 1;
-    o->base.offscreen = o->base.dump != nullptr;
+    o->base.offscreen = o->base.dump != nullptr || o->verify;
     return -1;
 }
 
@@ -237,6 +241,14 @@ int main(int argc, char** argv) {
     TextureHandle const tiles = request_texture_array(
         ctx, {.name = "tiles:floor", .layers = Span<StrView const>(kLayers, countof(kLayers))});
 
+    // --verify: once the array is Ready, each tile again as a texture of its own, to compare with.
+    TextureHandle own[countof(kLayers)] = {};
+    auto own_settled                    = [&] {
+        for (TextureHandle h : own)
+            if (h.is_null() || !ex::settled(state(ctx, h))) return false;
+        return true;
+    };
+
     // 6. Frames: wait for the slot, pump, apply events, draw.
     int exitCode         = 0;
     bool settledOnce     = false;
@@ -257,11 +269,15 @@ int main(int argc, char** argv) {
             if (e.kind == EventKind::Ready || e.kind == EventKind::Changed) log_array(ctx, tiles);
         }
         if (!opt.bindless) update_set(ctx, *va, device.device, tiles, sets, slot);
+        if (opt.verify && own[0].is_null() && is_ready(ctx, tiles))
+            for (usize i = 0; i < countof(kLayers); ++i)
+                own[i] = request_texture(ctx, kLayers[i]);
 
         bool last = false;
         if (o.offscreen) {
             if (settledOnce) last = true; // one frame after settling, as the other examples do
-            settledOnce = ex::settled(state(ctx, tiles));
+            settledOnce = ex::settled(state(ctx, tiles)) &&
+                          (!opt.verify || own_settled() || state(ctx, tiles) == State::Failed);
             if (!last && ex::ms_since_start() - startMs > o.timeoutS * 1000.0) {
                 KILN_ERROR("vk-array", "the array did not settle within %u s", o.timeoutS);
                 exitCode = 1;
@@ -304,10 +320,16 @@ int main(int argc, char** argv) {
         }
     }
     if (state(ctx, tiles) == State::Failed && exitCode == 0) exitCode = 1;
+    if (opt.verify && exitCode == 0 &&
+        !ex::verify_array_layers(ctx, tiles, Span<TextureHandle const>(own, countof(own)),
+                                 &vkx::adapter_read_texture, *va))
+        exitCode = 1;
     ex::log_adapter_stats("vk-array", vkx::adapter_stats(*va));
 
     // 7. Teardown: kiln first (it hands every object back through Adapter::destroy), then Vulkan.
     release(ctx, tiles);
+    for (TextureHandle h : own)
+        if (!h.is_null()) release(ctx, h);
 #if KILN_VK_HAS_COOK
     if (provider) cook::uninstall_provider(ctx);
 #endif

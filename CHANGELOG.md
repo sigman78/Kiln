@@ -19,6 +19,15 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
   assembled from `examples/assets/tiles/tile0.png` ... `tile5.png`, with hot reload.
 - **Example `kiln-vk-array`** (built with `KILN_EXAMPLE_VK_BASIC`): the same floor through Vulkan,
   with a descriptor set rewritten on kiln's events or, with `--bindless`, through kiln's slot.
+- **`--verify` in `kiln-gl-array` and `kiln-vk-array`:** reads the array back from the GPU and
+  compares every layer and level, byte for byte, with the same tile loaded as a texture of its own;
+  exit 1 on a difference. The Vulkan example adapter's images now also have `TRANSFER_SRC` usage.
+- `NullAdapterDesc::maxUploadBytes` (0 = unlimited, default): an opt-in staging cap so tests can make
+  `begin_upload()` fail with `Unsupported` for an oversized upload, like the GL/Vulkan example adapters.
+
+### Fixed
+- `destroy()` leaked the declaration (layer names and table) of a texture array the host had not
+  released.
 
 ### Changed
 - **Examples layout:** `examples/vk/` holds the shared Vulkan code (`kiln_example_vk`: device,

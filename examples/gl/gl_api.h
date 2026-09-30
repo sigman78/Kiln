@@ -114,6 +114,12 @@ inline constexpr GLenum GL_FRAMEBUFFER = 0x8D40, GL_READ_FRAMEBUFFER = 0x8CA8, G
     X(void, glCompressedTextureSubImage3D,                                                                     \
       (GLuint texture, GLint level, GLint x, GLint y, GLint z, GLsizei w, GLsizei h, GLsizei d, GLenum format, \
        GLsizei size, void const* data))                                                                        \
+    X(void, glGetTextureSubImage,                                                                              \
+      (GLuint texture, GLint level, GLint x, GLint y, GLint z, GLsizei w, GLsizei h, GLsizei d, GLenum format, \
+       GLenum type, GLsizei size, void* data))                                                                 \
+    X(void, glGetCompressedTextureSubImage,                                                                    \
+      (GLuint texture, GLint level, GLint x, GLint y, GLint z, GLsizei w, GLsizei h, GLsizei d, GLsizei size,  \
+       void* data))                                                                                            \
     X(GLubyte const*, glGetStringi, (GLenum name, GLuint index))                                               \
     X(void, glDeleteTextures, (GLsizei n, GLuint const* textures))                                             \
     X(void, glBindTextureUnit, (GLuint unit, GLuint texture))                                                  \

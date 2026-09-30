@@ -192,4 +192,72 @@ bool write_png(char const* path, Span<u8 const> rgba, u32 width, u32 height) noe
     return std::fclose(f) == 0 && ok;
 }
 
+namespace {
+
+TextureDesc adapter_desc(ktx2::TextureDesc const& d) noexcept {
+    return TextureDesc{.format = d.format,
+                       .width  = d.width,
+                       .height = d.height,
+                       .depth  = d.depth,
+                       .layers = d.layers * d.faces,
+                       .levels = d.levels,
+                       .shape  = d.isCube    ? TextureShape::Cube
+                                 : d.isArray ? TextureShape::Array
+                                             : TextureShape::Tex2D};
+}
+
+/// Bytes of one layer of `level`, and where layer `layer` starts in a ReadTextureFn result.
+u64 layer_bytes(TextureDesc const& d, u32 level) noexcept {
+    return format_image_bytes(d.format, max(d.width >> level, 1u), max(d.height >> level, 1u));
+}
+u64 layer_offset(TextureDesc const& d, u32 level, u32 layer) noexcept {
+    u64 off = 0;
+    for (u32 i = 0; i < level; ++i)
+        off += layer_bytes(d, i) * d.layers;
+    return off + layer_bytes(d, level) * layer;
+}
+
+} // namespace
+
+bool verify_array_layers(Context* ctx, TextureHandle array, Span<TextureHandle const> layers,
+                         ReadTextureFn read, void* user) noexcept {
+    TextureInfo const ai = texture_info(ctx, array);
+    TextureDesc const ad = adapter_desc(ai.desc);
+    if (ai.isPlaceholder || ad.layers != layers.size) {
+        KILN_ERROR("verify", "the array is not Ready with %u layers", u32(layers.size));
+        return false;
+    }
+    Vec<u8> arrayBytes(default_allocator(), Tag::Io);
+    Vec<u8> layerBytes(default_allocator(), Tag::Io);
+    if (!read(user, ai.gpu, ad, &arrayBytes)) {
+        KILN_ERROR("verify", "cannot read the array back");
+        return false;
+    }
+    u32 differences = 0;
+    for (u32 k = 0; k < layers.size; ++k) {
+        TextureInfo const li = texture_info(ctx, layers[k]);
+        TextureDesc const ld = adapter_desc(li.desc);
+        if (li.isPlaceholder || ld.format != ad.format || ld.width != ad.width || ld.height != ad.height ||
+            ld.levels != ad.levels || !read(user, li.gpu, ld, &layerBytes)) {
+            KILN_ERROR("verify",
+                       "layer %u: its own texture is not Ready, differs in shape, or cannot be read", k);
+            ++differences;
+            continue;
+        }
+        for (u32 level = 0; level < ad.levels; ++level) {
+            u64 const n = layer_bytes(ad, level);
+            if (std::memcmp(arrayBytes.data() + layer_offset(ad, level, k),
+                            layerBytes.data() + layer_offset(ld, level, 0), usize(n)) != 0) {
+                KILN_ERROR("verify", "layer %u level %u (%ux%u): the array's bytes differ", k, level,
+                           max(ad.width >> level, 1u), max(ad.height >> level, 1u));
+                ++differences;
+            }
+        }
+    }
+    if (differences == 0)
+        KILN_INFO("verify", "%u layers x %u levels of %s: the array matches every layer's own texture",
+                  u32(layers.size), ad.levels, format_name(ad.format));
+    return differences == 0;
+}
+
 } // namespace kiln::ex
