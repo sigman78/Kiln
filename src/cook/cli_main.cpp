@@ -56,14 +56,17 @@ struct Options {
     char const* defaultRoot = nullptr; ///< --root without a name; null: the input directory
     char const* map         = nullptr;
     bool check              = false;
-    bool verify             = false; ///< compare input content, not size and time
-    bool watch              = false; ///< keep cooking what changes until --timeout
-    u32 timeoutS            = 0;     ///< --watch: stop after this many seconds; 0 = never
+    bool verify             = false;   ///< compare input content, not size and time
+    bool watch              = false;   ///< keep cooking what changes until --timeout
+    u32 timeoutS            = 0;       ///< --watch: stop after this many seconds; 0 = never
+    bool gc                 = false;   ///< delete unreferenced artifacts instead of cooking
+    bool dryRun             = false;   ///< --gc: report only
+    char const* exportDir   = nullptr; ///< write a runtime-only copy of the store instead of cooking
     bool quiet              = false;
     bool verbose            = false;
     u32 threads             = 0; ///< cooking threads including the main one; 0 = auto, 1 = no pool
     char const* profile     = "default";
-    char const* targetName  = "compat";
+    char const* targetName  = nullptr; ///< null: compat when cooking, every profile for --export
     char const* quality     = "normal";
     u32 zstd                = kDefaultZstdLevel; ///< 0: texture levels stay plain
     MeshCookSettings mesh;
@@ -278,13 +281,16 @@ struct Ctx {
     DiagState& ds;
     DiagSink sink;
     CookSession session;
-    std::FILE* map        = nullptr;
-    JobSystem const* jobs = nullptr; ///< null: single-threaded
-    u32 maxThreads        = 0;       ///< CookEnv::maxThreads; 0 = no cap
-    CookPolicy policy     = {};
-    ManifestStore* store  = nullptr; ///< the store writer; null with --check
-    u64 hostDigest        = 0;
-    bool rescan           = false; ///< a --watch round: quiet about sources that did not change
+    std::FILE* map             = nullptr;
+    JobSystem const* jobs      = nullptr; ///< null: single-threaded
+    u32 maxThreads             = 0;       ///< CookEnv::maxThreads; 0 = no cap
+    CookPolicy policy          = {};
+    ManifestStore* store       = nullptr; ///< the store writer; null with --check
+    u64 hostDigest             = 0;
+    char const* defaultRootDir = nullptr;                 ///< the default root of this run, if one is known
+    Vec<char> scanned{default_allocator(), Tag::General}; ///< inputs scanned this round, NUL-separated
+    u32 dropped = 0;                                      ///< units whose source is gone
+    bool rescan = false; ///< a --watch round: quiet about sources that did not change
     /// --watch: sources whose cook failed, by path hash: the stats they failed with.
     HashMap<u64, FailedSource> failedSources{default_allocator(), Tag::General};
     u32 cooked = 0, skipped = 0, failed = 0;
@@ -405,8 +411,38 @@ void cook_file(Ctx& c, char const* path, char const* root) {
     if (c.opt.watch) c.failedSources.insert(pathHash, FailedSource{stats, retry});
 }
 
-/// Cooks every source under the inputs (cook_file() skips those that are up to date).
+/// Drops the units whose source lay under a scanned input and is gone. Their artifacts stay for --gc.
+void drop_vanished(Ctx& c) {
+    if (!c.store) return;
+    Vec<char> units(default_allocator(), Tag::General);
+    unit_names(c.store, &units);
+    for (usize at = 0; at < units.size();) {
+        StrView const name(units.data() + at, std::strlen(units.data() + at));
+        at += name.size + 1;
+        AssetNameParts const parts = split_asset_name(name);
+        char const* rootDir        = parts.root.empty() ? c.defaultRootDir : nullptr;
+        for (NamedRoot const& r : c.opt.roots)
+            if (parts.root == StrView(r.name)) rootDir = r.dir;
+        if (!rootDir) continue; // a root this run does not know
+        char src[2100];
+        format(src, sizeof src, "%s/%.*s", rootDir, KILN_SV(parts.path));
+        bool inScan = false;
+        for (usize s = 0; s < c.scanned.size() && !inScan;) {
+            char const* in = c.scanned.data() + s;
+            inScan         = std::strcmp(src, in) == 0 || under(src, in);
+            s += std::strlen(in) + 1;
+        }
+        if (!inScan || file_exists(src)) continue;
+        drop_unit(c.store, name);
+        ++c.dropped;
+        if (!c.opt.quiet) std::printf("  %-48.*s    source gone, dropped\n", KILN_SV(name));
+    }
+}
+
+/// Cooks every source under the inputs (cook_file() skips those that are up to date), then drops
+/// the units whose source under a scanned input is gone.
 void cook_inputs(Ctx& c) {
+    c.scanned.clear();
     for (char const* input : c.opt.inputs) {
         char in[1024];
         format(in, sizeof in, "%s", input);
@@ -429,6 +465,7 @@ void cook_inputs(Ctx& c) {
                 root[0] = '\0';
         }
 
+        c.scanned.append(Span<char const>(in, std::strlen(in) + 1));
         if (is_dir(in)) {
             FileList files;
             scan_dir(in, files);
@@ -439,6 +476,26 @@ void cook_inputs(Ctx& c) {
             cook_file(c, in, root);
         }
     }
+    drop_vanished(c);
+}
+
+/// The directory of the default root an input implies: the input itself, or a file's directory.
+void implied_root(char const* input, char* out, usize cap) {
+    format(out, cap, "%s", input);
+    normalize_slashes(out);
+    usize n = std::strlen(out);
+    while (n > 1 && out[n - 1] == '/')
+        out[--n] = '\0';
+    if (is_dir(out)) return;
+    if (char* slash = std::strrchr(out, '/'))
+        *slash = '\0';
+    else
+        format(out, cap, ".");
+}
+
+void print_gc(void* user, StrView file, u64 bytes) {
+    if (*static_cast<bool const*>(user)) return;
+    std::printf("  %-48.*s %llu B\n", KILN_SV(file), static_cast<unsigned long long>(bytes));
 }
 
 /// --watch: cooks what changed or appeared, twice a second, until the timeout (or forever). Each
@@ -531,6 +588,14 @@ int kiln::cook::cook_cli_main(int argc, char** argv, CookPolicy const& policy, u
          .arg    = "<s>",
          .help   = "--watch: stop after this many seconds (default: never)",
          .number = &o.timeoutS},
+        {.name = "--gc",
+         .help = "instead of cooking: delete the artifacts no profile references, and leftover "
+                 "temporary files", .flag = &o.gc},
+        {.name = "--dry-run", .help = "--gc: list what would be deleted, delete nothing", .flag = &o.dryRun},
+        {.name = "--export",
+         .arg  = "<dir>",
+         .help = "instead of cooking: write a runtime-only store (manifest.dir and its artifacts) into an "
+                 "empty <dir>; --target picks one profile, default every profile", .str  = &o.exportDir},
         {.name = "--verify",
          .help = "check sources by their content, not by size and time (CI, shipping)",
          .flag = &o.verify},
@@ -540,8 +605,8 @@ int kiln::cook::cook_cli_main(int argc, char** argv, CookPolicy const& policy, u
          .str  = &o.map},
         {.name    = "--target",
          .arg     = "<name>",
-         .help    = "target profile: the block formats it samples (default compat)",
-         .str     = &o.targetName,
+         .help    = "target profile: the block formats it samples (default compat); with --export, the "
+                    "profile to export", .str     = &o.targetName,
          .choices = kTargets},
         {.name    = "--quality",
          .arg     = "<level>",
@@ -575,9 +640,11 @@ int kiln::cook::cook_cli_main(int argc, char** argv, CookPolicy const& policy, u
     };
     cli::Spec const spec{
         .program  = "kiln-cook",
-        .synopsis = "<input>... [options]",
+        .synopsis = "[<input>...] [options]",
         .options  = {opts, countof(opts)},
         .footer =
+            "Inputs are source files or directories. The store records the roots a run used; with no\n"
+            "inputs, kiln-cook scans those roots again (new and changed sources cook, gone ones leave).\n"
             "Exit codes: 0 all inputs cooked, 1 usage, 2 IO failure, 3 one or more cook errors (--watch: "
             "sources still failing at the end).",
         .positional = &add_input,
@@ -585,15 +652,41 @@ int kiln::cook::cook_cli_main(int argc, char** argv, CookPolicy const& policy, u
     };
     cli::Result const args = cli::parse(spec, argc, argv);
     if (args.help) return 0;
-    if (!args.ok || o.inputs.empty()) {
+    if (!args.ok || (o.gc && o.exportDir) || (o.dryRun && !o.gc) ||
+        ((o.gc || o.exportDir) && (!o.inputs.empty() || o.check || o.watch)) ||
+        (o.check && o.inputs.empty())) {
         cli::usage(spec, stderr);
         return 1;
+    }
+    DiagState ds{o.quiet, o.verbose};
+    DiagSink const sink{&diag_fn, &ds};
+    if (o.gc) {
+        GcResult gc;
+        bool quietList = o.quiet;
+        Status const st =
+            collect_store_garbage(StrView(o.store), o.dryRun, &print_gc, &quietList, &gc, &sink);
+        if (!o.quiet)
+            std::printf("gc%s: %u artifact(s), %u temporary file(s), %llu B%s\n",
+                        o.dryRun ? " (dry run)" : "", gc.artifacts, gc.temporaries,
+                        static_cast<unsigned long long>(gc.bytes),
+                        o.dryRun ? " would be deleted" : " deleted");
+        return st.ok() ? 0 : 2;
+    }
+    if (o.exportDir) {
+        ExportResult ex;
+        Status const st = export_store(StrView(o.store), StrView(o.exportDir),
+                                       StrView(o.targetName ? o.targetName : ""), &ex, &sink);
+        if (st.failed()) return 2;
+        if (!o.quiet)
+            std::printf("export: %u profile(s), %u artifact(s), %llu B into %s\n", ex.profiles, ex.artifacts,
+                        static_cast<unsigned long long>(ex.bytes), o.exportDir);
+        return 0;
     }
     o.mesh.genTangents     = !noTangents;
     o.mesh.optimize        = !noOptimize;
     o.mesh.useAuthoredLods = !noLods;
     o.tex.genMips          = !noMips;
-    o.target               = *target_profile(StrView(o.targetName)); // one of kTargets
+    o.target               = *target_profile(StrView(o.targetName ? o.targetName : "compat")); // kTargets
     o.tex.quality          = std::strcmp(o.quality, "fast") == 0   ? EncodeQuality::Fast
                              : std::strcmp(o.quality, "high") == 0 ? EncodeQuality::High
                                                                    : EncodeQuality::Normal;
@@ -603,7 +696,6 @@ int kiln::cook::cook_cli_main(int argc, char** argv, CookPolicy const& policy, u
                              : std::strcmp(o.profile, "precise") == 0 ? VertexProfile::Precise
                                                                       : VertexProfile::Default;
 
-    DiagState ds{o.quiet, o.verbose};
     Ctx c{
         o, ds, DiagSink{&diag_fn,                                    &ds  },
           CookSession{o.check ? StoreMode::None : StoreMode::Disk, false}
@@ -624,10 +716,68 @@ int kiln::cook::cook_cli_main(int argc, char** argv, CookPolicy const& policy, u
         std::fprintf(stderr, "kiln-cook: --watch writes the store; it does not go with --check\n");
         return 1;
     }
+    // What the options and the store's root table point into; they outlive the cooking.
+    Vec<char> recorded(default_allocator(), Tag::General);
+    char implied[1024] = {};
     if (!o.check) {
         Status const opened = open_manifest_store(
             {.storeDir = StrView(o.store), .target = &o.target, .diag = &c.sink}, &c.store);
         if (opened.failed()) return 2;
+        // No inputs: the roots the store recorded. Given --root entries win over recorded ones.
+        if (o.inputs.empty()) {
+            store_roots(c.store, &recorded);
+            for (usize at = 0; at < recorded.size();) {
+                char const* name = recorded.data() + at;
+                at += std::strlen(name) + 1;
+                char const* dir = recorded.data() + at;
+                at += std::strlen(dir) + 1;
+                if (!*name) {
+                    if (!o.defaultRoot) o.defaultRoot = dir;
+                    continue;
+                }
+                bool given = false;
+                for (NamedRoot const& r : o.roots)
+                    given |= std::strcmp(r.name, name) == 0;
+                if (given) continue;
+                NamedRoot r{};
+                format(r.name, sizeof r.name, "%s", name);
+                format(r.dir, sizeof r.dir, "%s", dir);
+                o.roots.push_back(r);
+            }
+            if (o.defaultRoot) o.inputs.push_back(o.defaultRoot);
+            for (NamedRoot const& r : o.roots)
+                o.inputs.push_back(r.dir);
+            if (o.inputs.empty()) {
+                std::fprintf(stderr, "kiln-cook: no inputs, and %s records no roots: give the inputs once\n",
+                             o.store);
+                close_manifest_store(c.store);
+                return 1;
+            }
+        }
+        // The default root: --root <dir>, or the one directory every input implies.
+        if (o.defaultRoot) {
+            format(implied, sizeof implied, "%s", o.defaultRoot);
+            normalize_slashes(implied);
+            c.defaultRootDir = implied;
+        } else {
+            implied_root(o.inputs[0], implied, sizeof implied);
+            c.defaultRootDir = implied;
+            for (char const* input : o.inputs) {
+                char other[1024];
+                implied_root(input, other, sizeof other);
+                if (std::strcmp(other, implied) != 0) c.defaultRootDir = nullptr;
+            }
+            if (!c.defaultRootDir && !o.quiet)
+                std::fprintf(stderr,
+                             "kiln-cook: the inputs lie in different directories; the store records no "
+                             "default root for them\n");
+        }
+        Vec<Root> used(default_allocator(), Tag::General);
+        if (c.defaultRootDir) used.push_back(Root{StrView(), StrView(c.defaultRootDir)});
+        for (NamedRoot const& r : o.roots)
+            used.push_back(Root{StrView(r.name), StrView(r.dir)});
+        record_store_roots(c.store, used.span());
+
         UnitDesc const host{.meshDefaults    = &o.mesh,
                             .textureDefaults = &o.tex,
                             .nameRules       = kDefaultNameRules,
@@ -679,8 +829,8 @@ int kiln::cook::cook_cli_main(int argc, char** argv, CookPolicy const& policy, u
         return failing ? 3 : 0;
     }
     if (!o.quiet)
-        std::printf("%s: %u cooked, %u up to date, %u failed, %u warning(s)\n", o.check ? "check" : "cook",
-                    c.cooked, c.skipped, c.failed, ds.warnings);
+        std::printf("%s: %u cooked, %u up to date, %u dropped, %u failed, %u warning(s)\n",
+                    o.check ? "check" : "cook", c.cooked, c.skipped, c.dropped, c.failed, ds.warnings);
     if (c.failed) return 3;
     return 0;
 }

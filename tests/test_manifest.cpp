@@ -16,6 +16,7 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <initializer_list>
 #include <system_error>
 #include <thread>
 
@@ -1231,4 +1232,262 @@ KILN_TEST(ManifestCli, HashBeforeCook) {
     KILN_CHECK(!(manifest_key(store, AssetKind::Mesh, "external_uri.gltf"_sv) == key));
 }
 
+// ---------------------------------------------------------------------------
+// Root table, bare runs, --gc, --export
+// ---------------------------------------------------------------------------
+
+namespace {
+
+/// Runs kiln-cook with `args` (after the program name).
+int run_args(std::initializer_list<char const*> args, CookPolicy const& policy = {}) {
+    static char storage[16][1100];
+    char* argv[17];
+    int argc = 0;
+    argv[0]  = storage[0];
+    format(storage[argc++], sizeof storage[0], "kiln-cook");
+    for (char const* a : args) {
+        format(storage[argc], sizeof storage[0], "%s", a);
+        argv[argc] = storage[argc];
+        ++argc;
+    }
+    return cook::cook_cli_main(argc, argv, policy);
+}
+
+/// The directory the store's root table gives the root `name`, or an empty string.
+void recorded_root(char const* store, char const* name, char* out, usize cap) {
+    out[0]           = '\0';
+    ManifestStore* s = nullptr;
+    if (open_store(store, &s).failed()) return;
+    Vec<char> roots(default_allocator(), Tag::Test);
+    store_roots(s, &roots);
+    for (usize at = 0; at < roots.size();) {
+        char const* n = roots.data() + at;
+        at += std::strlen(n) + 1;
+        char const* d = roots.data() + at;
+        at += std::strlen(d) + 1;
+        if (std::strcmp(n, name) == 0) format(out, cap, "%s", d);
+    }
+    close_manifest_store(s);
+}
+
+bool same_dir(char const* a, char const* b) {
+    char x[1024], y[1024];
+    usize const nx = absolute_path(StrView(a), x, sizeof x), ny = absolute_path(StrView(b), y, sizeof y);
+    return nx && nx == ny && relative_path(StrView(x, nx), StrView(y, ny), x, sizeof x) == 1 && x[0] == '.';
+}
+
+usize count_files(char const* dir) {
+    std::error_code ec;
+    usize n = 0;
+    for (auto const& e : std::filesystem::directory_iterator(dir, ec))
+        n += e.is_regular_file(ec) ? 1 : 0;
+    return n;
+}
+
+} // namespace
+
+// kiln-cook records the roots it used; a run without inputs scans them again: nothing unchanged
+// cooks, a new source cooks, a gone source leaves. The table survives moving store and sources.
+KILN_TEST(ManifestCli, BareRunsCookFromTheRootTable) {
+    char project[1024], store[1100], sources[1100], extra[1200];
+    fresh_dir("manifest-bare", project, sizeof project);
+    format(store, sizeof store, "%s/store", project);
+    format(sources, sizeof sources, "%s/src", project);
+    copy_sources(sources);
+    KILN_REQUIRE_EQ(run_args({"-o", store, "-q"}), 1); // no inputs, no table yet
+    KILN_REQUIRE_EQ(run_args({sources, "-o", store, "-q"}), 0);
+    char root[1024];
+    recorded_root(store, "", root, sizeof root);
+    KILN_CHECK_MSG(same_dir(root, sources), "recorded default root '%s'", root);
+
+    PolicyCount count;
+    KILN_REQUIRE_EQ(run_args({"-o", store, "-q"}, count.policy()), 0);
+    KILN_CHECK_EQ(count.meshes.load(), 0u);
+
+    format(extra, sizeof extra, "%s/second.png", sources);
+    std::error_code ec;
+    std::filesystem::copy_file(std::filesystem::path(sources) / "external_uri_albedo.png", extra, ec);
+    KILN_REQUIRE_EQ(run_args({"-o", store, "-q"}), 0);
+    Hash128 const second = manifest_key(store, AssetKind::Texture, "second.png"_sv);
+    KILN_CHECK(!second.is_zero());
+    std::filesystem::remove(extra, ec);
+    KILN_REQUIRE_EQ(run_args({"-o", store, "-q"}), 0);
+    KILN_CHECK(manifest_key(store, AssetKind::Texture, "second.png"_sv).is_zero());
+    char artifact[1200];
+    (void)artifact_file_path(StrView(store), second, artifact, sizeof artifact);
+    KILN_CHECK(io_file_exists(StrView(artifact))); // dropped from the manifest; --gc deletes it
+
+    // The root is stored relative to the store: the project moves as a whole.
+    char moved[1100], movedStore[1200];
+    format(moved, sizeof moved, "%s-moved", project);
+    std::filesystem::remove_all(moved, ec);
+    std::filesystem::rename(project, moved, ec);
+    KILN_REQUIRE(!ec);
+    format(movedStore, sizeof movedStore, "%s/store", moved);
+    count.meshes = 0;
+    KILN_REQUIRE_EQ(run_args({"-o", movedStore, "-q"}, count.policy()), 0);
+    KILN_CHECK_EQ(count.meshes.load(), 0u);
+    KILN_CHECK(!manifest_key(movedStore, AssetKind::Mesh, "external_uri.gltf"_sv).is_zero());
+}
+
+// Named roots go into the table under their names; a bare run names the sources the same way.
+KILN_TEST(ManifestCli, NamedRootsInTheTable) {
+    char store[1024], sources[1024], rootArg[1100];
+    fresh_dir("manifest-named-root", store, sizeof store);
+    fresh_dir("manifest-named-root-src", sources, sizeof sources);
+    copy_sources(sources);
+    format(rootArg, sizeof rootArg, "gen=%s", sources);
+    KILN_REQUIRE_EQ(run_args({sources, "-o", store, "-q", "--root", rootArg}), 0);
+    KILN_REQUIRE(!manifest_key(store, AssetKind::Mesh, "gen:external_uri.gltf"_sv).is_zero());
+    char root[1024];
+    recorded_root(store, "gen", root, sizeof root);
+    KILN_CHECK_MSG(same_dir(root, sources), "recorded gen root '%s'", root);
+    PolicyCount count;
+    KILN_REQUIRE_EQ(run_args({"-o", store, "-q"}, count.policy()), 0);
+    KILN_CHECK_EQ(count.meshes.load(), 0u);
+    KILN_CHECK(!manifest_key(store, AssetKind::Mesh, "gen:external_uri.gltf"_sv).is_zero());
+}
+
+// The cook provider records the context's roots, so kiln-cook can go on without inputs.
+KILN_TEST(ManifestProvider, RecordsTheContextRoots) {
+    char store[1024], sources[1024];
+    fresh_dir("manifest-prov-roots", store, sizeof store);
+    fresh_dir("manifest-prov-roots-src", sources, sizeof sources);
+    copy_sources(sources);
+    {
+        ProviderContext p;
+        KILN_REQUIRE(p.init(store, sources, {}).ok());
+        MeshHandle const m = request_mesh(p.c.ctx, "external_uri.gltf"_sv);
+        KILN_REQUIRE(settle(p.c.ctx, m) == State::Ready);
+    }
+    char root[1024];
+    recorded_root(store, "", root, sizeof root);
+    KILN_CHECK_MSG(same_dir(root, sources), "recorded default root '%s'", root);
+    Hash128 const key = manifest_key(store, AssetKind::Mesh, "external_uri.gltf"_sv);
+    KILN_REQUIRE_EQ(run_args({"-o", store, "-q"}), 0);
+    KILN_CHECK(manifest_key(store, AssetKind::Mesh, "external_uri.gltf"_sv) == key);
+    KILN_CHECK(!manifest_key(store, AssetKind::Texture, "external_uri_albedo.png"_sv).is_zero()); // scanned
+}
+
+KILN_TEST(ManifestCli, GcDeletesOnlyUnreferencedArtifacts) {
+    char store[1024], sources[1024], path[1200];
+    fresh_dir("manifest-gc", store, sizeof store);
+    fresh_dir("manifest-gc-src", sources, sizeof sources);
+    copy_sources(sources);
+    KILN_REQUIRE_EQ(run_args({sources, "-o", store, "-q"}), 0);
+    Hash128 const mesh = manifest_key(store, AssetKind::Mesh, "external_uri.gltf"_sv);
+    Hash128 const tex  = manifest_key(store, AssetKind::Texture, "external_uri_albedo.png"_sv);
+
+    // Strays: an unreferenced artifact, a leftover temporary file, and files gc must not touch.
+    char const* const junk[] = {"aaaaaaaaaaaaaaaaaaaaaaaaaa", "manifest.dir.tmp.0123456789abcdef"};
+    char const* const keep[] = {"notes.txt", "aaaaaaaaaaaaaaaaaaaaaaaaa1", "aaaaaaaaaaaaaaaaaaaaaaaaaaa"};
+    for (char const* f : junk) {
+        format(path, sizeof path, "%s/%s", store, f);
+        std::FILE* fp = std::fopen(path, "wb");
+        KILN_REQUIRE(fp != nullptr);
+        std::fputs("x", fp);
+        std::fclose(fp);
+    }
+    for (char const* f : keep) {
+        format(path, sizeof path, "%s/%s", store, f);
+        std::FILE* fp = std::fopen(path, "wb");
+        KILN_REQUIRE(fp != nullptr);
+        std::fclose(fp);
+    }
+    usize const before = count_files(store);
+    KILN_REQUIRE_EQ(run_args({"-o", store, "-q", "--gc", "--dry-run"}), 0);
+    KILN_CHECK_EQ(count_files(store), before);
+
+    // gc refuses a store another process writes.
+    {
+        ManifestStore* s = nullptr;
+        KILN_REQUIRE(open_store(store, &s).ok());
+        KILN_CHECK_EQ(run_args({"-o", store, "-q", "--gc"}), 2);
+        close_manifest_store(s);
+    }
+    KILN_CHECK_EQ(count_files(store), before);
+
+    KILN_REQUIRE_EQ(run_args({"-o", store, "-q", "--gc"}), 0);
+    KILN_CHECK_EQ(count_files(store), before - 2);
+    for (char const* f : junk) {
+        format(path, sizeof path, "%s/%s", store, f);
+        KILN_CHECK_MSG(!io_file_exists(StrView(path)), "%s survived", f);
+    }
+    for (char const* f : {"notes.txt", "aaaaaaaaaaaaaaaaaaaaaaaaa1", "aaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                          "manifest.dir", "manifest.in", "manifest.lock"}) {
+        format(path, sizeof path, "%s/%s", store, f);
+        KILN_CHECK_MSG(io_file_exists(StrView(path)), "%s was deleted", f);
+    }
+    for (Hash128 const& k : {mesh, tex}) {
+        (void)artifact_file_path(StrView(store), k, path, sizeof path);
+        KILN_CHECK(io_file_exists(StrView(path)));
+    }
+
+    // A source that is gone leaves the manifest with the next run; its artifact goes with gc.
+    format(path, sizeof path, "%s/external_uri_albedo.png", sources);
+    KILN_REQUIRE(std::remove(path) == 0);
+    KILN_REQUIRE_EQ(run_args({"-o", store, "-q"}), 0);
+    KILN_CHECK(manifest_key(store, AssetKind::Texture, "external_uri_albedo.png"_sv).is_zero());
+    KILN_REQUIRE_EQ(run_args({"-o", store, "-q", "--gc"}), 0);
+    (void)artifact_file_path(StrView(store), tex, path, sizeof path);
+    KILN_CHECK(!io_file_exists(StrView(path)));
+    (void)artifact_file_path(StrView(store), mesh, path, sizeof path);
+    KILN_CHECK(io_file_exists(StrView(path)));
+}
+
+KILN_TEST(ManifestCli, ExportWritesARuntimeOnlyStore) {
+    char store[1024], sources[1024], all[1024], one[1024], path[1200];
+    fresh_dir("manifest-export", store, sizeof store);
+    fresh_dir("manifest-export-src", sources, sizeof sources);
+    fresh_dir("manifest-export-all", all, sizeof all);
+    fresh_dir("manifest-export-desktop", one, sizeof one);
+    copy_sources(sources);
+    KILN_REQUIRE_EQ(run_args({sources, "-o", store, "-q"}), 0);
+    KILN_REQUIRE_EQ(run_args({sources, "-o", store, "-q", "--target=desktop"}), 0);
+
+    KILN_REQUIRE_EQ(run_args({"-o", store, "-q", "--export", all}), 0);
+    format(path, sizeof path, "%s/manifest.in", all);
+    KILN_CHECK(!io_file_exists(StrView(path)));
+    format(path, sizeof path, "%s/manifest.lock", all);
+    KILN_CHECK(!io_file_exists(StrView(path)));
+    KILN_CHECK_EQ(count_files(all), usize(1 + 2 + 2)); // the manifest, two artifacts per profile
+    for (char const* profile : {"compat", "desktop"}) {
+        ManifestContext c;
+        KILN_REQUIRE(c.init(all, false, StrView(profile)).ok());
+        MeshHandle const m    = request_mesh(c.ctx, "external_uri.gltf"_sv);
+        TextureHandle const t = request_texture(c.ctx, "external_uri_albedo.png"_sv);
+        KILN_CHECK_MSG(settle(c.ctx, m) == State::Ready, "mesh, profile %s", profile);
+        KILN_CHECK_MSG(settle(c.ctx, t) == State::Ready, "texture, profile %s", profile);
+    }
+
+    KILN_REQUIRE_EQ(run_args({"-o", store, "-q", "--export", one, "--target=desktop"}), 0);
+    KILN_CHECK_EQ(count_files(one), usize(1 + 2));
+    KILN_CHECK(manifest_key(one, AssetKind::Mesh, "external_uri.gltf"_sv, "compat").is_zero());
+    KILN_CHECK(manifest_key(one, AssetKind::Mesh, "external_uri.gltf"_sv, "desktop") ==
+               manifest_key(store, AssetKind::Mesh, "external_uri.gltf"_sv, "desktop"));
+
+    KILN_CHECK_EQ(run_args({"-o", store, "-q", "--export", one}), 2);          // not empty
+    KILN_CHECK_EQ(run_args({sources, "-o", store, "-q", "--export", one}), 1); // inputs make no sense
+}
+
 #endif // KILN_MESH
+
+KILN_TEST(StorePaths, RelativeAndAbsolute) {
+    char out[256];
+#if defined(KILN_OS_WINDOWS)
+    KILN_CHECK_EQ(relative_path("C:/a/b/store"_sv, "C:/a/src"_sv, out, sizeof out), usize(9));
+    KILN_CHECK(std::strcmp(out, "../../src") == 0);
+    KILN_CHECK_EQ(relative_path("C:/a"_sv, "D:/a"_sv, out, sizeof out), usize(0)); // another drive
+    KILN_CHECK(relative_path("c:/A/b"_sv, "C:/a/B/c"_sv, out, sizeof out) == 1 && out[0] == 'c');
+    KILN_CHECK(relative_path("C:/a"_sv, "C:/a"_sv, out, sizeof out) == 1 && out[0] == '.');
+#else
+    KILN_CHECK_EQ(relative_path("/a/b/store"_sv, "/a/src"_sv, out, sizeof out), usize(9));
+    KILN_CHECK(std::strcmp(out, "../../src") == 0);
+    KILN_CHECK(relative_path("/a"_sv, "/a"_sv, out, sizeof out) == 1 && out[0] == '.');
+    KILN_CHECK_EQ(relative_path("/a"_sv, "/b"_sv, out, sizeof out), usize(0)); // no common directory
+#endif
+    usize const n = absolute_path("some/dir/../file"_sv, out, sizeof out);
+    KILN_REQUIRE(n > 0);
+    KILN_CHECK(StrView(out, n).ends_with("/some/file"_sv));
+    KILN_CHECK(std::strstr(out, "/../") == nullptr);
+}
