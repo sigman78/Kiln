@@ -1,8 +1,8 @@
 # Runtime texture arrays from independent assets
 
 **Status:** First version implemented and decided (v0.7, 2026-09-30; owner): one aggregate upload; the
-other choices are open-questions R12. The GL example `kiln-gl-array` shows it. Range uploads, the other
-example renderers and benchmarks are still open.
+other choices are open-questions R12. `kiln-gl-array` and `kiln-vk-array` (descriptor sets or bindless)
+show it. Range uploads (v0.8) and benchmarks are still open.
 **Decides:** How a runtime request can assemble independently cooked 2D textures into one GPU
 array, without producing a combined cooked file or changing the one-source-file rule.
 

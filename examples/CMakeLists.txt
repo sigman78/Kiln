@@ -51,6 +51,7 @@ if(KILN_BUILD_VIEWER OR KILN_EXAMPLE_VK_BASIC)
 endif()
 if(KILN_EXAMPLE_VK_BASIC)
     add_subdirectory(vk-basic)
+    add_subdirectory(vk-array) # kiln-vk-array: a texture array from separate tiles
 endif()
 if(KILN_EXAMPLE_NGA)
     add_subdirectory(nga)

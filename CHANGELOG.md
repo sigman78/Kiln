@@ -17,6 +17,8 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
   layer 0). `kMaxTextureArrayLayers` is 2048.
 - **Example `kiln-gl-array`** (built with `KILN_EXAMPLE_GL`): a floor of tiles from one texture array
   assembled from `examples/assets/tiles/tile0.png` ... `tile5.png`, with hot reload.
+- **Example `kiln-vk-array`** (built with `KILN_EXAMPLE_VK_BASIC`): the same floor through Vulkan,
+  with a descriptor set rewritten on kiln's events or, with `--bindless`, through kiln's slot.
 
 ## [0.6.0] - 2026-09-30
 

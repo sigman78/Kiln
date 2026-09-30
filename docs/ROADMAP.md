@@ -33,7 +33,7 @@ Not goals for v1:
 ## v0.7: quality and pipeline
 
 - **Runtime texture arrays** ([`design/runtime-texture-arrays.md`](design/runtime-texture-arrays.md);
-  runtime and the GL example `kiln-gl-array` done 2026-09-30). Independently cooked 2D assets assembled into one GPU array at load time. First
+  runtime and the examples `kiln-gl-array`, `kiln-vk-array` done 2026-09-30). Independently cooked 2D assets assembled into one GPU array at load time. First
   version (owner, 2026-09-30): one aggregate upload within today's adapter contract, file-backed 2D
   members, whole-array reload. Range uploads wait for v0.8.
 - **Faster BC encoding.** Decide from the direct-encoder benchmark in

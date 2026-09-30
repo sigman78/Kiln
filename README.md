@@ -47,7 +47,7 @@ read-only `*-shipping` presets (Release, cook, tools and hot reload off; see
 | `KILN_BUILD_TESTS` | ON when top-level | own runner, golden files, tool smoke tests |
 | `KILN_BUILD_EXAMPLES` | OFF (presets: ON) | `kiln-headless` |
 | `KILN_BUILD_VIEWER` | OFF (presets: ON) | `kiln-viewer`, `kiln-vk-smoke`; fetches Vulkan-Headers, volk and GLFW, no SDK needed |
-| `KILN_EXAMPLE_GL`, `KILN_EXAMPLE_GL_BINDLESS`, `KILN_EXAMPLE_SOKOL`, `KILN_EXAMPLE_VK_BASIC` | OFF (presets: ON) | the integration examples `kiln-gl` (and `kiln-gl-array`), `kiln-gl-bindless`, `kiln-sokol`, `kiln-vk-basic` |
+| `KILN_EXAMPLE_GL`, `KILN_EXAMPLE_GL_BINDLESS`, `KILN_EXAMPLE_SOKOL`, `KILN_EXAMPLE_VK_BASIC` | OFF (presets: ON) | the integration examples `kiln-gl` (and `kiln-gl-array`), `kiln-gl-bindless`, `kiln-sokol`, `kiln-vk-basic` (and `kiln-vk-array`) |
 | `KILN_EXAMPLE_NGA` | OFF | `kiln-nga` (NoGraphicsAPI; fetches its sources, the Vulkan loader and Slang) |
 | `KILN_HOT_RELOAD` | ON | hot-reload support in `kiln_runtime` (M5) |
 | `KILN_WEBP` | OFF | WebP texture sources in `kiln_cook` (`.webp`, `EXT_texture_webp`) |
