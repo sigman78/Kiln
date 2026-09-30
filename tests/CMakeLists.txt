@@ -27,6 +27,7 @@ endif()
 
 add_executable(kiln_tests
     kiln_test.h
+    hand_store.h
     test_main.cpp
     test_core.cpp
     test_alloc.cpp
@@ -117,6 +118,11 @@ if(TARGET kiln_cook)
     target_include_directories(kiln_bench_image PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(kiln_bench_image PRIVATE kiln_cook)
 endif()
+
+# The goldens as a catalog store (hand_store.h) in <build>/tests/samples/golden-store, for tools
+# and examples that read a store (examples/CMakeLists.txt, example_headless).
+add_test(NAME golden_store COMMAND kiln_tests GoldenStore.Build ${KILN_TEST_ARGS})
+set_tests_properties(golden_store PROPERTIES FIXTURES_SETUP golden_store)
 
 # wait() misuse must panic (never hang) with a K5007 message (test_runtime.cpp). These
 # cases panic on purpose, so they run as their own processes, selected by exact name.

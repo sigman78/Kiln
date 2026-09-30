@@ -58,12 +58,6 @@ struct RequestOptions {
     // reserved: range (partial loads, v0.8)
 };
 
-/// Where cooked files live (docs/design/store-catalog.md).
-enum class StoreLayout : u8 {
-    Named = 0, ///< a file per asset name (store_file_path()), used while it exists
-    Catalog,   ///< `catalogs/<profile>.kcat` maps names to immutable artifacts named by build key
-};
-
 /// Host-supplied placeholder pixels for one texture kind (RGBA8, tightly packed).
 struct PlaceholderDesc {
     TextureKind kind      = TextureKind::BaseColor;
@@ -73,9 +67,9 @@ struct PlaceholderDesc {
     Span<u8 const> pixels = {}; ///< width * height * 4 bytes
 };
 
-/// Dev builds: reload an asset when its cooked file changes (docs/design/hot-reload.md).
+/// Dev builds: reload an asset when its catalog entry changes (docs/design/hot-reload.md).
 struct HotReloadDesc {
-    bool watchStore = false; ///< poll the store files of loaded assets; needs KILN_HOT_RELOAD
+    bool watchStore = false; ///< poll the store's catalog; needs KILN_HOT_RELOAD
     u32 pollMs      = 250;
 };
 
@@ -85,21 +79,6 @@ struct Root {
     StrView dir  = {}; ///< the directory that holds its sources
 };
 
-/// The target profile a store was cooked for, as `<store>/kiln-store.txt` records it
-/// (docs/design/target-profiles.md). The cook writes the file; create() checks it.
-struct StoreProfile {
-    char name[64]    = {}; ///< NUL-terminated
-    u64 hash         = 0;  ///< hash_target of the profile
-    u64 blockFormats = 0;  ///< block_format_bit() set of the formats the profile may write
-};
-inline constexpr char kStoreProfileFile[] = "kiln-store.txt";
-
-/// Parses the text of a `kiln-store.txt`. ParseError when it is not one.
-KILN_API Status parse_store_profile(Span<u8 const> text, StoreProfile* out) noexcept;
-/// Reads `<storeDir>/kiln-store.txt` through `io` (nullptr: the compat backend). NotFound when
-/// the store has none; ParseError when it is malformed.
-KILN_API Status read_store_profile(IoBackend const* io, StrView storeDir, StoreProfile* out) noexcept;
-
 struct ContextDesc {
     Allocator const* alloc = nullptr; ///< nullptr = default allocator
     LogSink log            = {};      ///< fn null = process-wide sink (log.h)
@@ -108,10 +87,11 @@ struct ContextDesc {
     IoBackend const* io    = nullptr; ///< nullptr = compat backend
     Adapter const* adapter = nullptr; ///< required
 
-    StrView storeDir        = {}; ///< cooked store root (read-only for the runtime)
-    Span<Root const> roots  = {}; ///< where the cook provider looks for sources (dev)
-    StoreLayout storeLayout = StoreLayout::Catalog;
-    /// Catalog layout: the target profile whose catalog create() reads (check_profile_name()).
+    /// The store root (read-only for the runtime): artifacts and a catalog per target profile
+    /// (docs/design/store-catalog.md).
+    StrView storeDir       = {};
+    Span<Root const> roots = {}; ///< where the cook provider looks for sources (dev)
+    /// The target profile whose catalog create() reads (check_profile_name()).
     StrView profile      = "compat";
     bool devPlaceholders = KILN_DEBUG != 0; ///< Failed textures show the magenta checker
     /// A store whose profile has formats the adapter cannot sample makes create() fail (K5018).
@@ -193,12 +173,6 @@ struct AssetNameParts {
 [[nodiscard]] KILN_API StrView texture_asset_name(StrView meshName, mesh::MeshView const& v,
                                                   mesh::TextureBinding const& b, char* out,
                                                   usize cap) noexcept;
-
-/// The cooked file of `name` in the Named layout: `<storeDir>/<name>.mesh|.ktx2`, with the
-/// prefix `m:` of a named root written as the top-level directory `@m/`. Returns what `format()`
-/// returns (>= cap - 1 means truncated).
-[[nodiscard]] KILN_API usize store_file_path(StrView storeDir, AssetKind kind, StrView name, char* out,
-                                             usize cap) noexcept;
 
 // ---------------------------------------------------------------------------
 // Queries (allocation-free table lookups; stale handles read as Unloaded)
@@ -309,8 +283,9 @@ KILN_API void release(Context* ctx, Group g) noexcept; ///< frees the group reco
 // Hot reload
 // ---------------------------------------------------------------------------
 
-/// Reload the asset from its store file (through the cook provider if the file is
-/// missing). A Ready asset keeps serving its current payload until the new one is
+/// Reload the asset: look its name up in the catalog again (through the cook provider, if one is
+/// installed). Without the store poller, the catalog file is read again first when the reload
+/// starts. A Ready asset keeps serving its current payload until the new one is
 /// ready: then version + 1, bind() for a bindless slot, the old object released after the frames
 /// that use it, a Changed event.
 /// A failed reload keeps the old version and emits K5010. Memory-registered assets
@@ -335,23 +310,19 @@ KILN_API void request_reload(Context* ctx, TextureHandle h) noexcept;
 // Cook provider (dev builds; installed by kiln_cook, see kiln/cook/provider.h)
 // ---------------------------------------------------------------------------
 
-/// Called on a worker thread when the store has no file for an asset. Produces the
-/// cooked bytes for `assetPath` (writing them to the store as a side effect in disk
-/// mode). Returns NotFound when no source exists.
+/// Called on a worker before every load of a file asset, hit or miss. The provider brings the
+/// asset's catalog entry up to date (it cooks again when an input changed) and puts its
+/// artifact's build key in `*key`; when it cooked, also the bytes in `out`, which the load then
+/// uses. A zero key with bytes: they have no artifact (memory mode). Neither bytes nor a key: the
+/// catalog entry is used as it is (a miss if there is none), so a wrapper may handle some names
+/// only. NotFound: no source for the name. Without a provider the catalog is used as it is.
 struct CookProvider {
-    Status (*cook)(void* user, AssetKind kind, StrView assetPath, Allocator const* alloc, Vec<u8>* out,
-                   DiagSink const* diag) = nullptr;
-    void* user                           = nullptr;
+    Status (*prepare)(void* user, AssetKind kind, StrView assetPath, Allocator const* alloc, Vec<u8>* out,
+                      Hash128* key, DiagSink const* diag) = nullptr;
+    void* user                                            = nullptr;
     /// destroy() calls it for the provider still installed, after the last load has finished,
     /// so the provider can free itself. Null: nothing to free.
     void (*release)(void* user) = nullptr;
-    /// Catalog layout: called on a worker before every load of a file asset, hit or miss, instead
-    /// of `cook`. The provider brings the asset's entry up to date (it cooks again when an input
-    /// changed) and puts its artifact's build key in `*key`; when it cooked, also the bytes in
-    /// `out`, which the load then uses. A zero key with bytes: they have no artifact (memory mode).
-    /// NotFound: no source for the name. Null: the catalog is used as it is and `cook` fills misses.
-    Status (*prepare)(void* user, AssetKind kind, StrView assetPath, Allocator const* alloc, Vec<u8>* out,
-                      Hash128* key, DiagSink const* diag) = nullptr;
 };
 /// Replaces the installed provider. The old one is not released: a host that wraps it keeps it.
 KILN_API void set_cook_provider(Context* ctx, CookProvider const& provider) noexcept;
@@ -371,8 +342,7 @@ struct ContextStats {
 };
 [[nodiscard]] KILN_API ContextStats stats(Context* ctx) noexcept;
 [[nodiscard]] KILN_API StrView store_dir(Context* ctx) noexcept;
-[[nodiscard]] KILN_API StoreLayout store_layout(Context* ctx) noexcept;
-/// ContextDesc::profile (an owned copy); empty in the Named layout.
+/// ContextDesc::profile (an owned copy).
 [[nodiscard]] KILN_API StrView store_profile(Context* ctx) noexcept;
 /// The roots from ContextDesc (owned copies).
 [[nodiscard]] KILN_API Span<Root const> roots(Context* ctx) noexcept;
@@ -389,7 +359,7 @@ struct ContextStats {
 // ---------------------------------------------------------------------------
 
 enum RuntimeDiagCode : u32 {
-    kDiagStoreMiss        = 5001, ///< no cooked file and no provider / provider found no source (NotFound)
+    kDiagStoreMiss        = 5001, ///< not in the catalog (or no artifact) and no provider fills it (NotFound)
     kDiagCookOnMissFailed = 5002, ///< provider returned an error (its own K1-K3 diagnostics precede this)
     kDiagAssetLoadFailed  = 5003, ///< IO or validation failure while loading (status from the reader)
     kDiagAdapterRejected =
@@ -397,17 +367,15 @@ enum RuntimeDiagCode : u32 {
     kDiagRegistryFull  = 5005, ///< maxAssets / maxGroups reached
     kDiagEventsDropped = 5006, ///< event ring overflowed (Warning)
     kDiagWaitMisuse    = 5007, ///< wait() off the pump thread, or without kSelfSubmitting or flush (panics)
-    kDiagDuplicateRegister    = 5008, ///< register_* for an already known path
-    kDiagPlaceholderFailed    = 5009, ///< placeholder upload rejected at create()
-    kDiagReloadFailed         = 5010, ///< a reload failed; the previous version stays (Error)
-    kDiagHotReloadUnavailable = 5011, ///< not compiled in, or the IO backend has no stat (Warning)
-    kDiagReloadMemorySource   = 5012, ///< reload requested for a memory-registered asset (Warning)
-    kDiagBadAssetName         = 5013, ///< a request, registration or root breaks the name rules
-    kDiagTextureShapeMismatch = 5017, ///< the cooked texture's shape is not the requested one
-    kDiagStoreProfileUnsampled =
-        5018, ///< the store's profile has formats the adapter cannot sample, or its kiln-store.txt is bad
-    kDiagCatalogMissing =
-        5019, ///< Catalog layout: a request missed and the profile has no catalog (NotFound)
+    kDiagDuplicateRegister     = 5008, ///< register_* for an already known path
+    kDiagPlaceholderFailed     = 5009, ///< placeholder upload rejected at create()
+    kDiagReloadFailed          = 5010, ///< a reload failed; the previous version stays (Error)
+    kDiagHotReloadUnavailable  = 5011, ///< not compiled in, or the IO backend has no stat (Warning)
+    kDiagReloadMemorySource    = 5012, ///< reload requested for a memory-registered asset (Warning)
+    kDiagBadAssetName          = 5013, ///< a request, registration or root breaks the name rules
+    kDiagTextureShapeMismatch  = 5017, ///< the cooked texture's shape is not the requested one
+    kDiagStoreProfileUnsampled = 5018, ///< the catalog's profile has formats the adapter cannot sample
+    kDiagCatalogMissing        = 5019, ///< a request missed and the profile has no catalog (NotFound)
 };
 
 } // namespace kiln

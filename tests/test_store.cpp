@@ -1,6 +1,5 @@
 #include "kiln_test.h"
 
-#include "kiln/assets.h" // StoreProfile
 #include "kiln/cook/cook.h"
 
 #include <cstdio>
@@ -12,13 +11,6 @@ using namespace kiln;
 using namespace kiln::cook;
 
 namespace {
-
-/// An empty `<sample_dir()>/<suffix>`.
-void scratch_dir(char const* suffix, char* out, usize cap) {
-    format(out, cap, "%s/%s", kiln::test::sample_dir(), suffix);
-    std::error_code ec;
-    std::filesystem::remove_all(out, ec);
-}
 
 struct DiagCapture {
     u32 code = 0;
@@ -56,51 +48,6 @@ bool read_whole_file(char const* path, Vec<u8>& out) {
 
 } // namespace
 
-KILN_TEST(Store, KeyIsOrderSensitive) {
-    u64 const a = 0x1111111111111111ull;
-    u64 const b = 0x2222222222222222ull;
-    u64 const c = 0x3333333333333333ull;
-
-    u64 const k1 = store_key(a, b, c, 7);
-    u64 const k2 = store_key(b, a, c, 7); // sourceHash/settingsHash swapped
-    KILN_CHECK_NE(k1, k2);
-
-    u64 const k3 = store_key(a, c, b, 7); // settingsHash/targetHash swapped
-    KILN_CHECK_NE(k1, k3);
-
-    u64 const k4 = store_key(a, b, c, 7);
-    KILN_CHECK_EQ(k1, k4); // deterministic for identical inputs
-}
-
-KILN_TEST(Store, KeyIsCookerVersionSensitive) {
-    u64 const a = 42, b = 43, c = 44;
-    KILN_CHECK_NE(store_key(a, b, c, 1), store_key(a, b, c, 2));
-    KILN_CHECK_EQ(store_key(a, b, c, kCookerVersion), store_key(a, b, c, kCookerVersion));
-}
-
-KILN_TEST(Store, FileNameFormatting) {
-    char buf[64];
-    usize n = store_file_name(0x00000000deadbeefull, "mesh", buf, sizeof buf);
-    KILN_REQUIRE(n > 0);
-    KILN_CHECK_EQ(StrView(buf, n), StrView("00000000deadbeef.mesh"));
-    KILN_CHECK_EQ(buf[n], '\0');
-
-    usize n2 = store_file_name(0x0123456789abcdefull, "ktx2", buf, sizeof buf);
-    KILN_REQUIRE(n2 > 0);
-    KILN_CHECK_EQ(StrView(buf, n2), StrView("0123456789abcdef.ktx2"));
-}
-
-KILN_TEST(Store, FileNameCapacity) {
-    // "00000000deadbeef.mesh" is 21 chars; 22 with the NUL.
-    char tooSmall[21];
-    KILN_CHECK_EQ(store_file_name(0x00000000deadbeefull, "mesh", tooSmall, sizeof tooSmall), usize(0));
-
-    char exact[22];
-    usize n = store_file_name(0x00000000deadbeefull, "mesh", exact, sizeof exact);
-    KILN_CHECK_EQ(n, usize(21));
-    KILN_CHECK_EQ(exact[21], '\0');
-}
-
 // store_write / store_exists tests write under sample_dir().
 
 namespace {
@@ -109,8 +56,7 @@ namespace {
 /// existing (store_write only creates one directory level per call).
 void seed_dir(StrView dir, u64 uniqueTag) {
     char name[64];
-    usize n =
-        store_file_name(store_key(uniqueTag, uniqueTag, uniqueTag, kCookerVersion), "bin", name, sizeof name);
+    usize n = format(name, sizeof name, "seed_%llu.bin", static_cast<unsigned long long>(uniqueTag));
     KILN_REQUIRE(n > 0);
     u8 const byte = 0;
     KILN_REQUIRE(store_write(dir, StrView(name, n), Span<u8 const>(&byte, 1)).ok());
@@ -125,7 +71,7 @@ KILN_TEST(Store, WriteThenExists) {
     format(storeDir, sizeof storeDir, "%s/store", dir);
 
     char name[64];
-    usize n = store_file_name(store_key(1, 2, 3, kCookerVersion), "bin", name, sizeof name);
+    usize n = format(name, sizeof name, "file_1_2_3.bin");
     KILN_REQUIRE(n > 0);
     StrView const nameView(name, n);
 
@@ -149,7 +95,7 @@ KILN_TEST(Store, SecondWriteLeavesContentAddressedFileUntouched) {
     format(storeDir, sizeof storeDir, "%s/store", dir);
 
     char name[64];
-    usize n = store_file_name(store_key(10, 20, 30, kCookerVersion), "bin", name, sizeof name);
+    usize n = format(name, sizeof name, "file_10_20_30.bin");
     KILN_REQUIRE(n > 0);
     StrView const nameView(name, n);
 
@@ -175,7 +121,7 @@ KILN_TEST(Store, NoTempFileNameSurvivesAWrite) {
     format(storeDir, sizeof storeDir, "%s/store", dir);
 
     char name[64];
-    usize n = store_file_name(store_key(100, 200, 300, kCookerVersion), "bin", name, sizeof name);
+    usize n = format(name, sizeof name, "file_100_200_300.bin");
     KILN_REQUIRE(n > 0);
     StrView const nameView(name, n);
 
@@ -201,7 +147,7 @@ KILN_TEST(Store, MissingDirIsCreated) {
     format(subDir, sizeof subDir, "%s/fresh_subdir", storeDir);
 
     char name[64];
-    usize n = store_file_name(store_key(1000, 2000, 3000, kCookerVersion), "bin", name, sizeof name);
+    usize n = format(name, sizeof name, "file_1000_2000_3000.bin");
     KILN_REQUIRE(n > 0);
     StrView const nameView(name, n);
 
@@ -229,7 +175,7 @@ KILN_TEST(Store, WriteUnderRegularFileIsIoError) {
     }
 
     char name[64];
-    usize n = store_file_name(store_key(1, 1, 1, kCookerVersion), "bin", name, sizeof name);
+    usize n = format(name, sizeof name, "file_1_1_1.bin");
     KILN_REQUIRE(n > 0);
 
     u8 const payload[] = {'x'};
@@ -274,54 +220,3 @@ KILN_TEST(Store, OverwriteReplacesExistingFile) {
 // ---------------------------------------------------------------------------
 // Store profiles (docs/design/target-profiles.md)
 // ---------------------------------------------------------------------------
-
-KILN_TEST(Store, ParseStoreProfile) {
-    auto const parse = [](char const* text, StoreProfile* out) {
-        return parse_store_profile(Span<u8 const>(reinterpret_cast<u8 const*>(text), std::strlen(text)), out)
-            .code;
-    };
-    StoreProfile p;
-    KILN_REQUIRE_EQ(parse("kiln-store 1\r\nprofile compat\nhash 00ff00ff00ff00ff\nformats 137 145\n", &p),
-                    Code::Ok);
-    KILN_CHECK(StrView(p.name) == "compat");
-    KILN_CHECK_EQ(p.hash, u64(0x00ff00ff00ff00ffull));
-    KILN_CHECK_EQ(p.blockFormats, block_format_bit(Format::BC3_UNORM) | block_format_bit(Format::BC7_UNORM));
-    KILN_CHECK_EQ(parse("kiln-store 1\nprofile u\nhash 1\nformats\n", &p), Code::Ok); // uncompressed
-    KILN_CHECK_EQ(p.blockFormats, u64(0));
-    KILN_CHECK_EQ(parse("kiln-store 2\nprofile x\nhash 1\nformats\n", &p), Code::ParseError); // version
-    KILN_CHECK_EQ(parse("kiln-store 1\nprofile x\nformats\n", &p), Code::ParseError);         // no hash
-    KILN_CHECK_EQ(parse("kiln-store 1\nprofile x\nhash 1\nformats 37\n", &p),
-                  Code::ParseError); // not a block format
-    KILN_CHECK_EQ(parse("", &p), Code::ParseError);
-}
-
-KILN_TEST(Store, BindStoreProfile) {
-    char dir[1024];
-    scratch_dir("store_profile", dir, sizeof dir);
-    // A fresh store gets the descriptor; the same profile binds again.
-    KILN_REQUIRE(bind_store_profile(StrView(dir), kCompatTarget).ok());
-    StoreProfile p;
-    KILN_REQUIRE(read_store_profile(nullptr, StrView(dir), &p).ok());
-    KILN_CHECK(StrView(p.name) == "compat");
-    KILN_CHECK_EQ(p.hash, hash_target(kCompatTarget));
-    KILN_CHECK_EQ(p.blockFormats, kCompatBlockFormats);
-    KILN_CHECK(bind_store_profile(StrView(dir), kCompatTarget).ok());
-    // Another profile writes nothing.
-    DiagCapture cap;
-    DiagSink sink = cap.sink();
-    KILN_CHECK_EQ(bind_store_profile(StrView(dir), kDesktopTarget, &sink).code, Code::InvalidArgument);
-    KILN_CHECK_EQ(cap.code, u32(kDiagStoreProfileMismatch));
-    KILN_REQUIRE(read_store_profile(nullptr, StrView(dir), &p).ok());
-    KILN_CHECK(StrView(p.name) == "compat");
-
-    // A store with cooked files and no descriptor was cooked before profiles.
-    char legacy[1024];
-    scratch_dir("store_profile_legacy", legacy, sizeof legacy);
-    u8 const bytes[4] = {1, 2, 3, 4};
-    KILN_REQUIRE(store_write(StrView(legacy), "old.ktx2", Span<u8 const>(bytes, 4)).ok());
-    DiagCapture cap2;
-    DiagSink sink2 = cap2.sink();
-    KILN_CHECK_EQ(bind_store_profile(StrView(legacy), kCompatTarget, &sink2).code, Code::InvalidArgument);
-    KILN_CHECK_EQ(cap2.code, u32(kDiagStoreProfileMismatch));
-    KILN_CHECK_EQ(read_store_profile(nullptr, StrView(legacy), &p).code, Code::NotFound);
-}

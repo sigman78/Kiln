@@ -258,29 +258,15 @@ Status check_formats(ContextDesc const& desc, StrView profile, u64 blockFormats)
     return allow ? kOk : out;
 }
 
-/// Named layout: the profile in `kiln-store.txt`, if any.
-Status check_store_profile(ContextDesc const& desc) noexcept {
-    if (desc.storeDir.empty()) return kOk;
-    StoreProfile p;
-    Status const st = read_store_profile(desc.io, desc.storeDir, &p);
-    if (st.code == Code::NotFound) return kOk; // a store without a profile (made by hand, or older)
-    if (st.failed())
-        return diagf(&desc.diag, st, kDiagStoreProfileUnsampled, Severity::Error, desc.storeDir, "create",
-                     "%s is not a valid store profile", kStoreProfileFile);
-    return check_formats(desc, StrView(p.name), p.blockFormats);
-}
-
-/// Catalog layout: reads and validates the profile's catalog into `bytes`. A missing catalog is
-/// no error: a cook provider may write it later.
+/// Reads and validates the profile's catalog into `bytes`. A missing catalog (or no store) is no
+/// error: a cook provider or kiln-cook may write it later.
 Status load_catalog(ContextDesc const& desc, Allocator const* a, Vec<u8>* bytes, CatalogView* view,
                     bool* present) noexcept {
     *present = false;
     if (char const* why = check_profile_name(desc.profile))
         return diagf(&desc.diag, make_status(Code::InvalidArgument), kDiagBadAssetName, Severity::Error,
                      desc.profile, "create", "invalid profile name: %s", why);
-    if (desc.storeDir.empty())
-        return diagf(&desc.diag, make_status(Code::InvalidArgument), kDiagCatalogMissing, Severity::Error, {},
-                     "create", "the Catalog layout needs ContextDesc::storeDir");
+    if (desc.storeDir.empty()) return kOk;
     char path[1024];
     usize const n = catalog_file_path(desc.storeDir, desc.profile, path, sizeof path);
     if (n >= sizeof path - 1) return make_status(Code::InvalidArgument);
@@ -298,6 +284,25 @@ Status load_catalog(ContextDesc const& desc, Allocator const* a, Vec<u8>* bytes,
 }
 
 } // namespace
+
+void refresh_catalog(Context* ctx) noexcept {
+    if (ctx->watch || ctx->storeDirLen == 0) return;
+    char path[1024];
+    usize const n = catalog_path(ctx, path, sizeof path);
+    if (n + 1 >= sizeof path) return;
+    Vec<u8> bytes(ctx->alloc, Tag::Registry);
+    if (io_read_file(ctx->io, StrView(path, n), ctx->alloc, &bytes).failed()) return;
+    // The stored checksum tells whether it changed; a rewrite may keep the size and the time.
+    if (ctx->catalogPresent && bytes.size() >= kCatalogHeaderBytes &&
+        std::memcmp(bytes.data() + kCatalogChecksumOffset, ctx->catalogBytes.data() + kCatalogChecksumOffset,
+                    16) == 0)
+        return;
+    Result<CatalogView> v = CatalogView::open(bytes.span(), &ctx->diag, StrView(path, n));
+    if (v.failed()) return;                 // the one in use stays
+    ctx->catalogBytes   = std::move(bytes); // the view's bytes stay where they are
+    ctx->catalog        = *v;
+    ctx->catalogPresent = true;
+}
 
 } // namespace rt
 
@@ -325,10 +330,7 @@ Result<Context*> create(ContextDesc const& desc) noexcept {
     Vec<u8> catalogBytes(a, Tag::Registry);
     CatalogView catalog;
     bool catalogPresent = false;
-    if (desc.storeLayout == StoreLayout::Catalog)
-        KILN_TRY(load_catalog(desc, a, &catalogBytes, &catalog, &catalogPresent));
-    else
-        KILN_TRY(check_store_profile(desc));
+    KILN_TRY(load_catalog(desc, a, &catalogBytes, &catalog, &catalogPresent));
 
     Context* ctx         = new_object<Context>(a, Tag::Registry);
     ctx->alloc           = a;
@@ -365,16 +367,13 @@ Result<Context*> create(ContextDesc const& desc) noexcept {
     ctx->maxGroups    = desc.maxGroups;
     ctx->maxEvents    = desc.maxEvents;
 
-    ctx->storeDirLen = desc.storeDir.size;
-    ctx->storeDir    = copy_str(a, desc.storeDir);
-    ctx->layout      = desc.storeLayout;
-    if (ctx->layout == StoreLayout::Catalog) {
-        ctx->profileLen     = desc.profile.size;
-        ctx->profile        = copy_str(a, desc.profile);
-        ctx->catalogBytes   = std::move(catalogBytes); // the view's bytes stay where they are
-        ctx->catalog        = catalog;
-        ctx->catalogPresent = catalogPresent;
-    }
+    ctx->storeDirLen    = desc.storeDir.size;
+    ctx->storeDir       = copy_str(a, desc.storeDir);
+    ctx->profileLen     = desc.profile.size;
+    ctx->profile        = copy_str(a, desc.profile);
+    ctx->catalogBytes   = std::move(catalogBytes); // the view's bytes stay where they are
+    ctx->catalog        = catalog;
+    ctx->catalogPresent = catalogPresent;
     if (!desc.roots.empty()) {
         usize chars = 0;
         for (Root const& m : desc.roots)
@@ -488,7 +487,6 @@ ContextStats stats(Context* ctx) noexcept {
 StrView store_dir(Context* ctx) noexcept {
     return ctx ? StrView(ctx->storeDir, ctx->storeDirLen) : StrView{};
 }
-StoreLayout store_layout(Context* ctx) noexcept { return ctx ? ctx->layout : StoreLayout::Named; }
 StrView store_profile(Context* ctx) noexcept {
     return ctx && ctx->profile ? StrView(ctx->profile, ctx->profileLen) : StrView{};
 }

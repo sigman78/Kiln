@@ -42,15 +42,11 @@ char const* failure_text(u32 code) noexcept {
     }
 }
 
-/// A slot reached Ready or Failed with no job and no queue: run the reload requested
-/// meanwhile, or let the store poller watch it.
+/// A slot reached Ready or Failed with no job and no queue: run the reload requested meanwhile.
 void settle(Context* ctx, Slot& s) noexcept {
-    if (s.reloadPending) {
-        s.reloadPending = false;
-        reload_slot(ctx, s);
-        return;
-    }
-    watch_arm(ctx, s);
+    if (!s.reloadPending) return;
+    s.reloadPending = false;
+    reload_slot(ctx, s);
 }
 
 /// A reload of a Ready slot failed: drop the new metadata and object, keep serving the
@@ -119,12 +115,12 @@ void reload_slot(Context* ctx, Slot& s) noexcept {
     }
     KILN_ASSERT(!s.jobInFlight && s.queue == QueueId::None);
     KILN_ASSERT(s.state == State::Ready || s.state == State::Failed);
-    watch_disarm(ctx, s.index);
+    refresh_catalog(ctx);
     s.reloading  = true;
     s.phase      = Phase::MetaQueued;
     s.retryAfter = 0;
     s.capture.reset();
-    s.cooked.release(); // re-read the store (or re-cook), never the last load's cook output
+    s.cooked.release(); // look the name up again (or re-cook), never the last load's cook output
     s.cookedValid = false;
     queue_push(ctx, s.priority == Priority::High ? QueueId::MetaHigh : QueueId::MetaNormal, s);
 }
@@ -140,8 +136,8 @@ void submit_stage(Context* ctx, Slot& s, Stage stage) noexcept {
         s.jobKeyValid = false;
         // The artifact is chosen here, so a catalog swapped in later leaves this load alone.
         CatalogEntry e;
-        if (ctx->layout == StoreLayout::Catalog && s.source == SourceKind::File && !s.cookedValid &&
-            ctx->catalogPresent && ctx->catalog.find(s.kind, path_of(s), &e)) {
+        if (s.source == SourceKind::File && !s.cookedValid && ctx->catalogPresent &&
+            ctx->catalog.find(s.kind, path_of(s), &e)) {
             s.jobKey      = e.key;
             s.jobKeyValid = true;
         }

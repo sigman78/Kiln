@@ -253,7 +253,6 @@ Slot* request_slot(Context* ctx, AssetKind kind, StrView path, RequestOptions co
     s.reloadPending = false;
     s.groupAs       = State::Pending;
     s.jobStatus     = kOk;
-    s.jobStatValid  = false;
     s.jobKeyValid   = false;
     s.dispatchKeyValid = false;
     s.keyValid         = false;
@@ -296,7 +295,6 @@ void unload(Context* ctx, Slot& s) noexcept {
     leave_group(ctx, s);
     if (s.queue == QueueId::Await) orphan_upload(ctx, s);
     queue_remove(ctx, s);
-    watch_disarm(ctx, s.index);
     if (s.bindPending) --ctx->bindPendingCount;
     retire(ctx, s.realObj, s.bindSlot);
     s.realObj     = {};

@@ -1,8 +1,9 @@
 // tests/test_runtime.cpp — runtime (kiln/assets.h) through the null adapter.
-// Tests that leave ContextDesc::storeDir empty use golden_dir() as the store.
+// Tests that leave ContextDesc::storeDir empty use golden_store_dir(), the goldens as a catalog store.
 // RuntimePanic.* cases abort on purpose; they run only when selected by exact name (own CTest entries).
 #include "kiln_test.h"
 
+#include "hand_store.h"
 #include "ktx2_corpus.h" // corpus::read_file
 
 #include "kiln/assets.h"
@@ -17,13 +18,6 @@
 #include <cstring>
 #include <initializer_list>
 #include <thread>
-
-#if defined(KILN_OS_WINDOWS)
-#include <direct.h> // _mkdir
-#else
-#include <sys/stat.h> // mkdir
-#endif
-#include <cerrno>
 
 using namespace kiln;
 using namespace kiln::literals;
@@ -73,11 +67,10 @@ struct Rt {
     bool init(NullAdapterDesc nd = {}, ContextDesc cd = {}) {
         Result<NullAdapter*> a = null_adapter_create(nd, &adapter);
         if (!KILN_CHECK(a.ok())) return false;
-        na             = *a;
-        cd.adapter     = &adapter;
-        cd.diag        = diags.sink();
-        cd.storeLayout = StoreLayout::Named; // every store here is a named one (the goldens)
-        if (cd.storeDir.empty()) cd.storeDir = test::golden_dir();
+        na         = *a;
+        cd.adapter = &adapter;
+        cd.diag    = diags.sink();
+        if (cd.storeDir.empty()) cd.storeDir = test::golden_store_dir();
         Result<Context*> c = create(cd);
         if (!KILN_CHECK(c.ok())) return false;
         ctx = *c;
@@ -119,15 +112,6 @@ bool read_golden(char const* rel, char const* ext, Vec<u8>& out) {
     char path[1024];
     format(path, sizeof path, "%s/%s%s", test::golden_dir(), rel, ext);
     return KILN_CHECK_MSG(test::corpus::read_file(path, out), "cannot read %s", path);
-}
-
-bool ensure_dir(char const* dir) {
-#if defined(KILN_OS_WINDOWS)
-    if (_mkdir(dir) == 0) return true;
-#else
-    if (mkdir(dir, 0755) == 0) return true;
-#endif
-    return errno == EEXIST;
 }
 
 bool bytes_equal(u8 const* a, u8 const* b, usize n) { return n == 0 || std::memcmp(a, b, n) == 0; }
@@ -200,19 +184,6 @@ KILN_TEST(Runtime, ResolveAssetName) {
     KILN_CHECK_EQ(resolve_asset_name("props/chair.glb", "wood.png", buf, 8), usize(0));
 }
 
-KILN_TEST(Runtime, StoreFilePath) {
-    char buf[256];
-    auto const path = [&buf](StrView dir, AssetKind kind, StrView name) noexcept {
-        return StrView(buf, store_file_path(dir, kind, name, buf, sizeof buf));
-    };
-    KILN_CHECK(path("cooked", AssetKind::Mesh, "props/chair.glb") == "cooked/props/chair.glb.mesh");
-    KILN_CHECK(path("cooked/", AssetKind::Texture, "props/chair.glb#wood") ==
-               "cooked/props/chair.glb#wood.ktx2");
-    KILN_CHECK(path("cooked", AssetKind::Texture, "pool:tex/wood.png") == "cooked/@pool/tex/wood.png.ktx2");
-    KILN_CHECK(path("cooked", AssetKind::Texture, "pool:@2x/wood.png") == "cooked/@pool/@2x/wood.png.ktx2");
-    KILN_CHECK(path("", AssetKind::Mesh, "a.glb") == "a.glb.mesh");
-}
-
 KILN_TEST(Runtime, InvalidNamesAndMountsAreRejected) {
     Rt rt;
     if (!rt.init()) return;
@@ -245,8 +216,7 @@ KILN_TEST(Runtime, InvalidNamesAndMountsAreRejected) {
     Result<NullAdapter*> a = null_adapter_create({}, &r3.adapter);
     KILN_REQUIRE(a.ok());
     r3.na              = *a;
-    Result<Context*> c = create(ContextDesc{
-        .adapter = &r3.adapter, .roots = Span<Root const>(twice, 2), .storeLayout = StoreLayout::Named});
+    Result<Context*> c = create(ContextDesc{.adapter = &r3.adapter, .roots = Span<Root const>(twice, 2)});
     KILN_CHECK(c.failed());
     if (c.ok()) destroy(*c);
 }
@@ -257,7 +227,6 @@ KILN_TEST(Runtime, CreateDestroyPlaceholders) {
         NullAdapterDesc nd;
         nd.bindlessSlots = 0;
         ContextDesc cd;
-        cd.storeLayout     = StoreLayout::Named;
         cd.devPlaceholders = dev;
         cd.storeDir        = "does/not/exist";
         if (!rt.init(nd, cd)) return;
@@ -310,7 +279,6 @@ KILN_TEST(Runtime, HostPlaceholderOverride) {
     pd.height = 2;
     pd.pixels = Span<u8 const>(px, sizeof px);
     ContextDesc cd;
-    cd.storeLayout  = StoreLayout::Named;
     cd.placeholders = Span<PlaceholderDesc const>(&pd, 1);
     if (!rt.init(nd, cd)) return;
     RequestOptions ro;
@@ -335,7 +303,6 @@ KILN_TEST(Runtime, HostPlaceholderOverride) {
     DiagLog dl;
     pd.pixels = Span<u8 const>(px, 3);
     ContextDesc bad;
-    bad.storeLayout     = StoreLayout::Named;
     bad.adapter         = &a2;
     bad.diag            = dl.sink();
     bad.placeholders    = Span<PlaceholderDesc const>(&pd, 1);
@@ -589,7 +556,6 @@ KILN_TEST(Runtime, MissingAssetFails) {
         NullAdapterDesc nd;
         nd.bindlessSlots = 0;
         ContextDesc cd;
-        cd.storeLayout     = StoreLayout::Named;
         cd.devPlaceholders = dev;
         if (!rt.init(nd, cd)) return;
         TextureHandle t = request_texture(rt.ctx, "tex/nope");
@@ -609,27 +575,18 @@ KILN_TEST(Runtime, MissingAssetFails) {
 }
 
 KILN_TEST(Runtime, CorruptStoreFileFails) {
-    char dir[1024], path[1024];
-    format(dir, sizeof dir, "%s/store", test::sample_dir());
-    KILN_REQUIRE(ensure_dir(dir));
-    format(path, sizeof path, "%s/bad.mesh", dir);
-    std::FILE* f = std::fopen(path, "wb");
-    KILN_REQUIRE(f != nullptr);
+    test::HandStore store;
+    if (!store.init("corrupt")) return;
     u8 garbage[300];
     for (usize i = 0; i < sizeof garbage; ++i)
         garbage[i] = u8(i * 37 + 11);
-    std::fwrite(garbage, 1, sizeof garbage, f);
-    std::fclose(f);
-    format(path, sizeof path, "%s/short.ktx2", dir);
-    f = std::fopen(path, "wb");
-    KILN_REQUIRE(f != nullptr);
-    std::fwrite(ktx2::kIdentifier, 1, sizeof ktx2::kIdentifier, f);
-    std::fclose(f);
+    KILN_REQUIRE(store.put("bad", AssetKind::Mesh, Span<u8 const>(garbage, sizeof garbage)));
+    KILN_REQUIRE(
+        store.put("short", AssetKind::Texture, Span<u8 const>(ktx2::kIdentifier, sizeof ktx2::kIdentifier)));
 
     Rt rt;
     ContextDesc cd;
-    cd.storeLayout = StoreLayout::Named;
-    cd.storeDir    = dir;
+    cd.storeDir = store.dir();
     if (!rt.init({}, cd)) return;
     MeshHandle m    = request_mesh(rt.ctx, "bad");
     TextureHandle t = request_texture(rt.ctx, "short");
@@ -647,7 +604,6 @@ KILN_TEST(Runtime, AdapterRejectFails) {
     NullAdapterDesc nd2;
     nd2.failEveryN = 16; // the 15 placeholder uploads succeed, the 16th (the mesh) fails
     ContextDesc cd;
-    cd.storeLayout     = StoreLayout::Named;
     cd.devPlaceholders = true;
     if (!rt2.init(nd2, cd)) return;
     MeshHandle m = request_mesh(rt2.ctx, "mesh/Box");
@@ -734,13 +690,16 @@ struct FakeProvider {
     std::atomic<u32> calls{0};
     Vec<u8> bytes{default_allocator(), Tag::Test};
 
-    static Status cook(void* user, AssetKind kind, StrView path, Allocator const* alloc, Vec<u8>* out,
-                       DiagSink const* diag) {
+    /// Cooks `virtual/cube`, has no source for `virtual/none`, and leaves every other name to the
+    /// catalog.
+    static Status prepare(void* user, AssetKind kind, StrView path, Allocator const* alloc, Vec<u8>* out,
+                          Hash128*, DiagSink const* diag) {
         auto* self = static_cast<FakeProvider*>(user);
         self->calls.fetch_add(1);
-        if (kind != AssetKind::Mesh || path != "virtual/cube")
+        if (path == "virtual/none")
             return diagf(diag, make_status(Code::NotFound), 1001, Severity::Error, path, "provider",
                          "no source");
+        if (kind != AssetKind::Mesh || path != "virtual/cube") return kOk;
         Vec<u8> v(alloc, Tag::Payload);
         v.append(self->bytes.span());
         *out = std::move(v);
@@ -753,7 +712,7 @@ KILN_TEST(Runtime, CookProviderOnMiss) {
     if (!read_golden("mesh/cube_basic", ".mesh", fp.bytes)) return;
     Rt rt;
     if (!rt.init()) return;
-    set_cook_provider(rt.ctx, CookProvider{&FakeProvider::cook, &fp});
+    set_cook_provider(rt.ctx, CookProvider{&FakeProvider::prepare, &fp});
     MeshHandle m    = request_mesh(rt.ctx, "virtual/cube");
     MeshHandle miss = request_mesh(rt.ctx, "virtual/none");
     KILN_REQUIRE(rt.pump_until([&] { return is_ready(rt.ctx, m) && state(rt.ctx, miss) == State::Failed; }));
@@ -764,10 +723,10 @@ KILN_TEST(Runtime, CookProviderOnMiss) {
         Span<u8 const> got = null_adapter_payload(rt.na, gpu_object(rt.ctx, m));
         KILN_CHECK(got.size == decoded.size() && bytes_equal(got.data, decoded.data(), got.size));
     }
-    // A store hit never calls the provider.
+    // A catalog hit asks the provider too; with no answer, the catalog entry is used.
     MeshHandle hit = request_mesh(rt.ctx, "mesh/Box");
     KILN_REQUIRE(rt.pump_until([&] { return is_ready(rt.ctx, hit); }));
-    KILN_CHECK_EQ(fp.calls.load(), 2u);
+    KILN_CHECK_EQ(fp.calls.load(), 3u);
     release(rt.ctx, m);
     release(rt.ctx, miss);
     release(rt.ctx, hit);
@@ -816,8 +775,7 @@ KILN_TEST(Runtime, RegisterInMemory) {
 KILN_TEST(Runtime, ReleaseWhileLoading) {
     Rt rt;
     ContextDesc cd;
-    cd.storeLayout = StoreLayout::Named;
-    cd.maxAssets   = 4;
+    cd.maxAssets = 4;
     if (!rt.init({}, cd)) return;
     for (int round = 0; round < 20; ++round) {
         MeshHandle m    = request_mesh(rt.ctx, "mesh/authored_lods");
@@ -851,8 +809,7 @@ KILN_TEST(Runtime, ReleaseWhileLoading) {
 KILN_TEST(Runtime, EventOverflowDropsOldest) {
     Rt rt;
     ContextDesc cd;
-    cd.storeLayout = StoreLayout::Named;
-    cd.maxEvents   = 2;
+    cd.maxEvents = 2;
     if (!rt.init({}, cd)) return;
     Group g = group(rt.ctx);
     RequestOptions ro;
@@ -1021,47 +978,36 @@ KILN_TEST(Runtime, SteadyStateNoAllocation) {
 
 namespace {
 
-bool write_bytes(char const* path, Span<u8 const> bytes) {
-    std::FILE* f = std::fopen(path, "wb");
-    if (!KILN_CHECK_MSG(f != nullptr, "cannot write %s", path)) return false;
-    bool const ok = bytes.size == 0 || std::fwrite(bytes.data, 1, bytes.size, f) == bytes.size;
-    std::fclose(f);
-    return KILN_CHECK(ok);
-}
-
-/// Copies golden `rel` + `ext` over `dst` with plain stdio.
-bool put_golden(char const* rel, char const* ext, char const* dst) {
-    Vec<u8> bytes(default_allocator(), Tag::Test);
-    return read_golden(rel, ext, bytes) && write_bytes(dst, bytes.span());
-}
-
-bool put_garbage(char const* dst) {
-    u8 garbage[300];
-    for (usize i = 0; i < sizeof garbage; ++i)
-        garbage[i] = u8(i * 37 + 11);
-    return write_bytes(dst, Span<u8 const>(garbage, sizeof garbage));
-}
-
-/// A scratch store `<samples>/reload_<name>` with mesh/ and ktx2/ below it, and the
-/// file path of `mesh/thing.mesh` (or `ktx2/thing.ktx2`).
+/// A scratch catalog store `<samples>/reload_<name>`; the tests replace the files of `mesh/thing`
+/// and `ktx2/thing` in it.
 struct ReloadStore {
-    char dir[1024]  = {};
-    char mesh[1024] = {};
-    char tex[1024]  = {};
+    test::HandStore hand;
+    char const* dir = nullptr;
 
     bool init(char const* name) {
-        char sub[1024];
-        format(dir, sizeof dir, "%s/reload_%s", test::sample_dir(), name);
-        if (!KILN_CHECK(ensure_dir(dir))) return false;
-        format(sub, sizeof sub, "%s/mesh", dir);
-        if (!KILN_CHECK(ensure_dir(sub))) return false;
-        format(sub, sizeof sub, "%s/ktx2", dir);
-        if (!KILN_CHECK(ensure_dir(sub))) return false;
-        format(mesh, sizeof mesh, "%s/mesh/thing.mesh", dir);
-        format(tex, sizeof tex, "%s/ktx2/thing.ktx2", dir);
+        char sub[64];
+        format(sub, sizeof sub, "reload_%s", name);
+        if (!hand.init(sub)) return false;
+        dir = hand.dir();
         return true;
     }
 };
+
+/// Golden `rel` + `ext` becomes `mesh/thing` (.mesh) or `ktx2/thing` (.ktx2).
+bool put_golden(ReloadStore& store, char const* rel, char const* ext) {
+    Vec<u8> bytes(default_allocator(), Tag::Test);
+    bool const mesh = std::strcmp(ext, ".mesh") == 0;
+    return read_golden(rel, ext, bytes) &&
+           store.hand.put(mesh ? "mesh/thing" : "ktx2/thing", mesh ? AssetKind::Mesh : AssetKind::Texture,
+                          bytes.span());
+}
+
+bool put_garbage(ReloadStore& store) {
+    u8 garbage[300];
+    for (usize i = 0; i < sizeof garbage; ++i)
+        garbage[i] = u8(i * 37 + 11);
+    return store.hand.put("mesh/thing", AssetKind::Mesh, Span<u8 const>(garbage, sizeof garbage));
+}
 
 u32 count_code(DiagLog const& d, u32 code) {
     u32 n = 0;
@@ -1104,12 +1050,11 @@ KILN_TEST(Runtime, ReloadSwapsVersion) {
     MeshCounts boxCounts, multiCounts;
     if (!golden_counts("mesh/Box", boxCounts) || !golden_counts("mesh/MultiUVTest", multiCounts)) return;
     KILN_REQUIRE(!(boxCounts == multiCounts));
-    KILN_REQUIRE(put_golden("mesh/Box", ".mesh", store.mesh));
+    KILN_REQUIRE(put_golden(store, "mesh/Box", ".mesh"));
 
     Rt rt;
     ContextDesc cd;
-    cd.storeLayout = StoreLayout::Named;
-    cd.storeDir    = store.dir;
+    cd.storeDir = store.dir;
     if (!rt.init({}, cd)) return;
     MeshHandle m = request_mesh(rt.ctx, "mesh/thing");
     KILN_REQUIRE(rt.pump_until([&] { return is_ready(rt.ctx, m); }));
@@ -1121,7 +1066,7 @@ KILN_TEST(Runtime, ReloadSwapsVersion) {
 
     NullAdapterStats const st0 = null_adapter_stats(rt.na);
     usize const ev0            = rt.events.size();
-    KILN_REQUIRE(put_golden("mesh/MultiUVTest", ".mesh", store.mesh));
+    KILN_REQUIRE(put_golden(store, "mesh/MultiUVTest", ".mesh"));
     request_reload(rt.ctx, m);
 
     bool alwaysReady = true, oldViewUntilSwap = true;
@@ -1204,10 +1149,8 @@ KILN_TEST(Runtime, CpuFailureDiscardsUpload) {
         KILN_REQUIRE(na.ok());
         rt.na = *na;
         if (!withDiscard) rt.adapter.discard_upload = nullptr;
-        Result<Context*> c = create(ContextDesc{.diag        = rt.diags.sink(),
-                                                .adapter     = &rt.adapter,
-                                                .storeDir    = test::golden_dir(),
-                                                .storeLayout = StoreLayout::Named});
+        Result<Context*> c = create(ContextDesc{
+            .diag = rt.diags.sink(), .adapter = &rt.adapter, .storeDir = test::golden_store_dir()});
         KILN_REQUIRE(c.ok());
         rt.ctx                    = *c;
         NullAdapterStats const s0 = null_adapter_stats(rt.na);
@@ -1256,8 +1199,7 @@ KILN_TEST(Runtime, UploadFailedPlaceholderFailsCreate) {
     KILN_REQUIRE(a.ok());
     rt.na = *a;
     null_adapter_fail_uploads(rt.na, true);
-    Result<Context*> c = create(
-        ContextDesc{.diag = rt.diags.sink(), .adapter = &rt.adapter, .storeLayout = StoreLayout::Named});
+    Result<Context*> c = create(ContextDesc{.diag = rt.diags.sink(), .adapter = &rt.adapter});
     KILN_CHECK(c.failed());
     if (c.ok()) destroy(*c);
     KILN_CHECK(rt.diags.has(kDiagPlaceholderFailed));
@@ -1269,12 +1211,11 @@ KILN_TEST(Runtime, ReloadFailureKeepsOld) {
     if (!store.init("fail")) return;
     MeshCounts boxCounts;
     if (!golden_counts("mesh/Box", boxCounts)) return;
-    KILN_REQUIRE(put_golden("mesh/Box", ".mesh", store.mesh));
+    KILN_REQUIRE(put_golden(store, "mesh/Box", ".mesh"));
 
     Rt rt;
     ContextDesc cd;
-    cd.storeLayout = StoreLayout::Named;
-    cd.storeDir    = store.dir;
+    cd.storeDir = store.dir;
     if (!rt.init({}, cd)) return;
     Group g = group(rt.ctx);
     RequestOptions ro;
@@ -1287,7 +1228,7 @@ KILN_TEST(Runtime, ReloadFailureKeepsOld) {
     NullAdapterStats const st0 = null_adapter_stats(rt.na);
     usize const ev0            = rt.events.size();
 
-    KILN_REQUIRE(put_garbage(store.mesh));
+    KILN_REQUIRE(put_garbage(store));
     request_reload(rt.ctx, m);
     bool alwaysReady = true;
     KILN_REQUIRE(rt.pump_until([&] {
@@ -1319,12 +1260,11 @@ KILN_TEST(Runtime, ReloadFromFailed) {
     if (!store.init("from_failed")) return;
     MeshCounts multiCounts;
     if (!golden_counts("mesh/MultiUVTest", multiCounts)) return;
-    KILN_REQUIRE(put_garbage(store.mesh));
+    KILN_REQUIRE(put_garbage(store));
 
     Rt rt;
     ContextDesc cd;
-    cd.storeLayout = StoreLayout::Named;
-    cd.storeDir    = store.dir;
+    cd.storeDir = store.dir;
     if (!rt.init({}, cd)) return;
     Group g = group(rt.ctx);
     RequestOptions ro;
@@ -1348,7 +1288,7 @@ KILN_TEST(Runtime, ReloadFromFailed) {
     KILN_CHECK_EQ(progress(rt.ctx, g).ready, 0u);
 
     // Succeeds: Ready (not Changed), content version 2.
-    KILN_REQUIRE(put_golden("mesh/MultiUVTest", ".mesh", store.mesh));
+    KILN_REQUIRE(put_golden(store, "mesh/MultiUVTest", ".mesh"));
     ev0 = rt.events.size();
     request_reload(rt.ctx, m);
     KILN_REQUIRE(rt.pump_until([&] { return rt.find_event(EventKind::Ready, m.bits(), ev0) >= 0; }));
@@ -1381,12 +1321,11 @@ KILN_TEST(Runtime, ReloadFromFailed) {
 KILN_TEST(Runtime, ReloadTexture) {
     ReloadStore store;
     if (!store.init("texture")) return;
-    KILN_REQUIRE(put_golden("ktx2/color_srgb", ".ktx2", store.tex));
+    KILN_REQUIRE(put_golden(store, "ktx2/color_srgb", ".ktx2"));
 
     Rt rt;
     ContextDesc cd;
-    cd.storeLayout = StoreLayout::Named;
-    cd.storeDir    = store.dir;
+    cd.storeDir = store.dir;
     if (!rt.init({}, cd)) return;
     TextureHandle t       = request_texture(rt.ctx, "ktx2/thing");
     GpuObject const first = gpu_object(rt.ctx, t);
@@ -1397,7 +1336,7 @@ KILN_TEST(Runtime, ReloadTexture) {
     KILN_CHECK_EQ(null_adapter_slot(rt.na, first.slot).native, obj1.native);
 
     usize const ev0 = rt.events.size();
-    KILN_REQUIRE(put_golden("ktx2/height16", ".ktx2", store.tex));
+    KILN_REQUIRE(put_golden(store, "ktx2/height16", ".ktx2"));
     request_reload(rt.ctx, t);
     bool oldInfo = true;
     KILN_REQUIRE(rt.pump_until([&] {
@@ -1429,18 +1368,17 @@ KILN_TEST(Runtime, ReloadWhileLoading) {
     if (!store.init("while_loading")) return;
     MeshCounts boxCounts, multiCounts;
     if (!golden_counts("mesh/Box", boxCounts) || !golden_counts("mesh/MultiUVTest", multiCounts)) return;
-    KILN_REQUIRE(put_golden("mesh/Box", ".mesh", store.mesh));
+    KILN_REQUIRE(put_golden(store, "mesh/Box", ".mesh"));
 
     Rt rt;
     ContextDesc cd;
-    cd.storeLayout = StoreLayout::Named;
-    cd.storeDir    = store.dir;
+    cd.storeDir = store.dir;
     if (!rt.init({}, cd)) return;
 
     // Queued: the reload waits for the first load to settle, then runs once.
     MeshHandle m = request_mesh(rt.ctx, "mesh/thing");
     request_reload(rt.ctx, m);
-    KILN_REQUIRE(put_golden("mesh/MultiUVTest", ".mesh", store.mesh));
+    KILN_REQUIRE(put_golden(store, "mesh/MultiUVTest", ".mesh"));
     KILN_REQUIRE(rt.pump_until([&] { return rt.find_event(EventKind::Changed, m.bits()) >= 0; }));
     int const meta    = rt.find_event(EventKind::MetaReady, m.bits());
     int const ready   = rt.find_event(EventKind::Ready, m.bits());
@@ -1453,7 +1391,7 @@ KILN_TEST(Runtime, ReloadWhileLoading) {
     KILN_CHECK(counts_of(*mesh_view(rt.ctx, m)) == multiCounts);
 
     // Job in flight: a reload requested during a reload runs after it.
-    KILN_REQUIRE(put_golden("mesh/Box", ".mesh", store.mesh));
+    KILN_REQUIRE(put_golden(store, "mesh/Box", ".mesh"));
     usize const ev0 = rt.events.size();
     request_reload(rt.ctx, m);
     rt.pump_once();                               // dispatches the meta stage
@@ -1495,10 +1433,9 @@ KILN_TEST(Runtime, HotReloadUnavailableWarns) {
     noStat.stat      = nullptr;
     Rt rt;
     ContextDesc cd;
-    cd.storeLayout = StoreLayout::Named;
-    cd.storeDir    = "nowhere";
-    cd.io          = &noStat;
-    cd.hotReload   = {.watchStore = true, .pollMs = 20};
+    cd.storeDir  = "nowhere";
+    cd.io        = &noStat;
+    cd.hotReload = {.watchStore = true, .pollMs = 20};
     if (!rt.init({}, cd)) return;
     KILN_CHECK_EQ(count_code(rt.diags, kDiagHotReloadUnavailable), 1u);
     rt.shutdown();
@@ -1506,9 +1443,8 @@ KILN_TEST(Runtime, HotReloadUnavailableWarns) {
 #if !(defined(KILN_HOT_RELOAD) && KILN_HOT_RELOAD)
     Rt rt2;
     ContextDesc cd2;
-    cd2.storeLayout = StoreLayout::Named;
-    cd2.storeDir    = "nowhere";
-    cd2.hotReload   = {.watchStore = true};
+    cd2.storeDir  = "nowhere";
+    cd2.hotReload = {.watchStore = true};
     if (!rt2.init({}, cd2)) return;
     KILN_CHECK_EQ(count_code(rt2.diags, kDiagHotReloadUnavailable), 1u);
 #endif
@@ -1520,13 +1456,12 @@ KILN_TEST(Runtime, StorePollerDetectsChange) {
     if (!store.init("poller")) return;
     MeshCounts multiCounts;
     if (!golden_counts("mesh/MultiUVTest", multiCounts)) return;
-    KILN_REQUIRE(put_golden("mesh/Box", ".mesh", store.mesh));
+    KILN_REQUIRE(put_golden(store, "mesh/Box", ".mesh"));
 
     Rt rt;
     ContextDesc cd;
-    cd.storeLayout = StoreLayout::Named;
-    cd.storeDir    = store.dir;
-    cd.hotReload   = {.watchStore = true, .pollMs = 20};
+    cd.storeDir  = store.dir;
+    cd.hotReload = {.watchStore = true, .pollMs = 20};
     if (!rt.init({}, cd)) return;
     KILN_CHECK(!rt.diags.has(kDiagHotReloadUnavailable));
     MeshHandle m = request_mesh(rt.ctx, "mesh/thing");
@@ -1541,7 +1476,7 @@ KILN_TEST(Runtime, StorePollerDetectsChange) {
     KILN_CHECK_EQ(rt.events.size(), ev0);
 
     // A different size changes the stat even where mtime resolution is coarse.
-    KILN_REQUIRE(put_golden("mesh/MultiUVTest", ".mesh", store.mesh));
+    KILN_REQUIRE(put_golden(store, "mesh/MultiUVTest", ".mesh"));
     bool changed = false;
     for (int i = 0; i < 1000 && !changed; ++i) { // ~5 s
         rt.pump_once();
@@ -1561,8 +1496,7 @@ KILN_TEST(RuntimePanic, WaitOffThread) {
     set_panic_handler(&exit_on_panic, nullptr);
     Rt rt;
     ContextDesc cd;
-    cd.storeLayout = StoreLayout::Named;
-    cd.storeDir    = "nowhere";
+    cd.storeDir = "nowhere";
     if (!rt.init({}, cd)) return;
     Group g = group(rt.ctx);
     RequestOptions ro;
@@ -1583,7 +1517,6 @@ KILN_TEST(RuntimePanic, WaitNotSelfSubmitting) {
     KILN_REQUIRE(na.ok());
     a.caps = 0; // uploads "need a frame"
     ContextDesc cd;
-    cd.storeLayout     = StoreLayout::Named;
     cd.adapter         = &a;
     cd.storeDir        = "nowhere";
     Result<Context*> c = create(cd);
@@ -1604,14 +1537,15 @@ KILN_TEST(RuntimePanic, WaitNotSelfSubmitting) {
 
 namespace {
 
-/// A scratch store with KTX2 corpus files under short names: sky (cube), layers (array of 7),
-/// vol (volume) and flat (2D).
+/// A scratch catalog store with KTX2 corpus files under short names: sky (cube), layers (array
+/// of 7), vol (volume) and flat (2D).
 struct ShapeStore {
-    char dir[1024] = {};
+    test::HandStore hand;
+    char const* dir = nullptr;
 
     bool init() {
-        format(dir, sizeof dir, "%s/shapes", test::sample_dir());
-        if (!KILN_CHECK(ensure_dir(dir))) return false;
+        if (!hand.init("shapes")) return false;
+        dir = hand.dir();
         struct Copy {
             char const* from;
             char const* to;
@@ -1623,12 +1557,9 @@ struct ShapeStore {
             {"khronos/r8g8b8a8_srgb.ktx2",             "flat"  },
         };
         for (Copy const& c : files) {
-            char src[1024], dst[1024];
+            char src[1024];
             format(src, sizeof src, "%s/%s", test::corpus_dir(), c.from);
-            format(dst, sizeof dst, "%s/%s.ktx2", dir, c.to);
-            Vec<u8> bytes(default_allocator(), Tag::Test);
-            if (!KILN_CHECK_MSG(test::corpus::read_file(src, bytes), "cannot read %s", src)) return false;
-            if (!write_bytes(dst, bytes.span())) return false;
+            if (!hand.put_file(StrView(c.to), AssetKind::Texture, src)) return false;
         }
         return true;
     }
@@ -1645,8 +1576,7 @@ TextureHandle request_shape(Rt& rt, char const* name, TextureShape shape) {
 KILN_TEST(Runtime, ShapePlaceholders) {
     Rt rt;
     ContextDesc cd;
-    cd.storeLayout = StoreLayout::Named;
-    cd.storeDir    = "does/not/exist";
+    cd.storeDir = "does/not/exist";
     if (!rt.init({}, cd)) return;
     TextureHandle const cube = request_shape(rt, "tex/cube", TextureShape::Cube);
     TextureInfo ti           = texture_info(rt.ctx, cube);
@@ -1664,8 +1594,7 @@ KILN_TEST(Runtime, CubeAndArrayLoad) {
     if (!store.init()) return;
     Rt rt;
     ContextDesc cd;
-    cd.storeLayout = StoreLayout::Named;
-    cd.storeDir    = StrView(store.dir);
+    cd.storeDir = StrView(store.dir);
     if (!rt.init({}, cd)) return;
     TextureHandle const sky    = request_shape(rt, "sky", TextureShape::Cube);
     TextureHandle const layers = request_shape(rt, "layers", TextureShape::Array);
@@ -1684,8 +1613,7 @@ KILN_TEST(Runtime, TextureShapeMismatchFails) {
     if (!store.init()) return;
     Rt rt;
     ContextDesc cd;
-    cd.storeLayout = StoreLayout::Named;
-    cd.storeDir    = StrView(store.dir);
+    cd.storeDir = StrView(store.dir);
     if (!rt.init({}, cd)) return;
     TextureHandle const cubeAs2D   = request_shape(rt, "sky", TextureShape::Tex2D);
     TextureHandle const flatAsCube = request_shape(rt, "flat", TextureShape::Cube);
@@ -1709,10 +1637,8 @@ KILN_TEST(Runtime, AdapterWithoutShapeCaps) {
     KILN_REQUIRE(a.ok());
     rt.na = *a;
     rt.adapter.caps &= ~u32(kCubeTextures | kArrayTextures);
-    Result<Context*> c = create(ContextDesc{.diag        = rt.diags.sink(),
-                                            .adapter     = &rt.adapter,
-                                            .storeDir    = "none",
-                                            .storeLayout = StoreLayout::Named});
+    Result<Context*> c =
+        create(ContextDesc{.diag = rt.diags.sink(), .adapter = &rt.adapter, .storeDir = "none"});
     KILN_REQUIRE(c.ok());
     rt.ctx = *c;
     KILN_CHECK_EQ(null_adapter_stats(rt.na).beginUploads, KILN_DEBUG ? 5u : 4u);
@@ -1732,10 +1658,8 @@ KILN_TEST(Runtime, AdapterWithoutMeshes) {
     KILN_REQUIRE(a.ok());
     rt.na = *a;
     rt.adapter.caps &= ~u32(kMeshes);
-    Result<Context*> c = create(ContextDesc{.diag        = rt.diags.sink(),
-                                            .adapter     = &rt.adapter,
-                                            .storeDir    = test::golden_dir(),
-                                            .storeLayout = StoreLayout::Named});
+    Result<Context*> c = create(
+        ContextDesc{.diag = rt.diags.sink(), .adapter = &rt.adapter, .storeDir = test::golden_store_dir()});
     KILN_REQUIRE(c.ok());
     rt.ctx                 = *c;
     u32 const placeholders = null_adapter_stats(rt.na).beginUploads;
@@ -1838,10 +1762,8 @@ KILN_TEST(Runtime, AdapterFlush) {
     rt.adapter.caps &= ~u32(kSelfSubmitting);
     rt.adapter.flush   = &count_flush;
     g_flushes          = 0;
-    Result<Context*> c = create(ContextDesc{.diag        = rt.diags.sink(),
-                                            .adapter     = &rt.adapter,
-                                            .storeDir    = test::golden_dir(),
-                                            .storeLayout = StoreLayout::Named});
+    Result<Context*> c = create(
+        ContextDesc{.diag = rt.diags.sink(), .adapter = &rt.adapter, .storeDir = test::golden_store_dir()});
     KILN_REQUIRE(c.ok());
     rt.ctx = *c;
     KILN_CHECK(g_flushes >= 1);
@@ -1863,30 +1785,22 @@ namespace {
 bool no_bc5(void*, Format f, FormatUsage) { return f != Format::BC5_UNORM; }
 } // namespace
 
-// create() checks the store's profile against the adapter once (docs/design/target-profiles.md).
+// create() checks the catalog's profile against the adapter once (docs/design/target-profiles.md).
 KILN_TEST(Runtime, CreateChecksStoreProfile) {
-    char dir[1024];
-    format(dir, sizeof dir, "%s/runtime_store_profile", test::sample_dir());
-#if defined(KILN_OS_WINDOWS)
-    (void)_mkdir(dir);
-#else
-    (void)mkdir(dir, 0755);
-#endif
-    char path[1100];
-    format(path, sizeof path, "%s/%s", dir, kStoreProfileFile);
-    std::FILE* f = std::fopen(path, "wb");
-    KILN_REQUIRE(f != nullptr);
-    std::fputs("kiln-store 1\nprofile compat\nhash 0123456789abcdef\nformats 137 138 141 143 145 146\n", f);
-    std::fclose(f);
+    test::HandStore store;
+    if (!store.init("runtime_store_profile")) return;
+    store.set_block_formats(block_format_bit(Format::BC5_UNORM) | block_format_bit(Format::BC7_SRGB));
+    Vec<u8> tex(default_allocator(), Tag::Test);
+    if (!read_golden("ktx2/normal", ".ktx2", tex)) return;
+    KILN_REQUIRE(store.put("normal", AssetKind::Texture, tex.span()));
 
     Adapter adapter{};
     Result<NullAdapter*> na = null_adapter_create({}, &adapter);
     KILN_REQUIRE(na.ok());
     DiagLog log;
     ContextDesc cd{};
-    cd.storeLayout      = StoreLayout::Named;
     cd.adapter          = &adapter;
-    cd.storeDir         = StrView(dir);
+    cd.storeDir         = StrView(store.dir());
     cd.diag             = log.sink();
     Result<Context*> ok = create(cd); // the null adapter samples everything
     KILN_REQUIRE(ok.ok());
@@ -1903,92 +1817,19 @@ KILN_TEST(Runtime, CreateChecksStoreProfile) {
     KILN_CHECK(allowed.ok());
     if (allowed.ok()) destroy(*allowed);
     null_adapter_destroy(*na);
-    std::remove(path);
 }
 
-// A catalog store read by the runtime alone (the shipping case): the catalog is built by hand here,
-// since the reader-only suite has no cook code.
-KILN_TEST(Runtime, CatalogStoreWithoutCook) {
-    char dir[1024], sub[1100], path[1200];
-    format(dir, sizeof dir, "%s/runtime_catalog_store", test::sample_dir());
-    KILN_REQUIRE(ensure_dir(dir));
-    Vec<u8> mesh(default_allocator(), Tag::Test);
-    KILN_REQUIRE(read_golden("mesh/Box", ".mesh", mesh));
-    StrView const name = "Box.glb";
-    Hash128 const key  = xxh3_128(Span<u8 const>(reinterpret_cast<u8 const*>(name.data), name.size));
-
-    (void)artifact_file_path(StrView(dir), AssetKind::Mesh, key, path, sizeof path);
-    format(sub, sizeof sub, "%s/artifacts", dir);
-    KILN_REQUIRE(ensure_dir(sub));
-    *std::strrchr(path, '/') = '\0';
-    KILN_REQUIRE(ensure_dir(path));
-    (void)artifact_file_path(StrView(dir), AssetKind::Mesh, key, path, sizeof path);
-    std::FILE* f = std::fopen(path, "wb");
-    KILN_REQUIRE(f != nullptr);
-    std::fwrite(mesh.data(), 1, mesh.size(), f);
-    std::fclose(f);
-
-    // Format 0.1 with one entry: header, entry, index, strings ("compat" then the name), padding.
-    StrView const profile = "compat";
-    u64 const strings     = kCatalogHeaderBytes + kCatalogEntryBytes + kCatalogIndexBytes;
-    u64 const stringBytes = profile.size + name.size;
-    u64 const total       = (strings + stringBytes + 7) & ~u64(7);
-    Vec<u8> cat(default_allocator(), Tag::Test);
-    cat.resize(usize(total), u8(0));
-    u8* b = cat.data();
-    write_unaligned<u32>(b, kCatalogMagic);
-    write_unaligned<u16>(b + 4, kCatalogMajor);
-    write_unaligned<u16>(b + 6, kCatalogMinor);
-    write_unaligned<u32>(b + 8, kCatalogHeaderBytes);
-    write_unaligned<u64>(b + 16, total);
-    write_unaligned<u64>(b + 24, u64(1));
-    write_unaligned<u64>(b + 32, u64(kCatalogHeaderBytes));
-    write_unaligned<u64>(b + 40, u64(kCatalogHeaderBytes + kCatalogEntryBytes));
-    write_unaligned<u64>(b + 48, strings);
-    write_unaligned<u64>(b + 56, stringBytes);
-    write_unaligned<u32>(b + 84, u32(profile.size));
-    u8* e = b + kCatalogHeaderBytes;
-    write_unaligned<u32>(e, u32(profile.size));
-    write_unaligned<u32>(e + 4, u32(name.size));
-    write_unaligned<u16>(e + 8, u16(1));
-    std::memcpy(e + 16, key.bytes, 16);
-    Hash128 const sum = xxh3_128(mesh.span());
-    std::memcpy(e + 32, sum.bytes, 16);
-    write_unaligned<u64>(e + 48, u64(mesh.size()));
-    write_unaligned<u64>(e + kCatalogEntryBytes, hash_name(name));
-    std::memcpy(b + strings, profile.data, profile.size);
-    std::memcpy(b + strings + profile.size, name.data, name.size);
-    Hash128 const check = xxh3_128(cat.span()); // the checksum field is still zero
-    std::memcpy(b + kCatalogChecksumOffset, check.bytes, 16);
-
-    format(sub, sizeof sub, "%s/catalogs", dir);
-    KILN_REQUIRE(ensure_dir(sub));
-    (void)catalog_file_path(StrView(dir), profile, path, sizeof path);
-    f = std::fopen(path, "wb");
-    KILN_REQUIRE(f != nullptr);
-    std::fwrite(cat.data(), 1, cat.size(), f);
-    std::fclose(f);
-
-    Adapter adapter{};
-    Result<NullAdapter*> na = null_adapter_create({}, &adapter);
-    KILN_REQUIRE(na.ok());
-    DiagLog log;
-    ContextDesc cd{};
-    cd.adapter         = &adapter;
-    cd.storeDir        = StrView(dir);
-    cd.storeLayout     = StoreLayout::Catalog;
-    cd.diag            = log.sink();
-    Result<Context*> c = create(cd);
-    KILN_REQUIRE(c.ok());
-    MeshHandle const box   = request_mesh(*c, name);
-    MeshHandle const other = request_mesh(*c, "Other.glb");
-    for (int i = 0; i < 2000 && (state(*c, box) != State::Ready || state(*c, other) != State::Failed); ++i) {
-        (void)pump(*c, {});
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    }
-    KILN_CHECK(state(*c, box) == State::Ready);
-    KILN_CHECK(state(*c, other) == State::Failed);
-    KILN_CHECK(log.has(kDiagStoreMiss));
-    destroy(*c);
-    null_adapter_destroy(*na);
+// The goldens as a catalog store (hand_store.h), also the ctest fixture for kiln-headless.
+KILN_TEST(GoldenStore, Build) {
+    char path[1200];
+    (void)catalog_file_path(StrView(test::golden_store_dir()), "compat", path, sizeof path);
+    Vec<u8> bytes(default_allocator(), Tag::Test);
+    KILN_REQUIRE(test::corpus::read_file(path, bytes));
+    Result<CatalogView> v = CatalogView::open(bytes.span());
+    KILN_REQUIRE(v.ok());
+    CatalogEntry e;
+    for (char const* name : kGoldenMeshes)
+        KILN_CHECK_MSG(v->find(AssetKind::Mesh, StrView(name), &e), "%s is not in the golden store", name);
+    for (char const* name : kGoldenTextures)
+        KILN_CHECK_MSG(v->find(AssetKind::Texture, StrView(name), &e), "%s is not in the golden store", name);
 }

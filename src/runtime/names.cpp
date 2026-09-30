@@ -137,18 +137,4 @@ StrView texture_asset_name(StrView meshName, mesh::MeshView const& v, mesh::Text
     return StrView(out, path.size);
 }
 
-usize store_file_path(StrView storeDir, AssetKind kind, StrView name, char* out, usize cap) noexcept {
-    char const* ext = kind == AssetKind::Mesh ? ".mesh" : ".ktx2";
-    char const* sep = "";
-    if (!storeDir.empty()) {
-        char const last = storeDir[storeDir.size - 1];
-        sep             = (last == '/' || last == '\\') ? "" : "/";
-    }
-    AssetNameParts const p = split_asset_name(name);
-    if (p.root.empty()) return format(out, cap, "%.*s%s%.*s%s", KILN_SV(storeDir), sep, KILN_SV(name), ext);
-    StrView const rest = name.substr(p.root.size + 1);
-    return format(out, cap, "%.*s%s@%.*s/%.*s%s", KILN_SV(storeDir), sep, KILN_SV(p.root), KILN_SV(rest),
-                  ext);
-}
-
 } // namespace kiln

@@ -15,7 +15,7 @@ struct JobSystem; // kiln/io.h
 
 namespace kiln::cook {
 
-/// Bump when cooked output changes for identical input and settings. Part of every store key.
+/// Bump when cooked output changes for identical input and settings. Part of every build key.
 inline constexpr u32 kCookerVersion =
     5; // 5: .mesh 0.5, MaterialSlot carries the PBR factors
        // 4: Zstd kept only when it saves kZstdMinSaving of a texture file
@@ -173,35 +173,17 @@ KILN_API Result<CookedTexture> cook_texture(TextureSource const& src, TextureCoo
                                             TargetProfile const& target, CookEnv const& env = {}) noexcept;
 
 // ---------------------------------------------------------------------------
-// Store: content-hashed files, atomic writes, no index in v0.5
+// Store files: atomic writes (the catalog store in kiln/cook/catalog.h builds on them)
 // ---------------------------------------------------------------------------
-
-/// Store key = hash_combine chain of (source bytes hash, resolved settings hash,
-/// target hash, cooker version).
-[[nodiscard]] KILN_API u64 store_key(u64 sourceHash, u64 settingsHash, u64 targetHash,
-                                     u32 cookerVersion = kCookerVersion) noexcept;
-
-/// "<16 lowercase hex digits>.<ext>" into `out` (needs 16 + 1 + ext.size + 1 bytes).
-/// Returns the length written.
-KILN_API usize store_file_name(u64 key, StrView ext, char* out, usize cap) noexcept;
 
 /// Write `bytes` to `<dir>/<name>` atomically (temp file + rename). Creates `dir`
 /// if missing (one level). Without `overwrite`, an existing file with the same name is
 /// left untouched (content-addressed: same key means same bytes) and Status is Ok. With
-/// `overwrite` (hot-reload re-cooks, whose names are not content-addressed) the rename
-/// replaces it; if the rename fails, for example because a reader on Windows holds the
-/// file open without FILE_SHARE_DELETE, the old file stays and the result is IoError, so
+/// `overwrite` (a catalog rewrite) the rename replaces it; if the rename fails, for example because a reader
+/// on Windows holds the file open without FILE_SHARE_DELETE, the old file stays and the result is IoError, so
 /// the caller can retry.
 KILN_API Status store_write(StrView dir, StrView name, Span<u8 const> bytes, DiagSink const* diag = nullptr,
                             bool overwrite = false) noexcept;
-
-/// Checks the store's profile before anything is written to it (docs/design/target-profiles.md).
-/// Ok when `<storeDir>/kiln-store.txt` names `target` (same hash_target), or when the store has no
-/// cooked files: the file is then written, and the directory made. A store of another profile, or
-/// with `.mesh` / `.ktx2` files and no profile, or a catalog store (a `catalogs` directory), is
-/// InvalidArgument (K3008). Nothing is ever deleted.
-KILN_API Status bind_store_profile(StrView storeDir, TargetProfile const& target,
-                                   DiagSink const* diag = nullptr) noexcept;
 
 /// True if `<dir>/<name>` exists.
 [[nodiscard]] KILN_API bool store_exists(StrView dir, StrView name) noexcept;

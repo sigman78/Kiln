@@ -100,15 +100,20 @@ struct SlowCook {
     double msPerMiB  = 0;
     double latencyMs = 0;
 
-    static Status cook(void* u, AssetKind kind, StrView path, Allocator const* alloc, Vec<u8>* out,
-                       DiagSink const* diag) {
-        auto* s         = static_cast<SlowCook*>(u);
-        double const t0 = now_ms();
-        Status const st = s->inner.cook(s->inner.user, kind, path, alloc, out, diag);
-        double const ms = st.ok() ? s->latencyMs + s->msPerMiB * double(out->size()) / kMiB : 0.0;
+    /// Only a cook (bytes in `out`) is slowed; a check that the store is fresh is not.
+    static Status prepare(void* u, AssetKind kind, StrView path, Allocator const* alloc, Vec<u8>* out,
+                          Hash128* key, DiagSink const* diag) {
+        auto* s           = static_cast<SlowCook*>(u);
+        double const t0   = now_ms();
+        Status const st   = s->inner.prepare(s->inner.user, kind, path, alloc, out, key, diag);
+        bool const cooked = st.ok() && !out->empty();
+        double const ms   = cooked ? s->latencyMs + s->msPerMiB * double(out->size()) / kMiB : 0.0;
         KILN_INFO("slow-cook", "%s %.*s: %s in %.1f ms, %llu bytes (+%.1f ms)",
                   kind == AssetKind::Mesh ? "mesh" : "texture", KILN_SV(path),
-                  st.ok() ? "cooked" : code_name(st.code), now_ms() - t0, ull(out->size()), ms);
+                  st.failed() ? code_name(st.code)
+                  : cooked    ? "cooked"
+                              : "fresh",
+                  now_ms() - t0, ull(out->size()), ms);
         sleep_ms(ms);
         return st;
     }
@@ -230,11 +235,8 @@ void print_event(Context* ctx, Item* items, u32 count, Event const& e) {
 
 constexpr u32 kMaxRoots = 8;
 
-char const* const kLayouts[] = {"catalog", "named", nullptr};
-
 struct Options {
-    char const* store  = "cooked";
-    char const* layout = "catalog";
+    char const* store = "cooked";
     Root roots[kMaxRoots]; ///< --source and --root
     u32 rootCount    = 0;
     double slowMs    = 0;
@@ -282,11 +284,6 @@ int main(int argc, char** argv) {
     Options o;
     cli::Option const opts[] = {
         {.name = "--store", .arg = "<dir>", .help = "cooked store root (default: cooked)", .str = &o.store},
-        {.name    = "--layout",
-         .arg     = "<layout>",
-         .help    = "the store's layout: catalog (default) or named",
-         .str     = &o.layout,
-         .choices = kLayouts},
         {.name = "--source",
          .arg  = "<dir>",
          .help = "the default root; enables cook-on-miss (needs kiln_cook)",
@@ -350,13 +347,12 @@ int main(int argc, char** argv) {
     // 3. The context. Everything below runs on this thread, the pump thread.
     SlowIo slowIo;
     ContextDesc desc{
-        .diag        = DiagSink{&diag_to_stdout, nullptr},
-        .io          = slowIo.init(compat_io_backend(), o.slowMs, o.latencyMs),
-        .adapter     = &adapter,
-        .storeDir    = StrView(o.store),
-        .roots       = Span<Root const>(o.roots, o.rootCount),
-        .storeLayout = std::strcmp(o.layout, "named") == 0 ? StoreLayout::Named : StoreLayout::Catalog,
-        .hotReload   = {.watchStore = o.watch},
+        .diag      = DiagSink{&diag_to_stdout, nullptr},
+        .io        = slowIo.init(compat_io_backend(), o.slowMs, o.latencyMs),
+        .adapter   = &adapter,
+        .storeDir  = StrView(o.store),
+        .roots     = Span<Root const>(o.roots, o.rootCount),
+        .hotReload = {.watchStore = o.watch},
     };
     Result<Context*> c = create(desc);
     if (c.failed()) {
@@ -383,7 +379,7 @@ int main(int argc, char** argv) {
                 slowCook.inner     = cook_provider(ctx);
                 slowCook.msPerMiB  = o.slowMs;
                 slowCook.latencyMs = o.latencyMs;
-                set_cook_provider(ctx, CookProvider{&SlowCook::cook, &slowCook});
+                set_cook_provider(ctx, CookProvider{&SlowCook::prepare, &slowCook});
             }
         }
     }

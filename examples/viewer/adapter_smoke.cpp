@@ -151,7 +151,7 @@ bool check_discard(Adapter const& a, vkx::VkAdapter* vka) {
 }
 
 struct Options {
-    char const* store = "tests/golden";
+    char const* store = "cooked";
     bool validate     = false;
     u32 frames        = 8;
     u32 stagingKiB    = 0; ///< 0 = AdapterDesc default
@@ -193,7 +193,7 @@ int main(int argc, char** argv) {
     cli::Option const opts[] = {
         {.name = "--store",
          .arg  = "<dir>",
-         .help = "cooked store root (default: tests/golden)",
+         .help = "cooked store root (default: cooked; kiln_tests GoldenStore.Build makes one of the goldens)",
          .str  = &o.store},
         {.name = "--validate",
          .help = "enable the Vulkan validation layer if installed",
@@ -249,8 +249,7 @@ int main(int argc, char** argv) {
     bool const discardOk = check_discard(adapter, vka);
 
     // 2. The context. create() uploads the placeholders through the adapter and waits for them.
-    ContextDesc const desc{
-        .diag = diag, .adapter = &adapter, .storeDir = StrView(o.store), .storeLayout = StoreLayout::Named};
+    ContextDesc const desc{.diag = diag, .adapter = &adapter, .storeDir = StrView(o.store)};
     Result<Context*> c = create(desc);
     if (c.failed()) {
         KILN_ERROR("smoke", "create: %s", code_name(c.code()));

@@ -1,19 +1,6 @@
-// watch.cpp — the store poller: reload an asset when its cooked file changes
-// (docs/design/hot-reload.md, "Runtime"). Compiled in only with KILN_HOT_RELOAD;
-// without it, asking for the poller is K5011 and every hook is a no-op.
-//
-// Synchronization. The poller thread never reads Slot or any other registry state. It
-// works on its own table, one WatchEntry per slot index, that only the pump thread
-// writes: watch_arm() when a slot settles (copies generation, kind, path and the stat
-// the meta stage recorded), watch_disarm() when the slot loads again or unloads. Every
-// access to the table and to the hit list is under Watch::mutex. A round copies one
-// armed entry under the lock, stats the file without it, and re-checks the entry under
-// the lock before reporting a change (still armed, same generation, same recorded
-// stat). A reported entry is disarmed, so it is reported once until the next settle.
-// pump() (watch_drain) copies the hits out under the lock and requests the reloads
-// after releasing it; a hit whose slot generation changed meanwhile is dropped.
-// Catalog layout: no slot is armed; the poller hands a new catalog over under the mutex
-// (docs/design/hot-reload.md).
+// watch.cpp — the store poller: when the catalog file changes, swap it in and reload the assets
+// whose entry changed (docs/design/hot-reload.md). Compiled in only with KILN_HOT_RELOAD; without
+// it, asking for the poller is K5011 and every hook is a no-op.
 #include "runtime_internal.h"
 
 #if defined(KILN_HOT_RELOAD) && KILN_HOT_RELOAD
@@ -25,33 +12,15 @@ namespace kiln::rt {
 
 #if defined(KILN_HOT_RELOAD) && KILN_HOT_RELOAD
 
-struct WatchEntry {
-    u32 generation = 0; ///< slot generation the entry describes (0 = never armed)
-    bool armed     = false;
-    bool hasStat   = false; ///< a stat was recorded for this generation
-    AssetKind kind = AssetKind::Mesh;
-    IoStat stat;
-    u32 pathLen            = 0;
-    char path[kMaxPathLen] = {};
-};
-
-struct WatchHit {
-    u32 index      = 0;
-    u32 generation = 0;
-};
-
+/// The poller thread never reads Slot or other registry state: it hands a new catalog to the pump
+/// thread under `mutex`.
 struct Watch {
     std::mutex mutex;
     std::condition_variable wake;
-    bool stop           = false;   ///< under mutex
-    WatchEntry* entries = nullptr; ///< maxAssets, under mutex
-    WatchHit* hits      = nullptr; ///< maxAssets, under mutex
-    u32 hitCount        = 0;       ///< under mutex
-    WatchHit* drained   = nullptr; ///< maxAssets, pump thread only
-    u32 pollMs          = 250;
+    bool stop  = false; ///< under mutex
+    u32 pollMs = 250;
     std::thread thread;
 
-    // Catalog layout.
     IoStat catalogStat;            ///< poller thread only: the catalog file as last read
     bool catalogStatValid = false; ///< poller thread only
     Hash128 catalogSum;            ///< under mutex: checksum of the catalog in use (or pending)
@@ -119,43 +88,6 @@ void catalog_changed(Context* ctx) noexcept {
     }
 }
 
-/// One round over every armed entry. Returns false when asked to stop.
-bool poll_round(Context* ctx, Watch& w) noexcept {
-    IoBackend const* io = ctx->io;
-    if (ctx->layout == StoreLayout::Catalog) {
-        poll_catalog(ctx, w);
-        std::lock_guard<std::mutex> lock(w.mutex);
-        return !w.stop;
-    }
-    WatchEntry e;
-    char file[1024];
-    for (u32 i = 0; i < ctx->maxAssets; ++i) {
-        {
-            std::lock_guard<std::mutex> lock(w.mutex);
-            if (w.stop) return false;
-            WatchEntry const& cur = w.entries[i];
-            if (!cur.armed) continue;
-            e.generation = cur.generation;
-            e.kind       = cur.kind;
-            e.stat       = cur.stat;
-            e.pathLen    = cur.pathLen;
-            std::memcpy(e.path, cur.path, cur.pathLen);
-        }
-        usize const n = store_path(ctx, e.kind, StrView(e.path, e.pathLen), file, sizeof file);
-        if (n + 1 >= sizeof file) continue;
-        IoStat now;
-        // A failed stat (a rewrite by rename in progress, a deleted file) is not a change.
-        if (io->stat(io->user, StrView(file, n), &now).failed() || same_stat(now, e.stat)) continue;
-        std::lock_guard<std::mutex> lock(w.mutex);
-        WatchEntry& cur = w.entries[i];
-        if (!cur.armed || cur.generation != e.generation || !same_stat(cur.stat, e.stat)) continue;
-        if (w.hitCount == ctx->maxAssets) continue; // cannot happen: one hit per armed slot
-        w.hits[w.hitCount++] = WatchHit{i, e.generation};
-        cur.armed            = false;
-    }
-    return true;
-}
-
 void poll_main(Context* ctx) noexcept {
     Watch& w = *ctx->watch;
     for (;;) {
@@ -163,7 +95,7 @@ void poll_main(Context* ctx) noexcept {
             std::unique_lock<std::mutex> lock(w.mutex);
             if (w.wake.wait_for(lock, std::chrono::milliseconds(w.pollMs), [&] { return w.stop; })) return;
         }
-        if (!poll_round(ctx, w)) return;
+        poll_catalog(ctx, w);
     }
 }
 
@@ -182,16 +114,9 @@ void watch_start(Context* ctx, HotReloadDesc const& desc) noexcept {
     }
     Allocator const* a = ctx->alloc;
     Watch* w           = new_object<Watch>(a, Tag::Registry);
-    w->entries         = alloc_array<WatchEntry>(a, ctx->maxAssets, Tag::Registry);
-    for (u32 i = 0; i < ctx->maxAssets; ++i)
-        ::new (static_cast<void*>(w->entries + i)) WatchEntry();
-    w->hits    = alloc_array<WatchHit>(a, ctx->maxAssets, Tag::Registry);
-    w->drained = alloc_array<WatchHit>(a, ctx->maxAssets, Tag::Registry);
-    w->pollMs  = max(desc.pollMs, 1u);
+    w->pollMs          = max(desc.pollMs, 1u);
     w->pending.init(a, Tag::Io);
     if (ctx->catalogPresent) w->catalogSum = checksum_of(ctx->catalogBytes.span());
-    // Set before any job runs and cleared only by watch_free() after the jobs drained:
-    // workers read it (the meta stage records a stat only when watching).
     ctx->watch = w;
 
     // std::thread's constructor may throw on resource exhaustion; converted here.
@@ -225,9 +150,6 @@ void watch_free(Context* ctx) noexcept {
     if (!w) return;
     KILN_ASSERT(!w->thread.joinable());
     Allocator const* a = ctx->alloc;
-    free_array(a, w->entries, ctx->maxAssets, Tag::Registry);
-    free_array(a, w->hits, ctx->maxAssets, Tag::Registry);
-    free_array(a, w->drained, ctx->maxAssets, Tag::Registry);
     w->pending.release();
     delete_object(a, w, Tag::Registry);
     ctx->watch = nullptr;
@@ -236,14 +158,9 @@ void watch_free(Context* ctx) noexcept {
 void watch_drain(Context* ctx) noexcept {
     Watch* w = ctx->watch;
     if (!w) return;
-    u32 n           = 0;
     bool newCatalog = false;
     {
         std::lock_guard<std::mutex> lock(w->mutex);
-        n = w->hitCount;
-        for (u32 i = 0; i < n; ++i)
-            w->drained[i] = w->hits[i];
-        w->hitCount = 0;
         if (w->hasPending) {
             ctx->catalogBytes   = std::move(w->pending);
             ctx->catalog        = w->pendingView;
@@ -254,37 +171,6 @@ void watch_drain(Context* ctx) noexcept {
         }
     }
     if (newCatalog) catalog_changed(ctx);
-    for (u32 i = 0; i < n; ++i) {
-        Slot& s = ctx->slots[w->drained[i].index];
-        if (s.live && !s.zombie && s.generation == w->drained[i].generation) reload_slot(ctx, s);
-    }
-}
-
-void watch_arm(Context* ctx, Slot const& s) noexcept {
-    Watch* w = ctx->watch;
-    if (!w || ctx->layout == StoreLayout::Catalog) return;
-    std::lock_guard<std::mutex> lock(w->mutex);
-    WatchEntry& e = w->entries[s.index];
-    if (e.generation != s.generation) { // another asset in this slot: forget the old stat
-        e.generation = s.generation;
-        e.hasStat    = false;
-        e.kind       = s.kind;
-        e.pathLen    = s.pathLen;
-        std::memcpy(e.path, s.path, s.pathLen);
-    }
-    // No stat this time (the file vanished mid-rewrite): keep watching the last one.
-    if (s.jobStatValid) {
-        e.stat    = s.jobStat;
-        e.hasStat = true;
-    }
-    e.armed = s.source == SourceKind::File && e.hasStat;
-}
-
-void watch_disarm(Context* ctx, u32 index) noexcept {
-    Watch* w = ctx->watch;
-    if (!w) return;
-    std::lock_guard<std::mutex> lock(w->mutex);
-    w->entries[index].armed = false;
 }
 
 #else // !KILN_HOT_RELOAD
@@ -299,8 +185,6 @@ void watch_start(Context* ctx, HotReloadDesc const& desc) noexcept {
 void watch_stop(Context*) noexcept {}
 void watch_free(Context*) noexcept {}
 void watch_drain(Context*) noexcept {}
-void watch_arm(Context*, Slot const&) noexcept {}
-void watch_disarm(Context*, u32) noexcept {}
 
 #endif
 

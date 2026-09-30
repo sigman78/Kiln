@@ -17,8 +17,8 @@ struct CatalogStoreDesc {
 };
 
 /// Takes `<store>/catalogs/<profile>.lock` (K3009 if another writer holds it), makes the store's
-/// directories, and loads the profile's catalog and input records. A named-layout store is K3008;
-/// a malformed catalog is its K42xx; malformed input records are dropped (they only save time).
+/// directories, and loads the profile's catalog and input records. A malformed catalog is its
+/// K42xx; malformed input records are dropped (they only save time).
 [[nodiscard]] Status open_catalog_store(CatalogStoreDesc const& d, CatalogStore** out) noexcept;
 /// Releases the lock and frees the store. Does not commit.
 void close_catalog_store(CatalogStore* s) noexcept;

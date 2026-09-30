@@ -1,6 +1,5 @@
-// kiln/cook/provider.h — cook-on-miss for dev builds: installs a CookProvider on a
-// runtime Context that cooks missing assets from the context's roots into its store
-// (or only into memory in cache-less mode). kiln_cook only.
+// kiln/cook/provider.h — the cook provider for dev builds: keeps a Context's catalog store up to
+// date from the context's roots (or cooks only into memory, cache-less). kiln_cook only.
 #pragma once
 
 #include "kiln/assets.h"
@@ -9,7 +8,7 @@
 namespace kiln::cook {
 
 struct ProviderDesc {
-    StoreMode storeMode = StoreMode::Disk; ///< Disk: write cooked files to store_dir(ctx); Memory: cache-less
+    StoreMode storeMode  = StoreMode::Disk; ///< Disk: publish into the catalog store; Memory: cache-less
     TargetProfile target = {};
     /// The host's settings (resolution layer 2): the base that sidecars, inference and the
     /// policy build on (docs/design/settings.md, "Resolution layers").
@@ -35,12 +34,10 @@ struct ProviderDesc {
 /// A texture named `<mesh>#<image>` is an embedded image: the provider cooks `<mesh>`, which
 /// writes all of its embedded images. Images a mesh references by URI are not cooked with
 /// it; the host requests them by name. Returns InvalidArgument if the context has no roots.
-/// With StoreMode::Disk the store must be empty or cooked for `desc.target`'s profile
-/// (bind_store_profile); otherwise it returns InvalidArgument (K3008) and writes nothing.
-/// In the Catalog layout the context's profile must be `desc.target`'s (K3008). The provider then
-/// installs CookProvider::prepare: each asset is checked once per session by the size and time of
-/// its recorded inputs, and cooked again when they changed. In Disk mode it writes the profile's
-/// catalog and holds its lock until it is released (K3009 for a second writer).
+/// The context's profile must be `desc.target`'s (K3008). Each asset is checked once per session
+/// by the size and time of its recorded inputs, and cooked again when they changed. In Disk mode
+/// the provider writes the profile's catalog and holds its lock until it is released (K3009 for a
+/// second writer); in Memory mode it cooks every load and writes nothing.
 /// Call install_provider and uninstall_provider on the pump thread. destroy(ctx) frees a provider
 /// that is still installed, so uninstall_provider is needed only to remove it earlier.
 KILN_API Status install_provider(Context* ctx, ProviderDesc const& desc) noexcept;

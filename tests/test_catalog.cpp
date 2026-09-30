@@ -561,16 +561,9 @@ KILN_TEST(CatalogStore, OutputsTheCookNoLongerMakesLeave) {
     KILN_CHECK_EQ(v->size(), u64(unit.outputs.size() - 2));
 }
 
-KILN_TEST(CatalogStore, RefusesNamedStoresAndSurvivesLostRecords) {
+KILN_TEST(CatalogStore, SurvivesLostRecords) {
     char dir[1024];
-    fresh_dir("catalog-named", dir, sizeof dir);
-    KILN_REQUIRE(bind_store_profile(StrView(dir), kCompatTarget).ok()); // writes kiln-store.txt
     CatalogStore* s = nullptr;
-    LastCode lc;
-    DiagSink const sink{&LastCode::fn, &lc};
-    KILN_CHECK(open_store(dir, &s, &sink).failed());
-    KILN_CHECK_EQ(lc.code, u32(kDiagStoreProfileMismatch));
-
     fresh_dir("catalog-lost", dir, sizeof dir);
     CookUnit unit(default_allocator());
     KILN_REQUIRE(cook_corpus("cube_basic.glb", AssetKind::Mesh, &unit).ok());
@@ -593,18 +586,6 @@ KILN_TEST(CatalogStore, RefusesNamedStoresAndSurvivesLostRecords) {
     CookUnit rec(default_allocator());
     KILN_CHECK(!copy_input_record(s, "cube_basic.glb"_sv, &rec, &digest));
     close_catalog_store(s);
-}
-
-KILN_TEST(CatalogStore, NamedLayoutRefusesACatalogStore) {
-    char dir[1024];
-    fresh_dir("catalog-then-named", dir, sizeof dir);
-    CatalogStore* s = nullptr;
-    KILN_REQUIRE(open_store(dir, &s).ok());
-    close_catalog_store(s);
-    LastCode lc;
-    DiagSink const sink{&LastCode::fn, &lc};
-    KILN_CHECK(bind_store_profile(StrView(dir), kCompatTarget, &sink).failed());
-    KILN_CHECK_EQ(lc.code, u32(kDiagStoreProfileMismatch));
 }
 
 // ---------------------------------------------------------------------------
@@ -639,7 +620,6 @@ struct CatalogContext {
         ContextDesc desc{};
         desc.adapter       = &adapter;
         desc.storeDir      = StrView(dir);
-        desc.storeLayout   = StoreLayout::Catalog;
         desc.diag          = {&FirstCode::fn, &diag};
         desc.hotReload     = {.watchStore = hotReload, .pollMs = 5};
         Result<Context*> c = create(desc);
@@ -697,7 +677,6 @@ KILN_TEST(CatalogRuntime, LoadsArtifactsByName) {
 
     CatalogContext c;
     KILN_REQUIRE(c.init(dir).ok());
-    KILN_CHECK(store_layout(c.ctx) == StoreLayout::Catalog);
     KILN_CHECK(store_profile(c.ctx) == "compat"_sv);
     MeshHandle const m = request_mesh(c.ctx, "pbr_textures.glb"_sv);
     KILN_CHECK(settle(c.ctx, m) == State::Ready);
@@ -801,7 +780,6 @@ struct ProviderContext {
         ContextDesc cd{};
         cd.adapter           = &c.adapter;
         cd.storeDir          = StrView(store);
-        cd.storeLayout       = StoreLayout::Catalog;
         cd.roots             = Span<Root const>(&root, 1);
         cd.diag              = {&FirstCode::fn, &c.diag};
         cd.hotReload         = {.watchStore = hotReload, .pollMs = 5};
@@ -1066,16 +1044,6 @@ KILN_TEST(CatalogCli, WatchCooksEditsAndNewSources) {
     Hash128 const after = catalog_key(store, AssetKind::Mesh, "external_uri.gltf"_sv);
     KILN_CHECK(!after.is_zero() && !(after == first));
     KILN_CHECK(!catalog_key(store, AssetKind::Texture, "second.png"_sv).is_zero());
-}
-
-KILN_TEST(CatalogCli, LayoutsDoNotMix) {
-    char store[1024], sources[1024];
-    fresh_dir("catalog-cli-mix", store, sizeof store);
-    fresh_dir("catalog-cli-mix-src", sources, sizeof sources);
-    copy_sources(sources);
-    KILN_REQUIRE_EQ(run_cook(sources, store, "--layout=named"), 0);
-    KILN_CHECK_EQ(run_cook(sources, store), 2);             // a named store
-    KILN_CHECK_EQ(run_cook(sources, store, "--verify"), 2); // still a named store
 }
 
 #endif // KILN_MESH

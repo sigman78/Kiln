@@ -10,11 +10,13 @@ else()
     target_compile_definitions(kiln-headless PRIVATE KILN_HEADLESS_HAS_COOK=0)
 endif()
 
-# Smoke test against the committed golden files; the delays make the output show real progress.
+# Smoke test against the committed golden files, which kiln_tests puts into a catalog store (the
+# golden_store fixture, tests/CMakeLists.txt); the delays make the output show real progress.
 if(KILN_BUILD_TESTS)
     add_test(NAME example_headless
-             COMMAND kiln-headless --store ${CMAKE_SOURCE_DIR}/tests/golden --layout named --slow 200 --latency 5
+             COMMAND kiln-headless --store ${CMAKE_BINARY_DIR}/tests/samples/golden-store --slow 200 --latency 5
                      mesh/Box.mesh mesh/BoxTextured.mesh ktx2/color_srgb.ktx2 ktx2/normal.ktx2)
+    set_tests_properties(example_headless PROPERTIES FIXTURES_REQUIRED golden_store)
 
     # Cook-on-miss from two source roots into an empty catalog store: the default root and a named
     # root `gen:`. kiln-info then checks the catalog and every artifact it names.
