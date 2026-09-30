@@ -331,6 +331,7 @@ into a new directory; kiln deletes no store.
 
 1. ~~Record format~~: `manifest.in`, binary, with a checksum (above).
 2. ~~The prepare callback~~: `CookProvider::prepare` (R11). Accepting an unverified entry when the
-   provider finds no source is still open; such an entry is not used for now.
+   provider finds no source is not supported (owner, 2026-09-30); add an option when a host needs it.
 3. Whether `create()` should also accept a manifest file path directly (a shipping package that is
-   not a store directory).
+   not a store directory). Open until pack files or a split package need it: any copy of a store
+   directory loads, since the runtime reads only `manifest.dir` and the artifacts.
