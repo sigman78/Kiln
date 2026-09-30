@@ -87,6 +87,8 @@ Not goals for v1:
 - EXR sources; a bgfx adapter example.
 - Load-throughput and cook-time benchmarks; tracking full-rebuild time in CI (flag regressions
   over 20%).
+- GPU conformance runs under the Vulkan validation layer (with synchronization validation): the
+  examples' `--dump` and `--verify` modes. This machine has no layer yet; CI only compiles Vulkan.
 - Extracting `kiln/core` into a separate utility library.
 - Proposed notes awaiting the owner: [`design/readiness-sets.md`](design/readiness-sets.md).
 
