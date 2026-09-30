@@ -77,14 +77,11 @@ void catalog_changed(Context* ctx) noexcept {
     for (u32 i = 0; i < ctx->maxAssets; ++i) {
         Slot& s = ctx->slots[i];
         if (!s.live || s.zombie || s.source != SourceKind::File) continue;
-        CatalogEntry e;
-        if (!ctx->catalog.find(s.kind, path_of(s), &e)) continue;
-        // A load in flight is compared by its dispatch key: its job owns jobKey until it completes.
-        bool const settled = s.phase == Phase::Done;
-        bool const hasKey  = settled ? s.keyValid : s.dispatchKeyValid;
-        Hash128 const& key = settled ? s.key : s.dispatchKey;
-        if (hasKey && key == e.key) continue;
-        reload_slot(ctx, s);
+        // A load in flight learns its key only when it completes (the provider may name it): compare then.
+        if (s.phase != Phase::Done)
+            s.catalogCheck = true;
+        else if (catalog_names_other(ctx, s))
+            reload_slot(ctx, s);
     }
 }
 

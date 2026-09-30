@@ -140,10 +140,9 @@ struct Slot {
     bool jobCatalogPresent = false; ///< Context::catalogPresent at dispatch
 
     // --- keys (pump thread) ---------------------------------------------------------
-    Hash128 dispatchKey; ///< jobKey as dispatch set it; the job may change jobKey
-    bool dispatchKeyValid = false;
-    Hash128 key;           ///< the build key `cur` came from, or that a failed load tried
-    bool keyValid = false; ///< false: no artifact (provider bytes, a miss) or not loaded
+    bool catalogCheck = false; ///< a new catalog came during the load: compare keys when it settles
+    Hash128 key;               ///< the build key `cur` came from, or that a failed load tried
+    bool keyValid = false;     ///< false: no artifact (provider bytes, a miss) or not loaded
 
     // --- metadata (docs/design/hot-reload.md) ----------------------------------------
     // Queries answer from `cur` once Ready. The meta stage (worker) writes only `next`;
@@ -349,6 +348,9 @@ PumpStats pump_impl(Context* ctx, PumpOptions const& opt, bool keepEvents) noexc
 /// request_reload(): start a reload of a settled file-source slot, or remember it
 /// (reloadPending) until the slot settles. Memory sources: K5012.
 void reload_slot(Context* ctx, Slot& s) noexcept;
+/// True if the catalog in use has an entry for the settled file-source `s` that names another
+/// artifact than the one it loaded or tried (or it had none).
+[[nodiscard]] bool catalog_names_other(Context const* ctx, Slot const& s) noexcept;
 /// Poll non-self-submitting placeholder uploads (create() and pump()).
 void poll_placeholders(Context* ctx) noexcept;
 /// Poll abandoned uploads; a completed one is retired.
