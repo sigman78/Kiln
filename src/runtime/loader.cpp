@@ -463,10 +463,7 @@ Status write_mesh(Context* ctx, Slot& s, Source const& src, u8* dst) noexcept {
     Span<u8> const out(dst, usize(h.payloadDecodedSize));
     if (h.gpuDataOffset > src.size || h.gpuDataSize > src.size - h.gpuDataOffset)
         return make_status(Code::IoEof);
-    if (src.memory)
-        return mesh::decode_payload(v, src.mem.subspan(usize(h.gpuDataOffset), usize(h.gpuDataSize)), out, {},
-                                    &sink, nullptr, name);
-    if (v.payload_raw()) {
+    if (v.payload_raw() && !src.memory) {
         // Identity layout: one read of GPUD straight into the adapter's memory.
         if (h.payloadDecodedSize > h.gpuDataSize)
             return diagf(&sink, make_status(Code::Corrupt), mesh::kDiagPayloadRaw, Severity::Error, name,
@@ -474,13 +471,23 @@ Status write_mesh(Context* ctx, Slot& s, Source const& src, u8* dst) noexcept {
         IoBytes budget(ctx, h.payloadDecodedSize);
         return src.read(h.gpuDataOffset, h.payloadDecodedSize, dst);
     }
-    Vec<u8> scratch(ctx->alloc, Tag::Io);
-    scratch.resize(usize(h.gpuDataSize));
-    {
+    Vec<u8> encoded(ctx->alloc, Tag::Io);
+    Span<u8 const> gpud;
+    if (src.memory) {
+        gpud = src.mem.subspan(usize(h.gpuDataOffset), usize(h.gpuDataSize));
+    } else {
+        encoded.resize(usize(h.gpuDataSize));
         IoBytes budget(ctx, h.gpuDataSize);
-        KILN_TRY(src.read(h.gpuDataOffset, h.gpuDataSize, scratch.data()));
+        KILN_TRY(src.read(h.gpuDataOffset, h.gpuDataSize, encoded.data()));
+        gpud = encoded.span();
     }
-    return mesh::decode_payload(v, scratch.span(), out, {}, &sink, nullptr, name);
+    if (v.payload_raw()) return mesh::decode_payload(v, gpud, out, {}, &sink, nullptr, name);
+    // Never straight into the adapter's memory: Zstd reads its output back (as in write_level).
+    Vec<u8> decoded(ctx->alloc, Tag::Io);
+    decoded.resize(out.size);
+    KILN_TRY(mesh::decode_payload(v, gpud, decoded.span(), {}, &sink, nullptr, name));
+    if (out.size) std::memcpy(out.data, decoded.data(), out.size);
+    return kOk;
 }
 
 /// Buffers one texture write reuses across its levels (and layers).

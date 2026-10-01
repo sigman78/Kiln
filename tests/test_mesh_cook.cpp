@@ -12,6 +12,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 
 using namespace kiln;
 namespace corpus = kiln::test::corpus;
@@ -93,8 +94,10 @@ void open_cooked(cook::CookedMesh const& m, Opened& o, char const* name) {
     o.payload.resize(usize(o.view.decoded_size()));
     mesh::DecodeOptions dopt;
     dopt.verifyChecksums = true;
-    if (!KILN_CHECK_MSG(mesh::decode_payload(o.view, o.view.encoded(), o.payload.span(), dopt).ok(),
-                        "%s: decode_payload failed", name))
+    Diags dd;
+    DiagSink const dsink = dd.sink();
+    if (!KILN_CHECK_MSG(mesh::decode_payload(o.view, o.view.encoded(), o.payload.span(), dopt, &dsink).ok(),
+                        "%s: decode_payload failed: %s", name, dd.msg))
         return;
     if (!KILN_CHECK_MSG(mesh::check_indices(o.view, o.payload.span()).ok(), "%s: check_indices failed", name))
         return;
@@ -1002,4 +1005,89 @@ KILN_TEST(MeshCook, threads_byte_identical) {
     }
     destroy_thread_pool(*eight);
     destroy_thread_pool(*one);
+}
+
+/// The decoded payloads of two cooks of one source hold the same mesh: every vertex stream byte for
+/// byte, every triangle with the same vertices in the same winding (meshopt's index codec may rotate
+/// a triangle's vertices). Non-triangle index ranges compare byte for byte.
+bool same_mesh(mesh::MeshView const& v, Span<u8 const> a, Span<u8 const> b) {
+    for (u32 li = 0; li < v.lods().size(); ++li) {
+        mesh::MeshLod const l         = v.lods()[li];
+        mesh::VertexLayout const& lay = v.layouts()[l.layout];
+        for (u32 s = 0; s < lay.streamCount; ++s) {
+            usize const off = l.streamOffset[s], n = usize(l.vertexCount) * lay.strides[s];
+            if (!corpus::bytes_equal(a.subspan(off, n), b.subspan(off, n))) return false;
+        }
+        usize const isz = mesh::index_size(mesh::IndexType(l.indexType));
+        auto index      = [&](Span<u8 const> p, u32 k) {
+            u8 const* q = p.data + l.indexOffset + usize(k) * isz;
+            u32 x       = 0;
+            std::memcpy(&x, q, isz); // little-endian, as kiln targets
+            return x;
+        };
+        bool const triangles = l.indexCount % 3 == 0;
+        for (u32 t = 0; t + 2 < l.indexCount + (triangles ? 0 : 2); t += triangles ? 3 : 1) {
+            if (!triangles) {
+                if (index(a, t) != index(b, t)) return false;
+                continue;
+            }
+            u32 const x[3] = {index(a, t), index(a, t + 1), index(a, t + 2)};
+            u32 const y[3] = {index(b, t), index(b, t + 1), index(b, t + 2)};
+            bool rotation  = false;
+            for (u32 r = 0; r < 3; ++r)
+                rotation = rotation || (x[0] == y[r] && x[1] == y[(r + 1) % 3] && x[2] == y[(r + 2) % 3]);
+            if (!rotation) return false;
+        }
+    }
+    return true;
+}
+
+// Every compression scheme decodes to the mesh an uncompressed cook gives (Basic byte for byte, the
+// meshopt schemes up to triangle rotation), in the default and float profiles; never a larger file.
+KILN_TEST(MeshCook, CompressionRoundTrip) {
+    static char const* const kFiles[] = {
+        "generated/cube_basic.glb",       "generated/hierarchy_parts.glb",
+        "generated/multi_material.glb",   "generated/pbr_textures.glb",
+        "generated/two_uv_sets.glb",      "generated/u32_indices.glb",
+        "generated/authored_lods.glb",    "generated/non_triangle.glb",
+        "generated/no_uv_no_normals.glb", "khronos/Box.glb",
+        "khronos/BoxTextured.glb",        "khronos/BoxVertexColors.glb",
+        "khronos/MultiUVTest.glb",
+    };
+    static cook::CompressionScheme const kSchemes[] = {cook::CompressionScheme::Basic,
+                                                       cook::CompressionScheme::Meshopt,
+                                                       cook::CompressionScheme::MeshoptZstd};
+    for (cook::VertexProfile profile : {cook::VertexProfile::Default, cook::VertexProfile::Float}) {
+        for (char const* file : kFiles) {
+            char path[1024];
+            format(path, sizeof path, "%s/../gltf/%s", kiln::test::corpus_dir(), file);
+            Vec<u8> bytes(default_allocator(), Tag::Test);
+            if (!KILN_CHECK_MSG(corpus::read_file(path, bytes), "cannot read %s", path)) continue;
+            cook::MeshCookSettings s = default_settings();
+            s.profile                = profile;
+            Diags d;
+            Result<cook::CookedMesh> plain = cook_bytes(bytes.span(), "test/mesh.glb", d, s);
+            if (!KILN_CHECK_MSG(plain.ok(), "%s: %s", file, d.msg)) continue;
+            Opened p;
+            open_cooked(*plain, p, file);
+            if (!p.ok) continue;
+            for (cook::CompressionScheme scheme : kSchemes) {
+                cook::MeshCookSettings sc = s;
+                sc.compression            = scheme;
+                sc = cook::resolve_mesh(sc, cook::TargetProfile{}, cook::CookSession{}).value();
+                Result<cook::CookedMesh> packed = cook_bytes(bytes.span(), "test/mesh.glb", d, sc);
+                if (!KILN_CHECK_MSG(packed.ok(), "%s scheme %u: %s", file, u32(scheme), d.msg)) continue;
+                Opened c;
+                open_cooked(*packed, c, file);
+                if (!c.ok) continue;
+                bool const exact = scheme == cook::CompressionScheme::Basic;
+                KILN_CHECK_MSG(exact ? corpus::bytes_equal(c.payload.span(), p.payload.span())
+                                     : same_mesh(p.view, p.payload.span(), c.payload.span()),
+                               "%s scheme %u: the payload differs", file, u32(scheme));
+                KILN_CHECK_MSG(packed->file.size() <= plain->file.size(), "%s scheme %u: %llu > %llu bytes",
+                               file, u32(scheme), static_cast<unsigned long long>(packed->file.size()),
+                               static_cast<unsigned long long>(plain->file.size()));
+            }
+        }
+    }
 }

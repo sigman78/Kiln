@@ -54,24 +54,26 @@ struct NamedRoot {
 struct Options {
     Vec<char const*> inputs{default_allocator(), Tag::General};
     Vec<NamedRoot> roots{default_allocator(), Tag::General};
-    char const* store       = "cooked";
-    char const* defaultRoot = nullptr; ///< --root without a name; null: the input directory
-    char const* map         = nullptr;
-    char const* trace       = nullptr; ///< --trace: Chrome trace file
-    bool check              = false;
-    bool verify             = false;   ///< compare input content, not size and time
-    bool watch              = false;   ///< keep cooking what changes until --timeout
-    u32 timeoutS            = 0;       ///< --watch: stop after this many seconds; 0 = never
-    bool gc                 = false;   ///< delete unreferenced artifacts instead of cooking
-    bool dryRun             = false;   ///< --gc: report only
-    char const* exportDir   = nullptr; ///< write a runtime-only copy of the store instead of cooking
-    bool quiet              = false;
-    bool verbose            = false;
-    u32 threads             = 0; ///< cooking threads including the main one; 0 = auto, 1 = no pool
-    char const* profile     = "default";
-    char const* targetName  = nullptr; ///< null: compat when cooking, every profile for --export
-    char const* quality     = "normal";
-    u32 zstd                = kDefaultZstdLevel; ///< 0: texture levels stay plain
+    char const* store           = "cooked";
+    char const* defaultRoot     = nullptr; ///< --root without a name; null: the input directory
+    char const* map             = nullptr;
+    char const* trace           = nullptr; ///< --trace: Chrome trace file
+    bool check                  = false;
+    bool verify                 = false;   ///< compare input content, not size and time
+    bool watch                  = false;   ///< keep cooking what changes until --timeout
+    u32 timeoutS                = 0;       ///< --watch: stop after this many seconds; 0 = never
+    bool gc                     = false;   ///< delete unreferenced artifacts instead of cooking
+    bool dryRun                 = false;   ///< --gc: report only
+    char const* exportDir       = nullptr; ///< write a runtime-only copy of the store instead of cooking
+    bool quiet                  = false;
+    bool verbose                = false;
+    u32 threads                 = 0; ///< cooking threads including the main one; 0 = auto, 1 = no pool
+    char const* profile         = "default";
+    char const* meshCompression = "none";
+    u32 meshZstd                = 0;       ///< 0: kDefaultZstdLevel when the scheme uses Zstd
+    char const* targetName      = nullptr; ///< null: compat when cooking, every profile for --export
+    char const* quality         = "normal";
+    u32 zstd                    = kDefaultZstdLevel; ///< 0: texture levels stay plain
     MeshCookSettings mesh;
     TextureCookSettings tex;
     TargetProfile target;
@@ -615,8 +617,9 @@ bool add_root(void* user, char const* arg) {
     return true;
 }
 
-char const* const kProfiles[]  = {"default", "precise", "float", nullptr};
-char const* const kQualities[] = {"fast", "normal", "high", nullptr};
+char const* const kProfiles[]         = {"default", "precise", "float", nullptr};
+char const* const kMeshCompressions[] = {"none", "basic", "meshopt", "meshopt-zstd", nullptr};
+char const* const kQualities[]        = {"fast", "normal", "high", nullptr};
 
 } // namespace
 
@@ -674,6 +677,16 @@ int kiln::cook::cook_cli_main(int argc, char** argv, CookPolicy const& policy, u
          .arg    = "<level>",
          .help   = "Zstd level of texture files, 1..19 (default 3); 0 stores them plain",
          .number = &o.zstd,
+         .max    = kMaxZstdLevel},
+        {.name    = "--mesh-compression",
+         .arg     = "<scheme>",
+         .help    = "mesh payload compression (docs/mesh-format-spec.md 5.9)",
+         .str     = &o.meshCompression,
+         .choices = kMeshCompressions},
+        {.name   = "--mesh-zstd",
+         .arg    = "<level>",
+         .help   = "Zstd level of the basic and meshopt-zstd schemes, 1..19 (default 3)",
+         .number = &o.meshZstd,
          .max    = kMaxZstdLevel},
         {.name    = "--profile",
          .arg     = "<name>",
@@ -764,6 +777,12 @@ int kiln::cook::cook_cli_main(int argc, char** argv, CookPolicy const& policy, u
                                                           : EncodeQuality::Normal;
     o.tex.supercompression = o.zstd != 0 ? Supercompression::Zstd : Supercompression::None;
     o.tex.zstdLevel        = u8(o.zstd);
+    o.mesh.compression     = std::strcmp(o.meshCompression, "basic") == 0     ? CompressionScheme::Basic
+                             : std::strcmp(o.meshCompression, "meshopt") == 0 ? CompressionScheme::Meshopt
+                             : std::strcmp(o.meshCompression, "meshopt-zstd") == 0
+                                 ? CompressionScheme::MeshoptZstd
+                                 : CompressionScheme::None;
+    o.mesh.zstdLevel       = u8(o.meshZstd);
     o.mesh.profile         = std::strcmp(o.profile, "float") == 0     ? VertexProfile::Float
                              : std::strcmp(o.profile, "precise") == 0 ? VertexProfile::Precise
                                                                       : VertexProfile::Default;

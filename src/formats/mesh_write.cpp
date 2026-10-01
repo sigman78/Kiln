@@ -3,6 +3,14 @@
 // local, so _pad/_reserved fields are always 0.
 #include "kiln/cook/mesh_writer.h"
 
+#include "formats_internal.h"
+
+#include "kiln_meshopt_prefix.h" // before meshoptimizer.h: the vendored codec's names
+#include "meshoptimizer.h"
+
+#define ZSTD_STATIC_LINKING_ONLY // the custom-allocator API (the vendored zstd is pinned)
+#include <zstd.h>
+
 #include <algorithm>
 
 namespace kiln::mesh {
@@ -166,7 +174,92 @@ private:
 
 struct BlobOut {
     PayloadBlob rec;
-    u8 const* src; ///< decoded bytes (== encoded bytes: codec None)
+    u8 const* src;   ///< decoded bytes
+    Vec<u8> encoded; ///< empty: codec None, the encoded bytes are `src`
+    bool index = false;
+    Vec<u8> rotated; ///< MeshoptIndex: the indices as they decode; `src` then points here
+};
+
+/// One blob's encoding under a scheme: meshopt for vertices and triangle indices, else Zstd.
+struct Encoder {
+    ZSTD_CCtx* cctx = nullptr;
+    Vec<u8> shuffled;
+    Vec<u8> inner;
+
+    /// Zstd of `in` into `out`; false when it fails.
+    bool zstd(Span<u8 const> in, Vec<u8>& out) noexcept {
+        out.resize(ZSTD_compressBound(in.size));
+        usize const n = ZSTD_compress2(cctx, out.data(), out.size(), in.data, in.size);
+        if (ZSTD_isError(n)) return false;
+        out.resize(n);
+        return true;
+    }
+
+    /// Fills `b.encoded` and the codec fields; leaves the blob None when nothing shrinks it.
+    bool encode(BlobOut& b, cook::CompressionScheme scheme) noexcept {
+        bool const index  = b.index;
+        usize const n     = b.rec.decodedSize;
+        usize const size  = b.rec.elementSize;
+        usize const count = n / size;
+        Span<u8 const> const src(b.src, n);
+        bool const meshopt =
+            scheme == cook::CompressionScheme::Meshopt || scheme == cook::CompressionScheme::MeshoptZstd;
+        Codec codec   = Codec::Zstd;
+        Filter filter = Filter::None;
+        u16 flags     = 0;
+        if (meshopt && !index) {
+            inner.resize(meshopt_encodeVertexBufferBound(count, size));
+            usize const m =
+                meshopt_encodeVertexBufferLevel(inner.data(), inner.size(), b.src, count, size, 2, 1);
+            if (m == 0) return false;
+            inner.resize(m);
+            codec = Codec::MeshoptVertex;
+        } else if (meshopt && size != 1 && count % 3 == 0) {
+            inner.resize(meshopt_encodeIndexBufferBound(count, size == 2 ? usize(1) << 16 : usize(1) << 31));
+            usize const m = size == 2 ? meshopt_encodeIndexBuffer(inner.data(), inner.size(),
+                                                                  reinterpret_cast<u16 const*>(b.src), count)
+                                      : meshopt_encodeIndexBuffer(inner.data(), inner.size(),
+                                                                  reinterpret_cast<u32 const*>(b.src), count);
+            if (m == 0) return false;
+            inner.resize(m);
+            codec = Codec::MeshoptIndex;
+            // The codec may rotate a triangle's vertices (winding and triangle order stay): the payload
+            // is what it decodes to, so the checksum and every reader agree.
+            b.rotated.resize(n);
+            if (meshopt_decodeIndexBuffer(b.rotated.data(), count, size, inner.data(), inner.size()) != 0)
+                return false;
+        }
+        if (codec == Codec::Zstd) { // Basic, or what meshopt cannot take
+            Span<u8 const> in = src;
+            if (!index && size > 1) {
+                shuffled.resize(n);
+                for (usize byte = 0; byte < size; ++byte)
+                    for (usize i = 0; i < count; ++i)
+                        shuffled[byte * count + i] = b.src[i * size + byte];
+                in     = shuffled.span();
+                filter = Filter::ByteShuffle;
+            }
+            if (!zstd(in, b.encoded)) return false;
+        } else if (scheme == cook::CompressionScheme::MeshoptZstd) {
+            if (!zstd(inner.span(), b.encoded)) return false;
+            flags = kBlobOuterZstd;
+        } else {
+            b.encoded.resize(inner.size());
+            std::memcpy(b.encoded.data(), inner.data(), inner.size());
+        }
+        if (b.encoded.size() >= n) { // no gain: stored as it is
+            b.encoded.clear();
+            return true;
+        }
+        b.rec.codec  = u8(codec);
+        b.rec.filter = u8(filter);
+        b.rec.flags  = flags;
+        if (codec == Codec::MeshoptIndex) {
+            b.src = b.rotated.data();
+            if (b.rec.checksum != 0) b.rec.checksum = xxh32(b.src, n);
+        }
+        return true;
+    }
 };
 
 struct SectionOut {
@@ -224,7 +317,7 @@ Result<Vec<u8>> write(WriteDesc const& desc, WriteOptions const& opt, Allocator 
 
     // One blob per stream per LOD and one per index range. Splitting ranges into
     // smaller blobs is deferred to the codec work (spec §5.9).
-    auto emit_range = [&](u8 const* src, u64 bytes, u32 elementSize, u8 lodRank) {
+    auto emit_range = [&](u8 const* src, u64 bytes, u32 elementSize, u8 lodRank, bool index) {
         PayloadBlob b{};
         b.decodedOffset = u32(cursor);
         b.decodedSize   = u32(bytes);
@@ -234,7 +327,7 @@ Result<Vec<u8>> write(WriteDesc const& desc, WriteOptions const& opt, Allocator 
         b.flags         = 0;
         b.lodRank       = lodRank;
         b.checksum      = opt.checksums ? xxh32(src, usize(bytes)) : 0u;
-        blobs.push_back(BlobOut{b, src});
+        blobs.push_back(BlobOut{b, src, Vec<u8>(alloc, Tag::Cook), index, Vec<u8>(alloc, Tag::Cook)});
     };
 
     for (u32 li : order) {
@@ -254,7 +347,7 @@ Result<Vec<u8>> write(WriteDesc const& desc, WriteOptions const& opt, Allocator 
                 KILN_WRITE_FAIL(kDiagHeaderSizes,
                                 "decoded payload exceeds the 4 GiB limit (lod %u stream %u)", li, s);
             r.streamOffset[s] = u32(cursor);
-            emit_range(l.streams[s].data, bytes, lay.strides[s], rank[li]);
+            emit_range(l.streams[s].data, bytes, lay.strides[s], rank[li], false);
             cursor += bytes;
         }
         u32 isz    = index_size(l.indexType);
@@ -263,7 +356,7 @@ Result<Vec<u8>> write(WriteDesc const& desc, WriteOptions const& opt, Allocator 
         if (cursor + ibytes >= kLimit32)
             KILN_WRITE_FAIL(kDiagHeaderSizes, "decoded payload exceeds the 4 GiB limit (lod %u indices)", li);
         r.indexOffset = u32(cursor);
-        if (ibytes) emit_range(l.indices.data, ibytes, isz, rank[li]);
+        if (ibytes) emit_range(l.indices.data, ibytes, isz, rank[li], true);
         cursor += ibytes;
         r.indexCount     = l.indexCount;
         r.indexType      = u8(l.indexType);
@@ -274,17 +367,34 @@ Result<Vec<u8>> write(WriteDesc const& desc, WriteOptions const& opt, Allocator 
     u64 const decodedSize = align16(cursor);
     if (decodedSize >= kLimit32) KILN_WRITE_FAIL(kDiagHeaderSizes, "decoded payload exceeds the 4 GiB limit");
 
+    // -- compression ---------------------------------------------------------------
+    if (opt.compression != cook::CompressionScheme::None) {
+        fmt::ZstdMem mem{alloc, Tag::Cook};
+        Encoder e{ZSTD_createCCtx_advanced(ZSTD_customMem{&fmt::zstd_alloc, &fmt::zstd_free, &mem}),
+                  Vec<u8>(alloc, Tag::Cook), Vec<u8>(alloc, Tag::Cook)};
+        if (!e.cctx) KILN_WRITE_FAIL(kDiagHeaderSizes, "out of memory for the Zstd context");
+        (void)ZSTD_CCtx_setParameter(e.cctx, ZSTD_c_compressionLevel, int(clamp<u8>(opt.zstdLevel, 1, 19)));
+        (void)ZSTD_CCtx_setParameter(e.cctx, ZSTD_c_contentSizeFlag, 1);
+        (void)ZSTD_CCtx_setParameter(e.cctx, ZSTD_c_checksumFlag, 0);
+        bool ok = true;
+        for (u32 i = 0; i < u32(blobs.size()) && ok; ++i)
+            ok = e.encode(blobs[i], opt.compression);
+        ZSTD_freeCCtx(e.cctx);
+        if (!ok) KILN_WRITE_FAIL(kDiagHeaderSizes, "payload compression failed");
+    }
+
     // -- encoded layout ----------------------------------------------------------
     u64 enc  = 0;
     bool raw = encPad == 0;
     for (BlobOut& b : blobs) {
-        u64 eo = align16(enc + encPad);
-        if (eo + b.rec.decodedSize >= kLimit32)
+        u64 const bytes = b.encoded.empty() ? b.rec.decodedSize : b.encoded.size();
+        u64 eo          = align16(enc + encPad);
+        if (eo + bytes >= kLimit32)
             KILN_WRITE_FAIL(kDiagHeaderSizes, "encoded payload exceeds the 4 GiB limit");
         b.rec.encodedOffset = u32(eo);
-        b.rec.encodedSize   = b.rec.decodedSize;
-        enc                 = eo + b.rec.decodedSize;
-        if (b.rec.encodedOffset != b.rec.decodedOffset) raw = false;
+        b.rec.encodedSize   = u32(bytes);
+        enc                 = eo + bytes;
+        if (b.rec.encodedOffset != b.rec.decodedOffset || !b.encoded.empty()) raw = false;
     }
     u64 const gpuDataSize = align16(enc);
     if (gpuDataSize >= kLimit32) KILN_WRITE_FAIL(kDiagHeaderSizes, "encoded payload exceeds the 4 GiB limit");
@@ -463,12 +573,14 @@ Result<Vec<u8>> write(WriteDesc const& desc, WriteOptions const& opt, Allocator 
     gpud.size   = gpuDataSize;
     write_unaligned(base + sizeof(FileHeader) + usize(nSecs) * sizeof(SectionEntry), gpud);
     for (BlobOut const& b : blobs)
-        std::memcpy(base + gpuDataOffset + b.rec.encodedOffset, b.src, b.rec.decodedSize);
+        std::memcpy(base + gpuDataOffset + b.rec.encodedOffset, b.encoded.empty() ? b.src : b.encoded.data(),
+                    b.rec.encodedSize);
 
     if (stats) {
         stats->blobCount   = u32(blobs.size());
         stats->fileSize    = fileSize;
         stats->decodedSize = decodedSize;
+        stats->encodedSize = gpuDataSize;
         stats->raw         = raw;
     }
     return Result<Vec<u8>>(std::move(out));

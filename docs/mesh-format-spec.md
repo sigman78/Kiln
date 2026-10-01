@@ -481,6 +481,8 @@ A loader that meets a codec or filter it does not support (unknown, or not built
 - **Checksum.** `checksum` is xxh32 of the decoded bytes. 0 means "not stored", even when the real hash happens to be 0; that only skips a debug check.
 - **Destination.** Compressed blobs are read into a worker-local scratch buffer (arena) and decoded **directly into the adapter-provided destination** (staging / ReBAR). There is never a second full-size CPU copy.
 - **Quantization is not compression.** Vertex formats (§6) stay as described by `LAYT`, and the decoded payload is always exactly what the GPU consumes. Codecs and filters are lossless transforms of that data.
+- **`MeshoptIndex` and triangle rotation.** meshopt's index codec may rotate the three indices of a triangle (winding and triangle order stay). The writer therefore stores, and checksums, the indices as they decode. A cook with `MeshoptIndex` draws the same triangles as one without; only the provoking vertex of flat-interpolated attributes can differ. `MeshoptIndexSeq` keeps every index as it is.
+- **Decode into CPU memory.** Zstd reads its output back while it decodes. The kiln loader decodes a compressed payload into its own scratch memory and copies it to the adapter's staging, which is often write-combined (the same choice as for KTX2 levels).
 
 **Candidate schemes (to be decided with measurements, not part of v0.5 cooker output):**
 

@@ -4,6 +4,7 @@
 #pragma once
 
 #include "kiln/containers.h"
+#include "kiln/cook/settings.h"
 #include "kiln/mesh.h"
 
 namespace kiln::mesh {
@@ -92,12 +93,18 @@ struct WriteOptions {
     /// encoded blob (rounded up to a multiple of 16). Non-zero clears kPayloadRaw
     /// because encoded offsets no longer equal decoded offsets.
     u32 encodedPadding = 0;
+    /// Spec section 5.9 schemes. Vertex blobs take ByteShuffle + Zstd (Basic) or MeshoptVertex;
+    /// index blobs Zstd or MeshoptIndex; MeshoptZstd adds outer Zstd. A blob that does not shrink
+    /// stays codec None; U8 indices under a meshopt scheme take Zstd.
+    cook::CompressionScheme compression = cook::CompressionScheme::None;
+    u8 zstdLevel                        = 3; ///< 1..19, for Basic and MeshoptZstd
 };
 
 struct WriteStats {
     u32 blobCount   = 0;
     u64 fileSize    = 0;
     u64 decodedSize = 0;
+    u64 encodedSize = 0; ///< GPUD bytes
     bool raw        = false;
 };
 
