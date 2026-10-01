@@ -301,7 +301,7 @@ struct DiagCapture {
     u32 count         = 0;
     char message[256]{};
 
-    DiagSink sink() noexcept { return DiagSink{&DiagCapture::on_diag, this}; }
+    DiagSink sink() { return DiagSink{&DiagCapture::on_diag, this}; }
 
     static void on_diag(void* user, Diagnostic const& d) {
         auto* self     = static_cast<DiagCapture*>(user);

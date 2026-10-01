@@ -4,7 +4,7 @@
 
 namespace kiln {
 
-u64 profile_now_ns() noexcept {
+u64 profile_now_ns() {
     auto const t = std::chrono::steady_clock::now().time_since_epoch();
     return u64(std::chrono::duration_cast<std::chrono::nanoseconds>(t).count());
 }

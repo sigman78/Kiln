@@ -19,7 +19,7 @@ inline constexpr u32 kFailedCell   = 2;
 struct FailedChecker {
     u8 pixels[kFailedExtent * kFailedExtent * 4]{};
 
-    constexpr FailedChecker() noexcept {
+    constexpr FailedChecker() {
         for (u32 y = 0; y < kFailedExtent; ++y) {
             for (u32 x = 0; x < kFailedExtent; ++x) {
                 bool const magenta = ((x / kFailedCell) + (y / kFailedCell)) % 2 == 0;
@@ -36,7 +36,7 @@ constexpr FailedChecker kFailedChecker{};
 
 } // namespace
 
-PlaceholderImage builtin_placeholder(TextureKind kind) noexcept {
+PlaceholderImage builtin_placeholder(TextureKind kind) {
     switch (kind) {
     case TextureKind::BaseColor: return {Format::R8G8B8A8_SRGB, 1, 1, Span<u8 const>(kBaseColorPixel)};
     case TextureKind::Normal: return {Format::R8G8B8A8_UNORM, 1, 1, Span<u8 const>(kNormalPixel)};
@@ -48,7 +48,7 @@ PlaceholderImage builtin_placeholder(TextureKind kind) noexcept {
     std::unreachable();
 }
 
-PlaceholderImage builtin_failed_placeholder() noexcept {
+PlaceholderImage builtin_failed_placeholder() {
     return {Format::R8G8B8A8_SRGB, kFailedExtent, kFailedExtent, Span<u8 const>(kFailedChecker.pixels)};
 }
 

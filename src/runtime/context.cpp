@@ -12,8 +12,8 @@ namespace {
 
 using Clock = std::chrono::steady_clock;
 
-void log_info(Context* ctx, char const* fmt, ...) noexcept KILN_PRINTF(2, 3);
-void log_info(Context* ctx, char const* fmt, ...) noexcept {
+void log_info(Context* ctx, char const* fmt, ...) KILN_PRINTF(2, 3);
+void log_info(Context* ctx, char const* fmt, ...) {
     char msg[kLogMessageMax];
     va_list args;
     va_start(args, fmt);
@@ -25,9 +25,9 @@ void log_info(Context* ctx, char const* fmt, ...) noexcept {
         KILN_INFO("runtime", "%s", msg);
 }
 
-u64 pow2_at_least(u64 v, u64 lo) noexcept { return std::bit_ceil(max(v, lo)); }
+u64 pow2_at_least(u64 v, u64 lo) { return std::bit_ceil(max(v, lo)); }
 
-char* copy_str(Allocator const* a, StrView s) noexcept {
+char* copy_str(Allocator const* a, StrView s) {
     char* p = alloc_array<char>(a, s.size + 1, Tag::Registry);
     if (s.size) std::memcpy(p, s.data, s.size);
     p[s.size] = '\0';
@@ -38,7 +38,7 @@ char* copy_str(Allocator const* a, StrView s) noexcept {
 /// layer of `shape` (a cube has 6, an array 1). Retries Busy for up to 10 s. Completion is
 /// polled by the caller.
 Status upload_placeholder(Context* ctx, u32 index, AssetId id, TextureShape shape, Format format, u32 w,
-                          u32 h, Span<u8 const> pixels) noexcept {
+                          u32 h, Span<u8 const> pixels) {
     Placeholder& p = ctx->ph[index];
     p.id           = id;
     if ((format != Format::R8G8B8A8_UNORM && format != Format::R8G8B8A8_SRGB) || w == 0 || h == 0 ||
@@ -114,7 +114,7 @@ Status upload_placeholder(Context* ctx, u32 index, AssetId id, TextureShape shap
     return kOk;
 }
 
-Status upload_placeholders(Context* ctx, ContextDesc const& desc) noexcept {
+Status upload_placeholders(Context* ctx, ContextDesc const& desc) {
     for (u32 sh = 0; sh < u32(TextureShape::Count); ++sh) {
         TextureShape const shape = TextureShape(sh);
         if (!shape_supported(ctx, shape)) continue;
@@ -155,7 +155,7 @@ Status upload_placeholders(Context* ctx, ContextDesc const& desc) noexcept {
     return kOk;
 }
 
-void free_tables(Context* ctx) noexcept {
+void free_tables(Context* ctx) {
     Allocator const* a = ctx->alloc;
     if (ctx->slots) {
         for (u32 i = 0; i < ctx->maxAssets; ++i)
@@ -181,7 +181,7 @@ void free_tables(Context* ctx) noexcept {
     watch_free(ctx);
 }
 
-void teardown(Context* ctx) noexcept {
+void teardown(Context* ctx) {
     Adapter const& a = ctx->adapter;
     // 1. Let in-flight jobs finish (they only touch their slot and the completion ring).
     // Polled, not atomic::wait: a job's notify after its decrement could reach a freed context.
@@ -241,7 +241,7 @@ namespace {
 
 /// A store with a profile the adapter cannot fully sample is a configuration error: one report
 /// here instead of a failure per asset (docs/design/target-profiles.md).
-Status check_formats(ContextDesc const& desc, StrView profile, u64 blockFormats) noexcept {
+Status check_formats(ContextDesc const& desc, StrView profile, u64 blockFormats) {
     char missing[512] = {};
     usize at          = 0;
     for (u32 v = u32(Format::BC1_RGB_UNORM); v <= u32(Format::ASTC_12x12_SRGB); ++v) {
@@ -262,8 +262,7 @@ Status check_formats(ContextDesc const& desc, StrView profile, u64 blockFormats)
 
 /// Reads and validates the store's manifest into `bytes`. A missing manifest (or no store) is no
 /// error: a cook provider or kiln-cook may write it later.
-Status load_manifest(ContextDesc const& desc, Allocator const* a, Vec<u8>* bytes,
-                     ManifestView* view) noexcept {
+Status load_manifest(ContextDesc const& desc, Allocator const* a, Vec<u8>* bytes, ManifestView* view) {
     if (char const* why = check_profile_name(desc.profile))
         return diagf(&desc.diag, make_status(Code::InvalidArgument), kDiagBadAssetName, Severity::Error,
                      desc.profile, "create", "invalid profile name: %s", why);
@@ -287,12 +286,12 @@ Status load_manifest(ContextDesc const& desc, Allocator const* a, Vec<u8>* bytes
 
 } // namespace
 
-void adopt_manifest(Context* ctx, Vec<u8>&& bytes, ManifestView const& v) noexcept {
+void adopt_manifest(Context* ctx, Vec<u8>&& bytes, ManifestView const& v) {
     ctx->manifestBytes   = std::move(bytes); // the view's bytes stay where they are
     ctx->manifestPresent = v.find_profile(StrView(ctx->profile, ctx->profileLen), &ctx->manifest);
 }
 
-void refresh_manifest(Context* ctx) noexcept {
+void refresh_manifest(Context* ctx) {
     if (ctx->watch || ctx->storeDirLen == 0) return;
     char path[1024];
     usize const n = manifest_path(ctx, path, sizeof path);
@@ -313,7 +312,7 @@ void refresh_manifest(Context* ctx) noexcept {
 
 using namespace rt;
 
-Result<Context*> create(ContextDesc const& desc) noexcept {
+Result<Context*> create(ContextDesc const& desc) {
     if (!desc.adapter || !adapter_is_valid(*desc.adapter))
         return diagf(&desc.diag, make_status(Code::InvalidArgument), kDiagPlaceholderFailed, Severity::Error,
                      {}, "create", "ContextDesc::adapter is missing or invalid (adapter_is_valid)");
@@ -387,7 +386,7 @@ Result<Context*> create(ContextDesc const& desc) noexcept {
         ctx->rootChars    = alloc_array<char>(a, chars, Tag::Registry);
         ctx->rootCharsLen = chars;
         char* p           = ctx->rootChars;
-        auto const copy   = [&p](StrView s) noexcept {
+        auto const copy   = [&p](StrView s) {
             if (s.size) std::memcpy(p, s.data, s.size);
             p[s.size] = '\0';
             StrView const v(p, s.size);
@@ -447,7 +446,7 @@ Result<Context*> create(ContextDesc const& desc) noexcept {
     return ctx;
 }
 
-void destroy(Context* ctx) noexcept {
+void destroy(Context* ctx) {
     if (!ctx) return;
     watch_stop(ctx); // joins the poller before any table is freed
     teardown(ctx);
@@ -460,12 +459,12 @@ void destroy(Context* ctx) noexcept {
     delete_object(a, ctx, Tag::Registry);
 }
 
-void set_cook_provider(Context* ctx, CookProvider const& provider) noexcept {
+void set_cook_provider(Context* ctx, CookProvider const& provider) {
     if (ctx) ctx->provider = provider; // pump thread; snapshotted per load at dispatch
 }
-CookProvider cook_provider(Context* ctx) noexcept { return ctx ? ctx->provider : CookProvider{}; }
+CookProvider cook_provider(Context* ctx) { return ctx ? ctx->provider : CookProvider{}; }
 
-ContextStats stats(Context* ctx) noexcept {
+ContextStats stats(Context* ctx) {
     ContextStats st;
     if (!ctx) return st;
     for (u32 i = 0; i < ctx->maxAssets; ++i) {
@@ -488,20 +487,18 @@ ContextStats stats(Context* ctx) noexcept {
     return st;
 }
 
-StrView store_dir(Context* ctx) noexcept {
-    return ctx ? StrView(ctx->storeDir, ctx->storeDirLen) : StrView{};
-}
-StrView store_profile(Context* ctx) noexcept {
+StrView store_dir(Context* ctx) { return ctx ? StrView(ctx->storeDir, ctx->storeDirLen) : StrView{}; }
+StrView store_profile(Context* ctx) {
     return ctx && ctx->profile ? StrView(ctx->profile, ctx->profileLen) : StrView{};
 }
-Span<Root const> roots(Context* ctx) noexcept {
+Span<Root const> roots(Context* ctx) {
     return ctx ? Span<Root const>(ctx->roots, ctx->rootCount) : Span<Root const>{};
 }
-Allocator const* allocator(Context* ctx) noexcept { return ctx ? ctx->alloc : nullptr; }
-DiagSink const* diag_sink(Context* ctx) noexcept { return ctx ? &ctx->diag : nullptr; }
-JobSystem const* jobs(Context* ctx) noexcept { return ctx ? &ctx->jobs : nullptr; }
-Adapter const* adapter(Context* ctx) noexcept { return ctx ? &ctx->adapter : nullptr; }
-ProfileHooks const* profile_hooks(Context* ctx) noexcept { return ctx ? ctx->prof : nullptr; }
+Allocator const* allocator(Context* ctx) { return ctx ? ctx->alloc : nullptr; }
+DiagSink const* diag_sink(Context* ctx) { return ctx ? &ctx->diag : nullptr; }
+JobSystem const* jobs(Context* ctx) { return ctx ? &ctx->jobs : nullptr; }
+Adapter const* adapter(Context* ctx) { return ctx ? &ctx->adapter : nullptr; }
+ProfileHooks const* profile_hooks(Context* ctx) { return ctx ? ctx->prof : nullptr; }
 
 } // namespace kiln
 
@@ -509,13 +506,13 @@ namespace kiln {
 
 // A host's reload may follow an edit the provider has not seen: the load checks the sources again.
 // A reload after a manifest change does not: the store's writer checked them.
-void request_reload(Context* ctx, MeshHandle h) noexcept {
+void request_reload(Context* ctx, MeshHandle h) {
     if (rt::Slot* s = rt::resolve(ctx, h.bits(), AssetKind::Mesh)) {
         s->recheck = true;
         rt::reload_slot(ctx, *s);
     }
 }
-void request_reload(Context* ctx, TextureHandle h) noexcept {
+void request_reload(Context* ctx, TextureHandle h) {
     if (rt::Slot* s = rt::resolve(ctx, h.bits(), AssetKind::Texture)) {
         s->recheck = true;
         rt::reload_slot(ctx, *s);

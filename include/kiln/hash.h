@@ -7,13 +7,13 @@
 namespace kiln {
 
 /// Little-endian fourcc: fourcc('O','M','S','H') stores as bytes "OMSH".
-constexpr u32 fourcc(char a, char b, char c, char d) noexcept {
+constexpr u32 fourcc(char a, char b, char c, char d) {
     return u32(u8(a)) | (u32(u8(b)) << 8) | (u32(u8(c)) << 16) | (u32(u8(d)) << 24);
 }
-constexpr u32 fourcc(char const (&s)[5]) noexcept { return fourcc(s[0], s[1], s[2], s[3]); }
+constexpr u32 fourcc(char const (&s)[5]) { return fourcc(s[0], s[1], s[2], s[3]); }
 
 /// Writes the four characters of `id` into `out` (5 bytes, null-terminated).
-constexpr void fourcc_str(u32 id, char out[5]) noexcept {
+constexpr void fourcc_str(u32 id, char out[5]) {
     out[0] = char(id & 0xFF);
     out[1] = char((id >> 8) & 0xFF);
     out[2] = char((id >> 16) & 0xFF);
@@ -28,7 +28,7 @@ constexpr void fourcc_str(u32 id, char out[5]) noexcept {
 inline constexpr u64 kFnv1a64Offset = 0xcbf29ce484222325ull;
 inline constexpr u64 kFnv1a64Prime  = 0x100000001b3ull;
 
-constexpr u64 fnv1a64(u8 const* data, usize len, u64 seed = kFnv1a64Offset) noexcept {
+constexpr u64 fnv1a64(u8 const* data, usize len, u64 seed = kFnv1a64Offset) {
     u64 h = seed;
     for (usize i = 0; i < len; ++i) {
         h ^= data[i];
@@ -36,7 +36,7 @@ constexpr u64 fnv1a64(u8 const* data, usize len, u64 seed = kFnv1a64Offset) noex
     }
     return h;
 }
-constexpr u64 fnv1a64(char const* data, usize len, u64 seed = kFnv1a64Offset) noexcept {
+constexpr u64 fnv1a64(char const* data, usize len, u64 seed = kFnv1a64Offset) {
     u64 h = seed;
     for (usize i = 0; i < len; ++i) {
         h ^= u8(data[i]);
@@ -44,15 +44,15 @@ constexpr u64 fnv1a64(char const* data, usize len, u64 seed = kFnv1a64Offset) no
     }
     return h;
 }
-constexpr u64 fnv1a64(StrView s) noexcept { return fnv1a64(s.data, s.size); }
-constexpr u64 fnv1a64(Span<u8 const> b) noexcept { return fnv1a64(b.data, b.size); }
+constexpr u64 fnv1a64(StrView s) { return fnv1a64(s.data, s.size); }
+constexpr u64 fnv1a64(Span<u8 const> b) { return fnv1a64(b.data, b.size); }
 
 /// Name hash per the .mesh spec: FNV-1a 64 over exact bytes, no terminator.
-constexpr u64 hash_name(StrView s) noexcept { return fnv1a64(s); }
+constexpr u64 hash_name(StrView s) { return fnv1a64(s); }
 
 inline namespace literals {
 /// "meshes/ship"_h → FNV-1a 64 at compile time.
-constexpr u64 operator""_h(char const* s, usize n) noexcept { return fnv1a64(s, n); }
+constexpr u64 operator""_h(char const* s, usize n) { return fnv1a64(s, n); }
 } // namespace literals
 
 // ---------------------------------------------------------------------------
@@ -66,7 +66,7 @@ inline constexpr u64 kXxhP3 = 0x165667B19E3779F9ull;
 inline constexpr u64 kXxhP4 = 0x85EBCA77C2B2AE63ull;
 inline constexpr u64 kXxhP5 = 0x27D4EB2F165667C5ull;
 
-constexpr u64 xxh_read64(u8 const* p) noexcept {
+constexpr u64 xxh_read64(u8 const* p) {
     if consteval {
         u64 v = 0;
         for (int i = 0; i < 8; ++i)
@@ -77,7 +77,7 @@ constexpr u64 xxh_read64(u8 const* p) noexcept {
     std::memcpy(&v, p, 8);
     return v;
 }
-constexpr u32 xxh_read32(u8 const* p) noexcept {
+constexpr u32 xxh_read32(u8 const* p) {
     if consteval {
         u32 v = 0;
         for (int i = 0; i < 4; ++i)
@@ -88,19 +88,19 @@ constexpr u32 xxh_read32(u8 const* p) noexcept {
     std::memcpy(&v, p, 4);
     return v;
 }
-constexpr u64 xxh_round(u64 acc, u64 input) noexcept {
+constexpr u64 xxh_round(u64 acc, u64 input) {
     acc += input * kXxhP2;
     acc = std::rotl(acc, 31);
     acc *= kXxhP1;
     return acc;
 }
-constexpr u64 xxh_merge(u64 acc, u64 val) noexcept {
+constexpr u64 xxh_merge(u64 acc, u64 val) {
     val = xxh_round(0, val);
     acc ^= val;
     acc = acc * kXxhP1 + kXxhP4;
     return acc;
 }
-constexpr u64 xxh_avalanche(u64 h) noexcept {
+constexpr u64 xxh_avalanche(u64 h) {
     h ^= h >> 33;
     h *= kXxhP2;
     h ^= h >> 29;
@@ -111,7 +111,7 @@ constexpr u64 xxh_avalanche(u64 h) noexcept {
 } // namespace detail
 
 /// XXH64, bit-exact with the reference implementation.
-constexpr u64 xxh64(u8 const* p, usize len, u64 seed = 0) noexcept {
+constexpr u64 xxh64(u8 const* p, usize len, u64 seed = 0) {
     using namespace detail;
     u8 const* const end = p + len;
     u64 h;
@@ -158,12 +158,10 @@ constexpr u64 xxh64(u8 const* p, usize len, u64 seed = 0) noexcept {
     }
     return xxh_avalanche(h);
 }
-constexpr u64 xxh64(Span<u8 const> b, u64 seed = 0) noexcept { return xxh64(b.data, b.size, seed); }
+constexpr u64 xxh64(Span<u8 const> b, u64 seed = 0) { return xxh64(b.data, b.size, seed); }
 /// Runtime only (needs reinterpret_cast). For compile-time name hashes use fnv1a64 / ""_h.
-inline u64 xxh64(StrView s, u64 seed = 0) noexcept {
-    return xxh64(reinterpret_cast<u8 const*>(s.data), s.size, seed);
-}
-inline u64 xxh64(void const* p, usize len, u64 seed = 0) noexcept {
+inline u64 xxh64(StrView s, u64 seed = 0) { return xxh64(reinterpret_cast<u8 const*>(s.data), s.size, seed); }
+inline u64 xxh64(void const* p, usize len, u64 seed = 0) {
     return xxh64(static_cast<u8 const*>(p), len, seed);
 }
 
@@ -178,7 +176,7 @@ inline constexpr u32 kXxh32P3 = 3266489917u;
 inline constexpr u32 kXxh32P4 = 668265263u;
 inline constexpr u32 kXxh32P5 = 374761393u;
 
-constexpr u32 xxh32_round(u32 acc, u32 input) noexcept {
+constexpr u32 xxh32_round(u32 acc, u32 input) {
     acc += input * kXxh32P2;
     acc = std::rotl(acc, 13);
     acc *= kXxh32P1;
@@ -187,7 +185,7 @@ constexpr u32 xxh32_round(u32 acc, u32 input) noexcept {
 } // namespace detail
 
 /// XXH32, bit-exact with the reference implementation.
-constexpr u32 xxh32(u8 const* p, usize len, u32 seed = 0) noexcept {
+constexpr u32 xxh32(u8 const* p, usize len, u32 seed = 0) {
     using namespace detail;
     u8 const* const end = p + len;
     u32 h;
@@ -225,11 +223,9 @@ constexpr u32 xxh32(u8 const* p, usize len, u32 seed = 0) noexcept {
     h ^= h >> 16;
     return h;
 }
-constexpr u32 xxh32(Span<u8 const> b, u32 seed = 0) noexcept { return xxh32(b.data, b.size, seed); }
-inline u32 xxh32(StrView s, u32 seed = 0) noexcept {
-    return xxh32(reinterpret_cast<u8 const*>(s.data), s.size, seed);
-}
-inline u32 xxh32(void const* p, usize len, u32 seed = 0) noexcept {
+constexpr u32 xxh32(Span<u8 const> b, u32 seed = 0) { return xxh32(b.data, b.size, seed); }
+inline u32 xxh32(StrView s, u32 seed = 0) { return xxh32(reinterpret_cast<u8 const*>(s.data), s.size, seed); }
+inline u32 xxh32(void const* p, usize len, u32 seed = 0) {
     return xxh32(static_cast<u8 const*>(p), len, seed);
 }
 
@@ -238,28 +234,28 @@ inline u32 xxh32(void const* p, usize len, u32 seed = 0) noexcept {
 struct Hash128 {
     u8 bytes[16] = {};
 
-    [[nodiscard]] friend bool operator==(Hash128 const& a, Hash128 const& b) noexcept {
+    [[nodiscard]] friend bool operator==(Hash128 const& a, Hash128 const& b) {
         return std::memcmp(a.bytes, b.bytes, sizeof a.bytes) == 0;
     }
-    [[nodiscard]] bool is_zero() const noexcept { return *this == Hash128{}; }
+    [[nodiscard]] bool is_zero() const { return *this == Hash128{}; }
 };
 
 /// Streaming XXH64 for hashing several buffers (settings structs, file chunks).
 class KILN_API Xxh64State {
 public:
-    explicit Xxh64State(u64 seed = 0) noexcept { reset(seed); }
-    void reset(u64 seed = 0) noexcept;
-    void update(void const* data, usize len) noexcept;
-    void update(Span<u8 const> b) noexcept { update(b.data, b.size); }
-    void update(StrView s) noexcept { update(s.data, s.size); }
+    explicit Xxh64State(u64 seed = 0) { reset(seed); }
+    void reset(u64 seed = 0);
+    void update(void const* data, usize len);
+    void update(Span<u8 const> b) { update(b.data, b.size); }
+    void update(StrView s) { update(s.data, s.size); }
     /// Hash one scalar (integer, float, enum, bool). Structs are rejected: their padding
     /// bytes are indeterminate. Hash structs field by field (see docs/design/settings.md).
     template <class T>
         requires(std::is_arithmetic_v<T> || std::is_enum_v<T>)
-    void update_value(T const& v) noexcept {
+    void update_value(T const& v) {
         update(&v, sizeof(T));
     }
-    u64 digest() const noexcept;
+    u64 digest() const;
 
 private:
     u64 acc_[4];
@@ -274,7 +270,7 @@ private:
 // ---------------------------------------------------------------------------
 
 /// Finalizer for integer keys (splitmix64 mix).
-constexpr u64 mix64(u64 x) noexcept {
+constexpr u64 mix64(u64 x) {
     x ^= x >> 30;
     x *= 0xbf58476d1ce4e5b9ull;
     x ^= x >> 27;
@@ -283,25 +279,23 @@ constexpr u64 mix64(u64 x) noexcept {
     return x;
 }
 
-constexpr u64 hash_combine(u64 a, u64 b) noexcept {
+constexpr u64 hash_combine(u64 a, u64 b) {
     return mix64(a ^ (b + 0x9e3779b97f4a7c15ull + (a << 6) + (a >> 2)));
 }
 
-template <std::integral T> constexpr u64 hash_of(T v) noexcept { return mix64(u64(v)); }
-template <class T> constexpr u64 hash_of(T* p) noexcept {
-    return mix64(u64(reinterpret_cast<std::uintptr_t>(p)));
-}
-constexpr u64 hash_of(StrView s) noexcept { return fnv1a64(s); }
-template <class Tag> constexpr u64 hash_of(Handle<Tag> h) noexcept { return mix64(h.bits()); }
+template <std::integral T> constexpr u64 hash_of(T v) { return mix64(u64(v)); }
+template <class T> constexpr u64 hash_of(T* p) { return mix64(u64(reinterpret_cast<std::uintptr_t>(p))); }
+constexpr u64 hash_of(StrView s) { return fnv1a64(s); }
+template <class Tag> constexpr u64 hash_of(Handle<Tag> h) { return mix64(h.bits()); }
 template <class E>
     requires std::is_scoped_enum_v<E>
-constexpr u64 hash_of(E e) noexcept {
+constexpr u64 hash_of(E e) {
     return mix64(u64(std::to_underlying(e)));
 }
 
 /// Default hasher used by HashMap: dispatches to hash_of(key) via ADL.
 struct DefaultHash {
-    template <class K> constexpr u64 operator()(K const& k) const noexcept { return hash_of(k); }
+    template <class K> constexpr u64 operator()(K const& k) const { return hash_of(k); }
 };
 
 } // namespace kiln

@@ -9,7 +9,7 @@
 
 namespace kiln {
 
-char const* tag_name(Tag tag) noexcept {
+char const* tag_name(Tag tag) {
     switch (tag) {
     case Tag::General: return "general";
     case Tag::Core: return "core";
@@ -35,7 +35,7 @@ struct TagStats {
 
 TagStats g_stats[usize(Tag::Count)];
 
-void* sys_alloc(usize size, usize align) noexcept {
+void* sys_alloc(usize size, usize align) {
     if (size == 0) size = 1;
     if (align < kDefaultAlign) align = kDefaultAlign;
 #if defined(KILN_OS_WINDOWS)
@@ -46,7 +46,7 @@ void* sys_alloc(usize size, usize align) noexcept {
 #endif
 }
 
-void sys_free(void* p) noexcept {
+void sys_free(void* p) {
 #if defined(KILN_OS_WINDOWS)
     _aligned_free(p);
 #else
@@ -81,9 +81,9 @@ constexpr Allocator g_default{&default_alloc, &default_free, nullptr};
 
 } // namespace
 
-Allocator const* default_allocator() noexcept { return &g_default; }
+Allocator const* default_allocator() { return &g_default; }
 
-AllocStats default_alloc_stats(Tag tag) noexcept {
+AllocStats default_alloc_stats(Tag tag) {
     AllocStats out;
     auto add = [&](TagStats const& s) {
         out.bytesCurrent += s.bytesCurrent.load(std::memory_order_relaxed);
@@ -100,7 +100,7 @@ AllocStats default_alloc_stats(Tag tag) noexcept {
     return out;
 }
 
-void* alloc(Allocator const* a, usize size, usize align, Tag tag) noexcept {
+void* alloc(Allocator const* a, usize size, usize align, Tag tag) {
     KILN_ASSERT(a && a->alloc);
     KILN_VERIFY(is_pow2(align) && "alloc: alignment must be a power of two");
     void* p = a->alloc(a->user, size, align, tag);
@@ -120,9 +120,9 @@ struct Arena::Block {
 // fields), rounded up so the payload after it is kDefaultAlign-aligned.
 static constexpr usize kBlockHeader = align_up(usize(2 * sizeof(void*)), kDefaultAlign);
 
-Arena::Arena(Desc const& desc) noexcept { init(desc); }
+Arena::Arena(Desc const& desc) { init(desc); }
 
-Arena::~Arena() noexcept { release(); }
+Arena::~Arena() { release(); }
 
 Arena::Arena(Arena&& o) noexcept
     : desc_(o.desc_), head_(o.head_), cur_(o.cur_), end_(o.end_), used_(o.used_), reserved_(o.reserved_) {
@@ -147,14 +147,14 @@ Arena& Arena::operator=(Arena&& o) noexcept {
     return *this;
 }
 
-void Arena::init(Desc const& desc) noexcept {
+void Arena::init(Desc const& desc) {
     KILN_ASSERT(head_ == nullptr && "Arena::init on a live arena");
     desc_ = desc;
     if (!desc_.backing) desc_.backing = default_allocator();
     if (desc_.blockSize < 256) desc_.blockSize = 256;
 }
 
-void* Arena::alloc(usize size, usize align) noexcept {
+void* Arena::alloc(usize size, usize align) {
     KILN_ASSERT(is_pow2(align));
     u8* p = reinterpret_cast<u8*>(align_up(reinterpret_cast<std::uintptr_t>(cur_), std::uintptr_t(align)));
     if (KILN_LIKELY(cur_ && p + size <= end_)) {
@@ -165,7 +165,7 @@ void* Arena::alloc(usize size, usize align) noexcept {
     return alloc_slow(size, align);
 }
 
-void* Arena::alloc_slow(usize size, usize align) noexcept {
+void* Arena::alloc_slow(usize size, usize align) {
     if (!desc_.backing) init(desc_);
     // Blocks form one chain with no spare blocks to reuse, so always allocate a new
     // block big enough for this request plus alignment slack.
@@ -186,14 +186,14 @@ void* Arena::alloc_slow(usize size, usize align) noexcept {
     return p;
 }
 
-StrView Arena::copy(StrView s) noexcept {
+StrView Arena::copy(StrView s) {
     char* p = static_cast<char*>(alloc(s.size + 1, 1));
     if (s.size) std::memcpy(p, s.data, s.size);
     p[s.size] = '\0';
     return {p, s.size};
 }
 
-void Arena::reset() noexcept {
+void Arena::reset() {
     if (!head_) return;
     // Free every block except the oldest (bottom of the chain) and rewind into it.
     Block* b = head_;
@@ -209,7 +209,7 @@ void Arena::reset() noexcept {
     used_ = 0;
 }
 
-void Arena::release() noexcept {
+void Arena::release() {
     Block* b = head_;
     while (b) {
         Block* prev = b->prev;
@@ -228,6 +228,6 @@ void* arena_alloc_thunk(void* user, usize size, usize align, Tag /*tag*/) {
 void arena_free_thunk(void*, void*, usize, usize, Tag) {}
 } // namespace
 
-Allocator Arena::as_allocator() noexcept { return {&arena_alloc_thunk, &arena_free_thunk, this}; }
+Allocator Arena::as_allocator() { return {&arena_alloc_thunk, &arena_free_thunk, this}; }
 
 } // namespace kiln

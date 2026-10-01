@@ -29,29 +29,29 @@ struct NgaAdapterDesc {
 /// Fills `out`: bindless slots through bind(), the GPU work in Adapter::flush (so pump() and create()
 /// run on the thread that submits to queue 0). Call on that thread. The host reports its frames
 /// (PumpOptions): descriptors are freed only after the frames that read them.
-Result<NgaAdapter*> nga_adapter_create(NgaAdapterDesc const& desc, Adapter* out) noexcept;
+Result<NgaAdapter*> nga_adapter_create(NgaAdapterDesc const& desc, Adapter* out);
 /// After destroy(ctx). Waits for the adapter's own submissions.
-void nga_adapter_destroy(NgaAdapter* a) noexcept;
+void nga_adapter_destroy(NgaAdapter* a);
 /// The counters shared by every example adapter; any thread. busyHeap counts both a full mesh heap
 /// at begin_upload and a full texture heap or descriptor heap at flush (retried at the next one).
-ex::AdapterStats nga_adapter_stats(NgaAdapter* a) noexcept;
+ex::AdapterStats nga_adapter_stats(NgaAdapter* a);
 
 /// Set these before drawing: textures by descriptor index, samplers 0 (repeat) and 1 (clamp).
-gpu::TextureDescriptorHeap* nga_texture_heap(NgaAdapter* a) noexcept;
-gpu::SamplerDescriptorHeap* nga_sampler_heap(NgaAdapter* a) noexcept;
+gpu::TextureDescriptorHeap* nga_texture_heap(NgaAdapter* a);
+gpu::SamplerDescriptorHeap* nga_sampler_heap(NgaAdapter* a);
 
 /// The descriptor index a slot shows now: the placeholder until the texture arrives, then the texture.
 /// A descriptor is written once and never changed while a frame may use it; bind() moves the
 /// slot to another descriptor instead. kInvalid for a slot never bound.
-u32 nga_descriptor(NgaAdapter* a, u32 slot) noexcept;
+u32 nga_descriptor(NgaAdapter* a, u32 slot);
 
 struct NgaMesh {
     u64 gpu  = 0; ///< GPU address of the payload; stream and index offsets are relative to it
     u64 size = 0;
 };
 /// The mesh payload behind a GpuObject that gpu_object() returned (zero until Ready).
-NgaMesh nga_mesh(NgaAdapter* a, GpuObject obj) noexcept;
+NgaMesh nga_mesh(NgaAdapter* a, GpuObject obj);
 /// The texture behind a GpuObject, or null. Created with transfer_source usage, for --verify.
-gpu::Texture* nga_texture(NgaAdapter* a, GpuObject obj) noexcept;
+gpu::Texture* nga_texture(NgaAdapter* a, GpuObject obj);
 
 } // namespace kiln::nga

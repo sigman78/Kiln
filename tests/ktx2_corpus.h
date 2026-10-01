@@ -36,7 +36,7 @@ struct Manifest {
 };
 
 /// Read the whole file at `path` into `out`. Returns false if it cannot be opened or read.
-inline bool read_file(char const* path, Vec<u8>& out) noexcept {
+inline bool read_file(char const* path, Vec<u8>& out) {
     std::FILE* f = std::fopen(path, "rb");
     if (!f) return false;
     bool ok         = std::fseek(f, 0, SEEK_END) == 0;
@@ -52,7 +52,7 @@ inline bool read_file(char const* path, Vec<u8>& out) noexcept {
 
 /// The texels of `level`: its stored bytes, decoded when the file is Zstd-supercompressed.
 /// Empty when they do not decode.
-inline Vec<u8> texels(ktx2::Ktx2View const& v, u32 level) noexcept {
+inline Vec<u8> texels(ktx2::Ktx2View const& v, u32 level) {
     Vec<u8> out(default_allocator(), Tag::Test);
     if (level >= v.levels().size) return out;
     out.resize(usize(v.levels()[level].uncompressedByteLength));
@@ -60,7 +60,7 @@ inline Vec<u8> texels(ktx2::Ktx2View const& v, u32 level) noexcept {
     return out;
 }
 
-inline bool parse_u32(StrView s, u32& out) noexcept {
+inline bool parse_u32(StrView s, u32& out) {
     if (s.empty() || s.size > 10) return false;
     u64 v = 0;
     for (char c : s) {
@@ -72,14 +72,14 @@ inline bool parse_u32(StrView s, u32& out) noexcept {
     return true;
 }
 
-inline Format format_by_name(StrView name) noexcept {
+inline Format format_by_name(StrView name) {
     for (FormatInfo const& e : detail::kFormatTable)
         if (StrView(e.name) == name) return e.format;
     return Format::Undefined;
 }
 
 /// Call fn(item) for each comma-separated item of `list` (empty items skipped).
-template <class Fn> void for_each_item(StrView list, Fn&& fn) noexcept {
+template <class Fn> void for_each_item(StrView list, Fn&& fn) {
     usize pos = 0;
     while (pos < list.size) {
         usize comma = list.find(',', pos);
@@ -90,7 +90,7 @@ template <class Fn> void for_each_item(StrView list, Fn&& fn) noexcept {
 }
 
 /// Parse one non-comment line into `e`. Returns an error message or nullptr.
-inline char const* parse_line(StrView line, Entry& e) noexcept {
+inline char const* parse_line(StrView line, Entry& e) {
     StrView fields[12];
     usize n   = 0;
     usize pos = 0;
@@ -126,7 +126,7 @@ inline char const* parse_line(StrView line, Entry& e) noexcept {
 
 /// Load and parse `<dir>/manifest.txt`. Reports failures through KILN_CHECK_MSG and
 /// returns false if the manifest could not be read or has a malformed line.
-inline bool load_manifest(char const* dir, Manifest& m) noexcept {
+inline bool load_manifest(char const* dir, Manifest& m) {
     char path[1024];
     format(path, sizeof path, "%s/manifest.txt", dir);
     Vec<u8> raw(default_allocator(), Tag::Test);
@@ -176,7 +176,7 @@ struct DiagCapture {
     DiagSink sink() { return DiagSink{&fn, this}; }
 };
 
-inline bool bytes_equal(Span<u8 const> a, Span<u8 const> b) noexcept {
+inline bool bytes_equal(Span<u8 const> a, Span<u8 const> b) {
     return a.size == b.size && (a.size == 0 || std::memcmp(a.data, b.data, a.size) == 0);
 }
 

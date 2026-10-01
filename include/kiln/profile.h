@@ -21,12 +21,12 @@ struct ProfileHooks {
 };
 
 /// Nanoseconds of the steady clock that `interval` spans use.
-KILN_API u64 profile_now_ns() noexcept;
+KILN_API u64 profile_now_ns();
 
 /// zone_begin now, zone_end at scope exit. With null hooks it costs one branch.
 class ProfileZone {
 public:
-    ProfileZone(ProfileHooks const* hooks, char const* name, StrView asset = {}) noexcept
+    ProfileZone(ProfileHooks const* hooks, char const* name, StrView asset = {})
         : hooks_(hooks && hooks->zone_begin ? hooks : nullptr), name_(name), asset_(asset) {
         if (hooks_) hooks_->zone_begin(hooks_->user, name_, asset_);
     }
@@ -44,7 +44,7 @@ private:
 
 /// Reports an interval if the hooks take intervals.
 inline void profile_interval(ProfileHooks const* hooks, char const* name, StrView asset, u64 beginNs,
-                             u64 endNs) noexcept {
+                             u64 endNs) {
     if (hooks && hooks->interval) hooks->interval(hooks->user, name, asset, beginNs, endNs);
 }
 

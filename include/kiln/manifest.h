@@ -7,13 +7,13 @@
 namespace kiln {
 
 /// XXH3-128 of `bytes`, seed 0. A checksum, not a signature.
-KILN_API Hash128 xxh3_128(Span<u8 const> bytes) noexcept;
+KILN_API Hash128 xxh3_128(Span<u8 const> bytes);
 
 /// 32 lowercase hex digits and a NUL into `out`.
-KILN_API void hash128_hex(Hash128 const& h, char (&out)[33]) noexcept;
+KILN_API void hash128_hex(Hash128 const& h, char (&out)[33]);
 /// 26 base32 characters (RFC 4648 alphabet in lower case, `a-z2-7`, no padding) and a NUL into
 /// `out`: the bytes in order, 5 bits at a time from the top bit; the last character holds 3 bits.
-KILN_API void hash128_base32(Hash128 const& h, char (&out)[27]) noexcept;
+KILN_API void hash128_base32(Hash128 const& h, char (&out)[27]);
 
 // ---------------------------------------------------------------------------
 // Store layout, flat: <store>/manifest.dir (the runtime reads it) and each artifact at <store>/<26>,
@@ -24,12 +24,11 @@ KILN_API void hash128_base32(Hash128 const& h, char (&out)[27]) noexcept;
 inline constexpr char kManifestFile[] = "manifest.dir";
 
 /// `<storeDir>/manifest.dir`. Returns what `format()` returns (>= cap - 1: truncated).
-[[nodiscard]] KILN_API usize manifest_file_path(StrView storeDir, char* out, usize cap) noexcept;
+[[nodiscard]] KILN_API usize manifest_file_path(StrView storeDir, char* out, usize cap);
 /// `<storeDir>/<hash128_base32(key)>`, no extension, as manifest_file_path().
-[[nodiscard]] KILN_API usize artifact_file_path(StrView storeDir, Hash128 const& key, char* out,
-                                                usize cap) noexcept;
+[[nodiscard]] KILN_API usize artifact_file_path(StrView storeDir, Hash128 const& key, char* out, usize cap);
 /// Null if `name` is a valid profile name (`[a-z0-9_-]`, 1 to 63 characters), else a reason.
-KILN_API char const* check_profile_name(StrView name) noexcept;
+KILN_API char const* check_profile_name(StrView name);
 
 // ---------------------------------------------------------------------------
 // Manifest format 0.1 (little-endian; sections at 8-byte boundaries)
@@ -70,15 +69,15 @@ struct ManifestEntry {
 /// are a binary search. Valid while the manifest's bytes are.
 class KILN_API ManifestProfile {
 public:
-    ManifestProfile() noexcept = default;
+    ManifestProfile() = default;
 
-    StrView name() const noexcept { return name_; }
-    u64 hash() const noexcept { return hash_; }                  ///< hash_target
-    u64 block_formats() const noexcept { return blockFormats_; } ///< block_format_bit() set
-    u64 size() const noexcept { return count_; }
-    ManifestEntry entry(u64 i) const noexcept;
+    StrView name() const { return name_; }
+    u64 hash() const { return hash_; }                  ///< hash_target
+    u64 block_formats() const { return blockFormats_; } ///< block_format_bit() set
+    u64 size() const { return count_; }
+    ManifestEntry entry(u64 i) const;
     /// The entry of `name` and `kind`, or false.
-    [[nodiscard]] bool find(AssetKind kind, StrView name, ManifestEntry* out) const noexcept;
+    [[nodiscard]] bool find(AssetKind kind, StrView name, ManifestEntry* out) const;
 
 private:
     friend class ManifestView;
@@ -93,18 +92,18 @@ private:
 /// profiles. Copyable, no allocation.
 class KILN_API ManifestView {
 public:
-    ManifestView() noexcept = default;
+    ManifestView() = default;
 
     /// Checks everything: header, sizes, names, order, index and checksum. On failure, emits one
     /// K42xx diagnostic and returns Corrupt (VersionMismatch for K4202).
     static Result<ManifestView> open(Span<u8 const> bytes, DiagSink const* diag = nullptr,
-                                     StrView where = {}) noexcept;
+                                     StrView where = {});
 
-    u32 profile_count() const noexcept { return profiles_; }
-    ManifestProfile profile(u32 i) const noexcept;
+    u32 profile_count() const { return profiles_; }
+    ManifestProfile profile(u32 i) const;
     /// The profile called `name`, or false.
-    [[nodiscard]] bool find_profile(StrView name, ManifestProfile* out) const noexcept;
-    Hash128 checksum() const noexcept;
+    [[nodiscard]] bool find_profile(StrView name, ManifestProfile* out) const;
+    Hash128 checksum() const;
 
 private:
     Span<u8 const> bytes_;

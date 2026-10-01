@@ -15,7 +15,7 @@ constexpr usize kHeader = 16;
 
 } // namespace
 
-void* zstd_alloc(void* mem, usize size) noexcept {
+void* zstd_alloc(void* mem, usize size) {
     ZstdMem const* m = static_cast<ZstdMem const*>(mem);
     usize total      = 0;
     if (!checked_add(size, kHeader, total)) return nullptr;
@@ -25,7 +25,7 @@ void* zstd_alloc(void* mem, usize size) noexcept {
     return p + kHeader;
 }
 
-void zstd_free(void* mem, void* ptr) noexcept {
+void zstd_free(void* mem, void* ptr) {
     if (!ptr) return;
     ZstdMem const* m = static_cast<ZstdMem const*>(mem);
     u8* p            = static_cast<u8*>(ptr) - kHeader;
@@ -34,16 +34,16 @@ void zstd_free(void* mem, void* ptr) noexcept {
     free(m->alloc, p, total, kHeader, m->tag);
 }
 
-u64 zstd_content_size(Span<u8 const> src) noexcept {
+u64 zstd_content_size(Span<u8 const> src) {
     unsigned long long const n = ZSTD_getFrameContentSize(src.data, src.size);
     return n == ZSTD_CONTENTSIZE_UNKNOWN || n == ZSTD_CONTENTSIZE_ERROR ? ~u64(0) : u64(n);
 }
 
-ZstdDecoder::~ZstdDecoder() noexcept {
+ZstdDecoder::~ZstdDecoder() {
     if (ctx_) ZSTD_freeDCtx(ctx_);
 }
 
-bool ZstdDecoder::decode(Span<u8 const> src, Span<u8> out) noexcept {
+bool ZstdDecoder::decode(Span<u8 const> src, Span<u8> out) {
     if (!ctx_) {
         if (!mem_.alloc) mem_.alloc = default_allocator();
         ctx_ = ZSTD_createDCtx_advanced(ZSTD_customMem{&zstd_alloc, &zstd_free, &mem_});

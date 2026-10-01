@@ -48,13 +48,9 @@ constexpr u8 kPngSignature[8] = {0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n'};
 constexpr u32 kMaxDimension   = 16384;
 constexpr u64 kMaxImageBytes  = u64(1) << 32;
 
-u32 be32(u8 const* p) noexcept {
-    return (u32(p[0]) << 24) | (u32(p[1]) << 16) | (u32(p[2]) << 8) | u32(p[3]);
-}
+u32 be32(u8 const* p) { return (u32(p[0]) << 24) | (u32(p[1]) << 16) | (u32(p[2]) << 8) | u32(p[3]); }
 
-u32 le32(u8 const* p) noexcept {
-    return u32(p[0]) | (u32(p[1]) << 8) | (u32(p[2]) << 16) | (u32(p[3]) << 24);
-}
+u32 le32(u8 const* p) { return u32(p[0]) | (u32(p[1]) << 8) | (u32(p[2]) << 16) | (u32(p[3]) << 24); }
 
 struct PngHeader {
     u32 width    = 0;
@@ -66,7 +62,7 @@ struct PngHeader {
 };
 
 /// Validate the IHDR combination (PNG spec table 11.1).
-bool valid_depth(u8 colorType, u8 depth) noexcept {
+bool valid_depth(u8 colorType, u8 depth) {
     switch (colorType) {
     case 0: return depth == 1 || depth == 2 || depth == 4 || depth == 8 || depth == 16;
     case 3: return depth == 1 || depth == 2 || depth == 4 || depth == 8;
@@ -79,7 +75,7 @@ bool valid_depth(u8 colorType, u8 depth) noexcept {
 
 /// Scan chunk headers up to the first IDAT for a tRNS chunk. Stops quietly on a
 /// malformed chunk list; wuffs reports those errors during the real decode.
-bool scan_trns(Span<u8 const> bytes) noexcept {
+bool scan_trns(Span<u8 const> bytes) {
     usize pos = 8;
     while (pos + 8 <= bytes.size) {
         u32 const len  = be32(bytes.data + pos);
@@ -94,13 +90,13 @@ bool scan_trns(Span<u8 const> bytes) noexcept {
 }
 
 Status fail(DiagSink const* diag, StrView asset, char const* kind, Code code, u32 k, char const* fmt,
-            unsigned long long a = 0, unsigned long long b = 0) noexcept {
+            unsigned long long a = 0, unsigned long long b = 0) {
     return diagf(diag, make_status(code), k, Severity::Error, asset, kind, fmt, a, b);
 }
 
 /// Map a wuffs error/suspension to kiln's Status and a K2xxx diagnostic.
 Status wuffs_fail(DiagSink const* diag, StrView asset, char const* kind, wuffs_base__status st,
-                  char const* stage) noexcept {
+                  char const* stage) {
     char const* msg = st.repr ? st.repr : "unknown";
     if (std::strstr(msg, "unsupported") != nullptr)
         return diagf(diag, make_status(Code::Unsupported), kDiagImageUnsupported, Severity::Error, asset,
@@ -117,13 +113,13 @@ struct Scratch {
     usize size                 = 0;
     usize align                = 0;
 
-    Scratch(Allocator const* a, usize n, usize al) noexcept : allocator(a), size(n), align(al) {
+    Scratch(Allocator const* a, usize n, usize al) : allocator(a), size(n), align(al) {
         if (n) ptr = kiln::alloc(a, n, al, Tag::Cook);
     }
-    ~Scratch() noexcept { kiln::free(allocator, ptr, size, align, Tag::Cook); }
+    ~Scratch() { kiln::free(allocator, ptr, size, align, Tag::Cook); }
     Scratch(Scratch const&)            = delete;
     Scratch& operator=(Scratch const&) = delete;
-    u8* bytes() const noexcept { return static_cast<u8*>(ptr); }
+    u8* bytes() const { return static_cast<u8*>(ptr); }
 };
 
 /// What the caller already knows about the image. `channels == 0` takes the channel
@@ -135,7 +131,7 @@ struct Expect {
     u32 bits     = 8;
 };
 
-u32 channels_from(wuffs_base__pixel_format pf) noexcept {
+u32 channels_from(wuffs_base__pixel_format pf) {
     if (pf.repr == WUFFS_BASE__PIXEL_FORMAT__Y) return 1;
     return wuffs_base__pixel_format__transparency(&pf) == WUFFS_BASE__PIXEL_ALPHA_TRANSPARENCY__OPAQUE ? 3u
                                                                                                        : 4u;
@@ -143,8 +139,7 @@ u32 channels_from(wuffs_base__pixel_format pf) noexcept {
 
 /// Shared tail of every decoder: image config, size checks, decode to RGBA, narrow.
 Result<Image> decode_with(wuffs_base__image_decoder* dec, Span<u8 const> bytes, Expect expect,
-                          Allocator const* alloc, DiagSink const* diag, StrView asset,
-                          char const* kind) noexcept {
+                          Allocator const* alloc, DiagSink const* diag, StrView asset, char const* kind) {
     // wuffs only reads through the io_buffer; the const_cast never leads to a write.
     wuffs_base__io_buffer src = wuffs_base__ptr_u8__reader(const_cast<u8*>(bytes.data), bytes.size, true);
 
@@ -229,26 +224,26 @@ Result<Image> decode_with(wuffs_base__image_decoder* dec, Span<u8 const> bytes, 
 
 } // namespace
 
-bool is_png(Span<u8 const> bytes) noexcept {
+bool is_png(Span<u8 const> bytes) {
     return bytes.size >= sizeof(kPngSignature) &&
            std::memcmp(bytes.data, kPngSignature, sizeof(kPngSignature)) == 0;
 }
 
-bool is_jpeg(Span<u8 const> bytes) noexcept {
+bool is_jpeg(Span<u8 const> bytes) {
     return bytes.size >= 3 && bytes.data[0] == 0xFF && bytes.data[1] == 0xD8 && bytes.data[2] == 0xFF;
 }
 
-bool is_webp(Span<u8 const> bytes) noexcept {
+bool is_webp(Span<u8 const> bytes) {
     return bytes.size >= 12 && std::memcmp(bytes.data, "RIFF", 4) == 0 &&
            std::memcmp(bytes.data + 8, "WEBP", 4) == 0;
 }
 
-bool is_ktx2(Span<u8 const> bytes) noexcept {
+bool is_ktx2(Span<u8 const> bytes) {
     return bytes.size >= sizeof(ktx2::kIdentifier) &&
            std::memcmp(bytes.data, ktx2::kIdentifier, sizeof(ktx2::kIdentifier)) == 0;
 }
 
-bool is_lossy_image(Span<u8 const> bytes) noexcept {
+bool is_lossy_image(Span<u8 const> bytes) {
     if (is_jpeg(bytes)) return true;
     if (!is_webp(bytes)) return false;
     // Lossy WebP carries a "VP8 " chunk: first in a simple file, after "VP8X" in an extended one.
@@ -260,7 +255,7 @@ bool is_lossy_image(Span<u8 const> bytes) noexcept {
     return false;
 }
 
-bool webp_decode_enabled() noexcept {
+bool webp_decode_enabled() {
 #if defined(KILN_WEBP) && KILN_WEBP
     return true;
 #else
@@ -268,8 +263,7 @@ bool webp_decode_enabled() noexcept {
 #endif
 }
 
-Result<Image> decode_png(Span<u8 const> bytes, Allocator const* alloc, DiagSink const* diag,
-                         StrView asset) noexcept {
+Result<Image> decode_png(Span<u8 const> bytes, Allocator const* alloc, DiagSink const* diag, StrView asset) {
     if (!alloc) alloc = default_allocator();
     if (!is_png(bytes))
         return fail(diag, asset, "png", Code::ParseError, kDiagImageDecodeFailed, "not a PNG signature");
@@ -316,8 +310,7 @@ Result<Image> decode_png(Span<u8 const> bytes, Allocator const* alloc, DiagSink 
                        asset, "png");
 }
 
-Result<Image> decode_jpeg(Span<u8 const> bytes, Allocator const* alloc, DiagSink const* diag,
-                          StrView asset) noexcept {
+Result<Image> decode_jpeg(Span<u8 const> bytes, Allocator const* alloc, DiagSink const* diag, StrView asset) {
     if (!alloc) alloc = default_allocator();
     if (!is_jpeg(bytes))
         return fail(diag, asset, "jpeg", Code::ParseError, kDiagImageDecodeFailed, "not a JPEG signature");
@@ -331,8 +324,7 @@ Result<Image> decode_jpeg(Span<u8 const> bytes, Allocator const* alloc, DiagSink
                        diag, asset, "jpeg");
 }
 
-Result<Image> decode_webp(Span<u8 const> bytes, Allocator const* alloc, DiagSink const* diag,
-                          StrView asset) noexcept {
+Result<Image> decode_webp(Span<u8 const> bytes, Allocator const* alloc, DiagSink const* diag, StrView asset) {
     if (!alloc) alloc = default_allocator();
     if (!is_webp(bytes))
         return fail(diag, asset, "webp", Code::ParseError, kDiagImageDecodeFailed, "not a WebP signature");
@@ -351,7 +343,7 @@ Result<Image> decode_webp(Span<u8 const> bytes, Allocator const* alloc, DiagSink
 }
 
 Result<Image> decode_image(Span<u8 const> bytes, Allocator const* alloc, DiagSink const* diag,
-                           StrView asset) noexcept {
+                           StrView asset) {
     if (is_png(bytes)) return decode_png(bytes, alloc, diag, asset);
     if (is_jpeg(bytes)) return decode_jpeg(bytes, alloc, diag, asset);
     if (is_webp(bytes)) return decode_webp(bytes, alloc, diag, asset);

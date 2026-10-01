@@ -30,7 +30,7 @@ constexpr usize kMaxPath = 1024;
 #if defined(KILN_OS_WINDOWS)
 
 // Converts `path` into `wbuf` (NUL-terminated). Returns false on invalid UTF-8.
-[[nodiscard]] bool utf8_to_wide(StrView path, wchar_t (&wbuf)[kMaxPath]) noexcept {
+[[nodiscard]] bool utf8_to_wide(StrView path, wchar_t (&wbuf)[kMaxPath]) {
     if (path.size == 0) {
         wbuf[0] = L'\0';
         return true;
@@ -42,9 +42,7 @@ constexpr usize kMaxPath = 1024;
     return true;
 }
 
-HANDLE native_handle(IoFile f) noexcept {
-    return reinterpret_cast<HANDLE>(static_cast<std::uintptr_t>(f.bits - 1));
-}
+HANDLE native_handle(IoFile f) { return reinterpret_cast<HANDLE>(static_cast<std::uintptr_t>(f.bits - 1)); }
 
 Status compat_open(void*, StrView path, IoFile* out) {
     if (path.size >= kMaxPath) return make_status(Code::InvalidArgument);
@@ -119,7 +117,7 @@ Status compat_stat(void*, StrView path, IoStat* out) {
     return kOk;
 }
 
-bool stat_is_regular_file(StrView path) noexcept {
+bool stat_is_regular_file(StrView path) {
     if (path.size >= kMaxPath) return false;
     wchar_t wbuf[kMaxPath];
     if (!utf8_to_wide(path, wbuf)) return false;
@@ -130,7 +128,7 @@ bool stat_is_regular_file(StrView path) noexcept {
 
 #else // POSIX
 
-int native_fd(IoFile f) noexcept { return int(f.bits - 1); }
+int native_fd(IoFile f) { return int(f.bits - 1); }
 
 Status compat_open(void*, StrView path, IoFile* out) {
     if (path.size >= kMaxPath) return make_status(Code::InvalidArgument);
@@ -195,7 +193,7 @@ Status compat_stat(void*, StrView path, IoStat* out) {
     return kOk;
 }
 
-bool stat_is_regular_file(StrView path) noexcept {
+bool stat_is_regular_file(StrView path) {
     if (path.size >= kMaxPath) return false;
     char buf[kMaxPath];
     std::memcpy(buf, path.data, path.size);
@@ -212,9 +210,9 @@ constexpr IoBackend g_compatBackend{&compat_open,  &compat_size, &compat_read_ra
 
 } // namespace
 
-IoBackend const* compat_io_backend() noexcept { return &g_compatBackend; }
+IoBackend const* compat_io_backend() { return &g_compatBackend; }
 
-Status io_read_file(IoBackend const* io, StrView path, Allocator const* alloc, Vec<u8>* out) noexcept {
+Status io_read_file(IoBackend const* io, StrView path, Allocator const* alloc, Vec<u8>* out) {
     KILN_ASSERT(io && io->open && io->size && io->read_range && io->close);
     KILN_ASSERT(out != nullptr);
     if (!out->allocator()) out->init(alloc ? alloc : default_allocator(), Tag::Io);
@@ -233,6 +231,6 @@ Status io_read_file(IoBackend const* io, StrView path, Allocator const* alloc, V
     return st;
 }
 
-bool io_file_exists(StrView path) noexcept { return stat_is_regular_file(path); }
+bool io_file_exists(StrView path) { return stat_is_regular_file(path); }
 
 } // namespace kiln

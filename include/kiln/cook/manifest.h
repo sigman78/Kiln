@@ -35,7 +35,7 @@ struct BuildKeyDesc {
 
 /// XXH3-128 over a field-by-field serialization of `d`, kBuildKeySchema and kCookerVersion.
 /// The same key means the same cooked bytes.
-KILN_API Hash128 build_key(BuildKeyDesc const& d) noexcept;
+KILN_API Hash128 build_key(BuildKeyDesc const& d);
 
 /// Diagnostics of store writers (K3009, K3010; the K3000 range of settings.h).
 enum StoreDiagCode : u32 {
@@ -64,6 +64,6 @@ inline constexpr char kStoreLockFile[] = "manifest.lock";
 /// Writes a manifest (format 0.1) into `out`, replacing its contents. The same profiles and entries
 /// in any order give the same bytes. InvalidArgument for a bad profile or asset name (K4205), or a
 /// profile name, or a name and kind in one profile, given twice (K4207).
-KILN_API Status write_manifest(ManifestDesc const& d, Vec<u8>* out, DiagSink const* diag = nullptr) noexcept;
+KILN_API Status write_manifest(ManifestDesc const& d, Vec<u8>* out, DiagSink const* diag = nullptr);
 
 } // namespace kiln::cook

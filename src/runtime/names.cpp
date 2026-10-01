@@ -10,12 +10,12 @@ namespace kiln {
 
 namespace {
 
-[[nodiscard]] bool is_root_char(char c) noexcept {
+[[nodiscard]] bool is_root_char(char c) {
     return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_';
 }
 
 /// Checks the part after the root prefix, `#sub` included.
-char const* check_path(StrView path) noexcept {
+char const* check_path(StrView path) {
     usize const hash  = path.find('#');
     usize const slash = path.rfind('/');
     if (hash != StrView::kNpos) {
@@ -45,7 +45,7 @@ char const* check_path(StrView path) noexcept {
 
 } // namespace
 
-char const* texture_shape_name(TextureShape s) noexcept {
+char const* texture_shape_name(TextureShape s) {
     switch (s) {
     case TextureShape::Tex2D: return "2D";
     case TextureShape::Cube: return "cube";
@@ -55,7 +55,7 @@ char const* texture_shape_name(TextureShape s) noexcept {
     return "unsupported";
 }
 
-AssetNameParts split_asset_name(StrView name) noexcept {
+AssetNameParts split_asset_name(StrView name) {
     AssetNameParts p;
     usize const colon = name.find(':');
     if (colon != StrView::kNpos) {
@@ -68,14 +68,14 @@ AssetNameParts split_asset_name(StrView name) noexcept {
     return p;
 }
 
-char const* check_root_name(StrView root) noexcept {
+char const* check_root_name(StrView root) {
     if (root.size < 2) return "root name shorter than 2 characters";
     for (char const c : root)
         if (!is_root_char(c)) return "root name outside [a-z0-9_]";
     return nullptr;
 }
 
-char const* check_asset_name(StrView name) noexcept {
+char const* check_asset_name(StrView name) {
     if (name.empty()) return "empty name";
     if (name.size > kMaxAssetNameLen) return "longer than 255 bytes";
     usize const colon = name.find(':');
@@ -90,7 +90,7 @@ char const* check_asset_name(StrView name) noexcept {
     return check_path(name);
 }
 
-usize resolve_asset_name(StrView owner, StrView uri, char* out, usize cap) noexcept {
+usize resolve_asset_name(StrView owner, StrView uri, char* out, usize cap) {
     if (cap == 0 || check_asset_name(owner)) return 0;
     if (uri.empty() || uri[0] == '/' || uri.find(':') != StrView::kNpos || uri.find('\\') != StrView::kNpos)
         return 0;
@@ -128,7 +128,7 @@ usize resolve_asset_name(StrView owner, StrView uri, char* out, usize cap) noexc
 }
 
 StrView texture_asset_name(StrView meshName, mesh::MeshView const& v, mesh::TextureBinding const& b,
-                           char* out, usize cap) noexcept {
+                           char* out, usize cap) {
     StrView const path = v.str(b.pathStr);
     if (b.flags & mesh::kTextureExternal) return StrView(out, resolve_asset_name(meshName, path, out, cap));
     if (path.size >= cap || check_asset_name(path)) return {};

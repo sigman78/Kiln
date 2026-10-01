@@ -5,7 +5,7 @@
 
 namespace kiln::ktx2 {
 
-char const* supercompression_name(Supercompression s) noexcept {
+char const* supercompression_name(Supercompression s) {
     switch (s) {
     case Supercompression::None: return "None";
     case Supercompression::BasisLZ: return "BasisLZ";
@@ -20,11 +20,11 @@ namespace {
 constexpr u64 kU64Max = ~u64(0);
 
 /// checked_mul / checked_add (core.h) over u64, so u32 operands convert.
-bool mul_ok(u64 a, u64 b, u64& out) noexcept { return checked_mul(a, b, out); }
-bool add_ok(u64 a, u64 b, u64& out) noexcept { return checked_add(a, b, out); }
+bool mul_ok(u64 a, u64 b, u64& out) { return checked_mul(a, b, out); }
+bool add_ok(u64 a, u64 b, u64& out) { return checked_add(a, b, out); }
 
 /// Bytes of one w x h x d image in `info`, whole blocks, overflow-checked.
-bool image_bytes(FormatInfo const& info, u32 w, u32 h, u32 d, u64& out) noexcept {
+bool image_bytes(FormatInfo const& info, u32 w, u32 h, u32 d, u64& out) {
     u64 bw = (u64(w) + info.blockWidth - 1) / info.blockWidth;
     u64 bh = (u64(h) + info.blockHeight - 1) / info.blockHeight;
     u64 n  = 0;
@@ -33,7 +33,7 @@ bool image_bytes(FormatInfo const& info, u32 w, u32 h, u32 d, u64& out) noexcept
 
 /// Walk KVD entries; `fn` returns true to stop. Returns false if the KVD is malformed
 /// (and sets `err` to a static message).
-template <class Fn> bool walk_kvd(Span<u8 const> kvd, Fn&& fn, char const** err = nullptr) noexcept {
+template <class Fn> bool walk_kvd(Span<u8 const> kvd, Fn&& fn, char const** err = nullptr) {
     usize pos = 0;
     while (pos < kvd.size) {
         if (kvd.size - pos < 4) {
@@ -67,7 +67,7 @@ template <class Fn> bool walk_kvd(Span<u8 const> kvd, Fn&& fn, char const** err 
 }
 
 Status fail(DiagSink const* diag, StrView asset, Code code, u32 diagCode, char const* where, char const* fmt,
-            u64 a = 0, u64 b = 0) noexcept {
+            u64 a = 0, u64 b = 0) {
     // All messages take up to two integers so callers don't need their own varargs.
     return diagf(diag, make_status(code), diagCode, Severity::Error, asset, where, fmt,
                  static_cast<unsigned long long>(a), static_cast<unsigned long long>(b));
@@ -75,7 +75,7 @@ Status fail(DiagSink const* diag, StrView asset, Code code, u32 diagCode, char c
 
 } // namespace
 
-u64 Ktx2View::metadata_size(Header const& h) noexcept {
+u64 Ktx2View::metadata_size(Header const& h) {
     u64 end = sizeof(Header) + u64(max(h.levelCount, 1u)) * sizeof(LevelIndex);
     if (h.dfdByteLength != 0) end = max(end, u64(h.dfdByteOffset) + h.dfdByteLength);
     if (h.kvdByteLength != 0) end = max(end, u64(h.kvdByteOffset) + h.kvdByteLength);
@@ -84,7 +84,7 @@ u64 Ktx2View::metadata_size(Header const& h) noexcept {
     return end;
 }
 
-Result<Ktx2View> Ktx2View::open(Span<u8 const> bytes, DiagSink const* diag, StrView asset) noexcept {
+Result<Ktx2View> Ktx2View::open(Span<u8 const> bytes, DiagSink const* diag, StrView asset) {
     Ktx2View v;
     v.bytes_ = bytes;
 
@@ -253,13 +253,13 @@ Result<Ktx2View> Ktx2View::open(Span<u8 const> bytes, DiagSink const* diag, StrV
     return v;
 }
 
-u64 Ktx2View::level_image_bytes(u32 level) const noexcept {
+u64 Ktx2View::level_image_bytes(u32 level) const {
     if (info_ == nullptr || level >= desc_.levels) return 0;
     u64 n = 0;
     return image_bytes(*info_, level_width(level), level_height(level), level_depth(level), n) ? n : 0;
 }
 
-Span<u8 const> Ktx2View::level_data(u32 level) const noexcept {
+Span<u8 const> Ktx2View::level_data(u32 level) const {
     if (level >= desc_.levels) return {};
     LevelIndex const& li = levels_[level];
     if (li.byteOffset > bytes_.size || li.byteLength > bytes_.size - li.byteOffset) return {};
@@ -267,7 +267,7 @@ Span<u8 const> Ktx2View::level_data(u32 level) const noexcept {
 }
 
 Status Ktx2View::decode_level(u32 level, Span<u8> out, Allocator const* alloc, DiagSink const* diag,
-                              StrView asset) const noexcept {
+                              StrView asset) const {
     if (level >= desc_.levels)
         return fail(diag, asset, Code::InvalidArgument, kDiagKtxLevelIndex, "levelIndex",
                     "level %llu does not exist (%llu levels)", level, desc_.levels);
@@ -290,19 +290,19 @@ Status Ktx2View::decode_level(u32 level, Span<u8> out, Allocator const* alloc, D
     return kOk;
 }
 
-bool Ktx2View::has_all_level_data() const noexcept {
+bool Ktx2View::has_all_level_data() const {
     for (u32 i = 0; i < desc_.levels; ++i)
         if (level_data(i).empty()) return false;
     return desc_.levels > 0;
 }
 
-u32 Ktx2View::dfd_sample_count() const noexcept {
+u32 Ktx2View::dfd_sample_count() const {
     if (dfd_.size < 4 + kDfdBasicBlockHeaderSize) return 0;
     u32 const blockSize = read_unaligned<u32>(dfd_.data + 8) >> 16;
     return blockSize < kDfdBasicBlockHeaderSize ? 0 : (blockSize - kDfdBasicBlockHeaderSize) / kDfdSampleSize;
 }
 
-Span<u8 const> Ktx2View::find_key(StrView key) const noexcept {
+Span<u8 const> Ktx2View::find_key(StrView key) const {
     Span<u8 const> found;
     (void)walk_kvd(kvd_, [&](StrView k, Span<u8 const> value) {
         if (k != key) return false;
@@ -312,8 +312,7 @@ Span<u8 const> Ktx2View::find_key(StrView key) const noexcept {
     return found;
 }
 
-void Ktx2View::for_each_key(void (*fn)(void* user, StrView key, Span<u8 const> value),
-                            void* user) const noexcept {
+void Ktx2View::for_each_key(void (*fn)(void* user, StrView key, Span<u8 const> value), void* user) const {
     (void)walk_kvd(kvd_, [&](StrView k, Span<u8 const> value) {
         fn(user, k, value);
         return false;

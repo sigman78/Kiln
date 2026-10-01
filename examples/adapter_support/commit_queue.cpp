@@ -5,7 +5,7 @@
 
 namespace kiln::ex {
 
-CommitQueue::CommitQueue(Allocator const* alloc, u32 capacity) noexcept
+CommitQueue::CommitQueue(Allocator const* alloc, u32 capacity)
     : pending_(alloc ? alloc : default_allocator(), Tag::Payload),
       taken_(alloc ? alloc : default_allocator(), Tag::Payload), capacity_(capacity) {
     pending_.reserve(capacity);
@@ -19,13 +19,13 @@ CommitQueue& CommitQueue::operator=(CommitQueue&& o) noexcept {
     return *this;
 }
 
-void CommitQueue::push(u32 index) noexcept {
+void CommitQueue::push(u32 index) {
     std::lock_guard<std::mutex> const lock(mutex_);
     KILN_VERIFY(pending_.size() < capacity_ && "CommitQueue: more indices than upload records");
     pending_.push_back(index);
 }
 
-Span<u32 const> CommitQueue::take() noexcept {
+Span<u32 const> CommitQueue::take() {
     taken_.clear();
     {
         std::lock_guard<std::mutex> const lock(mutex_);

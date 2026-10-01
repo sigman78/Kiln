@@ -169,7 +169,7 @@ namespace {
 
 struct LastCode {
     u32 code = 0;
-    static void fn(void* user, Diagnostic const& d) noexcept { static_cast<LastCode*>(user)->code = d.code; }
+    static void fn(void* user, Diagnostic const& d) { static_cast<LastCode*>(user)->code = d.code; }
 };
 
 Hash128 key_of(char const* s) { return content_of(s); }
@@ -648,7 +648,7 @@ namespace {
 
 struct FirstCode {
     u32 code = 0;
-    static void fn(void* user, Diagnostic const& d) noexcept {
+    static void fn(void* user, Diagnostic const& d) {
         auto* self = static_cast<FirstCode*>(user);
         if (self->code == 0 && d.severity == Severity::Error) self->code = d.code;
     }
@@ -663,9 +663,9 @@ struct ManifestContext {
 
     ManifestContext(ManifestContext const&)            = delete;
     ManifestContext& operator=(ManifestContext const&) = delete;
-    ManifestContext() noexcept                         = default;
+    ManifestContext()                                  = default;
 
-    Status init(char const* dir, bool hotReload = false, StrView profile = "compat") noexcept {
+    Status init(char const* dir, bool hotReload = false, StrView profile = "compat") {
         Result<NullAdapter*> n = null_adapter_create({}, &adapter);
         if (n.failed()) return n.status();
         na = *n;
@@ -680,7 +680,7 @@ struct ManifestContext {
         ctx = *c;
         return kOk;
     }
-    ~ManifestContext() noexcept {
+    ~ManifestContext() {
         if (ctx) destroy(ctx);
         if (na) null_adapter_destroy(na);
     }
@@ -813,11 +813,11 @@ namespace {
 struct PolicyCount {
     std::atomic<u32> meshes{0};
     static Status mesh(void* user, CookAssetInfo const&, TargetProfile const&, MeshCookSettings*,
-                       DiagSink const*) noexcept {
+                       DiagSink const*) {
         ++static_cast<PolicyCount*>(user)->meshes;
         return kOk;
     }
-    CookPolicy policy() noexcept { return {.mesh = &mesh, .user = this}; }
+    CookPolicy policy() { return {.mesh = &mesh, .user = this}; }
 };
 
 /// A context with a provider over the root `sources`.

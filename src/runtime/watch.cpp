@@ -31,19 +31,17 @@ struct Watch {
 
 namespace {
 
-bool same_stat(IoStat const& a, IoStat const& b) noexcept {
-    return a.size == b.size && a.mtimeNs == b.mtimeNs;
-}
+bool same_stat(IoStat const& a, IoStat const& b) { return a.size == b.size && a.mtimeNs == b.mtimeNs; }
 
 /// The checksum stored in a validated manifest.
-Hash128 checksum_of(Span<u8 const> manifest) noexcept {
+Hash128 checksum_of(Span<u8 const> manifest) {
     Hash128 h;
     std::memcpy(h.bytes, manifest.data + kManifestChecksumOffset, sizeof h.bytes);
     return h;
 }
 
 /// Reads the manifest again if its stat changed; a valid one with a new checksum becomes pending.
-void poll_manifest(Context* ctx, Watch& w) noexcept {
+void poll_manifest(Context* ctx, Watch& w) {
     IoBackend const* io = ctx->io;
     char path[1024];
     usize const n = manifest_path(ctx, path, sizeof path);
@@ -73,7 +71,7 @@ void poll_manifest(Context* ctx, Watch& w) noexcept {
 
 /// A new manifest is in use: reload each asset whose entry names another artifact than the one it
 /// loaded or tried. An asset that left the manifest stays as it is.
-void manifest_changed(Context* ctx) noexcept {
+void manifest_changed(Context* ctx) {
     for (u32 i = 0; i < ctx->maxAssets; ++i) {
         Slot& s = ctx->slots[i];
         if (!s.live || s.zombie || s.source == SourceKind::Memory) continue;
@@ -85,7 +83,7 @@ void manifest_changed(Context* ctx) noexcept {
     }
 }
 
-void poll_main(Context* ctx) noexcept {
+void poll_main(Context* ctx) {
     Watch& w = *ctx->watch;
     for (;;) {
         {
@@ -96,14 +94,14 @@ void poll_main(Context* ctx) noexcept {
     }
 }
 
-void unavailable(Context* ctx, char const* why) noexcept {
+void unavailable(Context* ctx, char const* why) {
     (void)diagf(&ctx->diag, make_status(Code::Unsupported), kDiagHotReloadUnavailable, Severity::Warning, {},
                 "hot reload", "store poller not started: %s", why);
 }
 
 } // namespace
 
-void watch_start(Context* ctx, HotReloadDesc const& desc) noexcept {
+void watch_start(Context* ctx, HotReloadDesc const& desc) {
     if (!desc.watchStore) return;
     if (!ctx->io->stat) {
         unavailable(ctx, "the IO backend has no stat()");
@@ -131,7 +129,7 @@ void watch_start(Context* ctx, HotReloadDesc const& desc) noexcept {
     }
 }
 
-void watch_stop(Context* ctx) noexcept {
+void watch_stop(Context* ctx) {
     Watch* w = ctx->watch;
     if (!w || !w->thread.joinable()) return;
     {
@@ -142,7 +140,7 @@ void watch_stop(Context* ctx) noexcept {
     w->thread.join();
 }
 
-void watch_free(Context* ctx) noexcept {
+void watch_free(Context* ctx) {
     Watch* w = ctx->watch;
     if (!w) return;
     KILN_ASSERT(!w->thread.joinable());
@@ -152,7 +150,7 @@ void watch_free(Context* ctx) noexcept {
     ctx->watch = nullptr;
 }
 
-void watch_drain(Context* ctx) noexcept {
+void watch_drain(Context* ctx) {
     Watch* w = ctx->watch;
     if (!w) return;
     bool newManifest = false;
@@ -172,14 +170,14 @@ void watch_drain(Context* ctx) noexcept {
 
 struct Watch {};
 
-void watch_start(Context* ctx, HotReloadDesc const& desc) noexcept {
+void watch_start(Context* ctx, HotReloadDesc const& desc) {
     if (desc.watchStore)
         (void)diagf(&ctx->diag, make_status(Code::Unsupported), kDiagHotReloadUnavailable, Severity::Warning,
                     {}, "hot reload", "store poller not started: built without KILN_HOT_RELOAD");
 }
-void watch_stop(Context*) noexcept {}
-void watch_free(Context*) noexcept {}
-void watch_drain(Context*) noexcept {}
+void watch_stop(Context*) {}
+void watch_free(Context*) {}
+void watch_drain(Context*) {}
 
 #endif
 

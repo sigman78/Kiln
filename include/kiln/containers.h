@@ -11,7 +11,7 @@ namespace kiln {
 namespace detail {
 
 /// Relocate `n` objects from `src` to uninitialized `dst`, destroying the source.
-template <class T> inline void relocate_n(T* dst, T* src, usize n) noexcept {
+template <class T> inline void relocate_n(T* dst, T* src, usize n) {
     if constexpr (std::is_trivially_copyable_v<T>) {
         if (n) std::memcpy(static_cast<void*>(dst), static_cast<void const*>(src), n * sizeof(T));
     } else {
@@ -21,7 +21,7 @@ template <class T> inline void relocate_n(T* dst, T* src, usize n) noexcept {
         }
     }
 }
-template <class T> inline void destroy_n(T* p, usize n) noexcept {
+template <class T> inline void destroy_n(T* p, usize n) {
     if constexpr (!std::is_trivially_destructible_v<T>) {
         for (usize i = 0; i < n; ++i)
             p[i].~T();
@@ -30,7 +30,7 @@ template <class T> inline void destroy_n(T* p, usize n) noexcept {
         (void)n;
     }
 }
-template <class T> inline void default_construct_n(T* p, usize n) noexcept {
+template <class T> inline void default_construct_n(T* p, usize n) {
     if constexpr (std::is_trivially_default_constructible_v<T>) {
         if (n) std::memset(static_cast<void*>(p), 0, n * sizeof(T));
     } else {
@@ -47,8 +47,8 @@ public:
     static_assert(N > 0);
     static_assert(NothrowStorable<T>, "FixedArray<T> needs T whose copy, move and destruction never throw");
 
-    constexpr FixedArray() noexcept = default;
-    ~FixedArray() noexcept { clear(); }
+    constexpr FixedArray() = default;
+    ~FixedArray() { clear(); }
 
     FixedArray(FixedArray const& o) noexcept(std::is_nothrow_copy_constructible_v<T>) {
         for (usize i = 0; i < o.size_; ++i)
@@ -79,45 +79,45 @@ public:
         return *this;
     }
 
-    constexpr usize size() const noexcept { return size_; }
-    static constexpr usize capacity() noexcept { return N; }
-    [[nodiscard]] constexpr bool empty() const noexcept { return size_ == 0; }
-    [[nodiscard]] constexpr bool full() const noexcept { return size_ == N; }
+    constexpr usize size() const { return size_; }
+    static constexpr usize capacity() { return N; }
+    [[nodiscard]] constexpr bool empty() const { return size_ == 0; }
+    [[nodiscard]] constexpr bool full() const { return size_ == N; }
 
-    T* data() noexcept { return ptr(); }
-    T const* data() const noexcept { return ptr(); }
-    T* begin() noexcept { return ptr(); }
-    T* end() noexcept { return ptr() + size_; }
-    T const* begin() const noexcept { return ptr(); }
-    T const* end() const noexcept { return ptr() + size_; }
+    T* data() { return ptr(); }
+    T const* data() const { return ptr(); }
+    T* begin() { return ptr(); }
+    T* end() { return ptr() + size_; }
+    T const* begin() const { return ptr(); }
+    T const* end() const { return ptr() + size_; }
 
-    T& operator[](usize i) noexcept {
+    T& operator[](usize i) {
         KILN_ASSERT(i < size_);
         return ptr()[i];
     }
-    T const& operator[](usize i) const noexcept {
+    T const& operator[](usize i) const {
         KILN_ASSERT(i < size_);
         return ptr()[i];
     }
-    T& front() noexcept {
+    T& front() {
         KILN_ASSERT(size_ > 0);
         return ptr()[0];
     }
-    T& back() noexcept {
+    T& back() {
         KILN_ASSERT(size_ > 0);
         return ptr()[size_ - 1];
     }
-    T const& front() const noexcept {
+    T const& front() const {
         KILN_ASSERT(size_ > 0);
         return ptr()[0];
     }
-    T const& back() const noexcept {
+    T const& back() const {
         KILN_ASSERT(size_ > 0);
         return ptr()[size_ - 1];
     }
 
-    Span<T> span() noexcept { return {ptr(), size_}; }
-    Span<T const> span() const noexcept { return {ptr(), size_}; }
+    Span<T> span() { return {ptr(), size_}; }
+    Span<T const> span() const { return {ptr(), size_}; }
 
     /// Append. Panics when full.
     T& push_back(T const& v) {
@@ -138,17 +138,17 @@ public:
         ::new (slot(size_++)) T(v);
         return true;
     }
-    void pop_back() noexcept {
+    void pop_back() {
         KILN_ASSERT(size_ > 0);
         ptr()[--size_].~T();
     }
     /// Remove by swapping the last element into `i`. O(1), does not preserve order.
-    void erase_unordered(usize i) noexcept {
+    void erase_unordered(usize i) {
         KILN_ASSERT(i < size_);
         if (i != size_ - 1) ptr()[i] = std::move(ptr()[size_ - 1]);
         pop_back();
     }
-    void resize(usize n) noexcept {
+    void resize(usize n) {
         KILN_VERIFY(n <= N);
         if (n < size_)
             detail::destroy_n(ptr() + n, size_ - n);
@@ -156,15 +156,15 @@ public:
             detail::default_construct_n(ptr() + size_, n - size_);
         size_ = n;
     }
-    void clear() noexcept {
+    void clear() {
         detail::destroy_n(ptr(), size_);
         size_ = 0;
     }
 
 private:
-    T* ptr() noexcept { return std::launder(reinterpret_cast<T*>(storage_)); }
-    T const* ptr() const noexcept { return std::launder(reinterpret_cast<T const*>(storage_)); }
-    void* slot(usize i) noexcept { return static_cast<void*>(storage_ + i * sizeof(T)); }
+    T* ptr() { return std::launder(reinterpret_cast<T*>(storage_)); }
+    T const* ptr() const { return std::launder(reinterpret_cast<T const*>(storage_)); }
+    void* slot(usize i) { return static_cast<void*>(storage_ + i * sizeof(T)); }
 
     alignas(T) unsigned char storage_[N * sizeof(T)];
     usize size_ = 0;
@@ -174,9 +174,9 @@ private:
 template <class T> class Vec {
 public:
     static_assert(NothrowStorable<T>, "Vec<T> needs T whose copy, move and destruction never throw");
-    Vec() noexcept = default;
-    explicit Vec(Allocator const* alloc, Tag tag = Tag::Core) noexcept : alloc_(alloc), tag_(tag) {}
-    ~Vec() noexcept { release(); }
+    Vec() = default;
+    explicit Vec(Allocator const* alloc, Tag tag = Tag::Core) : alloc_(alloc), tag_(tag) {}
+    ~Vec() { release(); }
 
     Vec(Vec const&)            = delete; ///< Use clone(): copies allocate, so they are explicit.
     Vec& operator=(Vec const&) = delete;
@@ -200,7 +200,7 @@ public:
     }
 
     /// Set the allocator. Call before the first allocation.
-    void init(Allocator const* alloc, Tag tag = Tag::Core) noexcept {
+    void init(Allocator const* alloc, Tag tag = Tag::Core) {
         KILN_ASSERT(data_ == nullptr && "Vec::init after allocation");
         alloc_ = alloc;
         tag_   = tag;
@@ -215,46 +215,46 @@ public:
         return c;
     }
 
-    usize size() const noexcept { return size_; }
-    usize capacity() const noexcept { return cap_; }
-    [[nodiscard]] bool empty() const noexcept { return size_ == 0; }
-    Allocator const* allocator() const noexcept { return alloc_; }
-    Tag tag() const noexcept { return tag_; }
+    usize size() const { return size_; }
+    usize capacity() const { return cap_; }
+    [[nodiscard]] bool empty() const { return size_ == 0; }
+    Allocator const* allocator() const { return alloc_; }
+    Tag tag() const { return tag_; }
 
-    T* data() noexcept { return data_; }
-    T const* data() const noexcept { return data_; }
-    T* begin() noexcept { return data_; }
-    T* end() noexcept { return data_ + size_; }
-    T const* begin() const noexcept { return data_; }
-    T const* end() const noexcept { return data_ + size_; }
+    T* data() { return data_; }
+    T const* data() const { return data_; }
+    T* begin() { return data_; }
+    T* end() { return data_ + size_; }
+    T const* begin() const { return data_; }
+    T const* end() const { return data_ + size_; }
 
-    T& operator[](usize i) noexcept {
+    T& operator[](usize i) {
         KILN_ASSERT(i < size_);
         return data_[i];
     }
-    T const& operator[](usize i) const noexcept {
+    T const& operator[](usize i) const {
         KILN_ASSERT(i < size_);
         return data_[i];
     }
-    T& front() noexcept {
+    T& front() {
         KILN_ASSERT(size_ > 0);
         return data_[0];
     }
-    T& back() noexcept {
+    T& back() {
         KILN_ASSERT(size_ > 0);
         return data_[size_ - 1];
     }
-    T const& front() const noexcept {
+    T const& front() const {
         KILN_ASSERT(size_ > 0);
         return data_[0];
     }
-    T const& back() const noexcept {
+    T const& back() const {
         KILN_ASSERT(size_ > 0);
         return data_[size_ - 1];
     }
 
-    Span<T> span() noexcept { return {data_, size_}; }
-    Span<T const> span() const noexcept { return {data_, size_}; }
+    Span<T> span() { return {data_, size_}; }
+    Span<T const> span() const { return {data_, size_}; }
 
     void reserve(usize n) {
         if (n > cap_) grow_to(n);
@@ -269,7 +269,7 @@ public:
     }
     /// `fill` may be an element of this Vec.
     void resize(usize n, T const& fill) {
-        auto const fill_from = [&](T* d) noexcept {
+        auto const fill_from = [&](T* d) {
             for (usize i = size_; i < n; ++i)
                 ::new (static_cast<void*>(d + i)) T(fill);
         };
@@ -295,9 +295,7 @@ public:
     T& push_back(T const& v) { return emplace_back(v); }
     T& push_back(T&& v) { return emplace_back(std::move(v)); }
     template <class... Args> T& emplace_back(Args&&... args) {
-        auto const make = [&](T* d) noexcept {
-            ::new (static_cast<void*>(d + size_)) T(std::forward<Args>(args)...);
-        };
+        auto const make = [&](T* d) { ::new (static_cast<void*>(d + size_)) T(std::forward<Args>(args)...); };
         if (size_ == cap_)
             grow_with(grown(1), make);
         else
@@ -305,7 +303,7 @@ public:
         return data_[size_++];
     }
     void append(Span<T const> items) {
-        auto const copy = [&](T* d) noexcept {
+        auto const copy = [&](T* d) {
             for (usize i = 0; i < items.size; ++i)
                 ::new (static_cast<void*>(d + size_ + i)) T(items[i]);
         };
@@ -315,30 +313,30 @@ public:
             copy(data_);
         size_ += items.size;
     }
-    void pop_back() noexcept {
+    void pop_back() {
         KILN_ASSERT(size_ > 0);
         data_[--size_].~T();
     }
     /// Swap-remove: O(1), does not preserve order.
-    void erase_unordered(usize i) noexcept {
+    void erase_unordered(usize i) {
         KILN_ASSERT(i < size_);
         if (i != size_ - 1) data_[i] = std::move(data_[size_ - 1]);
         pop_back();
     }
     /// Ordered remove: O(n).
-    void erase(usize i) noexcept {
+    void erase(usize i) {
         KILN_ASSERT(i < size_);
         for (usize j = i + 1; j < size_; ++j)
             data_[j - 1] = std::move(data_[j]);
         pop_back();
     }
     /// Destroy all elements, keep capacity.
-    void clear() noexcept {
+    void clear() {
         detail::destroy_n(data_, size_);
         size_ = 0;
     }
     /// Destroy all elements and free memory.
-    void release() noexcept {
+    void release() {
         if (data_) {
             detail::destroy_n(data_, size_);
             free_array(alloc_, data_, cap_, tag_);
@@ -349,13 +347,13 @@ public:
 
 private:
     /// size_ + n, panicking on overflow.
-    usize grown(usize n) const noexcept {
+    usize grown(usize n) const {
         usize total = 0;
         KILN_VERIFY(checked_add(size_, n, total) && "Vec: size overflows");
         return total;
     }
     void grow_to(usize minCap) {
-        grow_with(minCap, [](T*) noexcept {});
+        grow_with(minCap, [](T*) {});
     }
     /// Moves to a buffer of at least `minCap`. `build(newData)` constructs the new elements first,
     /// while the old buffer, which its arguments may point into, is still alive.
@@ -396,9 +394,9 @@ public:
         bool inserted; ///< false if the key already existed
     };
 
-    HashMap() noexcept = default;
-    explicit HashMap(Allocator const* alloc, Tag tag = Tag::Core) noexcept : alloc_(alloc), tag_(tag) {}
-    ~HashMap() noexcept { release(); }
+    HashMap() = default;
+    explicit HashMap(Allocator const* alloc, Tag tag = Tag::Core) : alloc_(alloc), tag_(tag) {}
+    ~HashMap() { release(); }
 
     HashMap(HashMap const&)            = delete;
     HashMap& operator=(HashMap const&) = delete;
@@ -426,15 +424,15 @@ public:
         return *this;
     }
 
-    void init(Allocator const* alloc, Tag tag = Tag::Core) noexcept {
+    void init(Allocator const* alloc, Tag tag = Tag::Core) {
         KILN_ASSERT(hashes_ == nullptr && "HashMap::init after allocation");
         alloc_ = alloc;
         tag_   = tag;
     }
 
-    usize size() const noexcept { return size_; }
-    usize capacity() const noexcept { return cap_; }
-    [[nodiscard]] bool empty() const noexcept { return size_ == 0; }
+    usize size() const { return size_; }
+    usize capacity() const { return cap_; }
+    [[nodiscard]] bool empty() const { return size_ == 0; }
 
     /// Ensure room for `n` entries without rehashing.
     void reserve(usize n) {
@@ -442,15 +440,15 @@ public:
         if (need > cap_) rehash(need);
     }
 
-    V* find(K const& key) noexcept {
+    V* find(K const& key) {
         Entry* e = find_entry(key);
         return e ? &e->value : nullptr;
     }
-    V const* find(K const& key) const noexcept {
+    V const* find(K const& key) const {
         Entry const* e = find_entry(key);
         return e ? &e->value : nullptr;
     }
-    [[nodiscard]] bool contains(K const& key) const noexcept { return find_index(key) != kNpos; }
+    [[nodiscard]] bool contains(K const& key) const { return find_index(key) != kNpos; }
 
     /// Insert or overwrite. Returns the stored value.
     V& insert(K const& key, V value) {
@@ -494,14 +492,14 @@ private:
 
 public:
     /// Remove `key`. Returns true if it existed.
-    bool erase(K const& key) noexcept {
+    bool erase(K const& key) {
         usize i = find_index(key);
         if (i == kNpos) return false;
         erase_at(i);
         return true;
     }
 
-    void clear() noexcept {
+    void clear() {
         if (!cap_) return;
         for (usize i = 0; i < cap_; ++i) {
             if (hashes_[i]) {
@@ -512,7 +510,7 @@ public:
         }
         size_ = 0;
     }
-    void release() noexcept {
+    void release() {
         if (cap_) {
             clear();
             free(alloc_, hashes_, alloc_bytes(cap_), kDefaultAlign, tag_);
@@ -529,19 +527,19 @@ public:
         using Ptr    = std::conditional_t<Const, Entry const*, Entry*>;
 
     public:
-        Iter(MapPtr m, usize i) noexcept : m_(m), i_(i) { skip(); }
-        Ref operator*() const noexcept { return m_->entries_[i_]; }
-        Ptr operator->() const noexcept { return &m_->entries_[i_]; }
-        Iter& operator++() noexcept {
+        Iter(MapPtr m, usize i) : m_(m), i_(i) { skip(); }
+        Ref operator*() const { return m_->entries_[i_]; }
+        Ptr operator->() const { return &m_->entries_[i_]; }
+        Iter& operator++() {
             ++i_;
             skip();
             return *this;
         }
-        bool operator==(Iter const& o) const noexcept { return i_ == o.i_; }
-        bool operator!=(Iter const& o) const noexcept { return i_ != o.i_; }
+        bool operator==(Iter const& o) const { return i_ == o.i_; }
+        bool operator!=(Iter const& o) const { return i_ != o.i_; }
 
     private:
-        void skip() noexcept {
+        void skip() {
             while (i_ < m_->cap_ && m_->hashes_[i_] == 0)
                 ++i_;
         }
@@ -551,27 +549,27 @@ public:
     using iterator       = Iter<false>;
     using const_iterator = Iter<true>;
 
-    iterator begin() noexcept { return {this, 0}; }
-    iterator end() noexcept { return {this, cap_}; }
-    const_iterator begin() const noexcept { return {this, 0}; }
-    const_iterator end() const noexcept { return {this, cap_}; }
+    iterator begin() { return {this, 0}; }
+    iterator end() { return {this, cap_}; }
+    const_iterator begin() const { return {this, 0}; }
+    const_iterator end() const { return {this, cap_}; }
 
 private:
     static constexpr usize kNpos   = ~usize(0);
     static constexpr usize kMinCap = 8;
 
-    static u64 hash_key(K const& key) noexcept {
+    static u64 hash_key(K const& key) {
         u64 h = Hash{}(key);
         return h == 0 ? 1 : h; // 0 is the empty marker
     }
-    static constexpr usize cap_for(usize n) noexcept {
+    static constexpr usize cap_for(usize n) {
         // smallest power of two with n <= cap * 7/8
         usize cap = kMinCap;
         while (n * 8 > cap * 7)
             cap *= 2;
         return cap;
     }
-    static usize alloc_bytes(usize cap) noexcept {
+    static usize alloc_bytes(usize cap) {
         usize hashes = 0, entries = 0, total = 0;
         KILN_VERIFY(checked_mul(cap, sizeof(u64), hashes) && checked_mul(cap, sizeof(Entry), entries) &&
                     checked_add(align_up(hashes, alignof(Entry)), entries, total) &&
@@ -581,7 +579,7 @@ private:
 
     /// Slot pointer for `key`, or nullptr. Kept separate from find_index so the
     /// address is only formed on the found path (keeps gcc's -Wnull-dereference quiet).
-    Entry* find_entry(K const& key) const noexcept {
+    Entry* find_entry(K const& key) const {
         if (!cap_) return nullptr;
         u64 h   = hash_key(key);
         usize m = cap_ - 1;
@@ -593,7 +591,7 @@ private:
         }
     }
 
-    usize find_index(K const& key) const noexcept {
+    usize find_index(K const& key) const {
         if (!cap_) return kNpos;
         u64 h   = hash_key(key);
         usize m = cap_ - 1;
@@ -605,7 +603,7 @@ private:
         }
     }
 
-    void erase_at(usize i) noexcept {
+    void erase_at(usize i) {
         usize m = cap_ - 1;
         entries_[i].key.~K();
         entries_[i].value.~V();

@@ -15,7 +15,7 @@
 
 namespace kiln::sk {
 
-bool read_rgba(sg_image image, u32 width, u32 height, Vec<u8>& out) noexcept {
+bool read_rgba(sg_image image, u32 width, u32 height, Vec<u8>& out) {
     out.resize(usize(width) * height * 4);
 #if defined(SOKOL_D3D11)
     auto* device = static_cast<ID3D11Device*>(const_cast<void*>(sg_d3d11_device()));
@@ -71,7 +71,7 @@ bool read_rgba(sg_image image, u32 width, u32 height, Vec<u8>& out) noexcept {
 #endif
 }
 
-bool read_texture(sg_image image, TextureDesc const& desc, Vec<u8>& out) noexcept {
+bool read_texture(sg_image image, TextureDesc const& desc, Vec<u8>& out) {
     u64 total = 0;
     for (u32 i = 0; i < desc.levels; ++i)
         total += format_image_bytes(desc.format, max(desc.width >> i, 1u), max(desc.height >> i, 1u)) *

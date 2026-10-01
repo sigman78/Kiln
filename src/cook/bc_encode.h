@@ -13,7 +13,6 @@ namespace kiln::cook {
 /// BC5) channels; BC4 reads channel 0, BC5 channels 0 and 1. BC6H takes f32 RGBA and reads RGB,
 /// negative values as 0. Edge blocks repeat the last row and column. The bytes do not depend on
 /// `budget`.
-void bc_encode(Image const& img, Format format, EncodeQuality quality, Vec<u8>& out,
-               JobBudget const& budget) noexcept;
+void bc_encode(Image const& img, Format format, EncodeQuality quality, Vec<u8>& out, JobBudget const& budget);
 
 } // namespace kiln::cook

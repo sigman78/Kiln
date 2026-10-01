@@ -30,7 +30,7 @@ struct Call {
     std::atomic<u32> refs{0};     ///< the caller + every submitted helper not yet released
 };
 
-void run_chunks(Call& c) noexcept {
+void run_chunks(Call& c) {
     u32 done = 0;
     for (;;) {
         u32 const i = c.next.fetch_add(1, std::memory_order_relaxed);
@@ -44,7 +44,7 @@ void run_chunks(Call& c) noexcept {
 }
 
 /// Drops one reference; the last one frees the block. Nothing may touch `c` after.
-void release(Call* c) noexcept {
+void release(Call* c) {
     if (c->refs.fetch_sub(1, std::memory_order_acq_rel) != 1) return;
     std::atomic_thread_fence(std::memory_order_acquire);
     Allocator const* const alloc = c->alloc;
@@ -60,7 +60,7 @@ void helper_job(void* arg) {
 } // namespace
 
 void parallel_for(JobSystem const* jobs, Allocator const* alloc, u32 count, u32 grain, ParallelFn fn,
-                  void* user, u32 maxThreads) noexcept {
+                  void* user, u32 maxThreads) {
     if (count == 0) return;
     if (grain == 0) grain = 1;
     u32 const chunks = count / grain + (count % grain != 0 ? 1u : 0u);

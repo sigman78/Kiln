@@ -24,7 +24,7 @@ constexpr u64 kUploadAlign = 256; ///< start of every upload in the ring
 constexpr u32 kMaxLevels   = 16;
 
 /// For printf's %llu, whatever u64 is on this platform.
-unsigned long long ull(u64 v) noexcept { return v; }
+unsigned long long ull(u64 v) { return v; }
 
 enum class ObjectKind : u32 { Texture = 1, Buffer = 2 };
 
@@ -54,7 +54,7 @@ struct TexFormat {
 };
 
 /// BC4, BC5, BC6H and BC7 are core (RGTC, BPTC); BC1 and BC3 need S3TC, an extension.
-TexFormat tex_format(Format f, bool s3tc) noexcept {
+TexFormat tex_format(Format f, bool s3tc) {
     switch (f) {
     case Format::BC4_UNORM: return {GL_COMPRESSED_RED_RGTC1, 0, 0, true};
     case Format::BC5_UNORM: return {GL_COMPRESSED_RG_RGTC2, 0, 0, true};
@@ -118,7 +118,7 @@ struct GlAdapter {
 
 namespace {
 
-void release_object(GlAdapter* a, u32 index) noexcept {
+void release_object(GlAdapter* a, u32 index) {
     Object& o = a->objects[index];
     if (o.handle) glMakeTextureHandleNonResidentARB(o.handle);
     if (o.name) {
@@ -134,7 +134,7 @@ void release_object(GlAdapter* a, u32 index) noexcept {
 }
 
 /// True if the storage just allocated exists: GL reports running out of memory only as an error.
-bool storage_ok(Upload const& u) noexcept {
+bool storage_ok(Upload const& u) {
     bool ok = true;
     for (GLenum e = glGetError(); e != GL_NO_ERROR; e = glGetError())
         ok = ok && e != GL_OUT_OF_MEMORY;
@@ -144,7 +144,7 @@ bool storage_ok(Upload const& u) noexcept {
 
 /// The GL side of one committed upload: create the object, copy from the staging buffer. False
 /// when the storage cannot be allocated; nothing then reads the staging range.
-bool run_upload(GlAdapter* a, Upload& u) noexcept {
+bool run_upload(GlAdapter* a, Upload& u) {
     Object& o = a->objects[u.object];
     while (glGetError() != GL_NO_ERROR) {
     } // errors from before are not this upload's
@@ -193,7 +193,7 @@ bool run_upload(GlAdapter* a, Upload& u) noexcept {
 
 /// True once the upload is Complete or Failed. An InFlight one completes when its fence has
 /// signaled, which frees its ring range.
-bool poll(GlAdapter* a, u32 index) noexcept {
+bool poll(GlAdapter* a, u32 index) {
     ex::UploadState const st = a->uploads.state(index);
     if (st != ex::UploadState::InFlight)
         return st == ex::UploadState::Complete || st == ex::UploadState::Failed;
@@ -217,7 +217,7 @@ bool supports_format(void* user, Format f, FormatUsage usage) {
                                               : tex_format(f, a->s3tc).internal != 0;
 }
 
-bool has_extension(char const* name) noexcept {
+bool has_extension(char const* name) {
     GLint count = 0;
     glGetIntegerv(GL_NUM_EXTENSIONS, &count);
     for (GLint i = 0; i < count; ++i)
@@ -338,7 +338,7 @@ void destroy(void* user, GpuObject obj) {
 // --- Bindless ------------------------------------------------------------------------------------
 
 /// The resident handle of a finished texture, made on first use.
-u64 resident_handle(GlAdapter* a, GpuObject obj) noexcept {
+u64 resident_handle(GlAdapter* a, GpuObject obj) {
     if (obj.native == 0 || obj.native > a->objects.size() || obj.kind != u32(ObjectKind::Texture)) return 0;
     Object& o = a->objects[obj.native - 1];
     if (!o.handle && o.name) {
@@ -397,7 +397,7 @@ void flush(void* user) {
 
 } // namespace
 
-GlVertexFormat gl_vertex_format(Format f) noexcept {
+GlVertexFormat gl_vertex_format(Format f) {
     switch (f) {
     case Format::R32_SFLOAT: return {1, GL_FLOAT, false};
     case Format::R32G32_SFLOAT: return {2, GL_FLOAT, false};
@@ -412,7 +412,7 @@ GlVertexFormat gl_vertex_format(Format f) noexcept {
     }
 }
 
-Result<GlAdapter*> gl_adapter_create(GlAdapterDesc const& desc, Adapter* out) noexcept {
+Result<GlAdapter*> gl_adapter_create(GlAdapterDesc const& desc, Adapter* out) {
     if (!out || desc.stagingBytes == 0 || desc.maxObjects == 0 || desc.maxUploads == 0)
         return make_status(Code::InvalidArgument);
     Allocator const* const al = desc.alloc ? desc.alloc : default_allocator();
@@ -482,7 +482,7 @@ Result<GlAdapter*> gl_adapter_create(GlAdapterDesc const& desc, Adapter* out) no
     return a;
 }
 
-void gl_adapter_destroy(GlAdapter* a) noexcept {
+void gl_adapter_destroy(GlAdapter* a) {
     if (!a) return;
     for (u32 i = 0; i < a->uploads.capacity(); ++i)
         glDeleteSync(a->uploads[i].fence);
@@ -498,7 +498,7 @@ void gl_adapter_destroy(GlAdapter* a) noexcept {
     delete_object(a->alloc, a, Tag::Payload);
 }
 
-ex::AdapterStats gl_adapter_stats(GlAdapter* a) noexcept {
+ex::AdapterStats gl_adapter_stats(GlAdapter* a) {
     std::lock_guard<std::mutex> const lock(a->mutex);
     ex::AdapterStats s = a->stats;
     s.liveObjects      = u32(a->objects.size() - a->freeObjects.size());
@@ -508,13 +508,13 @@ ex::AdapterStats gl_adapter_stats(GlAdapter* a) noexcept {
     return s;
 }
 
-GlTexture gl_texture(GlAdapter const* a, GpuObject obj) noexcept {
+GlTexture gl_texture(GlAdapter const* a, GpuObject obj) {
     if (obj.native == 0 || obj.native > a->objects.size() || obj.kind != u32(ObjectKind::Texture)) return {};
     Object const& o = a->objects[obj.native - 1];
     return o.used ? GlTexture{o.name, o.target} : GlTexture{};
 }
 
-bool gl_read_texture(void* user, GpuObject obj, TextureDesc const& desc, Vec<u8>* out) noexcept {
+bool gl_read_texture(void* user, GpuObject obj, TextureDesc const& desc, Vec<u8>* out) {
     GlAdapter const* a    = static_cast<GlAdapter const*>(user);
     GlTexture const tex   = gl_texture(a, obj);
     TexFormat const f     = tex_format(desc.format, a->s3tc);
@@ -541,13 +541,13 @@ bool gl_read_texture(void* user, GpuObject obj, TextureDesc const& desc, Vec<u8>
     return glGetError() == GL_NO_ERROR;
 }
 
-GlBufferRange gl_handle_table(GlAdapter* a, u64 frame) noexcept {
+GlBufferRange gl_handle_table(GlAdapter* a, u64 frame) {
     u64 const offset = (frame % a->tableFrames) * a->tableStride;
     std::memcpy(a->tableMapped + offset, a->handles.data(), usize(a->slotsUsed) * sizeof(u64));
     return {a->table, offset, a->tableStride};
 }
 
-unsigned gl_buffer(GlAdapter const* a, GpuObject obj) noexcept {
+unsigned gl_buffer(GlAdapter const* a, GpuObject obj) {
     if (obj.native == 0 || obj.native > a->objects.size() || obj.kind != u32(ObjectKind::Buffer)) return 0;
     Object const& o = a->objects[obj.native - 1];
     return o.used ? o.name : 0;

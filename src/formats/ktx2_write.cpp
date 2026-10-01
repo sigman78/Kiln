@@ -13,7 +13,7 @@ namespace kiln::ktx2 {
 namespace {
 
 /// Round up to a multiple of `a` (not necessarily a power of two, e.g. 12).
-constexpr u64 round_up(u64 v, u64 a) noexcept { return (v + a - 1) / a * a; }
+constexpr u64 round_up(u64 v, u64 a) { return (v + a - 1) / a * a; }
 
 // KHR_DF channel ids and qualifiers for the RGBSDA color model.
 constexpr u32 kChannelIds[4] = {0, 1, 2, 15}; // R, G, B, A
@@ -40,7 +40,7 @@ struct BlockModel {
     BlockSample s[2];
 };
 
-BlockModel block_model(Format f) noexcept {
+BlockModel block_model(Format f) {
     constexpr u8 kAlpha = 15;
     switch (f) {
     case Format::BC1_RGB_UNORM:
@@ -72,16 +72,16 @@ BlockModel block_model(Format f) noexcept {
     }
 }
 
-u32 dfd_samples(FormatInfo const& info) noexcept {
+u32 dfd_samples(FormatInfo const& info) {
     return info.compressed ? block_model(info.format).samples : info.channels;
 }
 
-u32 dfd_size(FormatInfo const& info) noexcept {
+u32 dfd_size(FormatInfo const& info) {
     return 4 + kDfdBasicBlockHeaderSize + kDfdSampleSize * dfd_samples(info);
 }
 
 /// Sample bounds and qualifiers by component kind (KDF 1.3, 5.19 / 5.20).
-void sample_range(FormatInfo const& info, u32* lower, u32* upper, u32* qualifiers) noexcept {
+void sample_range(FormatInfo const& info, u32* lower, u32* upper, u32* qualifiers) {
     u32 const bits = info.compressed ? 32u : info.bitsPerChannel; // block samples span the full u32
     *lower = 0, *upper = 0, *qualifiers = 0;
     switch (info.kind) {
@@ -104,7 +104,7 @@ void sample_range(FormatInfo const& info, u32* lower, u32* upper, u32* qualifier
 }
 
 /// Write the DFD for `info` at `out` (dfd_size(info) bytes, zeroed).
-void write_dfd(u8* out, FormatInfo const& info, bool premultiplied) noexcept {
+void write_dfd(u8* out, FormatInfo const& info, bool premultiplied) {
     u32 const total     = dfd_size(info);
     u32 const blockSize = total - 4;
     write_unaligned<u32>(out + 0, total);
@@ -152,14 +152,14 @@ void write_dfd(u8* out, FormatInfo const& info, bool premultiplied) noexcept {
 }
 
 Status invalid(DiagSink const* diag, u32 code, char const* fmt, unsigned long long a = 0,
-               unsigned long long b = 0, unsigned long long c = 0) noexcept {
+               unsigned long long b = 0, unsigned long long c = 0) {
     return diagf(diag, make_status(Code::InvalidArgument), code, Severity::Error, {}, "ktx2 write", fmt, a, b,
                  c);
 }
 
 } // namespace
 
-Result<Vec<u8>> write(WriteDesc const& desc, Allocator const* alloc, DiagSink const* diag) noexcept {
+Result<Vec<u8>> write(WriteDesc const& desc, Allocator const* alloc, DiagSink const* diag) {
     // --- Validate --------------------------------------------------------------------
     FormatInfo const* info = format_info(desc.format);
     if (desc.format == Format::Undefined || info == nullptr)

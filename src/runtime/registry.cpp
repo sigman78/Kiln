@@ -7,7 +7,7 @@
 namespace kiln {
 namespace rt {
 
-void Buffer::allocate(Allocator const* a, usize n, Tag t) noexcept {
+void Buffer::allocate(Allocator const* a, usize n, Tag t) {
     KILN_ASSERT(data == nullptr);
     alloc = a;
     tag   = t;
@@ -15,7 +15,7 @@ void Buffer::allocate(Allocator const* a, usize n, Tag t) noexcept {
     data  = n ? static_cast<u8*>(kiln::alloc(a, n, 16, t)) : nullptr;
 }
 
-void Buffer::release() noexcept {
+void Buffer::release() {
     if (data) kiln::free(alloc, data, size, 16, tag);
     data = nullptr;
     size = 0;
@@ -25,11 +25,11 @@ void Buffer::release() noexcept {
 // Paths and ids
 // ---------------------------------------------------------------------------
 
-HashMap<AssetId, u32>& map_for(Context* ctx, AssetKind kind) noexcept {
+HashMap<AssetId, u32>& map_for(Context* ctx, AssetKind kind) {
     return kind == AssetKind::Mesh ? ctx->meshMap : ctx->texMap;
 }
 
-Slot* resolve(Context* ctx, u64 bits, AssetKind kind) noexcept {
+Slot* resolve(Context* ctx, u64 bits, AssetKind kind) {
     if (!ctx) return nullptr;
     u32 const index = u32(bits);
     u32 const gen   = u32(bits >> 32);
@@ -43,7 +43,7 @@ Slot* resolve(Context* ctx, u64 bits, AssetKind kind) noexcept {
 // Intrusive queues over slot indices
 // ---------------------------------------------------------------------------
 
-void queue_push(Context* ctx, QueueId q, Slot& s) noexcept {
+void queue_push(Context* ctx, QueueId q, Slot& s) {
     KILN_ASSERT(s.queue == QueueId::None);
     List& l = ctx->queues[u32(q)];
     s.queue = q;
@@ -61,7 +61,7 @@ void queue_push(Context* ctx, QueueId q, Slot& s) noexcept {
     }
 }
 
-void queue_remove(Context* ctx, Slot& s) noexcept {
+void queue_remove(Context* ctx, Slot& s) {
     if (s.queue == QueueId::None) return;
     List& l = ctx->queues[u32(s.queue)];
     if (s.qPrev != kInvalid)
@@ -77,7 +77,7 @@ void queue_remove(Context* ctx, Slot& s) noexcept {
     s.qPrev = s.qNext = kInvalid;
 }
 
-void boost(Context* ctx, Slot& s) noexcept {
+void boost(Context* ctx, Slot& s) {
     s.priority         = Priority::High;
     u64 const loadNs   = s.loadNs;
     u64 const queuedNs = s.queuedNs;
@@ -96,7 +96,7 @@ void boost(Context* ctx, Slot& s) noexcept {
 // Groups
 // ---------------------------------------------------------------------------
 
-GroupRec* group_of(Context* ctx, Slot const& s) noexcept {
+GroupRec* group_of(Context* ctx, Slot const& s) {
     if (s.groupIndex == kInvalid) return nullptr;
     GroupRec& g = ctx->groups[s.groupIndex];
     return (g.live && g.generation == s.groupGen) ? &g : nullptr;
@@ -104,13 +104,13 @@ GroupRec* group_of(Context* ctx, Slot const& s) noexcept {
 
 namespace {
 
-GroupRec* resolve_group(Context* ctx, Group g) noexcept {
+GroupRec* resolve_group(Context* ctx, Group g) {
     if (!ctx || g.is_null() || g.index >= ctx->maxGroups) return nullptr;
     GroupRec& r = ctx->groups[g.index];
     return (r.live && r.generation == g.generation) ? &r : nullptr;
 }
 
-void join_group(Context* ctx, Slot& s, Group g) noexcept {
+void join_group(Context* ctx, Slot& s, Group g) {
     if (s.groupIndex != kInvalid && group_of(ctx, s)) return; // first live group wins
     GroupRec* r = resolve_group(ctx, g);
     if (!r) return;
@@ -134,7 +134,7 @@ void join_group(Context* ctx, Slot& s, Group g) noexcept {
     r->bytesTotal += s.groupBytes;
 }
 
-void leave_group(Context* ctx, Slot& s) noexcept {
+void leave_group(Context* ctx, Slot& s) {
     if (GroupRec* r = group_of(ctx, s)) {
         switch (s.groupAs) {
         case State::Ready:
@@ -157,19 +157,19 @@ void leave_group(Context* ctx, Slot& s) noexcept {
 // Slots
 // ---------------------------------------------------------------------------
 
-void free_meta_set(Allocator const* a, MetaSet& m) noexcept {
+void free_meta_set(Allocator const* a, MetaSet& m) {
     m.meta.release();
     if (m.layout) free_array(a, m.layout, usize(m.layoutLevels) * kLayoutColumns, Tag::Payload);
     m = {};
 }
 
-MetaSet const* shown_meta(Slot const& s) noexcept {
+MetaSet const* shown_meta(Slot const& s) {
     if (s.state == State::Ready) return &s.cur;
     if (s.state == State::MetaReady) return &s.next;
     return nullptr;
 }
 
-ArrayDecl* new_array_decl(Allocator const* a, u32 count, usize namesLen) noexcept {
+ArrayDecl* new_array_decl(Allocator const* a, u32 count, usize namesLen) {
     auto* d     = new_object<ArrayDecl>(a, Tag::Registry);
     d->names    = alloc_array<char>(a, max<usize>(namesLen, 1), Tag::Registry);
     d->namesLen = namesLen;
@@ -180,7 +180,7 @@ ArrayDecl* new_array_decl(Allocator const* a, u32 count, usize namesLen) noexcep
     return d;
 }
 
-void free_array_job_data(Allocator const* a, ArrayDecl& d) noexcept {
+void free_array_job_data(Allocator const* a, ArrayDecl& d) {
     for (u32 i = 0; i < d.count; ++i) {
         ArrayLayer& l = d.layers[i];
         l.cooked.release();
@@ -192,7 +192,7 @@ void free_array_job_data(Allocator const* a, ArrayDecl& d) noexcept {
     }
 }
 
-void free_array_decl(Allocator const* a, ArrayDecl* d) noexcept {
+void free_array_decl(Allocator const* a, ArrayDecl* d) {
     if (!d) return;
     free_array_job_data(a, *d);
     for (u32 i = 0; i < d->count; ++i)
@@ -202,7 +202,7 @@ void free_array_decl(Allocator const* a, ArrayDecl* d) noexcept {
     delete_object(a, d, Tag::Registry);
 }
 
-void adopt_job_keys(Slot& s) noexcept {
+void adopt_job_keys(Slot& s) {
     s.key      = s.jobKey;
     s.keyValid = s.jobKeyValid;
     if (!s.array) return;
@@ -213,7 +213,7 @@ void adopt_job_keys(Slot& s) noexcept {
     }
 }
 
-void free_load_data(Slot& s) noexcept {
+void free_load_data(Slot& s) {
     free_meta_set(s.ctx->alloc, s.cur);
     free_meta_set(s.ctx->alloc, s.next);
     s.memory.release();
@@ -222,7 +222,7 @@ void free_load_data(Slot& s) noexcept {
     if (s.array) free_array_job_data(s.ctx->alloc, *s.array);
 }
 
-void free_slot(Context* ctx, Slot& s) noexcept {
+void free_slot(Context* ctx, Slot& s) {
     KILN_ASSERT(!s.jobInFlight && s.queue == QueueId::None);
     free_load_data(s);
     free_array_decl(ctx->alloc, s.array);
@@ -242,7 +242,7 @@ void free_slot(Context* ctx, Slot& s) noexcept {
 }
 
 Slot* request_slot(Context* ctx, AssetKind kind, StrView path, RequestOptions const& opt, Buffer* memory,
-                   bool rejectExisting) noexcept {
+                   bool rejectExisting) {
     if (char const* why = check_asset_name(path)) {
         (void)diagf(&ctx->diag, make_status(Code::InvalidArgument), kDiagBadAssetName, Severity::Error, path,
                     "request", "invalid asset name: %s", why);
@@ -352,7 +352,7 @@ Slot* request_slot(Context* ctx, AssetKind kind, StrView path, RequestOptions co
 
 namespace {
 
-void unload(Context* ctx, Slot& s) noexcept {
+void unload(Context* ctx, Slot& s) {
     leave_group(ctx, s);
     if (s.queue == QueueId::Await) orphan_upload(ctx, s);
     queue_remove(ctx, s);
@@ -371,7 +371,7 @@ void unload(Context* ctx, Slot& s) noexcept {
         free_slot(ctx, s);
 }
 
-void release_impl(Context* ctx, u64 bits, AssetKind kind) noexcept {
+void release_impl(Context* ctx, u64 bits, AssetKind kind) {
     Slot* s = resolve(ctx, bits, kind);
     if (!s) {
         KILN_ASSERT(bits == 0 && "release() of a stale handle (double release?)");
@@ -381,12 +381,12 @@ void release_impl(Context* ctx, u64 bits, AssetKind kind) noexcept {
     if (--s->refcount == 0) unload(ctx, *s);
 }
 
-Placeholder const& kind_placeholder(Context* ctx, TextureKind k, TextureShape shape) noexcept {
+Placeholder const& kind_placeholder(Context* ctx, TextureKind k, TextureShape shape) {
     return ctx->ph[placeholder_index(k < TextureKind::Count ? k : TextureKind::BaseColor, shape)];
 }
 
 /// The placeholder a texture shows in `s`'s state (or for a stale handle when s is null).
-Placeholder const& texture_placeholder(Context* ctx, Slot const* s) noexcept {
+Placeholder const& texture_placeholder(Context* ctx, Slot const* s) {
     bool const failedLook    = !s || s->state == State::Failed;
     TextureShape const shape = s ? s->texShape : TextureShape::Tex2D;
     Placeholder const& fp    = ctx->ph[failed_placeholder_index(shape)];
@@ -394,16 +394,16 @@ Placeholder const& texture_placeholder(Context* ctx, Slot const* s) noexcept {
     return kind_placeholder(ctx, s ? s->texKind : TextureKind::BaseColor, shape);
 }
 
-GpuObject placeholder_obj(Placeholder const& p) noexcept { return p.ready ? p.obj : GpuObject{}; }
+GpuObject placeholder_obj(Placeholder const& p) { return p.ready ? p.obj : GpuObject{}; }
 
-void release_now(Context* ctx, GpuObject obj, u32 bindSlot) noexcept {
+void release_now(Context* ctx, GpuObject obj, u32 bindSlot) {
     if (!obj.is_null()) ctx->adapter.destroy(ctx->adapter.user, obj);
     if (bindSlot != kInvalid) ctx->freeBindSlots.push_back(bindSlot);
 }
 
 } // namespace
 
-void retire(Context* ctx, GpuObject obj, u32 bindSlot) noexcept {
+void retire(Context* ctx, GpuObject obj, u32 bindSlot) {
     if (obj.is_null() && bindSlot == kInvalid) return;
     if (ctx->completedFrame >= ctx->frame)
         release_now(ctx, obj, bindSlot);
@@ -411,7 +411,7 @@ void retire(Context* ctx, GpuObject obj, u32 bindSlot) noexcept {
         ctx->retired.push_back({obj, bindSlot, ctx->frame});
 }
 
-void process_retired(Context* ctx) noexcept {
+void process_retired(Context* ctx) {
     for (usize i = 0; i < ctx->retired.size();) {
         Retired const r = ctx->retired[i];
         if (ctx->completedFrame < r.frame) {
@@ -423,13 +423,13 @@ void process_retired(Context* ctx) noexcept {
     }
 }
 
-void orphan_upload(Context* ctx, Slot& s) noexcept {
+void orphan_upload(Context* ctx, Slot& s) {
     if (!s.hasTarget) return;
     ctx->orphans.push_back({s.target.token, s.target.object});
     s.hasTarget = false;
 }
 
-void poll_orphans(Context* ctx) noexcept {
+void poll_orphans(Context* ctx) {
     for (usize i = 0; i < ctx->orphans.size();) {
         Orphan const o = ctx->orphans[i];
         Status why     = kOk; // an abandoned upload's reason goes nowhere
@@ -442,14 +442,14 @@ void poll_orphans(Context* ctx) noexcept {
     }
 }
 
-void bind_object(Context* ctx, Slot& s, GpuObject obj) noexcept {
+void bind_object(Context* ctx, Slot& s, GpuObject obj) {
     if (s.bindSlot == kInvalid) return;
     if (s.bindPending) --ctx->bindPendingCount;
     s.bindPending = false;
     ctx->adapter.bind(ctx->adapter.user, s.bindSlot, obj, s.texShape);
 }
 
-void bind_placeholder(Context* ctx, Slot& s) noexcept {
+void bind_placeholder(Context* ctx, Slot& s) {
     if (s.bindSlot == kInvalid) return;
     GpuObject const obj = placeholder_obj(texture_placeholder(ctx, &s));
     if (!obj.is_null()) {
@@ -467,15 +467,15 @@ using namespace rt;
 // Public API: ids, requests
 // ---------------------------------------------------------------------------
 
-AssetId asset_id(StrView name) noexcept { return check_asset_name(name) ? 0 : fnv1a64(name); }
+AssetId asset_id(StrView name) { return check_asset_name(name) ? 0 : fnv1a64(name); }
 
-MeshHandle request_mesh(Context* ctx, StrView path, RequestOptions const& opt) noexcept {
+MeshHandle request_mesh(Context* ctx, StrView path, RequestOptions const& opt) {
     if (!ctx) return {};
     Slot* s = request_slot(ctx, AssetKind::Mesh, path, opt, nullptr, false);
     return s ? MeshHandle::from_bits(handle_bits(*s)) : MeshHandle{};
 }
 
-TextureHandle request_texture(Context* ctx, StrView path, RequestOptions const& opt) noexcept {
+TextureHandle request_texture(Context* ctx, StrView path, RequestOptions const& opt) {
     if (!ctx) return {};
     Slot* s = request_slot(ctx, AssetKind::Texture, path, opt, nullptr, false);
     return s ? TextureHandle::from_bits(handle_bits(*s)) : TextureHandle{};
@@ -483,20 +483,20 @@ TextureHandle request_texture(Context* ctx, StrView path, RequestOptions const& 
 
 namespace {
 
-Slot* array_request_failed(Context* ctx, StrView name, Code code, char const* why) noexcept {
+Slot* array_request_failed(Context* ctx, StrView name, Code code, char const* why) {
     (void)diagf(&ctx->diag, make_status(code), kDiagArrayDeclaration, Severity::Error, name, "request",
                 "texture array: %s", why);
     return nullptr;
 }
 
-bool same_layers(ArrayDecl const& d, Span<StrView const> layers) noexcept {
+bool same_layers(ArrayDecl const& d, Span<StrView const> layers) {
     if (d.count != layers.size) return false;
     for (u32 i = 0; i < d.count; ++i)
         if (d.name(d.layers[i]) != layers[i]) return false;
     return true;
 }
 
-Slot* request_array_slot(Context* ctx, TextureArrayDesc const& desc) noexcept {
+Slot* request_array_slot(Context* ctx, TextureArrayDesc const& desc) {
     StrView const name = desc.name;
     if (char const* why = check_asset_name(name)) {
         (void)diagf(&ctx->diag, make_status(Code::InvalidArgument), kDiagBadAssetName, Severity::Error, name,
@@ -558,22 +558,22 @@ Slot* request_array_slot(Context* ctx, TextureArrayDesc const& desc) noexcept {
 
 } // namespace
 
-TextureHandle request_texture_array(Context* ctx, TextureArrayDesc const& desc) noexcept {
+TextureHandle request_texture_array(Context* ctx, TextureArrayDesc const& desc) {
     if (!ctx) return {};
     Slot* s = request_array_slot(ctx, desc);
     return s ? TextureHandle::from_bits(handle_bits(*s)) : TextureHandle{};
 }
 
-void release(Context* ctx, MeshHandle h) noexcept { release_impl(ctx, h.bits(), AssetKind::Mesh); }
-void release(Context* ctx, TextureHandle h) noexcept { release_impl(ctx, h.bits(), AssetKind::Texture); }
+void release(Context* ctx, MeshHandle h) { release_impl(ctx, h.bits(), AssetKind::Mesh); }
+void release(Context* ctx, TextureHandle h) { release_impl(ctx, h.bits(), AssetKind::Texture); }
 
-MeshHandle find_mesh(Context* ctx, AssetId id) noexcept {
+MeshHandle find_mesh(Context* ctx, AssetId id) {
     if (!ctx) return {};
     u32 const* i = ctx->meshMap.find(id);
     return i ? MeshHandle::from_bits(handle_bits(ctx->slots[*i])) : MeshHandle{};
 }
 
-TextureHandle find_texture(Context* ctx, AssetId id) noexcept {
+TextureHandle find_texture(Context* ctx, AssetId id) {
     if (!ctx) return {};
     u32 const* i = ctx->texMap.find(id);
     return i ? TextureHandle::from_bits(handle_bits(ctx->slots[*i])) : TextureHandle{};
@@ -583,48 +583,48 @@ TextureHandle find_texture(Context* ctx, AssetId id) noexcept {
 // Queries
 // ---------------------------------------------------------------------------
 
-State state(Context* ctx, MeshHandle h) noexcept {
+State state(Context* ctx, MeshHandle h) {
     Slot const* s = resolve(ctx, h.bits(), AssetKind::Mesh);
     return s ? s->state : State::Unloaded;
 }
-State state(Context* ctx, TextureHandle h) noexcept {
+State state(Context* ctx, TextureHandle h) {
     Slot const* s = resolve(ctx, h.bits(), AssetKind::Texture);
     return s ? s->state : State::Unloaded;
 }
-bool has_meta(Context* ctx, MeshHandle h) noexcept {
+bool has_meta(Context* ctx, MeshHandle h) {
     State const st = state(ctx, h);
     return st == State::MetaReady || st == State::Ready;
 }
-bool has_meta(Context* ctx, TextureHandle h) noexcept {
+bool has_meta(Context* ctx, TextureHandle h) {
     State const st = state(ctx, h);
     return st == State::MetaReady || st == State::Ready;
 }
-bool is_ready(Context* ctx, MeshHandle h) noexcept { return state(ctx, h) == State::Ready; }
-bool is_ready(Context* ctx, TextureHandle h) noexcept { return state(ctx, h) == State::Ready; }
+bool is_ready(Context* ctx, MeshHandle h) { return state(ctx, h) == State::Ready; }
+bool is_ready(Context* ctx, TextureHandle h) { return state(ctx, h) == State::Ready; }
 
-u32 version(Context* ctx, MeshHandle h) noexcept {
+u32 version(Context* ctx, MeshHandle h) {
     Slot const* s = resolve(ctx, h.bits(), AssetKind::Mesh);
     return s ? s->version : 0;
 }
-u32 version(Context* ctx, TextureHandle h) noexcept {
+u32 version(Context* ctx, TextureHandle h) {
     Slot const* s = resolve(ctx, h.bits(), AssetKind::Texture);
     return s ? s->version : 0;
 }
-AssetId id_of(Context* ctx, MeshHandle h) noexcept {
+AssetId id_of(Context* ctx, MeshHandle h) {
     Slot const* s = resolve(ctx, h.bits(), AssetKind::Mesh);
     return s ? s->id : 0;
 }
-AssetId id_of(Context* ctx, TextureHandle h) noexcept {
+AssetId id_of(Context* ctx, TextureHandle h) {
     Slot const* s = resolve(ctx, h.bits(), AssetKind::Texture);
     return s ? s->id : 0;
 }
 
-GpuObject gpu_object(Context* ctx, MeshHandle h) noexcept {
+GpuObject gpu_object(Context* ctx, MeshHandle h) {
     Slot const* s = resolve(ctx, h.bits(), AssetKind::Mesh);
     return (s && s->state == State::Ready) ? s->realObj : GpuObject{};
 }
 
-GpuObject gpu_object(Context* ctx, TextureHandle h) noexcept {
+GpuObject gpu_object(Context* ctx, TextureHandle h) {
     if (!ctx) return {};
     Slot const* s = resolve(ctx, h.bits(), AssetKind::Texture);
     GpuObject obj = s && s->state == State::Ready ? s->realObj : placeholder_obj(texture_placeholder(ctx, s));
@@ -632,13 +632,13 @@ GpuObject gpu_object(Context* ctx, TextureHandle h) noexcept {
     return obj;
 }
 
-mesh::MeshView const* mesh_view(Context* ctx, MeshHandle h) noexcept {
+mesh::MeshView const* mesh_view(Context* ctx, MeshHandle h) {
     Slot const* s    = resolve(ctx, h.bits(), AssetKind::Mesh);
     MetaSet const* m = s ? shown_meta(*s) : nullptr;
     return m ? &m->meshView : nullptr;
 }
 
-TextureInfo texture_info(Context* ctx, TextureHandle h) noexcept {
+TextureInfo texture_info(Context* ctx, TextureHandle h) {
     TextureInfo info;
     if (!ctx) return info;
     Slot const* s = resolve(ctx, h.bits(), AssetKind::Texture);
@@ -664,7 +664,7 @@ TextureInfo texture_info(Context* ctx, TextureHandle h) noexcept {
 // Groups
 // ---------------------------------------------------------------------------
 
-Group group(Context* ctx) noexcept {
+Group group(Context* ctx) {
     if (!ctx) return {};
     if (ctx->freeGroupCount == 0) {
         (void)diagf(&ctx->diag, make_status(Code::Busy), kDiagRegistryFull, Severity::Error, {}, "group",
@@ -680,7 +680,7 @@ Group group(Context* ctx) noexcept {
     return Group{i, g};
 }
 
-void release(Context* ctx, Group g) noexcept {
+void release(Context* ctx, Group g) {
     GroupRec* r = resolve_group(ctx, g);
     if (!r) return;
     r->live                                = false;
@@ -688,7 +688,7 @@ void release(Context* ctx, Group g) noexcept {
     ctx->freeGroups[ctx->freeGroupCount++] = g.index;
 }
 
-GroupStatus progress(Context* ctx, Group g) noexcept {
+GroupStatus progress(Context* ctx, Group g) {
     GroupRec const* r = resolve_group(ctx, g);
     if (!r) return {};
     return GroupStatus{r->ready, r->failed, r->pending, r->bytesDone, r->bytesTotal};
@@ -696,7 +696,7 @@ GroupStatus progress(Context* ctx, Group g) noexcept {
 
 namespace rt {
 /// Raise every live member of `g` to High (wait()).
-void boost_group(Context* ctx, Group g) noexcept {
+void boost_group(Context* ctx, Group g) {
     if (!resolve_group(ctx, g)) return;
     for (u32 i = 0; i < ctx->maxAssets; ++i) {
         Slot& s = ctx->slots[i];
@@ -705,12 +705,12 @@ void boost_group(Context* ctx, Group g) noexcept {
 }
 } // namespace rt
 
-GpuObject placeholder_object(Context* ctx, TextureKind kind, TextureShape shape) noexcept {
+GpuObject placeholder_object(Context* ctx, TextureKind kind, TextureShape shape) {
     if (!ctx || kind >= TextureKind::Count || shape >= TextureShape::Count) return {};
     return placeholder_obj(ctx->ph[placeholder_index(kind, shape)]);
 }
 
-TextureKind texture_kind_for_slot(mesh::TextureSlot slot) noexcept {
+TextureKind texture_kind_for_slot(mesh::TextureSlot slot) {
     switch (slot) {
     case mesh::TextureSlot::BaseColor: return TextureKind::BaseColor;
     case mesh::TextureSlot::Normal: return TextureKind::Normal;

@@ -21,7 +21,7 @@ struct Coverage {
     u32 count = 0;
     u32 grain = 0;
 
-    void reset(u32 n, u32 g) noexcept {
+    void reset(u32 n, u32 g) {
         for (auto& h : hits)
             h.store(0, std::memory_order_relaxed);
         badChunks.store(0, std::memory_order_relaxed);
@@ -29,7 +29,7 @@ struct Coverage {
         grain = g;
     }
 
-    static void fn(void* user, u32 begin, u32 end) noexcept {
+    static void fn(void* user, u32 begin, u32 end) {
         auto* self       = static_cast<Coverage*>(user);
         u32 const g      = self->grain ? self->grain : 1;
         bool const whole = begin < end && end <= self->count && (end - begin <= g || begin == 0);
@@ -38,7 +38,7 @@ struct Coverage {
             self->hits[i].fetch_add(1, std::memory_order_relaxed);
     }
 
-    [[nodiscard]] bool exactly_once() const noexcept {
+    [[nodiscard]] bool exactly_once() const {
         for (u32 i = 0; i < kMaxItems; ++i)
             if (hits[i].load(std::memory_order_relaxed) != (i < count ? 1u : 0u)) return false;
         return badChunks.load(std::memory_order_relaxed) == 0;
@@ -133,7 +133,7 @@ struct Peak {
     std::atomic<u32> active{0};
     std::atomic<u32> peak{0};
 
-    static void fn(void* user, u32, u32) noexcept {
+    static void fn(void* user, u32, u32) {
         auto* self  = static_cast<Peak*>(user);
         u32 const a = self->active.fetch_add(1, std::memory_order_acq_rel) + 1;
         u32 p       = self->peak.load(std::memory_order_relaxed);

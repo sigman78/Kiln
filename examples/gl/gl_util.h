@@ -21,7 +21,7 @@ using ex::parse_options;
 
 /// A window with a GL 4.6 core context, current and loaded; hidden with --offscreen. Null on failure
 /// (after glfwTerminate).
-[[nodiscard]] GLFWwindow* open_window(GlOptions const& o, char const* title) noexcept;
+[[nodiscard]] GLFWwindow* open_window(GlOptions const& o, char const* title);
 
 /// Shader code both examples use. kMeshVs: attributes 0 position, 1 normal, 2 tangent, 3 UV;
 /// uniforms 0 model, 1 view-projection. kSkyVs: one triangle over the screen. kCommonFs: tonemap,
@@ -30,15 +30,15 @@ extern char const* const kMeshVs;
 extern char const* const kSkyVs;
 extern char const* const kCommonFs;
 /// The fragment shader is `#version 460 core`, then `fsHeader`, kCommonFs, `fs`. 0 on failure.
-[[nodiscard]] GLuint build_program(char const* vs, char const* fsHeader, char const* fs) noexcept;
+[[nodiscard]] GLuint build_program(char const* vs, char const* fsHeader, char const* fs);
 
 /// Frames are drawn here, then blitted to the window (and read for --dump).
 struct Target {
     GLuint fbo = 0, color = 0, depth = 0;
     u32 width = 0, height = 0;
     GLsync frameDone = nullptr; ///< offscreen: the last frame's fence
-    void resize(u32 w, u32 h) noexcept;
-    void release() noexcept;
+    void resize(u32 w, u32 h);
+    void release();
 };
 
 /// The model's GL state: one vertex array per vertex layout, placement, per-part matrices.
@@ -50,12 +50,12 @@ struct Geometry {
     ex::Mat4 world[kMaxParts];
 };
 /// On MetaReady and Changed: the vertex arrays and the placement.
-void prepare_geometry(Geometry& g, mesh::MeshView const& v, StrView name) noexcept;
-void release_geometry(Geometry& g) noexcept;
+void prepare_geometry(Geometry& g, mesh::MeshView const& v, StrView name);
+void release_geometry(Geometry& g);
 /// Draws LOD 0 of every part from `buffer` (the payload). Before each submesh it calls
 /// `material(user, materialIndex)`, which binds that material's textures.
 void draw_geometry(Geometry& g, mesh::MeshView const& v, GLuint buffer,
-                   void (*material)(void* user, u32 index), void* user) noexcept;
+                   void (*material)(void* user, u32 index), void* user);
 
 struct Frame {
     ex::View view;
@@ -64,10 +64,10 @@ struct Frame {
     ex::Vec3 skyForward, skyRight, skyUp; ///< right and up scaled to the view at distance 1
 };
 /// Sizes and clears the target and computes the camera. False while the window is minimized.
-bool begin_frame(GLFWwindow* w, ex::OrbitCamera const& camera, Target& t, Frame* f) noexcept;
+bool begin_frame(GLFWwindow* w, ex::OrbitCamera const& camera, Target& t, Frame* f);
 /// Blits the target to the window and, with a window, swaps. Offscreen, it waits for the
 /// previous frame instead, so at most one frame is queued, as with a swap.
-void end_frame(GLFWwindow* w, Target& t, bool offscreen) noexcept;
+void end_frame(GLFWwindow* w, Target& t, bool offscreen);
 
 /// Offscreen: stop one frame after the scene settled (writing --dump), or at --timeout.
 struct OffscreenRun {
@@ -76,6 +76,6 @@ struct OffscreenRun {
 };
 /// True when the loop should stop; sets *exitCode (0, 1 for a failure or a timeout, 2 for IO).
 bool offscreen_done(GlOptions const& o, Target const& t, bool settled, bool failed, OffscreenRun& run,
-                    int* exitCode) noexcept;
+                    int* exitCode);
 
 } // namespace kiln::glx

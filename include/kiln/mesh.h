@@ -133,7 +133,7 @@ static_assert(sizeof(MeshPart) == 112);
 /// 8-bit indices (D3D11, Metal, WebGPU, sokol) may reject it.
 enum class IndexType : u8 { U16 = 0, U32 = 1, U8 = 2 };
 
-constexpr u32 index_size(IndexType t) noexcept {
+constexpr u32 index_size(IndexType t) {
     return t == IndexType::U16 ? 2u : t == IndexType::U32 ? 4u : t == IndexType::U8 ? 1u : 0u;
 }
 
@@ -261,15 +261,15 @@ struct PayloadBlob {
 static_assert(sizeof(PayloadBlob) == 32);
 
 // Enum <-> string (tools / diagnostics)
-KILN_API char const* semantic_name(Semantic s) noexcept;
-KILN_API char const* index_type_name(IndexType t) noexcept;
-KILN_API char const* alpha_mode_name(AlphaMode m) noexcept;
-KILN_API char const* texture_slot_name(TextureSlot s) noexcept;
-KILN_API char const* codec_name(Codec c) noexcept;
-KILN_API char const* filter_name(Filter f) noexcept;
+KILN_API char const* semantic_name(Semantic s);
+KILN_API char const* index_type_name(IndexType t);
+KILN_API char const* alpha_mode_name(AlphaMode m);
+KILN_API char const* texture_slot_name(TextureSlot s);
+KILN_API char const* codec_name(Codec c);
+KILN_API char const* filter_name(Filter f);
 
 /// True if the codec/filter pair is permitted by spec §5.9.
-[[nodiscard]] constexpr bool is_allowed_blob_encoding(Codec c, Filter f) noexcept {
+[[nodiscard]] constexpr bool is_allowed_blob_encoding(Codec c, Filter f) {
     switch (c) {
     case Codec::None:
     case Codec::Zstd: return f == Filter::None || f == Filter::ByteShuffle || f == Filter::Delta;
@@ -281,11 +281,11 @@ KILN_API char const* filter_name(Filter f) noexcept;
     }
     return false;
 }
-[[nodiscard]] constexpr bool is_meshopt_codec(Codec c) noexcept {
+[[nodiscard]] constexpr bool is_meshopt_codec(Codec c) {
     return c == Codec::MeshoptVertex || c == Codec::MeshoptIndex || c == Codec::MeshoptIndexSeq;
 }
 /// Why `elementSize` cannot go to the codec or filter (meshoptimizer's limits), or nullptr when it can.
-constexpr char const* blob_element_problem(Codec c, Filter f, u32 elementSize) noexcept {
+constexpr char const* blob_element_problem(Codec c, Filter f, u32 elementSize) {
     if (c == Codec::MeshoptVertex && (elementSize % 4 != 0 || elementSize > 256))
         return "MeshoptVertex needs an element size that is a multiple of 4, at most 256";
     if ((c == Codec::MeshoptIndex || c == Codec::MeshoptIndexSeq) && elementSize != 2 && elementSize != 4)
@@ -339,19 +339,19 @@ enum DiagCode : u32 {
 /// min(stride, sizeof(T)) bytes and zero-fills the rest (records from a newer minor).
 template <class T> class Records {
 public:
-    Records() noexcept = default;
-    Records(u8 const* base, u32 count, u32 stride) noexcept : base_(base), count_(count), stride_(stride) {}
+    Records() = default;
+    Records(u8 const* base, u32 count, u32 stride) : base_(base), count_(count), stride_(stride) {}
 
-    u32 size() const noexcept { return count_; }
-    [[nodiscard]] bool empty() const noexcept { return count_ == 0; }
-    u32 stride() const noexcept { return stride_; }
-    [[nodiscard]] bool contiguous() const noexcept { return stride_ == sizeof(T); }
+    u32 size() const { return count_; }
+    [[nodiscard]] bool empty() const { return count_ == 0; }
+    u32 stride() const { return stride_; }
+    [[nodiscard]] bool contiguous() const { return stride_ == sizeof(T); }
 
-    T const& operator[](u32 i) const noexcept {
+    T const& operator[](u32 i) const {
         KILN_ASSERT(i < count_ && stride_ >= sizeof(T));
         return *reinterpret_cast<T const*>(base_ + usize(i) * stride_);
     }
-    T get(u32 i) const noexcept {
+    T get(u32 i) const {
         KILN_ASSERT(i < count_);
         T out{};
         u32 n = stride_ < sizeof(T) ? stride_ : u32(sizeof(T));
@@ -359,7 +359,7 @@ public:
         return out;
     }
     /// Contiguous view; only valid when contiguous().
-    Span<T const> span() const noexcept {
+    Span<T const> span() const {
         KILN_ASSERT(contiguous());
         return {reinterpret_cast<T const*>(base_), count_};
     }
@@ -367,15 +367,15 @@ public:
     struct Iter {
         u8 const* p;
         u32 stride;
-        T const& operator*() const noexcept { return *reinterpret_cast<T const*>(p); }
-        Iter& operator++() noexcept {
+        T const& operator*() const { return *reinterpret_cast<T const*>(p); }
+        Iter& operator++() {
             p += stride;
             return *this;
         }
-        bool operator!=(Iter const& o) const noexcept { return p != o.p; }
+        bool operator!=(Iter const& o) const { return p != o.p; }
     };
-    Iter begin() const noexcept { return {base_, stride_}; }
-    Iter end() const noexcept { return {base_ + usize(count_) * stride_, stride_}; }
+    Iter begin() const { return {base_, stride_}; }
+    Iter end() const { return {base_ + usize(count_) * stride_, stride_}; }
 
 private:
     u8 const* base_ = nullptr;
@@ -397,44 +397,44 @@ public:
     /// Parse and validate. `bytes` must hold at least the CPU region. On failure a
     /// diagnostic (code K40xx) is emitted and the Status carries the error class.
     static Result<MeshView> open(Span<u8 const> bytes, OpenOptions const& opt = {},
-                                 DiagSink const* diag = nullptr, StrView assetName = {}) noexcept;
+                                 DiagSink const* diag = nullptr, StrView assetName = {});
 
-    FileHeader const& header() const noexcept { return *header_; }
-    Span<SectionEntry const> sections() const noexcept { return sections_; }
-    SectionEntry const* find_section(u32 id) const noexcept;
+    FileHeader const& header() const { return *header_; }
+    Span<SectionEntry const> sections() const { return sections_; }
+    SectionEntry const* find_section(u32 id) const;
 
-    ModelInfo const& model() const noexcept { return *model_; }
-    StrView name() const noexcept { return str(model_->nameStr); }
-    u64 asset_id() const noexcept { return model_->assetId; }
+    ModelInfo const& model() const { return *model_; }
+    StrView name() const { return str(model_->nameStr); }
+    u64 asset_id() const { return model_->assetId; }
 
-    Records<VertexLayout> const& layouts() const noexcept { return layouts_; }
-    Records<MeshPart> const& parts() const noexcept { return parts_; }
-    Records<MeshLod> const& lods() const noexcept { return lods_; }
-    Records<Submesh> const& submeshes() const noexcept { return submeshes_; }
-    Records<MaterialSlot> const& materials() const noexcept { return materials_; }
-    Records<TextureBinding> const& textures() const noexcept { return textures_; }
-    Records<Mount> const& mounts() const noexcept { return mounts_; }
-    Records<PayloadBlob> const& blobs() const noexcept { return blobs_; }
+    Records<VertexLayout> const& layouts() const { return layouts_; }
+    Records<MeshPart> const& parts() const { return parts_; }
+    Records<MeshLod> const& lods() const { return lods_; }
+    Records<Submesh> const& submeshes() const { return submeshes_; }
+    Records<MaterialSlot> const& materials() const { return materials_; }
+    Records<TextureBinding> const& textures() const { return textures_; }
+    Records<Mount> const& mounts() const { return mounts_; }
+    Records<PayloadBlob> const& blobs() const { return blobs_; }
 
     /// String by STRS offset. Offsets are validated by open() when `validate` is on;
     /// an out-of-range offset returns an empty view. `kInvalid` returns empty.
-    StrView str(u32 offset) const noexcept;
-    Span<u8 const> strings() const noexcept { return strings_; }
+    StrView str(u32 offset) const;
+    Span<u8 const> strings() const { return strings_; }
 
     /// GPUD bytes if they were part of the span given to open(), else empty.
-    Span<u8 const> encoded() const noexcept { return encoded_; }
-    [[nodiscard]] bool payload_raw() const noexcept { return (header_->flags & kPayloadRaw) != 0; }
-    u64 decoded_size() const noexcept { return header_->payloadDecodedSize; }
-    u32 payload_alignment() const noexcept { return header_->payloadAlignment; }
+    Span<u8 const> encoded() const { return encoded_; }
+    [[nodiscard]] bool payload_raw() const { return (header_->flags & kPayloadRaw) != 0; }
+    u64 decoded_size() const { return header_->payloadDecodedSize; }
+    u32 payload_alignment() const { return header_->payloadAlignment; }
 
     /// Binary search over mounts (sorted by nameHash). nullptr if absent.
-    Mount const* find_mount(u64 nameHash) const noexcept;
+    Mount const* find_mount(u64 nameHash) const;
     /// Linear search over parts. nullptr if absent.
-    MeshPart const* find_part(u64 nameHash) const noexcept;
+    MeshPart const* find_part(u64 nameHash) const;
 
     /// Byte size of stream `s` / the index range of a LOD (0 for unused streams).
-    u64 stream_bytes(MeshLod const& lod, u32 s) const noexcept;
-    static u64 index_bytes(MeshLod const& lod) noexcept {
+    u64 stream_bytes(MeshLod const& lod, u32 s) const;
+    static u64 index_bytes(MeshLod const& lod) {
         return u64(lod.indexCount) * index_size(IndexType(lod.indexType));
     }
 
@@ -470,18 +470,18 @@ struct DecodeOptions {
 /// checked (codec, filter, element size) before anything decodes.
 KILN_API Status decode_blob(PayloadBlob const& blob, Span<u8 const> encoded, Span<u8> dst,
                             DecodeOptions const& opt = {}, DiagSink const* diag = nullptr,
-                            Arena* scratch = nullptr, StrView assetName = {}) noexcept;
+                            Arena* scratch = nullptr, StrView assetName = {});
 
 /// Decodes every blob of `v` from `gpud` (the GPUD bytes, gpuDataSize long) into `dst`
 /// (>= payloadDecodedSize) and zero-fills the gaps. kPayloadRaw files take a single
 /// memcpy. Loaders that read blobs one by one call decode_blob() instead.
 KILN_API Status decode_payload(MeshView const& v, Span<u8 const> gpud, Span<u8> dst,
                                DecodeOptions const& opt = {}, DiagSink const* diag = nullptr,
-                               Arena* scratch = nullptr, StrView assetName = {}) noexcept;
+                               Arena* scratch = nullptr, StrView assetName = {});
 
 /// Tools-only check: every index value < vertexCount and every submesh's indices
 /// (plus vertexBase) address existing vertices. Needs the decoded payload.
 KILN_API Status check_indices(MeshView const& v, Span<u8 const> decoded, DiagSink const* diag = nullptr,
-                              StrView assetName = {}) noexcept;
+                              StrView assetName = {});
 
 } // namespace kiln::mesh

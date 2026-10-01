@@ -20,7 +20,7 @@ public:
         u64 beginNs, endNs;
     };
 
-    ProfileHooks hooks() noexcept {
+    ProfileHooks hooks() {
         return {.zone_begin = &begin, .zone_end = &end, .interval = &interval, .user = this};
     }
 

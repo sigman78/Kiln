@@ -102,7 +102,7 @@ struct Upload {
     Status failure;        ///< why, once Failed
 };
 
-gpu::Format gpu_format(Format f) noexcept {
+gpu::Format gpu_format(Format f) {
     switch (f) {
     case Format::R8_UNORM: return gpu::Format::r8_unorm;
     case Format::R8G8_UNORM: return gpu::Format::rg8_unorm;
@@ -165,7 +165,7 @@ struct NgaAdapter {
 
 namespace {
 
-void release_object(NgaAdapter* a, u32 index) noexcept {
+void release_object(NgaAdapter* a, u32 index) {
     Object& o = a->objects[index];
     gpu::destroy_texture(o.texture);
     std::lock_guard<std::mutex> const lock(a->mutex);
@@ -176,14 +176,14 @@ void release_object(NgaAdapter* a, u32 index) noexcept {
     a->freeObjects.push_back(index);
 }
 
-void free_upload(NgaAdapter* a, u32 index) noexcept {
+void free_upload(NgaAdapter* a, u32 index) {
     std::lock_guard<std::mutex> const lock(a->mutex);
     Upload& u = a->uploads[index];
     if (u.kind == UploadKind::TextureLevels) a->ring.release(u.span);
     a->uploads.release(index);
 }
 
-gpu::CommandPool* next_pool(NgaAdapter* a) noexcept {
+gpu::CommandPool* next_pool(NgaAdapter* a) {
     u32 const i = a->nextPool;
     a->nextPool = (a->nextPool + 1) % kCommandPools;
     if (a->poolValues[i])
@@ -197,7 +197,7 @@ enum class Record : u8 { Done, Retry, Failed };
 /// Records one texture upload: placement, creation, a copy per level, its descriptor. Retry when the
 /// heap or the descriptors are full now; Failed when the texture can never be made. What a failed
 /// upload reserved is freed by destroy().
-Record record_texture(NgaAdapter* a, gpu::CommandBuffer* cmd, Upload& u) noexcept {
+Record record_texture(NgaAdapter* a, gpu::CommandBuffer* cmd, Upload& u) {
     Object& o            = a->objects[u.object];
     TextureDesc const& t = u.tex;
     gpu::TextureDesc d{};
@@ -252,7 +252,7 @@ Record record_texture(NgaAdapter* a, gpu::CommandBuffer* cmd, Upload& u) noexcep
 
 /// True once the upload is Complete or Failed; an InFlight copy completes when the timeline
 /// passes its submission.
-bool poll(NgaAdapter* a, u32 index) noexcept {
+bool poll(NgaAdapter* a, u32 index) {
     ex::UploadState const st = a->uploads.state(index);
     if (st != ex::UploadState::InFlight)
         return st == ex::UploadState::Complete || st == ex::UploadState::Failed;
@@ -459,7 +459,7 @@ void flush(void* user) {
 
 } // namespace
 
-Result<NgaAdapter*> nga_adapter_create(NgaAdapterDesc const& desc, Adapter* out) noexcept {
+Result<NgaAdapter*> nga_adapter_create(NgaAdapterDesc const& desc, Adapter* out) {
     if (!out || !desc.device || desc.maxSlots == 0 || desc.maxDescriptors == 0 || desc.maxObjects == 0 ||
         desc.maxUploads == 0)
         return make_status(Code::InvalidArgument);
@@ -527,7 +527,7 @@ Result<NgaAdapter*> nga_adapter_create(NgaAdapterDesc const& desc, Adapter* out)
     return a;
 }
 
-void nga_adapter_destroy(NgaAdapter* a) noexcept {
+void nga_adapter_destroy(NgaAdapter* a) {
     if (!a) return;
     if (a->timeline && a->lastValue) gpu::wait_timeline({a->timeline, a->lastValue});
     for (u32 i = 0; i < a->objects.size(); ++i)
@@ -543,7 +543,7 @@ void nga_adapter_destroy(NgaAdapter* a) noexcept {
     delete_object(a->alloc, a, Tag::Payload);
 }
 
-ex::AdapterStats nga_adapter_stats(NgaAdapter* a) noexcept {
+ex::AdapterStats nga_adapter_stats(NgaAdapter* a) {
     std::lock_guard<std::mutex> const lock(a->mutex);
     ex::AdapterStats s = a->stats;
     s.liveObjects      = u32(a->objects.size() - a->freeObjects.size());
@@ -553,22 +553,22 @@ ex::AdapterStats nga_adapter_stats(NgaAdapter* a) noexcept {
     return s;
 }
 
-gpu::TextureDescriptorHeap* nga_texture_heap(NgaAdapter* a) noexcept { return a->descriptors; }
-gpu::SamplerDescriptorHeap* nga_sampler_heap(NgaAdapter* a) noexcept { return a->samplers; }
+gpu::TextureDescriptorHeap* nga_texture_heap(NgaAdapter* a) { return a->descriptors; }
+gpu::SamplerDescriptorHeap* nga_sampler_heap(NgaAdapter* a) { return a->samplers; }
 
-u32 nga_descriptor(NgaAdapter* a, u32 slot) noexcept {
+u32 nga_descriptor(NgaAdapter* a, u32 slot) {
     std::lock_guard<std::mutex> const lock(a->mutex);
     return slot < a->slotDescriptor.size() ? a->slotDescriptor[slot] : kInvalid;
 }
 
-NgaMesh nga_mesh(NgaAdapter* a, GpuObject obj) noexcept {
+NgaMesh nga_mesh(NgaAdapter* a, GpuObject obj) {
     if (obj.native == 0 || obj.native > a->objects.size() || obj.kind != u32(ObjectKind::Mesh)) return {};
     Object const& o = a->objects[obj.native - 1];
     if (!o.used) return {};
     return NgaMesh{.gpu = reinterpret_cast<u64>(a->meshHeap.range.gpu + o.heapOffset), .size = o.heapSize};
 }
 
-gpu::Texture* nga_texture(NgaAdapter* a, GpuObject obj) noexcept {
+gpu::Texture* nga_texture(NgaAdapter* a, GpuObject obj) {
     if (obj.native == 0 || obj.native > a->objects.size() || obj.kind != u32(ObjectKind::Texture))
         return nullptr;
     Object const& o = a->objects[obj.native - 1];

@@ -57,7 +57,7 @@ struct Pool {
 #if defined(KILN_OS_WINDOWS)
 using SetThreadDescriptionFn = HRESULT(WINAPI*)(HANDLE, PCWSTR);
 
-void set_worker_thread_name(u32 index) noexcept {
+void set_worker_thread_name(u32 index) {
     static SetThreadDescriptionFn const fn = [] {
         HMODULE mod = GetModuleHandleW(L"kernel32.dll");
         return mod ? reinterpret_cast<SetThreadDescriptionFn>(GetProcAddress(mod, "SetThreadDescription"))
@@ -75,13 +75,13 @@ void set_worker_thread_name(u32 index) noexcept {
     fn(GetCurrentThread(), wname);
 }
 
-void apply_worker_priority(ThreadPriority prio) noexcept {
+void apply_worker_priority(ThreadPriority prio) {
     if (prio == ThreadPriority::Normal) return;
     (void)SetThreadPriority(GetCurrentThread(), prio == ThreadPriority::Low ? THREAD_PRIORITY_BELOW_NORMAL
                                                                             : THREAD_PRIORITY_ABOVE_NORMAL);
 }
 #elif defined(KILN_OS_LINUX)
-void set_worker_thread_name(u32 index) noexcept {
+void set_worker_thread_name(u32 index) {
     char name[16]; // Linux pthread name limit is 16 bytes including the NUL.
     format(name, sizeof name, "kiln.wrk%u", index);
     (void)pthread_setname_np(pthread_self(), name);
@@ -89,16 +89,16 @@ void set_worker_thread_name(u32 index) noexcept {
 
 /// SCHED_OTHER has no per-thread priority, so the hint becomes a nice value for this
 /// thread only. Raising above 0 needs privileges; a failure is ignored.
-void apply_worker_priority(ThreadPriority prio) noexcept {
+void apply_worker_priority(ThreadPriority prio) {
     if (prio == ThreadPriority::Normal) return;
     (void)setpriority(PRIO_PROCESS, static_cast<id_t>(gettid()), prio == ThreadPriority::Low ? 5 : -5);
 }
 #else
-void set_worker_thread_name(u32) noexcept {}
-void apply_worker_priority(ThreadPriority) noexcept {}
+void set_worker_thread_name(u32) {}
+void apply_worker_priority(ThreadPriority) {}
 #endif
 
-u32 resolve_thread_count(u32 requested) noexcept {
+u32 resolve_thread_count(u32 requested) {
     if (requested != 0) return requested;
     unsigned hwc = std::thread::hardware_concurrency();
     u32 n        = hwc > 1 ? u32(hwc - 1) : 1u;
@@ -153,7 +153,7 @@ void pool_wait_idle(void* user) {
 
 } // namespace
 
-Result<JobSystem> create_thread_pool(ThreadPoolDesc const& desc) noexcept {
+Result<JobSystem> create_thread_pool(ThreadPoolDesc const& desc) {
     KILN_VERIFY(desc.queueCapacity > 0);
     Allocator const* a    = desc.alloc ? desc.alloc : default_allocator();
     u32 const threadCount = resolve_thread_count(desc.threads);
@@ -211,7 +211,7 @@ Result<JobSystem> create_thread_pool(ThreadPoolDesc const& desc) noexcept {
     return js;
 }
 
-void destroy_thread_pool(JobSystem const& jobs) noexcept {
+void destroy_thread_pool(JobSystem const& jobs) {
     if (!jobs.user) return;
     Pool* p = static_cast<Pool*>(jobs.user);
 
@@ -233,7 +233,7 @@ void destroy_thread_pool(JobSystem const& jobs) noexcept {
     delete_object(a, p, Tag::Jobs);
 }
 
-u32 thread_pool_thread_count(JobSystem const& jobs) noexcept {
+u32 thread_pool_thread_count(JobSystem const& jobs) {
     KILN_VERIFY(jobs.user != nullptr);
     Pool const* p = static_cast<Pool const*>(jobs.user);
     return p->workerCount;

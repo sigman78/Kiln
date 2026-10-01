@@ -23,7 +23,7 @@ enum class TextureKind : u8 { BaseColor = 0, Normal, Orm, Emissive, Count };
 /// `TextureDesc::layers == 6`, in the order +X, -X, +Y, -Y, +Z, -Z.
 enum class TextureShape : u8 { Tex2D = 0, Cube, Array, Count };
 /// "2D", "cube", "array"; "unsupported" for Count (a volume or a cube array).
-KILN_API char const* texture_shape_name(TextureShape s) noexcept;
+KILN_API char const* texture_shape_name(TextureShape s);
 
 enum AdapterCaps : u32 {
     /// commit_upload submits to a queue by itself and upload_status makes progress
@@ -80,7 +80,7 @@ struct GpuObject {
     u32 slot   = kInvalid; ///< bindless descriptor slot, if the adapter uses them
     u32 kind   = 0;        ///< adapter-defined tag
 
-    [[nodiscard]] bool is_null() const noexcept { return native == 0 && slot == kInvalid; }
+    [[nodiscard]] bool is_null() const { return native == 0 && slot == kInvalid; }
 };
 
 /// An upload after commit_upload, as Adapter::upload_status reports it.
@@ -152,16 +152,16 @@ struct Adapter {
 /// one; levels past 31 are 1x1. Returns 0 for an unknown format or a size that overflows u64
 /// (`offsets` / `pitches` may then hold some entries).
 [[nodiscard]] KILN_API u64 texture_level_layout(TextureDesc const& t, CopyConstraints const& c, u64* offsets,
-                                                u64* pitches) noexcept;
+                                                u64* pitches);
 
 /// The block-compressed formats `a` cannot sample (`supports_format` with SampledImage), as a
 /// block_format_bit() set: what a host checks a target profile against
 /// (docs/design/target-profiles.md).
-KILN_API u64 unsampled_block_formats(Adapter const& a) noexcept;
+KILN_API u64 unsampled_block_formats(Adapter const& a);
 
 /// True if every required entry point is set, `bind` comes with `bindlessSlots`, and the reserved
 /// tail is null.
-[[nodiscard]] inline bool adapter_is_valid(Adapter const& a) noexcept {
+[[nodiscard]] inline bool adapter_is_valid(Adapter const& a) {
     return a.supports_format && a.copy_constraints && a.begin_upload && a.commit_upload && a.upload_status &&
            a.destroy && (a.bind != nullptr) == (a.bindlessSlots != 0) && !a.reserved[0] && !a.reserved[1] &&
            !a.reserved[2] && !a.reserved[3] &&

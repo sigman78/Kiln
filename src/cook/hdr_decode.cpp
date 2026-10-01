@@ -16,13 +16,13 @@ constexpr u32 kMaxDimension    = 16384;
 constexpr usize kMaxHeaderLine = 4096;
 
 Status fail(DiagSink const* diag, StrView asset, Code code, u32 k, char const* fmt, unsigned long long a = 0,
-            unsigned long long b = 0) noexcept {
+            unsigned long long b = 0) {
     return diagf(diag, make_status(code), k, Severity::Error, asset, "hdr", fmt, a, b);
 }
 
 /// The next header line (without its '\n'); false at the end of the bytes or on a line that
 /// is too long.
-bool next_line(Span<u8 const> bytes, usize& pos, StrView* line) noexcept {
+bool next_line(Span<u8 const> bytes, usize& pos, StrView* line) {
     usize const begin = pos;
     while (pos < bytes.size && bytes[pos] != '\n') {
         if (pos - begin >= kMaxHeaderLine) return false;
@@ -35,7 +35,7 @@ bool next_line(Span<u8 const> bytes, usize& pos, StrView* line) noexcept {
 }
 
 /// Parses `prefix` followed by a decimal number at `at`; advances `at` past it.
-bool parse_field(StrView s, usize& at, StrView prefix, u32* out) noexcept {
+bool parse_field(StrView s, usize& at, StrView prefix, u32* out) {
     if (s.substr(at).starts_with(prefix) == false) return false;
     at += prefix.size;
     u64 v    = 0;
@@ -48,7 +48,7 @@ bool parse_field(StrView s, usize& at, StrView prefix, u32* out) noexcept {
 }
 
 /// One RGBE texel to float RGB, as Radiance's colr_color does.
-void rgbe_to_float(u8 const* p, f32* out) noexcept {
+void rgbe_to_float(u8 const* p, f32* out) {
     if (p[3] == 0) {
         out[0] = out[1] = out[2] = 0.0f;
         return;
@@ -60,7 +60,7 @@ void rgbe_to_float(u8 const* p, f32* out) noexcept {
 
 } // namespace
 
-bool is_hdr(Span<u8 const> bytes) noexcept {
+bool is_hdr(Span<u8 const> bytes) {
     auto const starts = [bytes](char const* sig) {
         usize const n = std::strlen(sig);
         return bytes.size >= n && std::memcmp(bytes.data, sig, n) == 0;
@@ -68,8 +68,7 @@ bool is_hdr(Span<u8 const> bytes) noexcept {
     return starts("#?RADIANCE") || starts("#?RGBE");
 }
 
-Result<Image> decode_hdr(Span<u8 const> bytes, Allocator const* alloc, DiagSink const* diag,
-                         StrView asset) noexcept {
+Result<Image> decode_hdr(Span<u8 const> bytes, Allocator const* alloc, DiagSink const* diag, StrView asset) {
     if (!is_hdr(bytes))
         return fail(diag, asset, Code::ParseError, kDiagImageDecodeFailed, "not a Radiance .hdr file");
 
@@ -187,7 +186,7 @@ Result<Image> decode_hdr(Span<u8 const> bytes, Allocator const* alloc, DiagSink 
     return img;
 }
 
-u16 float_to_half(f32 v) noexcept {
+u16 float_to_half(f32 v) {
     u32 const bits = std::bit_cast<u32>(v);
     u16 const sign = u16((bits >> 16) & 0x8000u);
     u32 const mag  = bits & 0x7FFFFFFFu;
@@ -210,7 +209,7 @@ u16 float_to_half(f32 v) noexcept {
     return u16(sign | min(r >> 13, 0x7BFFu));
 }
 
-f32 half_to_float(u16 h) noexcept {
+f32 half_to_float(u16 h) {
     u32 const sign = u32(h & 0x8000u) << 16;
     u32 const e    = (h >> 10) & 0x1Fu;
     u32 const m    = h & 0x3FFu;

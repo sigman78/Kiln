@@ -18,14 +18,14 @@ namespace kiln::cook {
 
 namespace {
 
-u32 add_string(CookUnit& u, StrView s) noexcept {
+u32 add_string(CookUnit& u, StrView s) {
     u32 const off = u32(u.strings.size());
     u.strings.append(Span<char const>(s.data, s.size));
     return off;
 }
 
 void add_input(CookUnit& u, InputRole role, StrView name, StrView path, IoStat const& stat,
-               Hash128 const& content) noexcept {
+               Hash128 const& content) {
     UnitInput in;
     in.role    = role;
     in.nameOff = add_string(u, name);
@@ -39,7 +39,7 @@ void add_input(CookUnit& u, InputRole role, StrView name, StrView path, IoStat c
 
 /// Reads `path` into `out` and records it as an input.
 Status read_input(UnitDesc const& d, CookUnit& u, InputRole role, StrView name, StrView path,
-                  Allocator const* alloc, Vec<u8>* out) noexcept {
+                  Allocator const* alloc, Vec<u8>* out) {
     IoStat st{};
     // Stat before the read, so an edit during the cook reads as a change later.
     if (d.statInputs && stat_file(path, &st).failed()) st = {};
@@ -58,7 +58,7 @@ struct Layers {
 /// Fills `l` for `name`. With `readSidecar`, reads and records the source's `.kiln` file when
 /// it exists (embedded images have none).
 Status prepare_layers(UnitDesc const& d, CookUnit& u, StrView name, SlotHint slot, bool readSidecar,
-                      Allocator const* alloc, Layers* l) noexcept {
+                      Allocator const* alloc, Layers* l) {
     l->desc = ResolveDesc{
         .asset     = {name, d.sourcePath, slot},
         .nameRules = d.nameRules,
@@ -82,8 +82,7 @@ Status prepare_layers(UnitDesc const& d, CookUnit& u, StrView name, SlotHint slo
     return kOk;
 }
 
-Hash128 output_key(UnitDesc const& d, CookUnit const& u, AssetKind kind, StrView name,
-                   u64 settingsHash) noexcept {
+Hash128 output_key(UnitDesc const& d, CookUnit const& u, AssetKind kind, StrView name, u64 settingsHash) {
     Vec<BuildInput> inputs(u.inputs.allocator(), Tag::Cook);
     inputs.resize(u.inputs.size());
     unit_build_inputs(u, inputs.data());
@@ -94,7 +93,7 @@ Hash128 output_key(UnitDesc const& d, CookUnit const& u, AssetKind kind, StrView
                       .inputs       = inputs.span()});
 }
 
-UnitOutput& add_output(CookUnit& u, AssetKind kind, StrView name, SlotHint slot) noexcept {
+UnitOutput& add_output(CookUnit& u, AssetKind kind, StrView name, SlotHint slot) {
     UnitOutput o;
     o.nameOff = add_string(u, name);
     o.nameLen = u32(name.size);
@@ -107,7 +106,7 @@ UnitOutput& add_output(CookUnit& u, AssetKind kind, StrView name, SlotHint slot)
 
 /// Cooks one texture from `bytes` into a new output. Records a failure in the output.
 Status cook_one_texture(UnitDesc const& d, CookUnit& u, Span<u8 const> bytes, StrView name, SlotHint slot,
-                        bool ownSource, Allocator const* alloc) noexcept {
+                        bool ownSource, Allocator const* alloc) {
     Layers layers;
     Status st = prepare_layers(d, u, name, slot, ownSource, alloc, &layers);
     Result<TextureCookSettings> rs =
@@ -151,7 +150,7 @@ struct ImageRun {
     ImageJob* jobs = nullptr;
 };
 
-void cook_images(void* user, u32 begin, u32 end) noexcept {
+void cook_images(void* user, u32 begin, u32 end) {
     ImageRun const& r = *static_cast<ImageRun const*>(user);
     for (u32 i = begin; i < end; ++i) {
         ImageJob& j = r.jobs[i];
@@ -165,7 +164,7 @@ void cook_images(void* user, u32 begin, u32 end) noexcept {
 /// Cooks a mesh's embedded images in parallel. Outputs keep the order of `refs`, so the unit is the
 /// same as a serial cook's; only the order of diagnostics between images may differ.
 void cook_embedded_images(UnitDesc const& d, CookUnit& u, Span<TextureRef const> refs,
-                          Allocator const* alloc) noexcept {
+                          Allocator const* alloc) {
     Vec<ImageJob> jobs(alloc, Tag::Cook);
     for (TextureRef const& t : refs) {
         if (t.embedded.empty()) continue;
@@ -205,7 +204,7 @@ struct ResolverCtx {
     StrView baseDir;
 };
 
-Status resolve_uri_fn(void* user, StrView uri, Allocator const* alloc, Vec<u8>* out) noexcept {
+Status resolve_uri_fn(void* user, StrView uri, Allocator const* alloc, Vec<u8>* out) {
     auto const* c = static_cast<ResolverCtx const*>(user);
     char path[1200];
     usize const n = format(path, sizeof path, "%.*s/%.*s", KILN_SV(c->baseDir), KILN_SV(uri));
@@ -215,7 +214,7 @@ Status resolve_uri_fn(void* user, StrView uri, Allocator const* alloc, Vec<u8>* 
     return read_input(*c->d, *c->u, InputRole::Buffer, uri, pathView, alloc, out);
 }
 
-Status cook_mesh_unit(UnitDesc const& d, CookUnit& u, Span<u8 const> bytes, Allocator const* alloc) noexcept {
+Status cook_mesh_unit(UnitDesc const& d, CookUnit& u, Span<u8 const> bytes, Allocator const* alloc) {
     usize const slash = d.sourcePath.rfind('/');
     ResolverCtx rctx{&d, &u, slash == StrView::kNpos ? StrView(".") : d.sourcePath.substr(0, slash)};
 
@@ -244,26 +243,26 @@ Status cook_mesh_unit(UnitDesc const& d, CookUnit& u, Span<u8 const> bytes, Allo
 
 } // namespace
 
-UnitOutput* CookUnit::find(AssetKind kind, StrView n) noexcept {
+UnitOutput* CookUnit::find(AssetKind kind, StrView n) {
     for (UnitOutput& o : outputs)
         if (o.kind == kind && name(o) == n) return &o;
     return nullptr;
 }
 
-Status CookUnit::first_failure() const noexcept {
+Status CookUnit::first_failure() const {
     for (UnitOutput const& o : outputs)
         if (o.status.failed()) return o.status;
     return kOk;
 }
 
-void unit_build_inputs(CookUnit const& unit, BuildInput* out) noexcept {
+void unit_build_inputs(CookUnit const& unit, BuildInput* out) {
     for (usize i = 0; i < unit.inputs.size(); ++i) {
         UnitInput const& in = unit.inputs[i];
         out[i]              = BuildInput{in.role, unit.str(in.nameOff, in.nameLen), in.content};
     }
 }
 
-u64 host_digest(UnitDesc const& d, u32 policyVersion) noexcept {
+u64 host_digest(UnitDesc const& d, u32 policyVersion) {
     Xxh64State h;
     h.update_value(kCookerVersion);
     h.update_value(hash_target(*d.target));
@@ -283,7 +282,7 @@ u64 host_digest(UnitDesc const& d, u32 policyVersion) noexcept {
     return h.digest();
 }
 
-bool recorded_keys_match(UnitDesc const& d, CookUnit const& rec) noexcept {
+bool recorded_keys_match(UnitDesc const& d, CookUnit const& rec) {
     Allocator const* alloc = d.env.alloc ? d.env.alloc : default_allocator();
     Vec<u8> sidecar(alloc, Tag::Cook);
     char sidecarBuf[1100];
@@ -346,7 +345,7 @@ bool recorded_keys_match(UnitDesc const& d, CookUnit const& rec) noexcept {
     return true;
 }
 
-usize input_path(StrView sourcePath, InputRole role, StrView name, char* out, usize cap) noexcept {
+usize input_path(StrView sourcePath, InputRole role, StrView name, char* out, usize cap) {
     if (role == InputRole::Source) return format(out, cap, "%.*s", KILN_SV(sourcePath));
     if (role == InputRole::Sidecar)
         return format(out, cap, "%.*s%.*s", KILN_SV(sourcePath), KILN_SV(kSidecarExt));
@@ -355,7 +354,7 @@ usize input_path(StrView sourcePath, InputRole role, StrView name, char* out, us
     return format(out, cap, "%.*s/%.*s", KILN_SV(dir), KILN_SV(name));
 }
 
-InputsCheck check_recorded_inputs(CookUnit& rec, StrView sourcePath, bool rehash) noexcept {
+InputsCheck check_recorded_inputs(CookUnit& rec, StrView sourcePath, bool rehash) {
     Vec<u8> bytes(rec.inputs.allocator(), Tag::Cook);
     bool touched = false;
     for (UnitInput& in : rec.inputs) {
@@ -385,7 +384,7 @@ InputsCheck check_recorded_inputs(CookUnit& rec, StrView sourcePath, bool rehash
     return touched ? InputsCheck::Touched : InputsCheck::Unchanged;
 }
 
-Status cook_unit(UnitDesc const& d, CookUnit* out) noexcept {
+Status cook_unit(UnitDesc const& d, CookUnit* out) {
     KILN_VERIFY(d.target && d.meshDefaults && d.textureDefaults);
     Allocator const* alloc = d.env.alloc ? d.env.alloc : default_allocator();
     ProfileZone const zone(d.env.profile, "cook.unit", d.name);
@@ -395,7 +394,7 @@ Status cook_unit(UnitDesc const& d, CookUnit* out) noexcept {
     return cook_one_texture(d, *out, bytes.span(), d.name, SlotHint::None, true, alloc);
 }
 
-Status stat_file(StrView path, IoStat* out) noexcept {
+Status stat_file(StrView path, IoStat* out) {
     IoBackend const* io = compat_io_backend();
     if (io && io->stat) return io->stat(io->user, path, out);
 

@@ -168,7 +168,7 @@ KILN_TEST(Runtime, AssetNameRules) {
 
 KILN_TEST(Runtime, ResolveAssetName) {
     char buf[256];
-    auto const resolve = [&buf](StrView owner, StrView uri) noexcept {
+    auto const resolve = [&buf](StrView owner, StrView uri) {
         return StrView(buf, resolve_asset_name(owner, uri, buf, sizeof buf));
     };
     KILN_CHECK(resolve("props/chair.glb", "wood.png") == "props/wood.png");

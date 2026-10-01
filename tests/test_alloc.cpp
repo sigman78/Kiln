@@ -13,13 +13,13 @@ struct Counted {
     static int ctorCount;
     static int dtorCount;
     int value;
-    explicit Counted(int v) noexcept : value(v) { ++ctorCount; }
-    ~Counted() noexcept { ++dtorCount; }
+    explicit Counted(int v) : value(v) { ++ctorCount; }
+    ~Counted() { ++dtorCount; }
 };
 int Counted::ctorCount = 0;
 int Counted::dtorCount = 0;
 
-bool is_aligned_ptr(void const* p, usize align) noexcept {
+bool is_aligned_ptr(void const* p, usize align) {
     return (reinterpret_cast<std::uintptr_t>(p) & (align - 1)) == 0;
 }
 

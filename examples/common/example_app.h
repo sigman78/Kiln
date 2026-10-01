@@ -13,16 +13,16 @@ struct GLFWwindow;
 namespace kiln::ex {
 
 /// Milliseconds since the program started.
-double ms_since_start() noexcept;
+double ms_since_start();
 /// Sends kiln's log to stdout with a millisecond timestamp.
-void install_stdout_log() noexcept;
+void install_stdout_log();
 /// A diagnostic sink that prints to stdout in the same format.
-DiagSink stdout_diag() noexcept;
+DiagSink stdout_diag();
 /// With KILN_TRACE=<file> in the environment: hooks for ContextDesc::profiler that record kiln's
 /// zones and waits. Empty hooks otherwise.
-ProfileHooks trace_hooks() noexcept;
+ProfileHooks trace_hooks();
 /// After destroy(ctx): logs the summary and writes the KILN_TRACE file (Chrome trace JSON).
-void finish_trace() noexcept;
+void finish_trace();
 
 /// What every integration example shows: the reference scene (WaterBottle under the HDR test sky),
 /// cooked on first use into a store in the build tree, with hot reload on. Nothing to pass.
@@ -43,7 +43,7 @@ struct Options {
 /// Fills `o` with the reference scene and reads the only options: --dump <file.png> and --help.
 /// Returns -1 to run, else the exit code: 0 after --help, 2 on a usage error or when the demo model
 /// has not been downloaded yet (the message says how).
-int parse_options(char const* program, int argc, char** argv, Options* o) noexcept;
+int parse_options(char const* program, int argc, char** argv, Options* o);
 
 /// A material's PBR factors (mesh::MaterialSlot) as the three vec4s every example shader reads.
 /// A shader multiplies each texture by its factor, and uses the factor alone without the texture.
@@ -53,12 +53,12 @@ struct MaterialFactors {
     f32 mro[4];            ///< x: metallic; y: roughness; z: occlusion strength; w: 0
 };
 /// The factors of `material`, or glTF's defaults when the view has no such material.
-MaterialFactors material_factors(mesh::MeshView const& v, u32 material) noexcept;
+MaterialFactors material_factors(mesh::MeshView const& v, u32 material);
 
-char const* state_name(State s) noexcept;
-char const* event_name(EventKind k) noexcept;
+char const* state_name(State s);
+char const* event_name(EventKind k);
 /// True when the state is final for this load: Ready or Failed.
-[[nodiscard]] inline bool settled(State s) noexcept { return s == State::Ready || s == State::Failed; }
+[[nodiscard]] inline bool settled(State s) { return s == State::Ready || s == State::Failed; }
 
 struct OrbitCamera {
     f32 azimuth   = 45.0f * kPi / 180.0f;
@@ -71,7 +71,7 @@ struct OrbitCamera {
 
 /// Left-drag orbits, the wheel zooms, + and - change the exposure, Esc closes the window. Uses the
 /// window's user pointer.
-void attach_camera(GLFWwindow* window, OrbitCamera* camera) noexcept;
+void attach_camera(GLFWwindow* window, OrbitCamera* camera);
 
 struct View {
     Mat4 view;
@@ -82,10 +82,10 @@ struct View {
 
 /// Looks at the sphere (center, radius) from the camera's direction, at a distance that fits it
 /// in a vertical field of view of `fovY`.
-View orbit_view(OrbitCamera const& camera, Vec3 center, f32 radius, f32 fovY, f32 aspect) noexcept;
+View orbit_view(OrbitCamera const& camera, Vec3 center, f32 radius, f32 fovY, f32 aspect);
 
 /// Writes RGBA8 pixels, top row first.
-bool write_png(char const* path, Span<u8 const> rgba, u32 width, u32 height) noexcept;
+bool write_png(char const* path, Span<u8 const> rgba, u32 width, u32 height);
 
 /// Reads a texture back from the GPU for a check: level by level, each level's layers in order, rows
 /// tightly packed (whole blocks). Waits for the GPU. False when it cannot.
@@ -94,6 +94,6 @@ using ReadTextureFn = bool (*)(void* user, GpuObject obj, TextureDesc const& des
 /// --verify for texture arrays: true when every level of layer i of `array` has the same bytes as
 /// the Ready texture `layers[i]`, loaded on its own. Logs each difference.
 [[nodiscard]] bool verify_array_layers(Context* ctx, TextureHandle array, Span<TextureHandle const> layers,
-                                       ReadTextureFn read, void* user) noexcept;
+                                       ReadTextureFn read, void* user);
 
 } // namespace kiln::ex

@@ -14,12 +14,12 @@ namespace kiln::cook {
 
 namespace {
 
-bool is_block_encoding(TextureEncoding e) noexcept {
+bool is_block_encoding(TextureEncoding e) {
     return e != TextureEncoding::Auto && e != TextureEncoding::Uncompressed;
 }
 
 /// The usages an explicit encoding can store (bcn-encoding.md, "Formats per usage").
-bool encoding_fits(TextureEncoding e, TextureUsage u) noexcept {
+bool encoding_fits(TextureEncoding e, TextureUsage u) {
     switch (e) {
     case TextureEncoding::Auto:
     case TextureEncoding::Uncompressed: return true;
@@ -39,7 +39,7 @@ bool encoding_fits(TextureEncoding e, TextureUsage u) noexcept {
 
 namespace detail {
 
-Format encoding_format(TextureEncoding e, bool srgb) noexcept {
+Format encoding_format(TextureEncoding e, bool srgb) {
     switch (e) {
     case TextureEncoding::BC1: return srgb ? Format::BC1_RGB_SRGB : Format::BC1_RGB_UNORM;
     case TextureEncoding::BC3: return srgb ? Format::BC3_SRGB : Format::BC3_UNORM;
@@ -53,13 +53,13 @@ Format encoding_format(TextureEncoding e, bool srgb) noexcept {
     return Format::Undefined;
 }
 
-bool srgb_blocks(ColorSpace cs, TextureUsage usage) noexcept {
+bool srgb_blocks(ColorSpace cs, TextureUsage usage) {
     return cs == ColorSpace::Srgb && (usage == TextureUsage::Color || usage == TextureUsage::Ui);
 }
 
 } // namespace detail
 
-TargetProfile const* target_profile(StrView name) noexcept {
+TargetProfile const* target_profile(StrView name) {
     for (TargetProfile const* t : {&kCompatTarget, &kDesktopTarget, &kUncompressedTarget})
         if (t->name == name) return t;
     return nullptr;
@@ -67,7 +67,7 @@ TargetProfile const* target_profile(StrView name) noexcept {
 
 Result<TextureCookSettings> resolve_texture(TextureCookSettings const& overrides, SlotHint hint,
                                             TargetProfile const& target, CookSession const& session,
-                                            DiagSink const* diag, StrView asset) noexcept {
+                                            DiagSink const* diag, StrView asset) {
     if (u8(overrides.usage) > u8(TextureUsage::Height) || u8(overrides.colorSpace) > u8(ColorSpace::Linear) ||
         u8(overrides.shape) > u8(CookShape::Array) || u8(overrides.encoding) > u8(TextureEncoding::BC7) ||
         u8(overrides.quality) > u8(EncodeQuality::High) ||
@@ -161,22 +161,21 @@ Result<TextureCookSettings> resolve_texture(TextureCookSettings const& overrides
 namespace {
 
 /// A Radiance `.hdr` source is HDR by its format, whatever its name says.
-bool has_hdr_extension(StrView name) noexcept {
+bool has_hdr_extension(StrView name) {
     if (name.size < 4) return false;
     StrView const ext = name.substr(name.size - 4);
     auto const lower  = [](char c) { return c >= 'A' && c <= 'Z' ? char(c - 'A' + 'a') : c; };
     return ext[0] == '.' && lower(ext[1]) == 'h' && lower(ext[2]) == 'd' && lower(ext[3]) == 'r';
 }
 
-Status refused(ResolveDesc const& d, Status st) noexcept {
+Status refused(ResolveDesc const& d, Status st) {
     return diagf(d.diag, st, kDiagPolicyRefused, Severity::Error, d.asset.name, "policy",
                  "the cook policy refused the asset (%s)", code_name(st.code));
 }
 
 } // namespace
 
-Result<TextureCookSettings> resolve_texture_layers(TextureCookSettings const& base,
-                                                   ResolveDesc const& d) noexcept {
+Result<TextureCookSettings> resolve_texture_layers(TextureCookSettings const& base, ResolveDesc const& d) {
     TextureCookSettings s = base;
     if (!d.sidecar.empty()) KILN_TRY(apply_sidecar(d.sidecar, &s, d.diag, d.sidecarPath));
     NameHints hints =
@@ -195,7 +194,7 @@ Result<TextureCookSettings> resolve_texture_layers(TextureCookSettings const& ba
     return resolve_texture(s, d.asset.slot, d.target, d.session, d.diag, d.asset.name);
 }
 
-Result<MeshCookSettings> resolve_mesh_layers(MeshCookSettings const& base, ResolveDesc const& d) noexcept {
+Result<MeshCookSettings> resolve_mesh_layers(MeshCookSettings const& base, ResolveDesc const& d) {
     MeshCookSettings s = base;
     if (!d.sidecar.empty()) KILN_TRY(apply_sidecar(d.sidecar, &s, d.diag, d.sidecarPath));
     if (d.policy.mesh) {
@@ -205,7 +204,7 @@ Result<MeshCookSettings> resolve_mesh_layers(MeshCookSettings const& base, Resol
     return resolve_mesh(s, d.target, d.session, d.diag, d.asset.name);
 }
 
-NameHints hints_from_name(StrView path, Span<NameRule const> rules) noexcept {
+NameHints hints_from_name(StrView path, Span<NameRule const> rules) {
     usize const slash = path.rfind('/');
     StrView stem      = slash == StrView::kNpos ? path : path.substr(slash + 1);
     usize const dot   = stem.rfind('.');
@@ -236,13 +235,12 @@ NameHints hints_from_name(StrView path, Span<NameRule const> rules) noexcept {
     return hints;
 }
 
-TextureUsage usage_from_name(StrView path, Span<NameRule const> rules) noexcept {
+TextureUsage usage_from_name(StrView path, Span<NameRule const> rules) {
     return hints_from_name(path, rules).usage;
 }
 
 Result<MeshCookSettings> resolve_mesh(MeshCookSettings const& overrides, TargetProfile const& target,
-                                      CookSession const& session, DiagSink const* diag,
-                                      StrView asset) noexcept {
+                                      CookSession const& session, DiagSink const* diag, StrView asset) {
     if (u8(overrides.profile) > u8(VertexProfile::Float) ||
         u8(overrides.compression) > u8(CompressionScheme::MeshoptZstd)) {
         return diagf(diag, make_status(Code::InvalidArgument), kDiagSettingsEnumRange, Severity::Error, asset,
@@ -295,14 +293,14 @@ Result<MeshCookSettings> resolve_mesh(MeshCookSettings const& overrides, TargetP
 namespace {
 
 /// Floats are hashed by bit pattern after folding -0.0f to 0.0f.
-u32 hashable_float_bits(f32 v) noexcept {
+u32 hashable_float_bits(f32 v) {
     if (v == 0.0f) v = 0.0f;
     return std::bit_cast<u32>(v);
 }
 
 } // namespace
 
-u64 hash_settings(TextureCookSettings const& s) noexcept {
+u64 hash_settings(TextureCookSettings const& s) {
     Xxh64State h;
     h.update_value(kTextureSettingsSchema);
     h.update_value(u8(s.colorSpace));
@@ -328,7 +326,7 @@ u64 hash_settings(TextureCookSettings const& s) noexcept {
     return h.digest();
 }
 
-u64 hash_settings(MeshCookSettings const& s) noexcept {
+u64 hash_settings(MeshCookSettings const& s) {
     Xxh64State h;
     h.update_value(kMeshSettingsSchema);
     h.update_value(u8(s.profile));
@@ -347,7 +345,7 @@ u64 hash_settings(MeshCookSettings const& s) noexcept {
     return h.digest();
 }
 
-u64 hash_target(TargetProfile const& t) noexcept {
+u64 hash_target(TargetProfile const& t) {
     Xxh64State h;
     h.update_value(kTargetSchema);
     h.update(t.name);
@@ -358,7 +356,7 @@ u64 hash_target(TargetProfile const& t) noexcept {
     return h.digest();
 }
 
-char const* texture_usage_name(TextureUsage u) noexcept {
+char const* texture_usage_name(TextureUsage u) {
     switch (u) {
     case TextureUsage::Auto: return "auto";
     case TextureUsage::Color: return "color";
@@ -373,7 +371,7 @@ char const* texture_usage_name(TextureUsage u) noexcept {
     return "?";
 }
 
-char const* color_space_name(ColorSpace c) noexcept {
+char const* color_space_name(ColorSpace c) {
     switch (c) {
     case ColorSpace::Auto: return "auto";
     case ColorSpace::Srgb: return "srgb";
@@ -382,7 +380,7 @@ char const* color_space_name(ColorSpace c) noexcept {
     return "?";
 }
 
-char const* vertex_profile_name(VertexProfile p) noexcept {
+char const* vertex_profile_name(VertexProfile p) {
     switch (p) {
     case VertexProfile::Default: return "default";
     case VertexProfile::Precise: return "precise";
@@ -391,7 +389,7 @@ char const* vertex_profile_name(VertexProfile p) noexcept {
     return "?";
 }
 
-char const* slot_hint_name(SlotHint h) noexcept {
+char const* slot_hint_name(SlotHint h) {
     switch (h) {
     case SlotHint::None: return "none";
     case SlotHint::BaseColor: return "baseColor";
@@ -403,7 +401,7 @@ char const* slot_hint_name(SlotHint h) noexcept {
     return "?";
 }
 
-char const* cook_shape_name(CookShape s) noexcept {
+char const* cook_shape_name(CookShape s) {
     switch (s) {
     case CookShape::Auto: return "auto";
     case CookShape::Tex2D: return "2d";
@@ -413,7 +411,7 @@ char const* cook_shape_name(CookShape s) noexcept {
     return "?";
 }
 
-char const* texture_encoding_name(TextureEncoding e) noexcept {
+char const* texture_encoding_name(TextureEncoding e) {
     switch (e) {
     case TextureEncoding::Auto: return "auto";
     case TextureEncoding::Uncompressed: return "uncompressed";
@@ -427,7 +425,7 @@ char const* texture_encoding_name(TextureEncoding e) noexcept {
     return "?";
 }
 
-char const* encode_quality_name(EncodeQuality q) noexcept {
+char const* encode_quality_name(EncodeQuality q) {
     switch (q) {
     case EncodeQuality::Fast: return "fast";
     case EncodeQuality::Normal: return "normal";
@@ -436,7 +434,7 @@ char const* encode_quality_name(EncodeQuality q) noexcept {
     return "?";
 }
 
-char const* supercompression_name(Supercompression s) noexcept {
+char const* supercompression_name(Supercompression s) {
     switch (s) {
     case Supercompression::None: return "none";
     case Supercompression::Zstd: return "zstd";

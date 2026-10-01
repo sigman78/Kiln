@@ -123,7 +123,7 @@ AttribFormat attrib_format(Format f) {
 
 } // namespace
 
-GLFWwindow* open_window(GlOptions const& o, char const* title) noexcept {
+GLFWwindow* open_window(GlOptions const& o, char const* title) {
     glfwSetErrorCallback(&glfw_error);
     if (!glfwInit()) return nullptr;
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
@@ -156,7 +156,7 @@ GLFWwindow* open_window(GlOptions const& o, char const* title) noexcept {
     return w;
 }
 
-GLuint build_program(char const* vs, char const* fsHeader, char const* fs) noexcept {
+GLuint build_program(char const* vs, char const* fsHeader, char const* fs) {
     char const* const vsParts[] = {vs};
     char const* const fsParts[] = {"#version 460 core\n", fsHeader, kCommonFs, fs};
     GLuint const v              = compile(GL_VERTEX_SHADER, vsParts, 1);
@@ -177,7 +177,7 @@ GLuint build_program(char const* vs, char const* fsHeader, char const* fs) noexc
     return 0;
 }
 
-void Target::resize(u32 w, u32 h) noexcept {
+void Target::resize(u32 w, u32 h) {
     if (w == width && h == height) return;
     release();
     width  = w;
@@ -193,7 +193,7 @@ void Target::resize(u32 w, u32 h) noexcept {
         KILN_ERROR("gl", "render target %ux%u is incomplete", w, h);
 }
 
-void Target::release() noexcept {
+void Target::release() {
     glDeleteFramebuffers(1, &fbo);
     glDeleteRenderbuffers(1, &color);
     glDeleteRenderbuffers(1, &depth);
@@ -203,7 +203,7 @@ void Target::release() noexcept {
     width = height = 0;
 }
 
-void prepare_geometry(Geometry& g, mesh::MeshView const& v, StrView name) noexcept {
+void prepare_geometry(Geometry& g, mesh::MeshView const& v, StrView name) {
     release_geometry(g);
     g.vaoCount = min<u32>(v.layouts().size(), kMaxLayouts);
     glCreateVertexArrays(GLsizei(g.vaoCount), g.vaos);
@@ -230,14 +230,14 @@ void prepare_geometry(Geometry& g, mesh::MeshView const& v, StrView name) noexce
     g.place = ex::scaling(scale) * ex::translation(ex::Vec3{-b.center[0], -b.center[1], -b.center[2]});
 }
 
-void release_geometry(Geometry& g) noexcept {
+void release_geometry(Geometry& g) {
     glDeleteVertexArrays(GLsizei(g.vaoCount), g.vaos);
     g.vaoCount    = 0;
     g.unsupported = false;
 }
 
 void draw_geometry(Geometry& g, mesh::MeshView const& v, GLuint buffer,
-                   void (*material)(void* user, u32 index), void* user) noexcept {
+                   void (*material)(void* user, u32 index), void* user) {
     if (g.unsupported) return;
     u32 const partCount = min<u32>(v.parts().size(), kMaxParts);
     for (u32 p = 0; p < partCount; ++p) {
@@ -269,7 +269,7 @@ void draw_geometry(Geometry& g, mesh::MeshView const& v, GLuint buffer,
     }
 }
 
-bool begin_frame(GLFWwindow* w, ex::OrbitCamera const& camera, Target& t, Frame* f) noexcept {
+bool begin_frame(GLFWwindow* w, ex::OrbitCamera const& camera, Target& t, Frame* f) {
     int fw = 0, fh = 0;
     glfwGetFramebufferSize(w, &fw, &fh);
     if (fw <= 0 || fh <= 0) return false;
@@ -290,7 +290,7 @@ bool begin_frame(GLFWwindow* w, ex::OrbitCamera const& camera, Target& t, Frame*
     return true;
 }
 
-void end_frame(GLFWwindow* w, Target& t, bool offscreen) noexcept {
+void end_frame(GLFWwindow* w, Target& t, bool offscreen) {
     GLint const tw = GLint(t.width), th = GLint(t.height);
     glBlitNamedFramebuffer(t.fbo, 0, 0, 0, tw, th, 0, 0, tw, th, GL_COLOR_BUFFER_BIT, GL_NEAREST);
     if (!offscreen) {
@@ -328,7 +328,7 @@ bool dump_png(Target const& t, char const* path) {
 } // namespace
 
 bool offscreen_done(GlOptions const& o, Target const& t, bool settled, bool failed, OffscreenRun& run,
-                    int* exitCode) noexcept {
+                    int* exitCode) {
     if (run.startMs == 0) run.startMs = ex::ms_since_start();
     if (run.settledOnce) { // one more frame after settling, so the last uploads are drawn
         *exitCode = failed ? 1 : 0;

@@ -18,7 +18,7 @@ struct PngDesc {
     Span<u8 const> trns    = {}; ///< tRNS chunk payload, written if non-empty
 };
 
-inline u32 samples_per_pixel(u8 colorType) noexcept {
+inline u32 samples_per_pixel(u8 colorType) {
     switch (colorType) {
     case 0: return 1;
     case 2: return 3;
@@ -29,7 +29,7 @@ inline u32 samples_per_pixel(u8 colorType) noexcept {
     }
 }
 
-inline u32 crc32(u8 const* p, usize n, u32 crc = 0) noexcept {
+inline u32 crc32(u8 const* p, usize n, u32 crc = 0) {
     crc = ~crc;
     for (usize i = 0; i < n; ++i) {
         crc ^= p[i];

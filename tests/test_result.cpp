@@ -11,27 +11,27 @@ using namespace kiln;
 namespace {
 
 // Helpers for KILN_TRY / KILN_TRY_ASSIGN.
-Status may_fail(bool fail) noexcept {
+Status may_fail(bool fail) {
     if (fail) return make_status(Code::InvalidArgument, 7);
     return kOk;
 }
 
-Status uses_try_status(bool fail) noexcept {
+Status uses_try_status(bool fail) {
     KILN_TRY(may_fail(fail));
     return kOk;
 }
 
-Result<int> compute(bool fail) noexcept {
+Result<int> compute(bool fail) {
     if (fail) return Code::NotFound;
     return 42;
 }
 
-Status uses_try_result(bool fail) noexcept {
+Status uses_try_result(bool fail) {
     KILN_TRY(compute(fail));
     return kOk;
 }
 
-Result<int> uses_try_assign(bool fail) noexcept {
+Result<int> uses_try_assign(bool fail) {
     KILN_TRY_ASSIGN(auto v, compute(fail));
     return v + 1;
 }
@@ -40,13 +40,13 @@ Result<int> uses_try_assign(bool fail) noexcept {
 struct Tracked {
     static int liveCount;
     int value;
-    explicit Tracked(int v) noexcept : value(v) { ++liveCount; }
+    explicit Tracked(int v) : value(v) { ++liveCount; }
     Tracked(Tracked const& o) noexcept : value(o.value) { ++liveCount; }
     Tracked(Tracked&& o) noexcept : value(o.value) {
         ++liveCount;
         o.value = -1;
     }
-    ~Tracked() noexcept { --liveCount; }
+    ~Tracked() { --liveCount; }
     Tracked& operator=(Tracked const&) = delete;
     Tracked& operator=(Tracked&&)      = delete;
 };
@@ -63,7 +63,7 @@ struct Captured {
     char message[256] = {};
 };
 
-void capture_fn(void* user, Diagnostic const& d) noexcept {
+void capture_fn(void* user, Diagnostic const& d) {
     Captured* c = static_cast<Captured*>(user);
     c->called   = true;
     c->code     = d.code;

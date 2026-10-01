@@ -66,18 +66,18 @@ struct Provider {
     std::condition_variable pollWake;
     std::atomic<bool> stopping{false};
 
-    explicit Provider(Allocator const* a) noexcept
+    explicit Provider(Allocator const* a)
         : storeDirBuf(a, Tag::Cook), rootsBuf(a, Tag::Cook), roots(a, Tag::Cook), ruleStrings(a, Tag::Cook),
           nameRules(a, Tag::Cook), alloc(a) {}
 };
 
 // Context* -> Provider* registry, under registry_mutex().
 
-std::mutex& registry_mutex() noexcept {
+std::mutex& registry_mutex() {
     static std::mutex m;
     return m;
 }
-HashMap<Context*, Provider*>& registry() noexcept {
+HashMap<Context*, Provider*>& registry() {
     static HashMap<Context*, Provider*> reg(default_allocator(), Tag::Cook);
     return reg;
 }
@@ -88,7 +88,7 @@ struct FoundSource {
     usize len       = 0;
 };
 
-[[nodiscard]] bool ext_is(StrView path, char const* ext) noexcept {
+[[nodiscard]] bool ext_is(StrView path, char const* ext) {
     usize const dot   = path.rfind('.');
     usize const slash = path.rfind('/');
     if (dot == StrView::kNpos || (slash != StrView::kNpos && slash > dot)) return false;
@@ -103,15 +103,15 @@ struct FoundSource {
     return true;
 }
 
-[[nodiscard]] bool is_model(StrView path) noexcept { return ext_is(path, "glb") || ext_is(path, "gltf"); }
-[[nodiscard]] bool is_image(StrView path) noexcept {
+[[nodiscard]] bool is_model(StrView path) { return ext_is(path, "glb") || ext_is(path, "gltf"); }
+[[nodiscard]] bool is_image(StrView path) {
     return ext_is(path, "png") || ext_is(path, "jpg") || ext_is(path, "jpeg") || ext_is(path, "hdr") ||
            (webp_decode_enabled() && ext_is(path, "webp")) || ext_is(path, "ktx2");
 }
 
 /// The source file of the (sub-asset free) name `owner`: `<root root>/<path>`. NotFound
 /// without a diagnostic when no such file exists, so the runtime reports a store miss.
-Status find_source(Provider const& p, StrView owner, FoundSource& out, DiagSink const* diag) noexcept {
+Status find_source(Provider const& p, StrView owner, FoundSource& out, DiagSink const* diag) {
     AssetNameParts const parts = split_asset_name(owner);
     Root const* root           = nullptr;
     for (Root const& m : p.roots)
@@ -134,7 +134,7 @@ Status find_source(Provider const& p, StrView owner, FoundSource& out, DiagSink 
 
 /// The unit of the source `sourcePath`, named `name` (a mesh, or a texture of its own).
 UnitDesc unit_desc(Provider const& p, AssetKind kind, StrView name, StrView sourcePath,
-                   Allocator const* alloc, DiagSink const* diag) noexcept {
+                   Allocator const* alloc, DiagSink const* diag) {
     return UnitDesc{
         .kind            = kind,
         .name            = name,
@@ -149,7 +149,7 @@ UnitDesc unit_desc(Provider const& p, AssetKind kind, StrView name, StrView sour
     };
 }
 
-std::mutex& source_lock(Provider& p, StrView sourcePath) noexcept {
+std::mutex& source_lock(Provider& p, StrView sourcePath) {
     return p.sourceLocks[fnv1a64(sourcePath) % kSourceLockStripes];
 }
 
@@ -158,11 +158,11 @@ struct UnitRequest {
     StrView owner;                        ///< the unit's name: `name` without `#<image>`
     AssetKind unitKind = AssetKind::Mesh; ///< Mesh: a glb/gltf source; Texture: an image of its own
     FoundSource src;
-    StrView source_path() const noexcept { return {src.path, src.len}; }
+    StrView source_path() const { return {src.path, src.len}; }
 };
 
 Status resolve_request(Provider const& p, AssetKind kind, StrView name, UnitRequest* out,
-                       DiagSink const* diag) noexcept {
+                       DiagSink const* diag) {
     AssetNameParts const parts = split_asset_name(name);
     bool const embedded        = !parts.sub.empty();
     bool const kindOk          = kind == AssetKind::Mesh ? !embedded && is_model(parts.path)
@@ -182,7 +182,7 @@ Status resolve_request(Provider const& p, AssetKind kind, StrView name, UnitRequ
 // ---------------------------------------------------------------------------
 
 /// Cooks a unit and, with a store, publishes it and rewrites the manifest. `unit` keeps the outputs.
-Status cook_and_publish(Provider& p, UnitDesc d, DiagSink const* diag, CookUnit* unit) noexcept {
+Status cook_and_publish(Provider& p, UnitDesc d, DiagSink const* diag, CookUnit* unit) {
     d.statInputs = true;
     KILN_TRY(cook_unit(d, unit));
     if (!p.store) return kOk;
@@ -196,7 +196,7 @@ Status cook_and_publish(Provider& p, UnitDesc d, DiagSink const* diag, CookUnit*
 }
 
 Status provider_prepare(void* user, AssetKind kind, StrView name, PrepareMode mode, Allocator const* alloc,
-                        Vec<u8>* out, Hash128* key, DiagSink const* diag) noexcept {
+                        Vec<u8>* out, Hash128* key, DiagSink const* diag) {
     auto* p = static_cast<Provider*>(user);
     UnitRequest r;
     KILN_TRY(resolve_request(*p, kind, name, &r, diag));
@@ -230,7 +230,7 @@ Status provider_prepare(void* user, AssetKind kind, StrView name, PrepareMode mo
 struct LogDiag {
     bool quiet = false; ///< a retry of a source version already reported as failing
 
-    static void fn(void* user, Diagnostic const& d) noexcept {
+    static void fn(void* user, Diagnostic const& d) {
         auto const* self = static_cast<LogDiag const*>(user);
         if (self->quiet || d.severity == Severity::Info) return;
         if (d.severity == Severity::Warning)
@@ -247,7 +247,7 @@ struct FailedUnit {
 };
 
 /// The size and time (or absence) of every recorded input next to `sourcePath`, as they are now.
-u64 inputs_digest(CookUnit const& rec, StrView sourcePath) noexcept {
+u64 inputs_digest(CookUnit const& rec, StrView sourcePath) {
     Xxh64State h;
     for (UnitInput const& in : rec.inputs) {
         char path[1200];
@@ -262,7 +262,7 @@ u64 inputs_digest(CookUnit const& rec, StrView sourcePath) noexcept {
 
 /// Re-cooks every fresh unit whose inputs changed, then rewrites the manifest once.
 /// False when asked to stop.
-bool poll_round(Provider* p, Vec<char>& units, HashMap<u64, FailedUnit>& failed) noexcept {
+bool poll_round(Provider* p, Vec<char>& units, HashMap<u64, FailedUnit>& failed) {
     fresh_units(p->store, &units);
     CookUnit rec(p->alloc);
     for (usize at = 0; at < units.size();) {
@@ -313,7 +313,7 @@ bool poll_round(Provider* p, Vec<char>& units, HashMap<u64, FailedUnit>& failed)
     return true;
 }
 
-void poller_main(Provider* p) noexcept {
+void poller_main(Provider* p) {
     Vec<char> units(p->alloc, Tag::Cook);
     HashMap<u64, FailedUnit> failed(p->alloc, Tag::Cook);
     auto const period = std::chrono::milliseconds(p->desc.pollMs > 0 ? p->desc.pollMs : 1u);
@@ -329,7 +329,7 @@ void poller_main(Provider* p) noexcept {
 
 /// std::thread's constructor may throw on resource exhaustion. Third-party throws are
 /// caught at the call site (as in src/io/thread_pool.cpp).
-bool start_poller(Provider* p) noexcept {
+bool start_poller(Provider* p) {
 #if KILN_HAS_EXCEPTIONS
     try {
         p->poller = std::thread(&poller_main, p);
@@ -342,7 +342,7 @@ bool start_poller(Provider* p) noexcept {
     return true;
 }
 
-void stop_poller(Provider* p) noexcept {
+void stop_poller(Provider* p) {
     if (!p->poller.joinable()) return;
     {
         std::lock_guard<std::mutex> const lock(p->pollMutex);
@@ -354,7 +354,7 @@ void stop_poller(Provider* p) noexcept {
 
 } // namespace
 
-bool source_case_matches(StrView root, StrView path) noexcept {
+bool source_case_matches(StrView root, StrView path) {
 #if defined(KILN_OS_WINDOWS)
     // FindFirstFileW returns the name as stored on disk; compare it segment by segment.
     if (root.empty()) root = StrView(".");
@@ -389,7 +389,7 @@ bool source_case_matches(StrView root, StrView path) noexcept {
 namespace {
 
 /// Frees a provider: from uninstall_provider, or from destroy() when the host forgot it.
-void provider_release(void* user) noexcept {
+void provider_release(void* user) {
     auto* p = static_cast<Provider*>(user);
     {
         std::lock_guard<std::mutex> const lock(registry_mutex());
@@ -406,7 +406,7 @@ void provider_release(void* user) noexcept {
 
 } // namespace
 
-Status install_provider(Context* ctx, ProviderDesc const& desc) noexcept {
+Status install_provider(Context* ctx, ProviderDesc const& desc) {
     Span<Root const> const ctxRoots = roots(ctx);
     if (ctxRoots.empty()) return make_status(Code::InvalidArgument);
 
@@ -440,7 +440,7 @@ Status install_provider(Context* ctx, ProviderDesc const& desc) noexcept {
     p->rootsBuf.resize(total);
     p->roots.reserve(ctxRoots.size);
     usize offset    = 0;
-    auto const copy = [p, &offset](StrView s) noexcept {
+    auto const copy = [p, &offset](StrView s) {
         if (s.size) std::memcpy(p->rootsBuf.data() + offset, s.data, s.size);
         p->rootsBuf[offset + s.size] = '\0';
         StrView const v(p->rootsBuf.data() + offset, s.size);
@@ -516,7 +516,7 @@ Status install_provider(Context* ctx, ProviderDesc const& desc) noexcept {
     return kOk;
 }
 
-void uninstall_provider(Context* ctx) noexcept {
+void uninstall_provider(Context* ctx) {
     Provider* p = nullptr;
     {
         std::lock_guard<std::mutex> const lock(registry_mutex());

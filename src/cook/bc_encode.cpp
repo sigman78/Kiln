@@ -45,7 +45,7 @@ enum class Codec : u8 { BC1, BC3, BC4, BC5, BC6H, BC7 };
 struct Encoders {
     bc7enc_compress_block_params bc7High;
 
-    Encoders() noexcept {
+    Encoders() {
         rgbcx::init(rgbcx::bc1_approx_mode::cBC1Ideal);
         kiln_bc7f::init();
         bc7enc_compress_block_init();
@@ -56,12 +56,12 @@ struct Encoders {
     }
 };
 
-Encoders const& encoders() noexcept {
+Encoders const& encoders() {
     static Encoders const e;
     return e;
 }
 
-Codec codec_of(Format f) noexcept {
+Codec codec_of(Format f) {
     switch (f) {
     case Format::BC1_RGB_UNORM:
     case Format::BC1_RGB_SRGB: return Codec::BC1;
@@ -95,7 +95,7 @@ struct Job {
 };
 
 /// The 16 texels of block (bx, by) as RGBA8, edges repeated. Missing channels are 0, alpha 255.
-void gather(Image const& img, u32 bx, u32 by, u8 px[64]) noexcept {
+void gather(Image const& img, u32 bx, u32 by, u8 px[64]) {
     u32 const c = img.channels;
     for (u32 y = 0; y < 4; ++y) {
         u32 const sy  = min(by * 4 + y, img.height - 1);
@@ -113,7 +113,7 @@ void gather(Image const& img, u32 bx, u32 by, u8 px[64]) noexcept {
 
 /// The 16 texels of block (bx, by) of an f32 RGBA image as RGB halves, edges repeated. Negative
 /// values become 0 (BC6H UFLOAT); float_to_half saturates and maps NaN to 0.
-void gather_half(Image const& img, u32 bx, u32 by, u16 px[48]) noexcept {
+void gather_half(Image const& img, u32 bx, u32 by, u16 px[48]) {
     for (u32 y = 0; y < 4; ++y) {
         u32 const sy = min(by * 4 + y, img.height - 1);
         for (u32 x = 0; x < 4; ++x) {
@@ -129,7 +129,7 @@ void gather_half(Image const& img, u32 bx, u32 by, u16 px[48]) noexcept {
     }
 }
 
-void encode_rows(void* user, u32 begin, u32 end) noexcept {
+void encode_rows(void* user, u32 begin, u32 end) {
     Job const& j = *static_cast<Job const*>(user);
     u8 px[64];
     if (j.codec == Codec::BC6H) {
@@ -180,7 +180,7 @@ void encode_rows(void* user, u32 begin, u32 end) noexcept {
 } // namespace
 
 void bc_encode(Image const& img, Format format, EncodeQuality quality, Vec<u8>& out,
-               JobBudget const& budget) noexcept {
+               JobBudget const& budget) {
     Codec const codec = codec_of(format);
     KILN_VERIFY(img.width > 0 && img.height > 0);
     KILN_VERIFY(

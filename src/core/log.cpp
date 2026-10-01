@@ -5,7 +5,7 @@
 
 namespace kiln {
 
-char const* log_level_name(LogLevel l) noexcept {
+char const* log_level_name(LogLevel l) {
     switch (l) {
     case LogLevel::Trace: return "trace";
     case LogLevel::Debug: return "debug";
@@ -32,31 +32,31 @@ struct LogState {
     std::atomic<LogLevel> level{LogLevel::Info};
 };
 
-LogState& state() noexcept {
+LogState& state() {
     static LogState s;
     return s;
 }
 
 } // namespace
 
-LogSink stderr_log_sink() noexcept { return {&stderr_sink_fn, nullptr}; }
+LogSink stderr_log_sink() { return {&stderr_sink_fn, nullptr}; }
 
-void set_log_sink(LogSink sink) noexcept {
+void set_log_sink(LogSink sink) {
     LogState& s = state();
     s.user.store(sink.user, std::memory_order_relaxed);
     s.fn.store(sink.fn, std::memory_order_release);
 }
 
-LogSink log_sink() noexcept {
+LogSink log_sink() {
     LogState& s = state();
     return {s.fn.load(std::memory_order_acquire), s.user.load(std::memory_order_relaxed)};
 }
 
-void set_log_level(LogLevel level) noexcept { state().level.store(level, std::memory_order_relaxed); }
+void set_log_level(LogLevel level) { state().level.store(level, std::memory_order_relaxed); }
 
-LogLevel log_level() noexcept { return state().level.load(std::memory_order_relaxed); }
+LogLevel log_level() { return state().level.load(std::memory_order_relaxed); }
 
-usize vformat(char* buf, usize cap, char const* fmt, va_list args) noexcept {
+usize vformat(char* buf, usize cap, char const* fmt, va_list args) {
     if (cap == 0) return 0;
     int n = std::vsnprintf(buf, cap, fmt, args);
     if (n < 0) {
@@ -66,7 +66,7 @@ usize vformat(char* buf, usize cap, char const* fmt, va_list args) noexcept {
     return usize(n) < cap ? usize(n) : cap - 1;
 }
 
-usize format(char* buf, usize cap, char const* fmt, ...) noexcept {
+usize format(char* buf, usize cap, char const* fmt, ...) {
     va_list args;
     va_start(args, fmt);
     usize n = vformat(buf, cap, fmt, args);
@@ -74,7 +74,7 @@ usize format(char* buf, usize cap, char const* fmt, ...) noexcept {
     return n;
 }
 
-void vlog(LogLevel level, char const* category, char const* fmt, va_list args) noexcept {
+void vlog(LogLevel level, char const* category, char const* fmt, va_list args) {
     if (level < log_level()) return;
     LogSink sink = log_sink();
     if (!sink.fn) return;
@@ -83,7 +83,7 @@ void vlog(LogLevel level, char const* category, char const* fmt, va_list args) n
     sink.fn(sink.user, level, StrView(category), StrView(buf, n));
 }
 
-void log(LogLevel level, char const* category, char const* fmt, ...) noexcept {
+void log(LogLevel level, char const* category, char const* fmt, ...) {
     va_list args;
     va_start(args, fmt);
     vlog(level, category, fmt, args);

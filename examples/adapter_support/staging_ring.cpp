@@ -3,12 +3,12 @@
 
 namespace kiln::ex {
 
-StagingRing::StagingRing(Allocator const* alloc, u64 size, u32 maxReservations) noexcept
+StagingRing::StagingRing(Allocator const* alloc, u64 size, u32 maxReservations)
     : ranges_(alloc ? alloc : default_allocator(), Tag::Payload), size_(size) {
     ranges_.resize(max(maxReservations, 1u));
 }
 
-StagingRing::Reservation StagingRing::reserve(u64 size, u64 align) noexcept {
+StagingRing::Reservation StagingRing::reserve(u64 size, u64 align) {
     KILN_ASSERT(is_pow2(align));
     u32 const cap = u32(ranges_.size());
     if (count_ == cap) return {};
@@ -35,7 +35,7 @@ StagingRing::Reservation StagingRing::reserve(u64 size, u64 align) noexcept {
     return {start, id};
 }
 
-void StagingRing::release(u32 id) noexcept {
+void StagingRing::release(u32 id) {
     u32 const cap = u32(ranges_.size());
     KILN_ASSERT(id < cap && (id + cap - first_) % cap < count_ && !ranges_[id].released);
     ranges_[id].released = true;
@@ -45,7 +45,7 @@ void StagingRing::release(u32 id) noexcept {
     }
 }
 
-u64 StagingRing::used() const noexcept {
+u64 StagingRing::used() const {
     if (count_ == 0) return 0;
     u64 const tail = ranges_[first_].begin;
     return head_ > tail ? head_ - tail : size_ - tail + head_;

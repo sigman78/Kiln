@@ -10,7 +10,7 @@
 
 namespace kiln {
 
-void no_crash_dialogs() noexcept {
+void no_crash_dialogs() {
 #if defined(_WIN32)
     SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX);
     _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);

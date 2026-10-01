@@ -85,7 +85,7 @@ struct FrameFences {
     u64 completed             = 0;
 
     /// Collects finished frames; blocks on the oldest one while kMax are in flight.
-    void poll() noexcept {
+    void poll() {
         while (count) {
             GLuint64 const timeout = count == kMax ? GLuint64(100'000'000) : 0;
             GLenum const r         = glClientWaitSync(fences[0], GL_SYNC_FLUSH_COMMANDS_BIT, timeout);
@@ -104,12 +104,12 @@ struct FrameFences {
         }
     }
     /// After the frame's draws.
-    void end_frame() noexcept {
+    void end_frame() {
         fences[count] = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
         frames[count] = next++;
         ++count;
     }
-    void release() noexcept {
+    void release() {
         for (u32 i = 0; i < count; ++i)
             glDeleteSync(fences[i]);
         count = 0;

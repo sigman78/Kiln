@@ -27,9 +27,9 @@ struct VkAdapter;
 
 /// Fills `out` (kSelfSubmitting, kCubeTextures, kArrayTextures, kMeshes; bindless unless
 /// AdapterDesc::bindless is false). `out` must outlive its users.
-Result<VkAdapter*> adapter_create(AdapterDesc const& desc, Adapter* out) noexcept;
+Result<VkAdapter*> adapter_create(AdapterDesc const& desc, Adapter* out);
 /// Waits for the transfer queue to go idle, then frees everything.
-void adapter_destroy(VkAdapter* a) noexcept;
+void adapter_destroy(VkAdapter* a);
 
 // --- What the renderer needs from the adapter (render thread) ---------------------------
 
@@ -37,13 +37,13 @@ void adapter_destroy(VkAdapter* a) noexcept;
 /// `maxSlots` (combined image samplers, partially bound, update after bind), one per
 /// TextureShape. A slot index is shared: a texture's slot is valid in the binding of its shape.
 /// The viewer binds the set once per frame.
-VkDescriptorSetLayout adapter_set_layout(VkAdapter* a) noexcept;
-VkDescriptorSet adapter_descriptor_set(VkAdapter* a) noexcept;
+VkDescriptorSetLayout adapter_set_layout(VkAdapter* a);
+VkDescriptorSet adapter_descriptor_set(VkAdapter* a);
 
 /// Timeline semaphore and the value that covers every upload kiln uses so far. A frame
 /// submit that waits on (semaphore, value) may sample any slot kiln has bound.
-VkSemaphore adapter_timeline(VkAdapter* a) noexcept;
-u64 adapter_upload_watermark(VkAdapter* a) noexcept;
+VkSemaphore adapter_timeline(VkAdapter* a);
+u64 adapter_upload_watermark(VkAdapter* a);
 
 /// A mesh payload: the buffer and the offset of the decoded payload inside it. The .mesh
 /// stream and index offsets are relative to `offset`. Null buffer if `obj` is not a mesh.
@@ -53,7 +53,7 @@ struct MeshPayload {
     VkDeviceSize size       = 0;
     VkDeviceAddress address = 0; ///< device address of the payload start
 };
-MeshPayload adapter_mesh(VkAdapter* a, GpuObject obj) noexcept;
+MeshPayload adapter_mesh(VkAdapter* a, GpuObject obj);
 
 /// The image view behind a texture's GpuObject (placeholder or real), for hosts that write their
 /// own descriptor sets. Null if `obj` is not a texture.
@@ -61,15 +61,14 @@ struct TextureView {
     VkImageView view   = VK_NULL_HANDLE;
     TextureShape shape = TextureShape::Tex2D;
 };
-TextureView adapter_texture(VkAdapter* a, GpuObject obj) noexcept;
+TextureView adapter_texture(VkAdapter* a, GpuObject obj);
 
 /// An ex::ReadTextureFn (`user` is the VkAdapter), for --verify: copies the image on the transfer
 /// queue and waits. Call when no frame is in flight; the queue must be free for this thread.
-[[nodiscard]] bool adapter_read_texture(void* user, GpuObject obj, TextureDesc const& desc,
-                                        Vec<u8>* out) noexcept;
+[[nodiscard]] bool adapter_read_texture(void* user, GpuObject obj, TextureDesc const& desc, Vec<u8>* out);
 
 /// The counters shared by every example adapter; any thread. A submitted copy never fails, and the
 /// only Busy is a full staging ring (a full object table is OutOfMemory).
-ex::AdapterStats adapter_stats(VkAdapter* a) noexcept;
+ex::AdapterStats adapter_stats(VkAdapter* a);
 
 } // namespace kiln::vkx

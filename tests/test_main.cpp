@@ -24,15 +24,15 @@ char const* g_filter    = nullptr;
 
 } // namespace
 
-char const* sample_dir() noexcept { return g_sampleDir; }
-char const* corpus_dir() noexcept { return g_corpusDir; }
-char const* golden_dir() noexcept { return g_goldenDir; }
-bool update_golden() noexcept { return g_updateGolden; }
-bool selected_exactly(char const* fullName) noexcept {
+char const* sample_dir() { return g_sampleDir; }
+char const* corpus_dir() { return g_corpusDir; }
+char const* golden_dir() { return g_goldenDir; }
+bool update_golden() { return g_updateGolden; }
+bool selected_exactly(char const* fullName) {
     return g_filter && fullName && std::strcmp(g_filter, fullName) == 0;
 }
 
-Registrar::Registrar(TestCase* tc) noexcept {
+Registrar::Registrar(TestCase* tc) {
     tc->next = nullptr;
     if (g_tail)
         g_tail->next = tc;
@@ -42,7 +42,7 @@ Registrar::Registrar(TestCase* tc) noexcept {
     ++g_count;
 }
 
-bool fail(char const* file, int line, char const* expr, char const* fmt, ...) noexcept {
+bool fail(char const* file, int line, char const* expr, char const* fmt, ...) {
     ++g_failures;
     char msg[1024];
     va_list args;
@@ -53,25 +53,23 @@ bool fail(char const* file, int line, char const* expr, char const* fmt, ...) no
     return false;
 }
 
-int current_failures() noexcept { return g_failures; }
+int current_failures() { return g_failures; }
 
-usize to_str(char* buf, usize cap, bool v) noexcept { return format(buf, cap, "%s", v ? "true" : "false"); }
-usize to_str(char* buf, usize cap, char v) noexcept { return format(buf, cap, "'%c' (%d)", v, int(v)); }
-usize to_str(char* buf, usize cap, i32 v) noexcept { return format(buf, cap, "%d", v); }
-usize to_str(char* buf, usize cap, u32 v) noexcept { return format(buf, cap, "%u (0x%x)", v, v); }
-usize to_str(char* buf, usize cap, i64 v) noexcept {
-    return format(buf, cap, "%lld", static_cast<long long>(v));
-}
-usize to_str(char* buf, usize cap, u64 v) noexcept {
+usize to_str(char* buf, usize cap, bool v) { return format(buf, cap, "%s", v ? "true" : "false"); }
+usize to_str(char* buf, usize cap, char v) { return format(buf, cap, "'%c' (%d)", v, int(v)); }
+usize to_str(char* buf, usize cap, i32 v) { return format(buf, cap, "%d", v); }
+usize to_str(char* buf, usize cap, u32 v) { return format(buf, cap, "%u (0x%x)", v, v); }
+usize to_str(char* buf, usize cap, i64 v) { return format(buf, cap, "%lld", static_cast<long long>(v)); }
+usize to_str(char* buf, usize cap, u64 v) {
     return format(buf, cap, "%llu (0x%llx)", static_cast<unsigned long long>(v),
                   static_cast<unsigned long long>(v));
 }
-usize to_str(char* buf, usize cap, f64 v) noexcept { return format(buf, cap, "%.9g", v); }
-usize to_str(char* buf, usize cap, StrView v) noexcept { return format(buf, cap, "\"%.*s\"", KILN_SV(v)); }
-usize to_str(char* buf, usize cap, char const* v) noexcept {
+usize to_str(char* buf, usize cap, f64 v) { return format(buf, cap, "%.9g", v); }
+usize to_str(char* buf, usize cap, StrView v) { return format(buf, cap, "\"%.*s\"", KILN_SV(v)); }
+usize to_str(char* buf, usize cap, char const* v) {
     return v ? format(buf, cap, "\"%s\"", v) : format(buf, cap, "nullptr");
 }
-usize to_str(char* buf, usize cap, void const* v) noexcept { return format(buf, cap, "%p", v); }
+usize to_str(char* buf, usize cap, void const* v) { return format(buf, cap, "%p", v); }
 
 namespace {
 
@@ -103,7 +101,7 @@ bool matches(TestCase const* tc, char const* filter) {
 
 } // namespace
 
-int run_all(int argc, char** argv) noexcept {
+int run_all(int argc, char** argv) {
     char const* filter = nullptr;
     bool list          = false;
     for (int i = 1; i < argc; ++i) {

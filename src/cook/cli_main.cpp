@@ -623,7 +623,7 @@ char const* const kQualities[]        = {"fast", "normal", "high", nullptr};
 
 } // namespace
 
-int kiln::cook::cook_cli_main(int argc, char** argv, CookPolicy const& policy, u32 policyVersion) noexcept {
+int kiln::cook::cook_cli_main(int argc, char** argv, CookPolicy const& policy, u32 policyVersion) {
     Options o;
     bool noTangents = false, noOptimize = false, noMips = false, noLods = false;
     cli::Option const opts[] = {

@@ -100,13 +100,13 @@ void stage_build_mip_chain(Image const&, Image const& rgba8, Allocator const* al
     KILN_VERIFY(r.ok());
 }
 
-u64 bytes_of_rgb8(Image const& rgb8, Image const&) noexcept { return rgb8.byte_size(); }
-u64 bytes_of_rgba8(Image const&, Image const& rgba8) noexcept { return rgba8.byte_size(); }
+u64 bytes_of_rgb8(Image const& rgb8, Image const&) { return rgb8.byte_size(); }
+u64 bytes_of_rgba8(Image const&, Image const& rgba8) { return rgba8.byte_size(); }
 
 struct StageSpec {
     char const* name;
     void (*run)(Image const& rgb8, Image const& rgba8, Allocator const* alloc, JobBudget const& jobs);
-    u64 (*srcBytes)(Image const& rgb8, Image const& rgba8) noexcept;
+    u64 (*srcBytes)(Image const& rgb8, Image const& rgba8);
 };
 
 constexpr StageSpec kStages[] = {
@@ -127,7 +127,7 @@ double ms_since(std::chrono::steady_clock::time_point t0) {
     return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
 }
 
-double mib_per_sec(u64 bytes, double ms) noexcept {
+double mib_per_sec(u64 bytes, double ms) {
     return ms > 0.0 ? (double(bytes) / (1024.0 * 1024.0)) / (ms / 1000.0) : 0.0;
 }
 

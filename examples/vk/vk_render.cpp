@@ -92,7 +92,7 @@ namespace {
 // --- Small object helpers -----------------------------------------------------------------------
 
 /// Names for the color formats a swapchain or the offscreen target is likely to use.
-char const* vk_format_name(VkFormat f) noexcept {
+char const* vk_format_name(VkFormat f) {
     switch (f) {
     case VK_FORMAT_B8G8R8A8_SRGB: return "B8G8R8A8_SRGB";
     case VK_FORMAT_B8G8R8A8_UNORM: return "B8G8R8A8_UNORM";
@@ -105,7 +105,7 @@ char const* vk_format_name(VkFormat f) noexcept {
 }
 
 Status create_image(Renderer* r, VkFormat format, VkImageUsageFlags usage, VkImageAspectFlags aspect,
-                    Image* out) noexcept {
+                    Image* out) {
     VkImageCreateInfo info{};
     info.sType         = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     info.imageType     = VK_IMAGE_TYPE_2D;
@@ -143,7 +143,7 @@ Status create_image(Renderer* r, VkFormat format, VkImageUsageFlags usage, VkIma
     return kOk;
 }
 
-void destroy_image(Renderer* r, Image& img) noexcept {
+void destroy_image(Renderer* r, Image& img) {
     vkDestroyImageView(r->device, img.view, nullptr);
     vkDestroyImage(r->device, img.image, nullptr);
     vkFreeMemory(r->device, img.memory, nullptr);
@@ -153,7 +153,7 @@ void destroy_image(Renderer* r, Image& img) noexcept {
 /// A buffer in memory with every `required` flag, mapped when host-visible.
 Status create_buffer(Renderer* r, VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags required,
                      VkMemoryPropertyFlags preferred, VkBuffer* buffer, VkDeviceMemory* memory,
-                     void** mapped) noexcept {
+                     void** mapped) {
     VkBufferCreateInfo info{};
     info.sType       = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
     info.size        = size;
@@ -173,7 +173,7 @@ Status create_buffer(Renderer* r, VkDeviceSize size, VkBufferUsageFlags usage, V
     return kOk;
 }
 
-void destroy_buffer(Renderer* r, VkBuffer& buffer, VkDeviceMemory& memory) noexcept {
+void destroy_buffer(Renderer* r, VkBuffer& buffer, VkDeviceMemory& memory) {
     vkDestroyBuffer(r->device, buffer, nullptr);
     vkFreeMemory(r->device, memory, nullptr);
     buffer = VK_NULL_HANDLE;
@@ -181,7 +181,7 @@ void destroy_buffer(Renderer* r, VkBuffer& buffer, VkDeviceMemory& memory) noexc
 }
 
 VkImageMemoryBarrier2 image_barrier(VkImage image, VkImageAspectFlags aspect, VkImageLayout from,
-                                    VkImageLayout to) noexcept {
+                                    VkImageLayout to) {
     VkImageMemoryBarrier2 b{};
     b.sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
     b.oldLayout           = from;
@@ -193,7 +193,7 @@ VkImageMemoryBarrier2 image_barrier(VkImage image, VkImageAspectFlags aspect, Vk
     return b;
 }
 
-void barrier(VkCommandBuffer cmd, VkImageMemoryBarrier2 const* images, u32 count) noexcept {
+void barrier(VkCommandBuffer cmd, VkImageMemoryBarrier2 const* images, u32 count) {
     VkDependencyInfo dep{};
     dep.sType                   = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
     dep.imageMemoryBarrierCount = count;
@@ -203,13 +203,13 @@ void barrier(VkCommandBuffer cmd, VkImageMemoryBarrier2 const* images, u32 count
 
 // --- Targets ------------------------------------------------------------------------------------
 
-Status create_depth(Renderer* r) noexcept {
+Status create_depth(Renderer* r) {
     destroy_image(r, r->depth);
     return create_image(r, kDepthFormat, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
                         VK_IMAGE_ASPECT_DEPTH_BIT, &r->depth);
 }
 
-void destroy_pipelines(Renderer* r) noexcept {
+void destroy_pipelines(Renderer* r) {
     for (LayoutPipeline& p : r->pipelines)
         vkDestroyPipeline(r->device, p.pipeline, nullptr);
     r->pipelines.clear();
@@ -217,7 +217,7 @@ void destroy_pipelines(Renderer* r) noexcept {
     r->skyPipeline = VK_NULL_HANDLE;
 }
 
-void destroy_swapchain_views(Renderer* r) noexcept {
+void destroy_swapchain_views(Renderer* r) {
     for (u32 i = 0; i < r->imageCount; ++i) {
         vkDestroyImageView(r->device, r->swapViews[i], nullptr);
         r->swapViews[i]  = VK_NULL_HANDLE;
@@ -228,7 +228,7 @@ void destroy_swapchain_views(Renderer* r) noexcept {
 
 /// (Re)creates the swapchain for the current framebuffer size. False while the window has
 /// no area (minimized); the caller skips the frame and tries again later.
-bool create_swapchain(Renderer* r) noexcept {
+bool create_swapchain(Renderer* r) {
     u32 w = 0, h = 0;
     r->desc.framebufferSize(r->desc.user, &w, &h);
     if (w == 0 || h == 0) return false;
@@ -315,7 +315,7 @@ bool create_swapchain(Renderer* r) noexcept {
     return true;
 }
 
-Status create_offscreen(Renderer* r) noexcept {
+Status create_offscreen(Renderer* r) {
     // sRGB like the window's swapchain, so the PNG looks the same; UNORM if it cannot be rendered to.
     VkFormatFeatureFlags const need =
         VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT | VK_FORMAT_FEATURE_TRANSFER_SRC_BIT;
@@ -342,7 +342,7 @@ Status create_offscreen(Renderer* r) noexcept {
 // --- Pipelines ----------------------------------------------------------------------------------
 
 /// Fixed shader location for an attribute, kInvalid for semantics the shaders do not read.
-u32 location_of(mesh::VertexAttrib const& a) noexcept {
+u32 location_of(mesh::VertexAttrib const& a) {
     switch (mesh::Semantic(a.semantic)) {
     case mesh::Semantic::Position: return a.semanticIndex == 0 ? 0u : kInvalid;
     case mesh::Semantic::Normal: return a.semanticIndex == 0 ? 1u : kInvalid;
@@ -353,7 +353,7 @@ u32 location_of(mesh::VertexAttrib const& a) noexcept {
     }
 }
 
-VkPipeline create_pipeline(Renderer* r, mesh::VertexLayout const& layout, u32* zeroBindings) noexcept {
+VkPipeline create_pipeline(Renderer* r, mesh::VertexLayout const& layout, u32* zeroBindings) {
     VkVertexInputBindingDescription bindings[mesh::kMaxStreams + kLocations];
     VkVertexInputAttributeDescription attribs[kLocations];
     u32 bindingCount = 0;
@@ -506,7 +506,7 @@ VkPipeline create_pipeline(Renderer* r, mesh::VertexLayout const& layout, u32* z
 }
 
 /// The sky pipeline: a full-screen triangle, no vertex input, no depth test or write.
-VkPipeline create_sky_pipeline(Renderer* r) noexcept {
+VkPipeline create_sky_pipeline(Renderer* r) {
     VkPipelineShaderStageCreateInfo stages[2]{};
     stages[0].sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
     stages[0].stage  = VK_SHADER_STAGE_VERTEX_BIT;
@@ -574,8 +574,7 @@ VkPipeline create_sky_pipeline(Renderer* r) noexcept {
 }
 
 /// The host's SPIR-V when it gave some, else the viewer's.
-VkShaderModule shader_module(Renderer* r, Span<u32 const> host, u32 const* builtin,
-                             usize builtinBytes) noexcept {
+VkShaderModule shader_module(Renderer* r, Span<u32 const> host, u32 const* builtin, usize builtinBytes) {
     VkShaderModuleCreateInfo smi{};
     smi.sType        = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
     smi.codeSize     = host.empty() ? builtinBytes : host.size * sizeof(u32);
@@ -585,7 +584,7 @@ VkShaderModule shader_module(Renderer* r, Span<u32 const> host, u32 const* built
     return m;
 }
 
-Status create_shared_objects(Renderer* r) noexcept {
+Status create_shared_objects(Renderer* r) {
     RendererDesc const& d = r->desc;
     r->vert               = shader_module(r, d.meshVert, k_mesh_vert_spv, sizeof k_mesh_vert_spv);
     r->frag               = shader_module(r, d.meshFrag, k_mesh_frag_spv, sizeof k_mesh_frag_spv);
@@ -686,7 +685,7 @@ Status create_shared_objects(Renderer* r) noexcept {
 
 // --- Public entry points ------------------------------------------------------------------------
 
-Result<Renderer*> renderer_create(RendererDesc const& desc) noexcept {
+Result<Renderer*> renderer_create(RendererDesc const& desc) {
     if (!desc.device || !desc.device->device || !desc.adapter) return make_status(Code::InvalidArgument);
     if (desc.surface && !desc.framebufferSize) return make_status(Code::InvalidArgument);
     if (!desc.surface && (desc.width == 0 || desc.height == 0)) return make_status(Code::InvalidArgument);
@@ -725,7 +724,7 @@ Result<Renderer*> renderer_create(RendererDesc const& desc) noexcept {
     return r;
 }
 
-void renderer_destroy(Renderer* r) noexcept {
+void renderer_destroy(Renderer* r) {
     if (!r) return;
     vkDeviceWaitIdle(r->device);
     destroy_pipelines(r);
@@ -754,7 +753,7 @@ void renderer_destroy(Renderer* r) noexcept {
     delete_object(r->alloc, r, Tag::General);
 }
 
-LayoutPipeline const* renderer_pipeline(Renderer* r, mesh::VertexLayout const& layout) noexcept {
+LayoutPipeline const* renderer_pipeline(Renderer* r, mesh::VertexLayout const& layout) {
     for (LayoutPipeline const& p : r->pipelines)
         if (std::memcmp(&p.layout, &layout, sizeof layout) == 0) return p.pipeline ? &p : nullptr;
     if (r->colorFormat == VK_FORMAT_UNDEFINED) return nullptr; // no target yet (window not shown)
@@ -766,9 +765,9 @@ LayoutPipeline const* renderer_pipeline(Renderer* r, mesh::VertexLayout const& l
     return p.pipeline ? &r->pipelines.back() : nullptr;
 }
 
-VkPipelineLayout renderer_pipeline_layout(Renderer* r) noexcept { return r->pipelineLayout; }
+VkPipelineLayout renderer_pipeline_layout(Renderer* r) { return r->pipelineLayout; }
 
-void renderer_draw_sky(Renderer* r, VkCommandBuffer cmd, SkyPush const& push) noexcept {
+void renderer_draw_sky(Renderer* r, VkCommandBuffer cmd, SkyPush const& push) {
     if (!r->skyPipeline) r->skyPipeline = create_sky_pipeline(r);
     if (!r->skyPipeline) return;
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->skyPipeline);
@@ -776,9 +775,9 @@ void renderer_draw_sky(Renderer* r, VkCommandBuffer cmd, SkyPush const& push) no
                        sizeof push, &push);
     vkCmdDraw(cmd, 3, 1, 0, 0);
 }
-VkBuffer renderer_zero_buffer(Renderer* r) noexcept { return r->zero; }
-VkExtent2D renderer_extent(Renderer* r) noexcept { return r->extent; }
-MaterialUniforms material_uniforms(mesh::MeshView const* v, u32 material) noexcept {
+VkBuffer renderer_zero_buffer(Renderer* r) { return r->zero; }
+VkExtent2D renderer_extent(Renderer* r) { return r->extent; }
+MaterialUniforms material_uniforms(mesh::MeshView const* v, u32 material) {
     MaterialUniforms u{
         {1, 1, 1, 1},
         {0, 0, 0, 1},
@@ -795,12 +794,12 @@ MaterialUniforms material_uniforms(mesh::MeshView const* v, u32 material) noexce
     return u;
 }
 
-FrameUniforms* renderer_uniforms(Renderer* r) noexcept { return r->frames[r->slot].uniforms; }
-void renderer_resize(Renderer* r) noexcept { r->needRecreate = !r->offscreen; }
-void renderer_wait_idle(Renderer* r) noexcept { vkDeviceWaitIdle(r->device); }
-char const* renderer_color_format_name(Renderer* r) noexcept { return vk_format_name(r->colorFormat); }
+FrameUniforms* renderer_uniforms(Renderer* r) { return r->frames[r->slot].uniforms; }
+void renderer_resize(Renderer* r) { r->needRecreate = !r->offscreen; }
+void renderer_wait_idle(Renderer* r) { vkDeviceWaitIdle(r->device); }
+char const* renderer_color_format_name(Renderer* r) { return vk_format_name(r->colorFormat); }
 
-FrameNumbers renderer_wait_frame(Renderer* r) noexcept {
+FrameNumbers renderer_wait_frame(Renderer* r) {
     r->slot  = u32(r->frameNumber % kFramesInFlight);
     Frame& f = r->frames[r->slot];
     VKX_CHECK(vkWaitForFences(r->device, 1, &f.fence, VK_TRUE, UINT64_MAX));
@@ -810,7 +809,7 @@ FrameNumbers renderer_wait_frame(Renderer* r) noexcept {
     return {f.number, completed};
 }
 
-VkCommandBuffer renderer_begin(Renderer* r) noexcept {
+VkCommandBuffer renderer_begin(Renderer* r) {
     Frame& f            = r->frames[r->slot];
     VkImage target      = r->color.image;
     VkImageView targetV = r->color.view;
@@ -903,7 +902,7 @@ VkCommandBuffer renderer_begin(Renderer* r) noexcept {
     return f.cmd;
 }
 
-void renderer_end(Renderer* r, bool readback) noexcept {
+void renderer_end(Renderer* r, bool readback) {
     Frame& f = r->frames[r->slot];
     vkCmdEndRendering(f.cmd);
 
@@ -1009,7 +1008,7 @@ void renderer_end(Renderer* r, bool readback) noexcept {
     }
 }
 
-Status renderer_read_back(Renderer* r, Vec<u8>* rgba, u32* width, u32* height) noexcept {
+Status renderer_read_back(Renderer* r, Vec<u8>* rgba, u32* width, u32* height) {
     if (!r->offscreen || !r->readbackRecorded) return make_status(Code::InvalidArgument);
     vkDeviceWaitIdle(r->device);
     u32 const w = r->extent.width, h = r->extent.height;

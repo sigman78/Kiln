@@ -198,8 +198,8 @@ KILN_GL_BINDLESS_FUNCTIONS(KILN_GL_DECLARE)
 
 /// Loads every function above for the current context. False (and logs the first missing one)
 /// if the context is older than 4.6 core.
-[[nodiscard]] bool load_gl() noexcept;
+[[nodiscard]] bool load_gl();
 /// Loads ARB_bindless_texture; false if the driver does not offer it.
-[[nodiscard]] bool load_gl_bindless() noexcept;
+[[nodiscard]] bool load_gl_bindless();
 
 } // namespace kiln::glx

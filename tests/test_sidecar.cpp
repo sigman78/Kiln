@@ -157,7 +157,7 @@ struct TestPolicy {
     bool meshNoOptimize = false;
 
     static Status texture(void* user, CookAssetInfo const&, TargetProfile const&, TextureCookSettings* s,
-                          DiagSink const*) noexcept {
+                          DiagSink const*) {
         auto* self = static_cast<TestPolicy*>(user);
         self->seen = s->usage;
         if (self->refuse) return make_status(Code::Unsupported);
@@ -166,11 +166,11 @@ struct TestPolicy {
         return kOk;
     }
     static Status mesh(void* user, CookAssetInfo const&, TargetProfile const&, MeshCookSettings* s,
-                       DiagSink const*) noexcept {
+                       DiagSink const*) {
         if (static_cast<TestPolicy*>(user)->meshNoOptimize) s->optimize = false;
         return kOk;
     }
-    CookPolicy policy() noexcept { return CookPolicy{&texture, &mesh, this}; }
+    CookPolicy policy() { return CookPolicy{&texture, &mesh, this}; }
 };
 
 ResolveDesc desc_for(StrView name, StrView sidecar = {}, SlotHint slot = SlotHint::None) {

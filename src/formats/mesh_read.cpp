@@ -8,7 +8,7 @@
 
 namespace kiln::mesh {
 
-char const* semantic_name(Semantic s) noexcept {
+char const* semantic_name(Semantic s) {
     switch (s) {
     case Semantic::Position: return "Position";
     case Semantic::Normal: return "Normal";
@@ -21,7 +21,7 @@ char const* semantic_name(Semantic s) noexcept {
     }
     return "?";
 }
-char const* index_type_name(IndexType t) noexcept {
+char const* index_type_name(IndexType t) {
     switch (t) {
     case IndexType::U16: return "U16";
     case IndexType::U32: return "U32";
@@ -29,7 +29,7 @@ char const* index_type_name(IndexType t) noexcept {
     }
     return "?";
 }
-char const* alpha_mode_name(AlphaMode m) noexcept {
+char const* alpha_mode_name(AlphaMode m) {
     switch (m) {
     case AlphaMode::Opaque: return "Opaque";
     case AlphaMode::Mask: return "Mask";
@@ -37,7 +37,7 @@ char const* alpha_mode_name(AlphaMode m) noexcept {
     }
     return "?";
 }
-char const* texture_slot_name(TextureSlot s) noexcept {
+char const* texture_slot_name(TextureSlot s) {
     switch (s) {
     case TextureSlot::BaseColor: return "BaseColor";
     case TextureSlot::Normal: return "Normal";
@@ -47,7 +47,7 @@ char const* texture_slot_name(TextureSlot s) noexcept {
     }
     return u8(s) < 16 ? "Reserved" : "?";
 }
-char const* codec_name(Codec c) noexcept {
+char const* codec_name(Codec c) {
     switch (c) {
     case Codec::None: return "None";
     case Codec::Zstd: return "Zstd";
@@ -57,7 +57,7 @@ char const* codec_name(Codec c) noexcept {
     }
     return "?";
 }
-char const* filter_name(Filter f) noexcept {
+char const* filter_name(Filter f) {
     switch (f) {
     case Filter::None: return "None";
     case Filter::ByteShuffle: return "ByteShuffle";
@@ -88,7 +88,7 @@ struct Ctx {
                  __VA_ARGS__)
 
 /// Section lookup during open (before the view is built).
-SectionEntry const* find_sec(Span<SectionEntry const> secs, u32 id) noexcept {
+SectionEntry const* find_sec(Span<SectionEntry const> secs, u32 id) {
     for (SectionEntry const& s : secs)
         if (s.id == id) return &s;
     return nullptr;
@@ -97,7 +97,7 @@ SectionEntry const* find_sec(Span<SectionEntry const> secs, u32 id) noexcept {
 /// Validate a record section's stride/count against T and bind a Records<T>.
 template <class T>
 Status bind_records(Ctx& ctx, Span<u8 const> bytes, SectionEntry const* sec, char const* name, bool required,
-                    u32 minCount, Records<T>& out) noexcept {
+                    u32 minCount, Records<T>& out) {
     if (!sec) {
         if (required) KILN_MESH_FAIL(ctx, Corrupt, kDiagSectionMissing, "required section %s missing", name);
         out = {};
@@ -121,10 +121,10 @@ Status bind_records(Ctx& ctx, Span<u8 const> bytes, SectionEntry const* sec, cha
 }
 
 /// STRS ends with a NUL, so any in-range offset is a valid C string.
-bool str_ok(Span<u8 const> strs, u32 off) noexcept { return off == kInvalid || off < strs.size; }
+bool str_ok(Span<u8 const> strs, u32 off) { return off == kInvalid || off < strs.size; }
 
 /// Sum of the intersection of [a, a+n) with every blob's decoded range.
-u64 covered_bytes(Records<PayloadBlob> const& blobs, u64 a, u64 n) noexcept {
+u64 covered_bytes(Records<PayloadBlob> const& blobs, u64 a, u64 n) {
     u64 b = a + n, sum = 0;
     for (PayloadBlob const& pb : blobs) {
         u64 s = pb.decodedOffset, e = s + pb.decodedSize;
@@ -134,7 +134,7 @@ u64 covered_bytes(Records<PayloadBlob> const& blobs, u64 a, u64 n) noexcept {
     return sum;
 }
 
-Status validate_blobs(Ctx& ctx, FileHeader const& h, Records<PayloadBlob> const& blobs) noexcept {
+Status validate_blobs(Ctx& ctx, FileHeader const& h, Records<PayloadBlob> const& blobs) {
     u64 prevEncEnd    = 0;
     u32 prevRank      = 0;
     bool decAscending = true;
@@ -206,7 +206,7 @@ Status validate_blobs(Ctx& ctx, FileHeader const& h, Records<PayloadBlob> const&
     return kOk;
 }
 
-Status validate_layouts(Ctx& ctx, Records<VertexLayout> const& layouts) noexcept {
+Status validate_layouts(Ctx& ctx, Records<VertexLayout> const& layouts) {
     for (u32 li = 0; li < layouts.size(); ++li) {
         VertexLayout const& l = layouts[li];
         if (l.streamCount < 1 || l.streamCount > kMaxStreams || l.attribCount < 1 ||
@@ -248,7 +248,7 @@ Status validate_layouts(Ctx& ctx, Records<VertexLayout> const& layouts) noexcept
     return kOk;
 }
 
-Status validate_full(Ctx& ctx, MeshView const& v) noexcept {
+Status validate_full(Ctx& ctx, MeshView const& v) {
     FileHeader const& h = v.header();
     Span<u8 const> strs = v.strings();
     u64 dec             = h.payloadDecodedSize;
@@ -364,7 +364,7 @@ Status validate_full(Ctx& ctx, MeshView const& v) noexcept {
 } // namespace
 
 Result<MeshView> MeshView::open(Span<u8 const> bytes, OpenOptions const& opt, DiagSink const* diag,
-                                StrView assetName) noexcept {
+                                StrView assetName) {
     Ctx ctx{diag, assetName};
     if (bytes.size < sizeof(FileHeader))
         KILN_MESH_FAIL(ctx, Corrupt, kDiagTruncated, "buffer of %llu bytes is smaller than the header",
@@ -463,15 +463,15 @@ Result<MeshView> MeshView::open(Span<u8 const> bytes, OpenOptions const& opt, Di
     return v;
 }
 
-SectionEntry const* MeshView::find_section(u32 id) const noexcept { return find_sec(sections_, id); }
+SectionEntry const* MeshView::find_section(u32 id) const { return find_sec(sections_, id); }
 
-StrView MeshView::str(u32 offset) const noexcept {
+StrView MeshView::str(u32 offset) const {
     if (offset == kInvalid || offset >= strings_.size) return {};
     char const* p = reinterpret_cast<char const*>(strings_.data + offset);
     return {p, StrView::cstr_len(p)}; // STRS ends with '\0' (checked in open)
 }
 
-Mount const* MeshView::find_mount(u64 nameHash) const noexcept {
+Mount const* MeshView::find_mount(u64 nameHash) const {
     u32 lo = 0, hi = mounts_.size();
     while (lo < hi) {
         u32 mid        = lo + (hi - lo) / 2;
@@ -486,13 +486,13 @@ Mount const* MeshView::find_mount(u64 nameHash) const noexcept {
     return nullptr;
 }
 
-MeshPart const* MeshView::find_part(u64 nameHash) const noexcept {
+MeshPart const* MeshView::find_part(u64 nameHash) const {
     for (MeshPart const& p : parts_)
         if (p.nameHash == nameHash) return &p;
     return nullptr;
 }
 
-u64 MeshView::stream_bytes(MeshLod const& lod, u32 s) const noexcept {
+u64 MeshView::stream_bytes(MeshLod const& lod, u32 s) const {
     if (s >= kMaxStreams || lod.layout >= layouts_.size()) return 0;
     VertexLayout const& lay = layouts_[lod.layout];
     if (s >= lay.streamCount) return 0;
@@ -503,7 +503,7 @@ namespace {
 
 /// What decoding a payload's blobs reuses: the Zstd context and two buffers.
 struct BlobDecoder {
-    explicit BlobDecoder(Allocator const* a) noexcept
+    explicit BlobDecoder(Allocator const* a)
         : zstd(a ? a : default_allocator()), inner(a ? a : default_allocator(), Tag::Io),
           shuffled(a ? a : default_allocator(), Tag::Io) {}
     fmt::ZstdDecoder zstd;
@@ -512,14 +512,14 @@ struct BlobDecoder {
 };
 
 /// ByteShuffle undone: byte b of element i is at src[b * count + i].
-void unshuffle(u8 const* src, u8* dst, usize count, usize size) noexcept {
+void unshuffle(u8 const* src, u8* dst, usize count, usize size) {
     for (usize b = 0; b < size; ++b)
         for (usize i = 0; i < count; ++i)
             dst[i * size + b] = src[b * count + i];
 }
 
 Status decode_one(PayloadBlob const& blob, Span<u8 const> encoded, Span<u8> dst, DecodeOptions const& opt,
-                  Ctx& ctx, BlobDecoder& d) noexcept {
+                  Ctx& ctx, BlobDecoder& d) {
     if (dst.size != blob.decodedSize)
         KILN_MESH_FAIL(ctx, InvalidArgument, kDiagDecodeSize, "destination is %llu bytes, blob decodes to %u",
                        static_cast<unsigned long long>(dst.size), blob.decodedSize);
@@ -616,14 +616,14 @@ Status decode_one(PayloadBlob const& blob, Span<u8 const> encoded, Span<u8> dst,
 } // namespace
 
 Status decode_blob(PayloadBlob const& blob, Span<u8 const> encoded, Span<u8> dst, DecodeOptions const& opt,
-                   DiagSink const* diag, Arena* /*scratch*/, StrView assetName) noexcept {
+                   DiagSink const* diag, Arena* /*scratch*/, StrView assetName) {
     Ctx ctx{diag, assetName};
     BlobDecoder d(opt.alloc);
     return decode_one(blob, encoded, dst, opt, ctx, d);
 }
 
 Status decode_payload(MeshView const& v, Span<u8 const> gpud, Span<u8> dst, DecodeOptions const& opt,
-                      DiagSink const* diag, Arena* scratch, StrView assetName) noexcept {
+                      DiagSink const* diag, Arena* scratch, StrView assetName) {
     Ctx ctx{diag, assetName};
     FileHeader const& h = v.header();
     if (gpud.size != h.gpuDataSize)
@@ -663,8 +663,7 @@ Status decode_payload(MeshView const& v, Span<u8 const> gpud, Span<u8> dst, Deco
     return kOk;
 }
 
-Status check_indices(MeshView const& v, Span<u8 const> decoded, DiagSink const* diag,
-                     StrView assetName) noexcept {
+Status check_indices(MeshView const& v, Span<u8 const> decoded, DiagSink const* diag, StrView assetName) {
     Ctx ctx{diag, assetName};
     if (decoded.size < v.decoded_size())
         KILN_MESH_FAIL(ctx, InvalidArgument, kDiagDecodeSize, "decoded payload span too small");

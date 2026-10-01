@@ -37,7 +37,7 @@ struct Upload {
     Status failure; ///< why, once Failed
 };
 
-sg_pixel_format pixel_format(Format f) noexcept {
+sg_pixel_format pixel_format(Format f) {
     switch (f) {
     case Format::R8_UNORM: return SG_PIXELFORMAT_R8;
     case Format::R8_SNORM: return SG_PIXELFORMAT_R8SN;
@@ -85,7 +85,7 @@ struct SokolAdapter {
 namespace {
 
 /// Frees the bytes kiln wrote; sokol has copied them, or never will.
-void free_bytes(SokolAdapter* a, Upload& u) noexcept {
+void free_bytes(SokolAdapter* a, Upload& u) {
     if (!u.bytes) return;
     usize const n = usize(max<u64>(u.size, 1));
     kiln::free(a->alloc, u.bytes, n, 16, Tag::Payload);
@@ -94,7 +94,7 @@ void free_bytes(SokolAdapter* a, Upload& u) noexcept {
     a->stats.stagingUsed -= n;
 }
 
-void release_object(SokolAdapter* a, u32 index) noexcept {
+void release_object(SokolAdapter* a, u32 index) {
     Object& o = a->objects[index];
     sg_destroy_view(o.view);
     sg_destroy_image(o.image);
@@ -106,13 +106,13 @@ void release_object(SokolAdapter* a, u32 index) noexcept {
 
 /// Why sokol could not make a resource: an invalid id means its pool was full, a valid one that the
 /// backend refused it.
-Status creation_failure(u32 id) noexcept {
+Status creation_failure(u32 id) {
     return make_status(id == SG_INVALID_ID ? Code::OutOfMemory : Code::Unsupported);
 }
 
 /// The sokol side of one committed upload. sokol copies the data, so the bytes can go at once.
 /// The reason (logged; nothing left behind) when sokol rejects the buffer, the image or its view.
-Status make_object(SokolAdapter* a, Upload const& u) noexcept {
+Status make_object(SokolAdapter* a, Upload const& u) {
     Object& o = a->objects[u.object];
     if (u.kind == UploadKind::MeshPayload) {
         sg_buffer_desc d{};
@@ -300,7 +300,7 @@ void flush(void* user) {
 
 } // namespace
 
-sg_vertex_format sokol_vertex_format(Format f) noexcept {
+sg_vertex_format sokol_vertex_format(Format f) {
     switch (f) {
     case Format::R32_SFLOAT: return SG_VERTEXFORMAT_FLOAT;
     case Format::R32G32_SFLOAT: return SG_VERTEXFORMAT_FLOAT2;
@@ -315,7 +315,7 @@ sg_vertex_format sokol_vertex_format(Format f) noexcept {
     }
 }
 
-Result<SokolAdapter*> sokol_adapter_create(SokolAdapterDesc const& desc, Adapter* out) noexcept {
+Result<SokolAdapter*> sokol_adapter_create(SokolAdapterDesc const& desc, Adapter* out) {
     if (!out || desc.maxObjects == 0 || desc.maxUploads == 0) return make_status(Code::InvalidArgument);
     sg_desc const gd = sg_query_desc();
     if (u32(min(gd.buffer_pool_size, min(gd.image_pool_size, gd.view_pool_size))) <= desc.maxObjects) {
@@ -351,7 +351,7 @@ Result<SokolAdapter*> sokol_adapter_create(SokolAdapterDesc const& desc, Adapter
     return a;
 }
 
-void sokol_adapter_destroy(SokolAdapter* a) noexcept {
+void sokol_adapter_destroy(SokolAdapter* a) {
     if (!a) return;
     for (u32 i = 0; i < a->uploads.capacity(); ++i)
         free_bytes(a, a->uploads[i]); // uploads never flushed still hold theirs
@@ -360,7 +360,7 @@ void sokol_adapter_destroy(SokolAdapter* a) noexcept {
     delete_object(a->alloc, a, Tag::Payload);
 }
 
-ex::AdapterStats sokol_adapter_stats(SokolAdapter* a) noexcept {
+ex::AdapterStats sokol_adapter_stats(SokolAdapter* a) {
     std::lock_guard<std::mutex> const lock(a->mutex);
     ex::AdapterStats s = a->stats;
     s.liveObjects      = u32(a->objects.size() - a->freeObjects.size());
@@ -368,13 +368,13 @@ ex::AdapterStats sokol_adapter_stats(SokolAdapter* a) noexcept {
     return s;
 }
 
-sg_view sokol_texture(SokolAdapter const* a, GpuObject obj) noexcept {
+sg_view sokol_texture(SokolAdapter const* a, GpuObject obj) {
     if (obj.native == 0 || obj.native > a->objects.size() || obj.kind != u32(ObjectKind::Texture)) return {};
     Object const& o = a->objects[obj.native - 1];
     return o.used ? o.view : sg_view{};
 }
 
-sg_buffer sokol_buffer(SokolAdapter const* a, GpuObject obj) noexcept {
+sg_buffer sokol_buffer(SokolAdapter const* a, GpuObject obj) {
     if (obj.native == 0 || obj.native > a->objects.size() || obj.kind != u32(ObjectKind::Buffer)) return {};
     Object const& o = a->objects[obj.native - 1];
     return o.used ? o.buffer : sg_buffer{};

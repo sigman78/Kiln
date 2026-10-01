@@ -35,7 +35,7 @@ constexpr u16 kInputsMinor = 3; ///< 2: the root table; 3: outputs carry their b
 // Paths and the lock
 // ---------------------------------------------------------------------------
 
-bool mkdir_one(char const* path) noexcept {
+bool mkdir_one(char const* path) {
 #if defined(KILN_OS_WINDOWS)
     if (_mkdir(path) == 0) return true;
 #else
@@ -45,7 +45,7 @@ bool mkdir_one(char const* path) noexcept {
 }
 
 /// mkdir -p over the NUL-terminated forward-slash path in `buf`.
-bool make_dirs(char* buf) noexcept {
+bool make_dirs(char* buf) {
     usize const n = std::strlen(buf);
     for (usize i = 1; i <= n; ++i) {
         if (i < n && buf[i] != '/') continue;
@@ -68,7 +68,7 @@ struct FileLock {
 #endif
 
     /// Busy when another holder has it.
-    Status acquire(char const* path) noexcept {
+    Status acquire(char const* path) {
 #if defined(KILN_OS_WINDOWS)
         wchar_t wpath[1024];
         if (MultiByteToWideChar(CP_UTF8, 0, path, -1, wpath, 1024) == 0)
@@ -89,7 +89,7 @@ struct FileLock {
 #endif
     }
 
-    void release() noexcept {
+    void release() {
 #if defined(KILN_OS_WINDOWS)
         if (h != INVALID_HANDLE_VALUE) CloseHandle(h);
         h = INVALID_HANDLE_VALUE;
@@ -109,31 +109,31 @@ struct NameIndex {
     HashMap<u64, u32> heads;
     Vec<u32> next;
 
-    NameIndex(Allocator const* a) noexcept : heads(a, Tag::Cook), next(a, Tag::Cook) {}
+    NameIndex(Allocator const* a) : heads(a, Tag::Cook), next(a, Tag::Cook) {}
 
-    template <class Match> u32 find(u64 h, Match&& match) const noexcept {
+    template <class Match> u32 find(u64 h, Match&& match) const {
         u32 const* head = heads.find(h);
         for (u32 i = head ? *head : kInvalid; i != kInvalid; i = next[i])
             if (match(i)) return i;
         return kInvalid;
     }
     /// Item `i` (the next one, numbered in order) gets hash `h`.
-    void add(u64 h, u32 i) noexcept {
+    void add(u64 h, u32 i) {
         KILN_ASSERT(i == next.size());
         u32* head = heads.find(h);
         next.push_back(head ? *head : kInvalid);
         heads.insert(h, i);
     }
-    void clear() noexcept {
+    void clear() {
         heads.clear();
         next.clear();
     }
 };
 
-u64 entry_hash(AssetKind kind, StrView name) noexcept { return hash_combine(hash_name(name), u64(kind)); }
+u64 entry_hash(AssetKind kind, StrView name) { return hash_combine(hash_name(name), u64(kind)); }
 
 /// True if the unit `unit` makes the asset `name`: the unit itself, or `<unit>#<image>`.
-bool owns(StrView unit, StrView name) noexcept {
+bool owns(StrView unit, StrView name) {
     return name == unit ||
            (name.size > unit.size && name[unit.size] == '#' && name.substr(0, unit.size) == unit);
 }
@@ -166,11 +166,11 @@ struct Record {
     Vec<UnitInput> inputs; ///< names into `strings`; no paths
     Vec<RecordOutput> outputs;
 
-    explicit Record(Allocator const* a) noexcept
+    explicit Record(Allocator const* a)
         : strings(a, Tag::Cook), inputs(a, Tag::Cook), outputs(a, Tag::Cook) {}
-    StrView str(u32 off, u32 len) const noexcept { return {strings.data() + off, len}; }
-    StrView name() const noexcept { return str(nameOff, nameLen); }
-    u32 add(StrView s) noexcept {
+    StrView str(u32 off, u32 len) const { return {strings.data() + off, len}; }
+    StrView name() const { return str(nameOff, nameLen); }
+    u32 add(StrView s) {
         u32 const off = u32(strings.size());
         strings.append(Span<char const>(s.data, s.size));
         return off;
@@ -195,9 +195,9 @@ struct OtherProfile {
     Vec<u8> records; ///< encoded records, one after another
     Vec<u32> recordEnds;
 
-    explicit OtherProfile(Allocator const* a) noexcept
+    explicit OtherProfile(Allocator const* a)
         : strings(a, Tag::Cook), entries(a, Tag::Cook), records(a, Tag::Cook), recordEnds(a, Tag::Cook) {}
-    StrView name() const noexcept { return {strings.data() + nameOff, nameLen}; }
+    StrView name() const { return {strings.data() + nameOff, nameLen}; }
 };
 
 /// A root of the table: its name (empty: the default root) and directory, as stored.
@@ -231,22 +231,21 @@ struct ManifestStore {
     bool dirty        = false;
     bool cookerWarned = false; ///< the other-cooker-version warning was logged
 
-    explicit ManifestStore(Allocator const* a) noexcept
+    explicit ManifestStore(Allocator const* a)
         : alloc(a), storeDir(a, Tag::Cook), profileName(a, Tag::Cook), names(a, Tag::Cook),
           entries(a, Tag::Cook), entryIndex(a), records(a, Tag::Cook), recordIndex(a), others(a, Tag::Cook),
           rootStrings(a, Tag::Cook), roots(a, Tag::Cook) {}
 
-    StrView dir() const noexcept { return {storeDir.data(), storeDir.size() - 1}; }
-    StrView profile() const noexcept { return {profileName.data(), profileName.size()}; }
-    StrView name_of(Entry const& e) const noexcept { return {names.data() + e.nameOff, e.nameLen}; }
+    StrView dir() const { return {storeDir.data(), storeDir.size() - 1}; }
+    StrView profile() const { return {profileName.data(), profileName.size()}; }
+    StrView name_of(Entry const& e) const { return {names.data() + e.nameOff, e.nameLen}; }
 
-    u32 find_entry(AssetKind kind, StrView name) const noexcept {
+    u32 find_entry(AssetKind kind, StrView name) const {
         return entryIndex.find(entry_hash(kind, name),
                                [&](u32 i) { return entries[i].kind == kind && name_of(entries[i]) == name; });
     }
     /// The live entry of (`kind`, `name`) with these values; a new one or a revived slot.
-    void put_entry(AssetKind kind, StrView name, Hash128 const& key, Hash128 const& checksum,
-                   u64 bytes) noexcept {
+    void put_entry(AssetKind kind, StrView name, Hash128 const& key, Hash128 const& checksum, u64 bytes) {
         u32 i = find_entry(kind, name);
         if (i == kInvalid) {
             i = u32(entries.size());
@@ -264,16 +263,16 @@ struct ManifestStore {
         e.checksum = checksum;
         e.bytes    = bytes;
     }
-    void remove_entry(AssetKind kind, StrView name) noexcept {
+    void remove_entry(AssetKind kind, StrView name) {
         u32 const i = find_entry(kind, name);
         if (i != kInvalid) entries[i].live = false;
     }
 
-    u32 find_record(StrView name) const noexcept {
+    u32 find_record(StrView name) const {
         return recordIndex.find(hash_name(name), [&](u32 i) { return records[i].name() == name; });
     }
     /// The record slot of `name`, made if missing (its old contents stay until replaced).
-    Record& record_slot(StrView name) noexcept {
+    Record& record_slot(StrView name) {
         u32 i = find_record(name);
         if (i == kInvalid) {
             i = u32(records.size());
@@ -282,19 +281,19 @@ struct ManifestStore {
         }
         return records[i];
     }
-    Record* live_record(StrView name) noexcept {
+    Record* live_record(StrView name) {
         u32 const i = find_record(name);
         return i == kInvalid || !records[i].live ? nullptr : &records[i];
     }
 
-    StrView root_str(u32 off, u32 len) const noexcept { return {rootStrings.data() + off, len}; }
-    u32 add_root_str(StrView v) noexcept {
+    StrView root_str(u32 off, u32 len) const { return {rootStrings.data() + off, len}; }
+    u32 add_root_str(StrView v) {
         u32 const off = u32(rootStrings.size());
         rootStrings.append(Span<char const>(v.data, v.size));
         return off;
     }
     /// Sets the directory of the root `name`; true if that changed the table.
-    bool set_root(StrView name, StrView dir) noexcept {
+    bool set_root(StrView name, StrView dir) {
         for (RootEntry& r : roots) {
             if (root_str(r.nameOff, r.nameLen) != name) continue;
             if (root_str(r.dirOff, r.dirLen) == dir) return false;
@@ -321,15 +320,15 @@ namespace {
 
 struct Out {
     Vec<u8>& b;
-    void u(u64 v, usize n) noexcept {
+    void u(u64 v, usize n) {
         for (usize i = 0; i < n; ++i)
             b.push_back(u8(v >> (8 * i)));
     }
-    void str(StrView s) noexcept {
+    void str(StrView s) {
         u(s.size, 2);
         b.append(Span<u8 const>(reinterpret_cast<u8 const*>(s.data), s.size));
     }
-    void hash(Hash128 const& h) noexcept { b.append(Span<u8 const>(h.bytes, 16)); }
+    void hash(Hash128 const& h) { b.append(Span<u8 const>(h.bytes, 16)); }
 };
 
 struct In {
@@ -337,7 +336,7 @@ struct In {
     usize at = 0;
     bool ok  = true;
 
-    u64 u(usize n) noexcept {
+    u64 u(usize n) {
         if (!ok || b.size - at < n) return ok = false, 0;
         u64 v = 0;
         for (usize i = 0; i < n; ++i)
@@ -345,14 +344,14 @@ struct In {
         at += n;
         return v;
     }
-    StrView str() noexcept {
+    StrView str() {
         usize const n = usize(u(2));
         if (!ok || b.size - at < n) return ok = false, StrView();
         StrView const s(reinterpret_cast<char const*>(b.data + at), n);
         at += n;
         return s;
     }
-    Hash128 hash() noexcept {
+    Hash128 hash() {
         Hash128 h;
         if (!ok || b.size - at < 16) return ok = false, h;
         std::memcpy(h.bytes, b.data + at, 16);
@@ -365,7 +364,7 @@ struct In {
 static_assert(kCookerVersion < 256, "manifest.in stores kCookerVersion in one byte");
 
 /// One record's body: unit name, kind, cooker version, digest, inputs, outputs.
-void encode_record(Out& o, Record const& r) noexcept {
+void encode_record(Out& o, Record const& r) {
     o.str(r.name());
     o.u(u8(r.kind), 1);
     o.u(r.cookerVersion, 1);
@@ -389,7 +388,7 @@ void encode_record(Out& o, Record const& r) noexcept {
 }
 
 /// Decodes one record's body into `r`; false when it does not decode.
-bool decode_record(In& in, Record& r) noexcept {
+bool decode_record(In& in, Record& r) {
     StrView const name = in.str();
     u64 const kind     = in.u(1);
     u64 const cooker   = in.u(1);
@@ -434,7 +433,7 @@ bool decode_record(In& in, Record& r) noexcept {
     return in.ok;
 }
 
-void clear_records(ManifestStore& s) noexcept {
+void clear_records(ManifestStore& s) {
     s.records.clear();
     s.recordIndex.clear();
     s.roots.clear();
@@ -447,7 +446,7 @@ void clear_records(ManifestStore& s) noexcept {
 /// Splits `bytes` (a manifest.in) among the profiles: the writer's records are decoded unless
 /// `ownDropped`; other profiles keep theirs encoded; records of profiles the manifest no longer has
 /// go. False (and no records) when the file does not decode.
-bool load_records(ManifestStore& s, Span<u8 const> bytes, bool ownDropped) noexcept {
+bool load_records(ManifestStore& s, Span<u8 const> bytes, bool ownDropped) {
     if (bytes.size < 16 + 12) return false;
     Span<u8 const> const body(bytes.data, bytes.size - 16);
     Hash128 stored;
@@ -491,7 +490,7 @@ bool load_records(ManifestStore& s, Span<u8 const> bytes, bool ownDropped) noexc
 // ---------------------------------------------------------------------------
 
 /// Writes `bytes` to the file `path` by a temporary file and a rename.
-Status replace_file(char const* path, Span<u8 const> bytes, DiagSink const* diag) noexcept {
+Status replace_file(char const* path, Span<u8 const> bytes, DiagSink const* diag) {
     StrView const p(path);
     usize const slash = p.rfind('/');
     KILN_VERIFY(slash != StrView::kNpos);
@@ -500,7 +499,7 @@ Status replace_file(char const* path, Span<u8 const> bytes, DiagSink const* diag
 
 /// The artifact of `key`: written if absent; an existing one must have the same bytes.
 Status publish_artifact(StrView storeDir, Hash128 const& key, Span<u8 const> bytes, Hash128 const& checksum,
-                        StrView name, Allocator const* alloc, DiagSink const* diag) noexcept {
+                        StrView name, Allocator const* alloc, DiagSink const* diag) {
     char path[1024];
     usize const n = artifact_file_path(storeDir, key, path, sizeof path);
     if (n >= sizeof path - 1) return make_status(Code::InvalidArgument);
@@ -529,7 +528,7 @@ Status publish_artifact(StrView storeDir, Hash128 const& key, Span<u8 const> byt
 /// Drops the writer's records whose outputs name other artifacts than the manifest's entries: a
 /// crash between the manifest.dir and manifest.in writes leaves records of another cook. Their
 /// units are checked by cooking again.
-void drop_foreign_records(ManifestStore& s) noexcept {
+void drop_foreign_records(ManifestStore& s) {
     u32 dropped = 0;
     for (Record& r : s.records) {
         if (!r.live) continue;
@@ -551,7 +550,7 @@ void drop_foreign_records(ManifestStore& s) noexcept {
 }
 
 /// Loads `<store>/manifest.dir`, then `<store>/manifest.in`, if there are.
-Status load_manifest(ManifestStore& s, DiagSink const* diag) noexcept {
+Status load_manifest(ManifestStore& s, DiagSink const* diag) {
     char path[1024];
     if (manifest_file_path(s.dir(), path, sizeof path) >= sizeof path - 1)
         return make_status(Code::InvalidArgument);
@@ -616,7 +615,7 @@ Status load_manifest(ManifestStore& s, DiagSink const* diag) noexcept {
     return kOk;
 }
 
-bool name_less(StrView a, StrView b) noexcept {
+bool name_less(StrView a, StrView b) {
     usize const n = min(a.size, b.size);
     int const c   = n ? std::memcmp(a.data, b.data, n) : 0;
     return c != 0 ? c < 0 : a.size < b.size;
@@ -624,7 +623,7 @@ bool name_less(StrView a, StrView b) noexcept {
 
 } // namespace
 
-Status open_manifest_store(ManifestStoreDesc const& d, ManifestStore** out) noexcept {
+Status open_manifest_store(ManifestStoreDesc const& d, ManifestStore** out) {
     KILN_VERIFY(d.target);
     *out = nullptr;
     if (char const* why = check_profile_name(d.target->name))
@@ -641,7 +640,7 @@ Status open_manifest_store(ManifestStoreDesc const& d, ManifestStore** out) noex
     s->target.name = s->profile();
     s->targetHash  = hash_target(s->target);
 
-    auto const fail = [s](Status st) noexcept {
+    auto const fail = [s](Status st) {
         close_manifest_store(s);
         return st;
     };
@@ -661,13 +660,13 @@ Status open_manifest_store(ManifestStoreDesc const& d, ManifestStore** out) noex
     return kOk;
 }
 
-void close_manifest_store(ManifestStore* s) noexcept {
+void close_manifest_store(ManifestStore* s) {
     if (!s) return;
     s->lock.release();
     delete_object(s->alloc, s, Tag::Cook);
 }
 
-Status publish_unit(ManifestStore* s, CookUnit& unit, u64 hostDigest, DiagSink const* diag) noexcept {
+Status publish_unit(ManifestStore* s, CookUnit& unit, u64 hostDigest, DiagSink const* diag) {
     if (unit.outputs.empty() || unit.inputs.empty()) return make_status(Code::InvalidArgument);
     if (unit.outputs[0].status.failed()) return unit.outputs[0].status;
 
@@ -729,7 +728,7 @@ Status publish_unit(ManifestStore* s, CookUnit& unit, u64 hostDigest, DiagSink c
     return kOk;
 }
 
-Status commit_manifest(ManifestStore* s, DiagSink const* diag, u32 minIntervalMs) noexcept {
+Status commit_manifest(ManifestStore* s, DiagSink const* diag, u32 minIntervalMs) {
     // One commit at a time, so renames land in order; the store mutex is held only for the snapshot.
     std::lock_guard<std::mutex> const commitLock(s->commitMutex);
     auto const now = std::chrono::steady_clock::now();
@@ -764,9 +763,8 @@ Status commit_manifest(ManifestStore* s, DiagSink const* diag, u32 minIntervalMs
         Vec<u32> order(s->alloc, Tag::Cook);
         for (u32 i = 0; i < profiles.size(); ++i)
             order.push_back(i);
-        std::sort(order.begin(), order.end(), [&profiles](u32 a, u32 b) noexcept {
-            return name_less(profiles[a].name, profiles[b].name);
-        });
+        std::sort(order.begin(), order.end(),
+                  [&profiles](u32 a, u32 b) { return name_less(profiles[a].name, profiles[b].name); });
 
         KILN_TRY(write_manifest({.profiles = profiles.span()}, &manifest, diag));
 
@@ -782,7 +780,7 @@ Status commit_manifest(ManifestStore* s, DiagSink const* diag, u32 minIntervalMs
         Vec<u32> rootOrder(s->alloc, Tag::Cook);
         for (u32 i = 0; i < s->roots.size(); ++i)
             rootOrder.push_back(i);
-        std::sort(rootOrder.begin(), rootOrder.end(), [s](u32 a, u32 b) noexcept {
+        std::sort(rootOrder.begin(), rootOrder.end(), [s](u32 a, u32 b) {
             return name_less(s->root_str(s->roots[a].nameOff, s->roots[a].nameLen),
                              s->root_str(s->roots[b].nameOff, s->roots[b].nameLen));
         });
@@ -796,7 +794,7 @@ Status commit_manifest(ManifestStore* s, DiagSink const* diag, u32 minIntervalMs
                 Vec<u32> recs(s->alloc, Tag::Cook);
                 for (u32 i = 0; i < s->records.size(); ++i)
                     if (s->records[i].live) recs.push_back(i);
-                std::sort(recs.begin(), recs.end(), [s](u32 a, u32 b) noexcept {
+                std::sort(recs.begin(), recs.end(), [s](u32 a, u32 b) {
                     return name_less(s->records[a].name(), s->records[b].name());
                 });
                 for (u32 const i : recs) {
@@ -835,7 +833,7 @@ Status commit_manifest(ManifestStore* s, DiagSink const* diag, u32 minIntervalMs
     return st;
 }
 
-bool manifest_find(ManifestStore* s, AssetKind kind, StrView name, Hash128* key) noexcept {
+bool manifest_find(ManifestStore* s, AssetKind kind, StrView name, Hash128* key) {
     std::lock_guard<std::mutex> const lock(s->mutex);
     u32 const i = s->find_entry(kind, name);
     if (i == kInvalid || !s->entries[i].live) return false;
@@ -843,7 +841,7 @@ bool manifest_find(ManifestStore* s, AssetKind kind, StrView name, Hash128* key)
     return true;
 }
 
-bool copy_input_record(ManifestStore* s, StrView name, CookUnit* out, u64* hostDigest) noexcept {
+bool copy_input_record(ManifestStore* s, StrView name, CookUnit* out, u64* hostDigest) {
     std::lock_guard<std::mutex> const lock(s->mutex);
     Record const* r = s->live_record(name);
     if (!r) return false;
@@ -871,13 +869,13 @@ bool copy_input_record(ManifestStore* s, StrView name, CookUnit* out, u64* hostD
     return true;
 }
 
-u32 record_cooker_version(ManifestStore* s, StrView name) noexcept {
+u32 record_cooker_version(ManifestStore* s, StrView name) {
     std::lock_guard<std::mutex> const lock(s->mutex);
     Record const* r = s->live_record(name);
     return r ? r->cookerVersion : 0;
 }
 
-void set_record_cooker_version(ManifestStore* s, StrView name, u32 version) noexcept {
+void set_record_cooker_version(ManifestStore* s, StrView name, u32 version) {
     std::lock_guard<std::mutex> const lock(s->mutex);
     if (Record* r = s->live_record(name)) {
         r->cookerVersion = u8(version);
@@ -885,7 +883,7 @@ void set_record_cooker_version(ManifestStore* s, StrView name, u32 version) noex
     }
 }
 
-void set_record_digest(ManifestStore* s, StrView name, u64 hostDigest) noexcept {
+void set_record_digest(ManifestStore* s, StrView name, u64 hostDigest) {
     std::lock_guard<std::mutex> const lock(s->mutex);
     Record* r = s->live_record(name);
     if (!r || r->hostDigest == hostDigest) return;
@@ -893,7 +891,7 @@ void set_record_digest(ManifestStore* s, StrView name, u64 hostDigest) noexcept 
     s->dirty      = true;
 }
 
-void set_record_stats(ManifestStore* s, StrView name, CookUnit const& rec) noexcept {
+void set_record_stats(ManifestStore* s, StrView name, CookUnit const& rec) {
     std::lock_guard<std::mutex> const lock(s->mutex);
     Record* r = s->live_record(name);
     if (!r || r->inputs.size() != rec.inputs.size()) return;
@@ -904,7 +902,7 @@ void set_record_stats(ManifestStore* s, StrView name, CookUnit const& rec) noexc
 
 /// Once per store session: a record another cooker version wrote cooks again. Two builds of kiln that
 /// share a store undo each other's cooks; the warning names that case.
-void warn_other_cooker(ManifestStore* s, StrView name) noexcept {
+void warn_other_cooker(ManifestStore* s, StrView name) {
     u32 version = 0;
     {
         std::lock_guard<std::mutex> const lock(s->mutex);
@@ -921,7 +919,7 @@ void warn_other_cooker(ManifestStore* s, StrView name) noexcept {
         KILN_SV(s->dir()));
 }
 
-bool record_is_current(ManifestStore* s, UnitDesc const& d, u64 hostDigest, bool rehash) noexcept {
+bool record_is_current(ManifestStore* s, UnitDesc const& d, u64 hostDigest, bool rehash) {
     CookUnit rec(d.env.alloc ? d.env.alloc : s->alloc);
     u64 digest = 0;
     if (!copy_input_record(s, d.name, &rec, &digest) || rec.inputs.empty()) return false;
@@ -944,13 +942,13 @@ bool record_is_current(ManifestStore* s, UnitDesc const& d, u64 hostDigest, bool
     return true;
 }
 
-bool is_fresh(ManifestStore* s, StrView name) noexcept {
+bool is_fresh(ManifestStore* s, StrView name) {
     std::lock_guard<std::mutex> const lock(s->mutex);
     Record const* r = s->live_record(name);
     return r && r->fresh;
 }
 
-void mark_fresh(ManifestStore* s, StrView name, StrView sourcePath) noexcept {
+void mark_fresh(ManifestStore* s, StrView name, StrView sourcePath) {
     std::lock_guard<std::mutex> const lock(s->mutex);
     Record* r = s->live_record(name);
     if (!r) return;
@@ -960,7 +958,7 @@ void mark_fresh(ManifestStore* s, StrView name, StrView sourcePath) noexcept {
     r->srcLen = u32(sourcePath.size);
 }
 
-void fresh_units(ManifestStore* s, Vec<char>* out) noexcept {
+void fresh_units(ManifestStore* s, Vec<char>* out) {
     std::lock_guard<std::mutex> const lock(s->mutex);
     out->clear();
     for (Record const& r : s->records) {
@@ -979,17 +977,17 @@ void fresh_units(ManifestStore* s, Vec<char>* out) noexcept {
 
 namespace {
 
-bool is_absolute(StrView p) noexcept { return (p.size && p[0] == '/') || (p.size >= 2 && p[1] == ':'); }
+bool is_absolute(StrView p) { return (p.size && p[0] == '/') || (p.size >= 2 && p[1] == ':'); }
 
 /// The part of an asset name before `#`: the unit that makes it.
-StrView owner_of(StrView name) noexcept {
+StrView owner_of(StrView name) {
     usize const hash = name.find('#');
     return hash == StrView::kNpos ? name : name.substr(0, hash);
 }
 
 } // namespace
 
-void record_store_roots(ManifestStore* s, Span<Root const> roots) noexcept {
+void record_store_roots(ManifestStore* s, Span<Root const> roots) {
     char store[1024];
     usize const storeLen = absolute_path(s->dir(), store, sizeof store);
     std::lock_guard<std::mutex> const lock(s->mutex);
@@ -1003,7 +1001,7 @@ void record_store_roots(ManifestStore* s, Span<Root const> roots) noexcept {
     }
 }
 
-void store_roots(ManifestStore* s, Vec<char>* out) noexcept {
+void store_roots(ManifestStore* s, Vec<char>* out) {
     char store[1024];
     usize const storeLen = absolute_path(s->dir(), store, sizeof store);
     std::lock_guard<std::mutex> const lock(s->mutex);
@@ -1027,11 +1025,11 @@ void store_roots(ManifestStore* s, Vec<char>* out) noexcept {
     }
 }
 
-void unit_names(ManifestStore* s, Vec<char>* out) noexcept {
+void unit_names(ManifestStore* s, Vec<char>* out) {
     std::lock_guard<std::mutex> const lock(s->mutex);
     out->clear();
     HashMap<u64, u8> seen(s->alloc, Tag::Cook);
-    auto const add = [&](StrView name) noexcept {
+    auto const add = [&](StrView name) {
         if (!seen.try_emplace(hash_name(name), u8(1)).inserted) return;
         out->append(Span<char const>(name.data, name.size));
         out->push_back('\0');
@@ -1042,7 +1040,7 @@ void unit_names(ManifestStore* s, Vec<char>* out) noexcept {
         if (e.live) add(owner_of(s->name_of(e)));
 }
 
-void drop_unit(ManifestStore* s, StrView name) noexcept {
+void drop_unit(ManifestStore* s, StrView name) {
     std::lock_guard<std::mutex> const lock(s->mutex);
     if (Record* r = s->live_record(name)) r->live = false;
     for (Entry& e : s->entries)
@@ -1056,7 +1054,7 @@ void drop_unit(ManifestStore* s, StrView name) noexcept {
 
 namespace {
 
-bool is_base32_name(StrView n) noexcept {
+bool is_base32_name(StrView n) {
     if (n.size != 26) return false;
     for (char const c : n)
         if (!((c >= 'a' && c <= 'z') || (c >= '2' && c <= '7'))) return false;
@@ -1064,7 +1062,7 @@ bool is_base32_name(StrView n) noexcept {
 }
 
 /// `<name>.tmp.<16 lowercase hex digits>`, what store_write() writes before its rename.
-bool is_temporary_name(StrView n) noexcept {
+bool is_temporary_name(StrView n) {
     if (n.size < 5 + 16 + 1) return false;
     if (n.substr(n.size - 21, 5) != ".tmp."_sv) return false;
     for (char const c : n.substr(n.size - 16))
@@ -1073,7 +1071,7 @@ bool is_temporary_name(StrView n) noexcept {
 }
 
 /// Calls `fn(name, isDir, bytes)` for each entry of `dir`; false when it cannot be read.
-template <class Fn> bool list_dir(char const* dir, Fn&& fn) noexcept {
+template <class Fn> bool list_dir(char const* dir, Fn&& fn) {
 #if defined(KILN_OS_WINDOWS)
     char pattern[1100];
     format(pattern, sizeof pattern, "%s/*", dir);
@@ -1108,7 +1106,7 @@ template <class Fn> bool list_dir(char const* dir, Fn&& fn) noexcept {
 #endif
 }
 
-bool remove_file(char const* path) noexcept {
+bool remove_file(char const* path) {
 #if defined(KILN_OS_WINDOWS)
     wchar_t wide[1100];
     return MultiByteToWideChar(CP_UTF8, 0, path, -1, wide, 1100) != 0 && DeleteFileW(wide) != 0;
@@ -1119,7 +1117,7 @@ bool remove_file(char const* path) noexcept {
 
 /// Reads and validates `<store>/manifest.dir` into `bytes`; NotFound when there is none.
 Status read_manifest(StrView storeDir, Allocator const* alloc, Vec<u8>* bytes, ManifestView* view,
-                     DiagSink const* diag) noexcept {
+                     DiagSink const* diag) {
     char path[1024];
     usize const n = manifest_file_path(storeDir, path, sizeof path);
     if (n >= sizeof path - 1) return make_status(Code::InvalidArgument);
@@ -1134,7 +1132,7 @@ Status read_manifest(StrView storeDir, Allocator const* alloc, Vec<u8>* bytes, M
 } // namespace
 
 Status collect_store_garbage(StrView storeDir, bool dryRun, GcReportFn report, void* user, GcResult* out,
-                             DiagSink const* diag) noexcept {
+                             DiagSink const* diag) {
     *out                   = {};
     Allocator const* alloc = default_allocator();
     char dir[1024];
@@ -1177,16 +1175,16 @@ Status collect_store_garbage(StrView storeDir, bool dryRun, GcReportFn report, v
             }
         }
     std::sort(keep.begin(), keep.end(),
-              [](Name const& a, Name const& b) noexcept { return std::memcmp(a.c, b.c, 26) < 0; });
-    auto const referenced = [&keep](StrView n) noexcept {
-        Name const* it = std::lower_bound(keep.begin(), keep.end(), n, [](Name const& a, StrView b) noexcept {
+              [](Name const& a, Name const& b) { return std::memcmp(a.c, b.c, 26) < 0; });
+    auto const referenced = [&keep](StrView n) {
+        Name const* it = std::lower_bound(keep.begin(), keep.end(), n, [](Name const& a, StrView b) {
             return std::memcmp(a.c, b.data, 26) < 0;
         });
         return it != keep.end() && std::memcmp(it->c, n.data, 26) == 0;
     };
 
     Status result     = kOk;
-    bool const listed = list_dir(dir, [&](StrView name, bool isDir, u64 size) noexcept {
+    bool const listed = list_dir(dir, [&](StrView name, bool isDir, u64 size) {
         if (isDir) return;
         bool const artifact = is_base32_name(name) && !referenced(name);
         bool const temp     = is_temporary_name(name);
@@ -1209,14 +1207,14 @@ Status collect_store_garbage(StrView storeDir, bool dryRun, GcReportFn report, v
 }
 
 Status export_store(StrView storeDir, StrView outDir, StrView profile, ExportResult* out,
-                    DiagSink const* diag) noexcept {
+                    DiagSink const* diag) {
     *out                   = {};
     Allocator const* alloc = default_allocator();
     char dir[1024];
     if (format(dir, sizeof dir, "%.*s", KILN_SV(outDir)) >= sizeof dir - 1)
         return make_status(Code::InvalidArgument);
     bool empty = true;
-    (void)list_dir(dir, [&empty](StrView, bool, u64) noexcept { empty = false; });
+    (void)list_dir(dir, [&empty](StrView, bool, u64) { empty = false; });
     if (!empty)
         return diagf(diag, make_status(Code::AlreadyExists), 0, Severity::Error, outDir, "export",
                      "the export directory is not empty");
@@ -1281,7 +1279,7 @@ Status export_store(StrView storeDir, StrView outDir, StrView profile, ExportRes
 // Paths
 // ---------------------------------------------------------------------------
 
-usize absolute_path(StrView path, char* out, usize cap) noexcept {
+usize absolute_path(StrView path, char* out, usize cap) {
     char buf[1024];
     if (path.size + 1 > sizeof buf || cap == 0) return 0;
     std::memcpy(buf, path.data, path.size);
@@ -1316,9 +1314,9 @@ usize absolute_path(StrView path, char* out, usize cap) noexcept {
 #endif
 }
 
-usize relative_path(StrView from, StrView to, char* out, usize cap) noexcept {
+usize relative_path(StrView from, StrView to, char* out, usize cap) {
     // Segments compare byte for byte, except that Windows drive letters and names ignore ASCII case.
-    auto const same = [](StrView a, StrView b) noexcept {
+    auto const same = [](StrView a, StrView b) {
         if (a.size != b.size) return false;
         for (usize i = 0; i < a.size; ++i) {
             char x = a[i], y = b[i];
@@ -1330,7 +1328,7 @@ usize relative_path(StrView from, StrView to, char* out, usize cap) noexcept {
         }
         return true;
     };
-    auto const next = [](StrView& rest) noexcept {
+    auto const next = [](StrView& rest) {
         while (rest.size && rest[0] == '/')
             rest = rest.substr(1);
         usize const slash = rest.find('/');
