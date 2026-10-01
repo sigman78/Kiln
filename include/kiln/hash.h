@@ -284,7 +284,7 @@ constexpr u64 hash_combine(u64 a, u64 b) {
 }
 
 template <std::integral T> constexpr u64 hash_of(T v) { return mix64(u64(v)); }
-template <class T> constexpr u64 hash_of(T* p) { return mix64(u64(reinterpret_cast<std::uintptr_t>(p))); }
+template <class T> u64 hash_of(T* p) { return mix64(u64(reinterpret_cast<std::uintptr_t>(p))); }
 constexpr u64 hash_of(StrView s) { return fnv1a64(s); }
 template <class Tag> constexpr u64 hash_of(Handle<Tag> h) { return mix64(h.bits()); }
 template <class E>

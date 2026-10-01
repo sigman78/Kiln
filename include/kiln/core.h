@@ -277,12 +277,12 @@ template <class T> Span(T*, usize) -> Span<T>;
 using ByteSpan      = Span<u8>;
 using ConstByteSpan = Span<u8 const>;
 
-template <class T> constexpr Span<u8 const> as_bytes(Span<T> s) {
+template <class T> Span<u8 const> as_bytes(Span<T> s) {
     return {reinterpret_cast<u8 const*>(s.data), s.size_bytes()};
 }
 template <class T>
     requires(!std::is_const_v<T>)
-constexpr Span<u8> as_writable_bytes(Span<T> s) {
+Span<u8> as_writable_bytes(Span<T> s) {
     return {reinterpret_cast<u8*>(s.data), s.size_bytes()};
 }
 

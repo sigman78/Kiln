@@ -146,6 +146,19 @@ foreach(_case WaitOffThread WaitNotSelfSubmitting)
 ]*wait")
 endforeach()
 
+# Status and Result<T> must stay [[nodiscard]]: each probe discards one and must fail to build with
+# the compiler's discarded-result diagnostic. Needs warnings as errors (a passing build is cached).
+if(KILN_WARNINGS_AS_ERRORS)
+    foreach(_probe discard_status discard_result)
+        add_library(kiln_probe_${_probe} OBJECT EXCLUDE_FROM_ALL compile_fail/${_probe}.cpp)
+        target_link_libraries(kiln_probe_${_probe} PRIVATE kiln_core)
+        kiln_apply_warnings(kiln_probe_${_probe})
+        add_test(NAME compile_fail_${_probe}
+                 COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR} --target kiln_probe_${_probe} --config $<CONFIG>)
+        set_tests_properties(compile_fail_${_probe} PROPERTIES PASS_REGULAR_EXPRESSION "C4834|'nodiscard'")
+    endforeach()
+endif()
+
 # ---------------------------------------------------------------------------
 # Reference validation with the Khronos `ktx` CLI (KTX-Software 4.x), if installed:
 #   ktx_validate_<name>         kiln writer output: sample_*.ktx2 and the corpus round
