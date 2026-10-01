@@ -117,7 +117,6 @@ constexpr EnumName<Supercompression> kSupercompressions[] = {
 };
 constexpr EnumName<CompressionScheme> kCompressions[] = {
     {"none",         CompressionScheme::None       },
-    {"basic",        CompressionScheme::Basic      },
     {"meshopt",      CompressionScheme::Meshopt    },
     {"meshopt-zstd", CompressionScheme::MeshoptZstd},
 };

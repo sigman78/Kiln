@@ -12,7 +12,7 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
   `no_crash_dialogs()` (`tools/no_crash_dialogs.h`, target `kiln_no_crash_dialogs`). On Windows a crash,
   `abort()` (`KILN_PANIC`) or a debug CRT assert ends the process with a message and exit code 3 instead
   of a dialog box, so automated runs never hang. The library itself changes no process-wide setting.
-- **`.mesh` payload compression** (docs/design/mesh-compression.md): mesh settings `compression` (`Basic`,
+- **`.mesh` payload compression** (docs/design/mesh-compression.md): mesh settings `compression` (`None`,
   `Meshopt`, `MeshoptZstd`) and `zstdLevel`, the same sidecar keys, `kiln-cook --mesh-compression` and
   `--mesh-zstd`. The runtime decodes every scheme: `kiln_runtime` now links meshoptimizer (v1.3, fetched
   also by a shipping configure unless the host provides the target). New diagnostic K4024. `kiln-info

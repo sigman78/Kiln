@@ -488,7 +488,7 @@ A loader that meets a codec or filter it does not support (unknown, or not built
 
 | Scheme | Blob settings | Expected character |
 |---|---|---|
-| Basic | `Zstd` + `ByteShuffle` (vertex) / `Zstd` (index) | Simple, one dependency, good ratio on quantized data, very fast decode |
+| Basic | `Zstd` + `ByteShuffle` (vertex) / `Zstd` (index) | Not offered by the kiln cooker: dominated by meshopt (`design/mesh-compression.md`); the writer uses it only for strides meshopt cannot take |
 | meshopt | `MeshoptVertex` / `MeshoptIndex` | Best decode speed (GB/s range), good ratio, designed for this data |
 | meshopt + Zstd | above + `kBlobOuterZstd` | Best ratio; costs an extra decode pass |
 
@@ -608,7 +608,7 @@ vkCmdDrawIndexed(cmd, sm.indexCount, instanceCount,
 - **Material library tag:** should material remap data live in the `.mesh`, or only in the library? Right now `MTEX` is "authored defaults" (proposed: library only, `docs/open-questions.md` A6).
 - **Hot reload:** keyed by `assetId` plus `cookHash`. Old GPU ranges are released after frames-in-flight (see `design/handles-and-states.md`).
 - **Per-LOD LOD-switch hysteresis:** stored in the file or engine-global?
-- **Default compression scheme:** Basic (Zstd + ByteShuffle), meshopt, or meshopt + Zstd. Decide by measuring ratio and decode MB/s on the real asset set; the format supports all three.
+- ~~**Default compression scheme**~~: decided 2026-10-01, `Meshopt` (`design/mesh-compression.md`).
 - **Delta filter semantics:** per-lane delta over which lane width (element-size lanes vs 2-byte vs 4-byte)? Specify precisely before the first cooker emits it, or drop it if measurements show no gain over ByteShuffle alone. Until then writers must not emit `Delta`.
 - **Split blobs (v0.7):** chunk size fixed (e.g. 64 KB decoded) or cooker-chosen per range? Must split blobs start 16-B aligned (split step `lcm(unit, 16)`, e.g. 48 B for a 24-B stride or U16 triangles), or is whole-element alignment enough? Decide with the codec work; until then the cooker writes one blob per range.
 - **meshopt filters on float data:** only relevant for the `precise` profile. Possibly never needed if quantized profiles dominate.

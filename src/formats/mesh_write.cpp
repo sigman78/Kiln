@@ -230,7 +230,7 @@ struct Encoder {
             if (meshopt_decodeIndexBuffer(b.rotated.data(), count, size, inner.data(), inner.size()) != 0)
                 return false;
         }
-        if (codec == Codec::Zstd) { // Basic, or what meshopt cannot take
+        if (codec == Codec::Zstd) { // what meshopt cannot take
             Span<u8 const> in = src;
             if (!index && size > 1) {
                 shuffled.resize(n);

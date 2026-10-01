@@ -211,8 +211,7 @@ KILN_TEST(Settings, MeshCompressionResolves) {
     };
     Case const cases[] = {
         {CompressionScheme::None,        5, 0                },
-        {CompressionScheme::Basic,       0, kDefaultZstdLevel},
-        {CompressionScheme::Basic,       9, 9                },
+        {CompressionScheme::MeshoptZstd, 9, 9                },
         {CompressionScheme::Meshopt,     9, 0                },
         {CompressionScheme::MeshoptZstd, 0, kDefaultZstdLevel},
     };
@@ -227,7 +226,7 @@ KILN_TEST(Settings, MeshCompressionResolves) {
     }
     DiagCapture cap;
     DiagSink sink = cap.sink();
-    KILN_CHECK(resolve_mesh({.compression = CompressionScheme::Basic, .zstdLevel = 20}, TargetProfile{},
+    KILN_CHECK(resolve_mesh({.compression = CompressionScheme::MeshoptZstd, .zstdLevel = 20}, TargetProfile{},
                             CookSession{}, &sink)
                    .code() == Code::InvalidArgument);
 }

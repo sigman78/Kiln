@@ -1042,8 +1042,8 @@ bool same_mesh(mesh::MeshView const& v, Span<u8 const> a, Span<u8 const> b) {
     return true;
 }
 
-// Every compression scheme decodes to the mesh an uncompressed cook gives (Basic byte for byte, the
-// meshopt schemes up to triangle rotation), in the default and float profiles; never a larger file.
+// Every compression scheme decodes to the mesh an uncompressed cook gives (up to the triangle rotation
+// of meshopt's index codec), in the default and float profiles; never a larger file.
 KILN_TEST(MeshCook, CompressionRoundTrip) {
     static char const* const kFiles[] = {
         "generated/cube_basic.glb",       "generated/hierarchy_parts.glb",
@@ -1054,8 +1054,7 @@ KILN_TEST(MeshCook, CompressionRoundTrip) {
         "khronos/BoxTextured.glb",        "khronos/BoxVertexColors.glb",
         "khronos/MultiUVTest.glb",
     };
-    static cook::CompressionScheme const kSchemes[] = {cook::CompressionScheme::Basic,
-                                                       cook::CompressionScheme::Meshopt,
+    static cook::CompressionScheme const kSchemes[] = {cook::CompressionScheme::Meshopt,
                                                        cook::CompressionScheme::MeshoptZstd};
     for (cook::VertexProfile profile : {cook::VertexProfile::Default, cook::VertexProfile::Float}) {
         for (char const* file : kFiles) {
@@ -1081,9 +1080,7 @@ KILN_TEST(MeshCook, CompressionRoundTrip) {
                 Opened c;
                 open_cooked(*packed, c, file);
                 if (!c.ok) continue;
-                bool const exact = scheme == cook::CompressionScheme::Basic;
-                KILN_CHECK_MSG(exact ? corpus::bytes_equal(c.payload.span(), p.payload.span())
-                                     : same_mesh(p.view, p.payload.span(), c.payload.span()),
+                KILN_CHECK_MSG(same_mesh(p.view, p.payload.span(), c.payload.span()),
                                "%s scheme %u: the payload differs", file, u32(scheme));
                 KILN_CHECK_MSG(packed->file.size() <= plain->file.size(), "%s scheme %u: %llu > %llu bytes",
                                file, u32(scheme), static_cast<unsigned long long>(packed->file.size()),

@@ -246,8 +246,7 @@ Result<MeshCookSettings> resolve_mesh(MeshCookSettings const& overrides, TargetP
         return diagf(diag, make_status(Code::Unsupported), kDiagSettingsUnsupported, Severity::Error, asset,
                      "blobChunkSize", "blob chunking is reserved for v0.6; blobChunkSize must be 0");
     }
-    bool const usesZstd =
-        s.compression == CompressionScheme::Basic || s.compression == CompressionScheme::MeshoptZstd;
+    bool const usesZstd = s.compression == CompressionScheme::MeshoptZstd;
     if (s.zstdLevel > kMaxZstdLevel)
         return diagf(diag, make_status(Code::InvalidArgument), kDiagSettingsInvalidCombo, Severity::Error,
                      asset, "zstdLevel", "zstdLevel %u is above %u", s.zstdLevel, kMaxZstdLevel);
@@ -325,8 +324,7 @@ u64 hash_settings(MeshCookSettings const& s) noexcept {
     h.update_value(u8(s.compression));
     // Hash zstdLevel as 0 unless the scheme uses Zstd, so changing an unused field
     // never misses the store.
-    bool const usesZstd =
-        s.compression == CompressionScheme::Basic || s.compression == CompressionScheme::MeshoptZstd;
+    bool const usesZstd = s.compression == CompressionScheme::MeshoptZstd;
     h.update_value(u8(usesZstd ? s.zstdLevel : 0));
     h.update_value(s.blobChunkSize);
     return h.digest();

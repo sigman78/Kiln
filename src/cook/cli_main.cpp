@@ -618,7 +618,7 @@ bool add_root(void* user, char const* arg) {
 }
 
 char const* const kProfiles[]         = {"default", "precise", "float", nullptr};
-char const* const kMeshCompressions[] = {"none", "basic", "meshopt", "meshopt-zstd", nullptr};
+char const* const kMeshCompressions[] = {"none", "meshopt", "meshopt-zstd", nullptr};
 char const* const kQualities[]        = {"fast", "normal", "high", nullptr};
 
 } // namespace
@@ -685,7 +685,7 @@ int kiln::cook::cook_cli_main(int argc, char** argv, CookPolicy const& policy, u
          .choices = kMeshCompressions},
         {.name   = "--mesh-zstd",
          .arg    = "<level>",
-         .help   = "Zstd level of the basic and meshopt-zstd schemes, 1..19 (default 3)",
+         .help   = "Zstd level of the meshopt-zstd scheme, 1..19 (default 3)",
          .number = &o.meshZstd,
          .max    = kMaxZstdLevel},
         {.name    = "--profile",
@@ -778,8 +778,7 @@ int kiln::cook::cook_cli_main(int argc, char** argv, CookPolicy const& policy, u
     o.tex.supercompression = o.zstd != 0 ? Supercompression::Zstd : Supercompression::None;
     o.tex.zstdLevel        = u8(o.zstd);
     if (o.meshCompression)
-        o.mesh.compression = std::strcmp(o.meshCompression, "basic") == 0     ? CompressionScheme::Basic
-                             : std::strcmp(o.meshCompression, "meshopt") == 0 ? CompressionScheme::Meshopt
+        o.mesh.compression = std::strcmp(o.meshCompression, "meshopt") == 0 ? CompressionScheme::Meshopt
                              : std::strcmp(o.meshCompression, "meshopt-zstd") == 0
                                  ? CompressionScheme::MeshoptZstd
                                  : CompressionScheme::None;
