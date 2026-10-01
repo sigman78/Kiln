@@ -81,7 +81,7 @@ struct DiagCapture {
     int count          = 0;
     char firstMsg[256] = {};
 
-    static void fn(void* user, Diagnostic const& d) noexcept {
+    static void fn(void* user, Diagnostic const& d) {
         auto* self = static_cast<DiagCapture*>(user);
         if (self->firstCode == 0) {
             self->firstCode = d.code;
@@ -89,7 +89,7 @@ struct DiagCapture {
         }
         ++self->count;
     }
-    DiagSink sink() noexcept { return DiagSink{&fn, this}; }
+    DiagSink sink() { return DiagSink{&fn, this}; }
 };
 
 /// Owns a null adapter + a runtime Context; tears both down.
@@ -100,10 +100,9 @@ struct TestContext {
 
     TestContext(TestContext const&)            = delete;
     TestContext& operator=(TestContext const&) = delete;
-    TestContext() noexcept                     = default;
+    TestContext()                              = default;
 
-    bool init(StrView storeDir, Span<Root const> roots, DiagSink diag = {},
-              HotReloadDesc hotReload = {}) noexcept {
+    bool init(StrView storeDir, Span<Root const> roots, DiagSink diag = {}, HotReloadDesc hotReload = {}) {
         Result<NullAdapter*> na_ = null_adapter_create({}, &adapter);
         if (!KILN_CHECK_MSG(na_.ok(), "null_adapter_create failed")) return false;
         na = na_.value();
@@ -121,7 +120,7 @@ struct TestContext {
         return true;
     }
 
-    ~TestContext() noexcept {
+    ~TestContext() {
         if (ctx) cook::uninstall_provider(ctx); // optional: destroy() releases it too
         if (ctx) destroy(ctx);
         if (na) null_adapter_destroy(na);
@@ -129,7 +128,7 @@ struct TestContext {
 };
 
 /// Pumps until `h`'s state settles (Ready/Failed) or `maxIters` is reached.
-template <class Handle> State pump_until_settled(Context* ctx, Handle h, int maxIters = 500) noexcept {
+template <class Handle> State pump_until_settled(Context* ctx, Handle h, int maxIters = 500) {
     for (int i = 0; i < maxIters; ++i) {
         pump(ctx, {});
         State const s = state(ctx, h);
@@ -814,7 +813,7 @@ namespace {
 
 /// Turns mips off for every texture and refuses `big.png`.
 Status no_mips_policy(void*, cook::CookAssetInfo const& asset, cook::TargetProfile const&,
-                      cook::TextureCookSettings* s, DiagSink const*) noexcept {
+                      cook::TextureCookSettings* s, DiagSink const*) {
     if (asset.name == "big.png") return make_status(Code::Unsupported);
     s->genMips = false;
     return kOk;

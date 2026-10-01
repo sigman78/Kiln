@@ -16,24 +16,24 @@ namespace {
 constexpr u32 kNoLimit = 0xFFFFFFFFu;
 
 Status fail(DiagSink const* diag, StrView asset, Status status, u32 code, char const* fmt,
-            unsigned long long a = 0, unsigned long long b = 0, unsigned long long c = 0) noexcept {
+            unsigned long long a = 0, unsigned long long b = 0, unsigned long long c = 0) {
     return diagf(diag, status, code, Severity::Error, asset, "texture", fmt, a, b, c);
 }
 
 void note(DiagSink const* diag, StrView asset, Severity sev, u32 code, char const* fmt,
           unsigned long long a = 0, unsigned long long b = 0, unsigned long long c = 0,
-          unsigned long long d = 0) noexcept {
+          unsigned long long d = 0) {
     (void)diagf(diag, kOk, code, sev, asset, "texture", fmt, a, b, c, d);
 }
 
 /// The CookShape a KTX2 texture has.
-CookShape shape_of(ktx2::TextureDesc const& d) noexcept {
+CookShape shape_of(ktx2::TextureDesc const& d) {
     return d.isCube ? CookShape::Cube : d.isArray ? CookShape::Array : CookShape::Tex2D;
 }
 
 Result<CookedTexture> pass_through(TextureSource const& src, CookShape shape, u32 cap, u32 maxLayers,
                                    Allocator const* alloc, DiagSink const* diag, StrView asset,
-                                   u64 sourceHash) noexcept {
+                                   u64 sourceHash) {
     Result<ktx2::Ktx2View> r = ktx2::Ktx2View::open(src.bytes, diag, asset);
     if (r.failed())
         return fail(diag, asset, r.status(), kDiagImagePassthroughBad,
@@ -81,7 +81,7 @@ struct Plan {
 /// The block format of a texture, or Undefined to stay uncompressed. An explicit encoding is
 /// its own format (resolve_texture checked that the profile has it); Auto takes the first format
 /// of the usage's preference list that the profile has (docs/design/target-profiles.md).
-Format block_format(TextureEncoding e, u64 profile, TextureUsage usage, u32 srcChannels, bool srgb) noexcept {
+Format block_format(TextureEncoding e, u64 profile, TextureUsage usage, u32 srcChannels, bool srgb) {
     if (e != TextureEncoding::Auto) {
         Format const f = detail::encoding_format(e, srgb);
         return (profile & block_format_bit(f)) ? f : Format::Undefined;
@@ -112,7 +112,7 @@ Format block_format(TextureEncoding e, u64 profile, TextureUsage usage, u32 srcC
 /// The 8-bit image a block format encodes from: 1 channel for BC4, 2 for a BC5 mask, else RGBA
 /// (a BC5 normal keeps the normal plan and encodes its R and G).
 Plan block_plan(Image const& img, TextureUsage usage, bool srgb, Format bc, DiagSink const* diag,
-                StrView asset) noexcept {
+                StrView asset) {
     Plan p;
     p.format = bc;
     p.bits   = 8;
@@ -135,8 +135,7 @@ Plan block_plan(Image const& img, TextureUsage usage, bool srgb, Format bc, Diag
     return p;
 }
 
-Plan plan_for(Image const& img, TextureUsage usage, ColorSpace cs, DiagSink const* diag,
-              StrView asset) noexcept {
+Plan plan_for(Image const& img, TextureUsage usage, ColorSpace cs, DiagSink const* diag, StrView asset) {
     Plan p;
     switch (usage) {
     case TextureUsage::Normal:
@@ -187,12 +186,12 @@ Plan plan_for(Image const& img, TextureUsage usage, ColorSpace cs, DiagSink cons
     return p;
 }
 
-bool is_pow2(u32 v) noexcept { return v != 0 && (v & (v - 1)) == 0; }
+bool is_pow2(u32 v) { return v != 0 && (v & (v - 1)) == 0; }
 
 Result<CookedTexture> cook_decoded(TextureSource const& src, TextureCookSettings const& settings,
                                    TargetProfile const& target, u32 cap, Allocator const* alloc,
                                    DiagSink const* diag, JobBudget const& budget, StrView asset,
-                                   u64 sourceHash) noexcept {
+                                   u64 sourceHash) {
     detail::Stage swTotal(budget.profile, "cook.texture", asset);
     detail::Stage swDecode(budget.profile, "cook.decode", asset);
     KILN_TRY_ASSIGN(Image decoded, decode_image(src.bytes, alloc, diag, asset));
@@ -418,7 +417,7 @@ Result<CookedTexture> cook_decoded(TextureSource const& src, TextureCookSettings
 } // namespace
 
 Result<CookedTexture> cook_texture(TextureSource const& src, TextureCookSettings const& settings,
-                                   TargetProfile const& target, CookEnv const& env) noexcept {
+                                   TargetProfile const& target, CookEnv const& env) {
     Allocator const* const alloc = env.alloc ? env.alloc : default_allocator();
     DiagSink const* const diag   = env.diag;
     StrView const asset          = src.assetPath.empty() ? src.sourcePath : src.assetPath;

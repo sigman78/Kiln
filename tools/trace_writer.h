@@ -16,18 +16,18 @@ namespace kiln::cli {
 
 class TraceWriter {
 public:
-    TraceWriter() noexcept : t0_(profile_now_ns()) {}
+    TraceWriter() : t0_(profile_now_ns()) {}
     TraceWriter(TraceWriter const&)            = delete;
     TraceWriter& operator=(TraceWriter const&) = delete;
 
     /// Valid while this writer lives.
-    ProfileHooks hooks() noexcept {
+    ProfileHooks hooks() {
         return ProfileHooks{
             .zone_begin = &zone_begin, .zone_end = &zone_end, .interval = &interval, .user = this};
     }
 
     /// Writes the Chrome trace JSON. False when the file cannot be written.
-    bool write(char const* path) noexcept {
+    bool write(char const* path) {
         std::lock_guard<std::mutex> const lock(mutex_);
         std::FILE* f = std::fopen(path, "wb");
         if (!f) return false;
@@ -66,7 +66,7 @@ public:
 
     /// One log line per event name: count, total and longest time. Zones of one name on several
     /// threads add up, so a total can exceed the wall time.
-    void log_summary() noexcept {
+    void log_summary() {
         std::lock_guard<std::mutex> const lock(mutex_);
         struct Row {
             char const* name;
@@ -116,7 +116,7 @@ private:
         u64 ns;
     };
 
-    static u32 thread_index(TraceWriter* w) noexcept {
+    static u32 thread_index(TraceWriter* w) {
         thread_local TraceWriter* owner = nullptr;
         thread_local u32 index          = 0;
         if (owner != w) {
@@ -125,7 +125,7 @@ private:
         }
         return index;
     }
-    void add(char ph, char const* name, StrView asset, u32 tid, u32 id, u64 ns, u64 endNs = 0) noexcept {
+    void add(char ph, char const* name, StrView asset, u32 tid, u32 id, u64 ns, u64 endNs = 0) {
         std::lock_guard<std::mutex> const lock(mutex_);
         u32 const off = u32(strings_.size());
         strings_.append(Span<char const>(asset.data, asset.size));
@@ -146,7 +146,7 @@ private:
         u32 const t  = thread_index(w);
         w->add('b', name, asset, t, id, beginNs, endNs);
     }
-    static void escape(StrView s, char* out, usize cap) noexcept {
+    static void escape(StrView s, char* out, usize cap) {
         usize n = 0;
         for (usize i = 0; i < s.size && n + 3 < cap; ++i) {
             char const c = s.data[i];

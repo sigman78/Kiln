@@ -31,19 +31,19 @@ struct NullAdapterStats {
 struct NullAdapter;
 
 /// Fills `out`, which stays valid until null_adapter_destroy(). `out` must outlive its users.
-KILN_API Result<NullAdapter*> null_adapter_create(NullAdapterDesc const& desc, Adapter* out) noexcept;
-KILN_API void null_adapter_destroy(NullAdapter* na) noexcept;
+KILN_API Result<NullAdapter*> null_adapter_create(NullAdapterDesc const& desc, Adapter* out);
+KILN_API void null_adapter_destroy(NullAdapter* na);
 
 /// The bytes kiln wrote for `obj` (empty if unknown or destroyed).
-KILN_API Span<u8 const> null_adapter_payload(NullAdapter* na, GpuObject obj) noexcept;
+KILN_API Span<u8 const> null_adapter_payload(NullAdapter* na, GpuObject obj);
 /// The object last bound to a bindless `slot` (null if never bound / not bindless).
-KILN_API GpuObject null_adapter_slot(NullAdapter* na, u32 slot) noexcept;
-KILN_API NullAdapterStats null_adapter_stats(NullAdapter* na) noexcept;
+KILN_API GpuObject null_adapter_slot(NullAdapter* na, u32 slot);
+KILN_API NullAdapterStats null_adapter_stats(NullAdapter* na);
 /// Testing: while `fail` is true, every upload committed reports UploadStatus::Failed.
 /// Their reason is Code::OutOfMemory.
-KILN_API void null_adapter_fail_uploads(NullAdapter* na, bool fail) noexcept;
+KILN_API void null_adapter_fail_uploads(NullAdapter* na, bool fail);
 /// Testing: while `broken` is true, begin_upload succeeds but gives no destination memory, so kiln's
 /// write fails after it and kiln discards the upload (or commits it, without discard_upload).
-KILN_API void null_adapter_break_targets(NullAdapter* na, bool broken) noexcept;
+KILN_API void null_adapter_break_targets(NullAdapter* na, bool broken);
 
 } // namespace kiln

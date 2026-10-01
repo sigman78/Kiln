@@ -23,7 +23,7 @@ namespace kiln::cook {
 namespace {
 
 /// Copies `s` into `out` (NUL-terminated). False if it would overflow `cap`.
-[[nodiscard]] bool to_cstr(char* out, usize cap, StrView s) noexcept {
+[[nodiscard]] bool to_cstr(char* out, usize cap, StrView s) {
     if (s.size + 1 > cap) return false;
     std::memcpy(out, s.data, s.size);
     out[s.size] = '\0';
@@ -31,7 +31,7 @@ namespace {
 }
 
 /// Builds "<dir>/<name>" into `out` (NUL-terminated). False if it would overflow `cap`.
-[[nodiscard]] bool join_path(char* out, usize cap, StrView dir, StrView name) noexcept {
+[[nodiscard]] bool join_path(char* out, usize cap, StrView dir, StrView name) {
     usize const need = dir.size + 1 + name.size + 1; // dir + '/' + name + NUL
     if (need > cap) return false;
     std::memcpy(out, dir.data, dir.size);
@@ -43,7 +43,7 @@ namespace {
 
 /// Appends ".tmp.<16 hex digits>" to the NUL-terminated path in `buf`. False if
 /// it would overflow `cap`.
-[[nodiscard]] bool append_tmp_suffix(char* buf, usize cap, u64 id) noexcept {
+[[nodiscard]] bool append_tmp_suffix(char* buf, usize cap, u64 id) {
     usize const len  = std::strlen(buf);
     usize const need = len + 5 + 16 + 1; // ".tmp." + hex + NUL
     if (need > cap) return false;
@@ -64,7 +64,7 @@ namespace {
 
 /// Process- and call-unique id for temp file names. It only has to avoid collisions
 /// with other writers racing on the same store directory.
-u64 next_tmp_id() noexcept {
+u64 next_tmp_id() {
     static std::atomic<u64> counter{0};
 #if defined(KILN_OS_WINDOWS)
     u64 const pid = u64(GetCurrentProcessId());
@@ -76,7 +76,7 @@ u64 next_tmp_id() noexcept {
 
 /// mkdir(dir), treating "already exists" as success. One level only: a missing
 /// grandparent directory is a caller error (see store_write's doc comment).
-[[nodiscard]] bool ensure_dir(char const* dir) noexcept {
+[[nodiscard]] bool ensure_dir(char const* dir) {
 #if defined(KILN_OS_WINDOWS)
     if (_mkdir(dir) == 0) return true;
 #else
@@ -87,7 +87,7 @@ u64 next_tmp_id() noexcept {
 
 } // namespace
 
-bool store_exists(StrView dir, StrView name) noexcept {
+bool store_exists(StrView dir, StrView name) {
     char path[1024];
     if (!join_path(path, sizeof path, dir, name)) return false;
     std::FILE* f = std::fopen(path, "rb");
@@ -96,8 +96,7 @@ bool store_exists(StrView dir, StrView name) noexcept {
     return true;
 }
 
-Status store_write(StrView dir, StrView name, Span<u8 const> bytes, DiagSink const* diag,
-                   bool overwrite) noexcept {
+Status store_write(StrView dir, StrView name, Span<u8 const> bytes, DiagSink const* diag, bool overwrite) {
     char dst[1024];
     if (!join_path(dst, sizeof dst, dir, name)) {
         return diagf(diag, make_status(Code::InvalidArgument), 0, Severity::Error, name, "store",

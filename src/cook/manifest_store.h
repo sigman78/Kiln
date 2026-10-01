@@ -20,60 +20,59 @@ struct ManifestStoreDesc {
 /// and loads the manifest. A malformed manifest is its K42xx. The profile's entries and records are
 /// dropped when they were cooked for another definition of it (another hash_target); malformed
 /// records are dropped (they only save time).
-Status open_manifest_store(ManifestStoreDesc const& d, ManifestStore** out) noexcept;
+Status open_manifest_store(ManifestStoreDesc const& d, ManifestStore** out);
 /// Releases the lock and frees the store. Does not commit.
-void close_manifest_store(ManifestStore* s) noexcept;
+void close_manifest_store(ManifestStore* s);
 
 /// Writes the artifacts of `unit`'s outputs that cooked (create-if-absent; K3010 when an existing
 /// artifact of the same key has other bytes), then replaces the unit's entries and input record in
 /// memory, and marks the unit fresh. An output whose artifact fails gets that Status and leaves the
 /// manifest; when the first output fails, nothing changes and its Status is returned.
-Status publish_unit(ManifestStore* s, CookUnit& unit, u64 hostDigest, DiagSink const* diag) noexcept;
+Status publish_unit(ManifestStore* s, CookUnit& unit, u64 hostDigest, DiagSink const* diag);
 /// Rewrites the manifest (temporary file, then rename) if anything changed and the last commit is
 /// at least `minIntervalMs` old. A failed write is tried again next time.
-Status commit_manifest(ManifestStore* s, DiagSink const* diag, u32 minIntervalMs = 0) noexcept;
+Status commit_manifest(ManifestStore* s, DiagSink const* diag, u32 minIntervalMs = 0);
 
 /// The entry of `name` and `kind` in memory, or false.
-[[nodiscard]] bool manifest_find(ManifestStore* s, AssetKind kind, StrView name, Hash128* key) noexcept;
+[[nodiscard]] bool manifest_find(ManifestStore* s, AssetKind kind, StrView name, Hash128* key);
 /// Copies the input record of the unit `name` into `out`: inputs (without paths), and the outputs'
 /// names, kinds, slots and current keys (no bytes). False when there is none.
-[[nodiscard]] bool copy_input_record(ManifestStore* s, StrView name, CookUnit* out, u64* hostDigest) noexcept;
+[[nodiscard]] bool copy_input_record(ManifestStore* s, StrView name, CookUnit* out, u64* hostDigest);
 /// The kCookerVersion that wrote the unit `name`'s record; 0 when unknown (an older store) or
 /// when there is no record.
-u32 record_cooker_version(ManifestStore* s, StrView name) noexcept;
+u32 record_cooker_version(ManifestStore* s, StrView name);
 /// For tests: makes the record look as if another cooker version wrote it.
-void set_record_cooker_version(ManifestStore* s, StrView name, u32 version) noexcept;
+void set_record_cooker_version(ManifestStore* s, StrView name, u32 version);
 /// Sets the host-settings digest of the unit `name`'s record (its keys were checked again).
-void set_record_digest(ManifestStore* s, StrView name, u64 hostDigest) noexcept;
+void set_record_digest(ManifestStore* s, StrView name, u64 hostDigest);
 /// Sets the stats of the unit `name`'s inputs to those in `rec` (their content did not change).
-void set_record_stats(ManifestStore* s, StrView name, CookUnit const& rec) noexcept;
+void set_record_stats(ManifestStore* s, StrView name, CookUnit const& rec);
 
 /// True if the unit `d.name`'s record still describes it: every output with its entry and
 /// artifact, every input unchanged next to `d.sourcePath` (check_recorded_inputs(); new stats
 /// of unchanged content are kept), and `hostDigest` or, when the digest differs, the host's
 /// settings giving the recorded keys (the record then takes `hostDigest`).
-[[nodiscard]] bool record_is_current(ManifestStore* s, UnitDesc const& d, u64 hostDigest,
-                                     bool rehash) noexcept;
+[[nodiscard]] bool record_is_current(ManifestStore* s, UnitDesc const& d, u64 hostDigest, bool rehash);
 
 /// Records `roots` in the root table of manifest.in (docs/design/store-manifest.md), replacing
 /// entries of the same name. A root's directory (absolute, or relative to the working directory) is
 /// kept relative to the store when a relative path exists, else absolute.
-void record_store_roots(ManifestStore* s, Span<Root const> roots) noexcept;
+void record_store_roots(ManifestStore* s, Span<Root const> roots);
 /// The root table with every directory made absolute: name, NUL, directory, NUL, for each entry.
-void store_roots(ManifestStore* s, Vec<char>* out) noexcept;
+void store_roots(ManifestStore* s, Vec<char>* out);
 /// The units of the writer's profile (its records, and the owners of entries without one),
 /// NUL-separated.
-void unit_names(ManifestStore* s, Vec<char>* out) noexcept;
+void unit_names(ManifestStore* s, Vec<char>* out);
 /// Removes the unit `name`: its record and every entry of it (the unit and `<unit>#...`). The
 /// artifacts stay for garbage collection.
-void drop_unit(ManifestStore* s, StrView name) noexcept;
+void drop_unit(ManifestStore* s, StrView name);
 
 /// Session state, never written: a unit is fresh once this process checked its inputs or cooked
 /// it, and remembers the source it was found at. The source poller watches the fresh units.
-[[nodiscard]] bool is_fresh(ManifestStore* s, StrView name) noexcept;
-void mark_fresh(ManifestStore* s, StrView name, StrView sourcePath) noexcept;
+[[nodiscard]] bool is_fresh(ManifestStore* s, StrView name);
+void mark_fresh(ManifestStore* s, StrView name, StrView sourcePath);
 /// The fresh units into `out` (replaced): name, NUL, source path, NUL, for each.
-void fresh_units(ManifestStore* s, Vec<char>* out) noexcept;
+void fresh_units(ManifestStore* s, Vec<char>* out);
 
 // ---------------------------------------------------------------------------
 // Maintenance (kiln-cook --gc and --export)
@@ -93,7 +92,7 @@ using GcReportFn = void (*)(void* user, StrView file, u64 bytes);
 /// temporary files store writes leave (`<name>.tmp.<16 hex digits>`). Nothing else is touched. A
 /// store without a manifest has no referenced artifact. With `dryRun`, nothing is deleted.
 Status collect_store_garbage(StrView storeDir, bool dryRun, GcReportFn report, void* user, GcResult* out,
-                             DiagSink const* diag) noexcept;
+                             DiagSink const* diag);
 
 struct ExportResult {
     u32 profiles  = 0;
@@ -106,13 +105,13 @@ struct ExportResult {
 /// references, each checked against its checksum while it is copied. No input records, no lock.
 /// The source store is only read.
 Status export_store(StrView storeDir, StrView outDir, StrView profile, ExportResult* out,
-                    DiagSink const* diag) noexcept;
+                    DiagSink const* diag);
 
 /// `path` made absolute, with `/` separators and no `.` or `..` segments (the last segment need not
 /// exist); its length, or 0 when it cannot be made.
-[[nodiscard]] usize absolute_path(StrView path, char* out, usize cap) noexcept;
+[[nodiscard]] usize absolute_path(StrView path, char* out, usize cap);
 /// The relative path from the absolute directory `from` to the absolute `to` (`.` when equal); 0
 /// when there is none (another drive).
-[[nodiscard]] usize relative_path(StrView from, StrView to, char* out, usize cap) noexcept;
+[[nodiscard]] usize relative_path(StrView from, StrView to, char* out, usize cap);
 
 } // namespace kiln::cook

@@ -7,7 +7,7 @@ namespace rt {
 namespace {
 
 Slot* register_impl(Context* ctx, AssetKind kind, StrView path, Span<u8 const> bytes,
-                    RequestOptions const& opt) noexcept {
+                    RequestOptions const& opt) {
     if (!ctx) return nullptr;
     StrView const name = path;
     if (char const* why = check_asset_name(name)) {
@@ -48,14 +48,13 @@ Slot* register_impl(Context* ctx, AssetKind kind, StrView path, Span<u8 const> b
 } // namespace
 } // namespace rt
 
-MeshHandle register_mesh(Context* ctx, StrView path, Span<u8 const> meshFile,
-                         RequestOptions const& opt) noexcept {
+MeshHandle register_mesh(Context* ctx, StrView path, Span<u8 const> meshFile, RequestOptions const& opt) {
     rt::Slot* s = rt::register_impl(ctx, AssetKind::Mesh, path, meshFile, opt);
     return s ? MeshHandle::from_bits(rt::handle_bits(*s)) : MeshHandle{};
 }
 
 TextureHandle register_texture(Context* ctx, StrView path, Span<u8 const> ktx2File,
-                               RequestOptions const& opt) noexcept {
+                               RequestOptions const& opt) {
     rt::Slot* s = rt::register_impl(ctx, AssetKind::Texture, path, ktx2File, opt);
     return s ? TextureHandle::from_bits(rt::handle_bits(*s)) : TextureHandle{};
 }

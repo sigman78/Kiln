@@ -5,7 +5,7 @@
 namespace kiln::cook {
 
 Result<CookedMesh> cook_mesh(MeshSource const& src, MeshCookSettings const&, TargetProfile const&,
-                             CookEnv const& env) noexcept {
+                             CookEnv const& env) {
     return diagf(env.diag, make_status(Code::Unsupported), kDiagMeshCookNotBuilt, Severity::Error,
                  src.assetPath, "cook_mesh", "mesh cooking is not built into this kiln (KILN_MESH=OFF)");
 }

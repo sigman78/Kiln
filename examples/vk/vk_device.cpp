@@ -16,12 +16,12 @@ constexpr u32 kMaxDevices              = 16;
 constexpr u32 kMaxFamilies             = 32;
 constexpr u32 kMaxLayers               = 64;
 
-Status vk_fail(DiagSink const* diag, char const* what, VkResult r) noexcept {
+Status vk_fail(DiagSink const* diag, char const* what, VkResult r) {
     return diagf(diag, make_status(Code::Internal), 0, Severity::Error, {}, "vulkan", "%s failed: %s", what,
                  result_name(r));
 }
 
-bool layer_present(char const* name) noexcept {
+bool layer_present(char const* name) {
     u32 count = 0;
     if (vkEnumerateInstanceLayerProperties(&count, nullptr) != VK_SUCCESS) return false;
     VkLayerProperties layers[kMaxLayers];
@@ -53,7 +53,7 @@ struct FeatureChain {
     VkPhysicalDeviceVulkan11Features f11{};
     VkPhysicalDeviceFeatures2 f2{};
 
-    void link() noexcept {
+    void link() {
         f2.sType  = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
         f11.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES;
         f12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
@@ -66,7 +66,7 @@ struct FeatureChain {
         f14.pNext = nullptr;
     }
 
-    char const* missing() const noexcept {
+    char const* missing() const {
         if (!f12.timelineSemaphore) return "timelineSemaphore";
         if (!f12.descriptorIndexing) return "descriptorIndexing";
         if (!f12.shaderSampledImageArrayNonUniformIndexing)
@@ -85,7 +85,7 @@ struct FeatureChain {
     }
 
     /// Only the features this example uses, so the device does not pay for the rest.
-    void enable_required() noexcept {
+    void enable_required() {
         f12.timelineSemaphore                            = VK_TRUE;
         f12.descriptorIndexing                           = VK_TRUE;
         f12.shaderSampledImageArrayNonUniformIndexing    = VK_TRUE;
@@ -101,7 +101,7 @@ struct FeatureChain {
     }
 };
 
-bool has_extension(VkPhysicalDevice pd, char const* name) noexcept {
+bool has_extension(VkPhysicalDevice pd, char const* name) {
     u32 count = 0;
     if (vkEnumerateDeviceExtensionProperties(pd, nullptr, &count, nullptr) != VK_SUCCESS || count == 0)
         return false;
@@ -116,7 +116,7 @@ bool has_extension(VkPhysicalDevice pd, char const* name) noexcept {
 }
 
 /// Returns the graphics family, or kInvalid when the device has none.
-u32 graphics_family(VkPhysicalDevice pd) noexcept {
+u32 graphics_family(VkPhysicalDevice pd) {
     u32 count = 0;
     vkGetPhysicalDeviceQueueFamilyProperties(pd, &count, nullptr);
     VkQueueFamilyProperties fam[kMaxFamilies];
@@ -129,7 +129,7 @@ u32 graphics_family(VkPhysicalDevice pd) noexcept {
 
 } // namespace
 
-char const* result_name(VkResult r) noexcept {
+char const* result_name(VkResult r) {
     switch (r) {
     case VK_SUCCESS: return "VK_SUCCESS";
     case VK_NOT_READY: return "VK_NOT_READY";
@@ -163,7 +163,7 @@ char const* result_name(VkResult r) noexcept {
     }
 }
 
-Result<Device> device_create(DeviceDesc const& desc, DiagSink const* diag) noexcept {
+Result<Device> device_create(DeviceDesc const& desc, DiagSink const* diag) {
     VkResult r = volkInitialize();
     if (r != VK_SUCCESS) return vk_fail(diag, "volkInitialize (no Vulkan loader)", r);
     if (volkGetInstanceVersion() < VK_API_VERSION_1_4)
@@ -323,7 +323,7 @@ Result<Device> device_create(DeviceDesc const& desc, DiagSink const* diag) noexc
     return d;
 }
 
-void device_destroy(Device& d) noexcept {
+void device_destroy(Device& d) {
     if (d.device) {
         vkDeviceWaitIdle(d.device);
         vkDestroyDevice(d.device, nullptr);
@@ -336,7 +336,7 @@ void device_destroy(Device& d) noexcept {
 }
 
 u32 find_memory_type(Device const& d, u32 typeBits, VkMemoryPropertyFlags required,
-                     VkMemoryPropertyFlags preferred) noexcept {
+                     VkMemoryPropertyFlags preferred) {
     u32 fallback = kInvalid;
     for (u32 i = 0; i < d.memProps.memoryTypeCount; ++i) {
         if (!(typeBits & (1u << i))) continue;

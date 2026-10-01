@@ -14,8 +14,8 @@ namespace kiln::ex {
 /// never allocates after construction.
 class CommitQueue {
 public:
-    CommitQueue() noexcept = default;
-    CommitQueue(Allocator const* alloc, u32 capacity) noexcept;
+    CommitQueue() = default;
+    CommitQueue(Allocator const* alloc, u32 capacity);
 
     CommitQueue(CommitQueue const&)            = delete;
     CommitQueue& operator=(CommitQueue const&) = delete;
@@ -23,9 +23,9 @@ public:
 
     /// Any thread: upload `index` waits for the next take(). The pump thread pushes an index again
     /// to retry it at the next flush.
-    void push(u32 index) noexcept;
+    void push(u32 index);
     /// Pump thread: everything pushed so far, in push order. Valid until the next take().
-    [[nodiscard]] Span<u32 const> take() noexcept;
+    [[nodiscard]] Span<u32 const> take();
 
 private:
     std::mutex mutex_;

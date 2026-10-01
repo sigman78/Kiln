@@ -10,7 +10,6 @@ namespace kiln::cook {
 /// Returns the exit code: 0 every input cooked, 1 usage, 2 IO failure, 3 one or more cook errors.
 /// A project tool is `int main(int argc, char** argv) { return cook_cli_main(argc, argv, policy); }`.
 /// `policyVersion` is ProviderDesc::policyVersion: bump it when the policy changes.
-KILN_API int cook_cli_main(int argc, char** argv, CookPolicy const& policy = {},
-                           u32 policyVersion = 0) noexcept;
+KILN_API int cook_cli_main(int argc, char** argv, CookPolicy const& policy = {}, u32 policyVersion = 0);
 
 } // namespace kiln::cook

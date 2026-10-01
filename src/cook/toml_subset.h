@@ -23,7 +23,6 @@ struct TomlEntry {
 
 /// Parses `text` into `out` in file order. Decoded strings and sections live in `arena`.
 /// Anything outside the subset is a K3005 error whose `where` is "<file>:<line>".
-Status parse_toml_subset(StrView text, Arena& arena, Vec<TomlEntry>& out, DiagSink const* diag,
-                         StrView file) noexcept;
+Status parse_toml_subset(StrView text, Arena& arena, Vec<TomlEntry>& out, DiagSink const* diag, StrView file);
 
 } // namespace kiln::cook::detail

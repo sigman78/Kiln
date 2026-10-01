@@ -41,7 +41,7 @@ struct Options {
 };
 
 /// --dump <file.png>, --bindless, --verify and --help. Returns -1 to run, else the exit code.
-int parse(int argc, char** argv, Options* o) noexcept {
+int parse(int argc, char** argv, Options* o) {
     cli::Option const opts[] = {
         {.name = "--dump",
          .arg  = "<file.png>",
@@ -151,7 +151,7 @@ void update_set(Context* ctx, vkx::VkAdapter* va, VkDevice device, TextureHandle
     a.layers[slot]  = texture_info(ctx, tiles).desc.layers;
 }
 
-void log_array(Context* ctx, TextureHandle h) noexcept {
+void log_array(Context* ctx, TextureHandle h) {
     TextureInfo const ti = texture_info(ctx, h);
     KILN_INFO("array", "%u layers of %s %ux%u, %u levels, version %u", ti.desc.layers,
               format_name(ti.desc.format), ti.desc.width, ti.desc.height, ti.desc.levels, ti.version);

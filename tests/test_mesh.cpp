@@ -19,8 +19,8 @@ struct DiagCapture {
     u32 count         = 0;
     char message[256]{};
 
-    DiagSink sink() noexcept { return DiagSink{&DiagCapture::on_diag, this}; }
-    void reset() noexcept { *this = DiagCapture{}; }
+    DiagSink sink() { return DiagSink{&DiagCapture::on_diag, this}; }
+    void reset() { *this = DiagCapture{}; }
 
     static void on_diag(void* user, Diagnostic const& d) {
         auto* self     = static_cast<DiagCapture*>(user);
@@ -34,7 +34,7 @@ struct DiagCapture {
     }
 };
 
-VertexAttrib attr(Semantic sem, u8 semIndex, u8 stream, Format fmt, u16 offset) noexcept {
+VertexAttrib attr(Semantic sem, u8 semIndex, u8 stream, Format fmt, u16 offset) {
     VertexAttrib a{};
     a.semantic      = u8(sem);
     a.semanticIndex = semIndex;
@@ -61,7 +61,7 @@ void fill_u32(Vec<u8>& v, u32 count, u32 (*fn)(u32)) {
         write_unaligned(v.data() + usize(k) * 4, fn(k));
 }
 
-Span<u8 const> cspan(Vec<u8> const& v) noexcept { return {v.data(), v.size()}; }
+Span<u8 const> cspan(Vec<u8> const& v) { return {v.data(), v.size()}; }
 
 /// A small but complete mesh: 2 layouts, 3 parts (root, hull with 2 LODs, antenna),
 /// 4 submeshes, 2 materials, 3 textures, 3 mounts (given unsorted).
@@ -172,7 +172,7 @@ struct TestMesh {
     TestMesh(TestMesh const&)            = delete;
     TestMesh& operator=(TestMesh const&) = delete;
 
-    WriteDesc desc() const noexcept {
+    WriteDesc desc() const {
         WriteDesc d;
         d.name       = "ships/test_hauler";
         d.sourceHash = 0x1122334455667788ull;

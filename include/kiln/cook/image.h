@@ -22,9 +22,9 @@ struct Image {
     u32 bitsPerChannel = 0; ///< 8, 16 (native-endian u16) or 32 (f32: HDR, linear, not clamped)
     Vec<u8> pixels;         ///< width * height * channels * (bits / 8) bytes
 
-    u32 bytes_per_pixel() const noexcept { return channels * (bitsPerChannel / 8); }
-    u64 row_bytes() const noexcept { return u64(width) * bytes_per_pixel(); }
-    u64 byte_size() const noexcept { return row_bytes() * height; }
+    u32 bytes_per_pixel() const { return channels * (bitsPerChannel / 8); }
+    u64 row_bytes() const { return u64(width) * bytes_per_pixel(); }
+    u64 byte_size() const { return row_bytes() * height; }
 };
 
 // ---------------------------------------------------------------------------
@@ -49,16 +49,16 @@ enum ImageDiagCode : u32 {
 };
 
 /// True if `bytes` start with the signature of that format.
-[[nodiscard]] KILN_API bool is_png(Span<u8 const> bytes) noexcept;
-[[nodiscard]] KILN_API bool is_jpeg(Span<u8 const> bytes) noexcept;
-[[nodiscard]] KILN_API bool is_webp(Span<u8 const> bytes) noexcept;
-[[nodiscard]] KILN_API bool is_ktx2(Span<u8 const> bytes) noexcept;
+[[nodiscard]] KILN_API bool is_png(Span<u8 const> bytes);
+[[nodiscard]] KILN_API bool is_jpeg(Span<u8 const> bytes);
+[[nodiscard]] KILN_API bool is_webp(Span<u8 const> bytes);
+[[nodiscard]] KILN_API bool is_ktx2(Span<u8 const> bytes);
 /// Radiance .hdr: the header starts with `#?RADIANCE` or `#?RGBE`.
-[[nodiscard]] KILN_API bool is_hdr(Span<u8 const> bytes) noexcept;
+[[nodiscard]] KILN_API bool is_hdr(Span<u8 const> bytes);
 /// True for JPEG and lossy WebP.
-[[nodiscard]] KILN_API bool is_lossy_image(Span<u8 const> bytes) noexcept;
+[[nodiscard]] KILN_API bool is_lossy_image(Span<u8 const> bytes);
 /// True if this build decodes WebP (CMake option KILN_WEBP, off by default).
-[[nodiscard]] KILN_API bool webp_decode_enabled() noexcept;
+[[nodiscard]] KILN_API bool webp_decode_enabled();
 
 // Decoders return an Image allocated from `alloc` (Tag::Cook). Malformed input returns
 // ParseError, an unsupported feature returns Unsupported; both emit a K2xxx diagnostic.
@@ -66,23 +66,23 @@ enum ImageDiagCode : u32 {
 /// PNG: 8- or 16-bit; gray, gray+alpha, RGB, RGBA, palette expanded to RGB/RGBA. Interlaced
 /// PNGs are accepted.
 KILN_API Result<Image> decode_png(Span<u8 const> bytes, Allocator const* alloc,
-                                  DiagSink const* diag = nullptr, StrView asset = {}) noexcept;
+                                  DiagSink const* diag = nullptr, StrView asset = {});
 /// JPEG: baseline and progressive, to 1 channel (gray) or 3 (RGB), 8-bit. Arithmetic
 /// coding, 12/16-bit precision, lossless and hierarchical JPEG return Unsupported.
 KILN_API Result<Image> decode_jpeg(Span<u8 const> bytes, Allocator const* alloc,
-                                   DiagSink const* diag = nullptr, StrView asset = {}) noexcept;
+                                   DiagSink const* diag = nullptr, StrView asset = {});
 /// WebP: lossy and lossless, first frame only, to 3 channels (opaque) or 4, 8-bit.
 /// Returns Unsupported when webp_decode_enabled() is false.
 KILN_API Result<Image> decode_webp(Span<u8 const> bytes, Allocator const* alloc,
-                                   DiagSink const* diag = nullptr, StrView asset = {}) noexcept;
+                                   DiagSink const* diag = nullptr, StrView asset = {});
 /// Radiance .hdr (RGBE): flat or run-length encoded scanlines, standard orientation (`-Y H +X W`)
 /// only, to 3 channels of f32 (bitsPerChannel 32). Texels decode as Radiance does:
 /// (mantissa + 0.5) * 2^(exponent - 136), exponent 0 is black. The header's EXPOSURE is ignored.
 KILN_API Result<Image> decode_hdr(Span<u8 const> bytes, Allocator const* alloc,
-                                  DiagSink const* diag = nullptr, StrView asset = {}) noexcept;
+                                  DiagSink const* diag = nullptr, StrView asset = {});
 /// Picks the decoder from the signature. Other bytes return Unsupported (K2003).
 KILN_API Result<Image> decode_image(Span<u8 const> bytes, Allocator const* alloc,
-                                    DiagSink const* diag = nullptr, StrView asset = {}) noexcept;
+                                    DiagSink const* diag = nullptr, StrView asset = {});
 
 // ---------------------------------------------------------------------------
 // Half floats, integer-exact
@@ -90,18 +90,18 @@ KILN_API Result<Image> decode_image(Span<u8 const> bytes, Allocator const* alloc
 
 /// IEEE 754 binary16 from f32, round to nearest even. Values beyond the half range saturate to
 /// +-65504 instead of becoming infinity, so one bright texel cannot poison filtering; NaN becomes 0.
-KILN_API u16 float_to_half(f32 v) noexcept;
-KILN_API f32 half_to_float(u16 h) noexcept;
+KILN_API u16 float_to_half(f32 v);
+KILN_API f32 half_to_float(u16 h);
 
 // ---------------------------------------------------------------------------
 // sRGB transfer, integer-exact
 // ---------------------------------------------------------------------------
 
 /// sRGB-encoded 8-bit value -> linear 16-bit (0..65535), from a fixed table.
-KILN_API u16 srgb8_to_linear16(u8 v) noexcept;
+KILN_API u16 srgb8_to_linear16(u8 v);
 /// Linear 16-bit -> nearest sRGB-encoded 8-bit value (ties to the lower code), from a
 /// 64 KiB table derived from the same 256 entries.
-KILN_API u8 linear16_to_srgb8(u16 v) noexcept;
+KILN_API u8 linear16_to_srgb8(u16 v);
 
 // ---------------------------------------------------------------------------
 // Operations (all deterministic; results allocated from `alloc`, Tag::Cook)
@@ -126,7 +126,7 @@ struct JobBudget {
 /// v * 257. To 32 (f32): integers become v / max (no sRGB decode), A = 1.0. From 32 only to 32.
 /// Returns a copy when nothing changes.
 KILN_API Result<Image> convert_image(Image const& src, u32 channels, u32 bitsPerChannel,
-                                     Allocator const* alloc, JobBudget const& budget = {}) noexcept;
+                                     Allocator const* alloc, JobBudget const& budget = {});
 
 /// Level 0 preparation for prepare_image. Flip and renormalize apply to the converted
 /// image and are no-ops where flip_green / renormalize would be.
@@ -139,7 +139,7 @@ struct PrepareOptions {
 /// `src`. Byte-identical to calling them in that order. For f32 output the flags must be off.
 KILN_API Result<Image> prepare_image(Image const& src, u32 channels, u32 bitsPerChannel,
                                      PrepareOptions const& opt, Allocator const* alloc,
-                                     JobBudget const& budget = {}) noexcept;
+                                     JobBudget const& budget = {});
 
 /// `srgb`: sRGB-correct averaging of the first three channels (8-bit only; alpha is
 /// always linear). `renormalize`: treat RGB as a tangent-space normal (0..1 -> -1..1)
@@ -152,23 +152,23 @@ struct MipOptions {
 /// or row is dropped; a dimension of 1 samples the same texel twice. f32 images average as
 /// ((a + b) + (c + d)) * 0.25 with no fused multiply-add, identical on every compiler.
 KILN_API Result<Image> downsample_2x(Image const& src, MipOptions const& opt, Allocator const* alloc,
-                                     JobBudget const& budget = {}) noexcept;
+                                     JobBudget const& budget = {});
 
 /// Flip the green channel (v -> max - v) in place; DirectX -> OpenGL normal convention.
-KILN_API void flip_green(Image& img, JobBudget const& budget = {}) noexcept;
+KILN_API void flip_green(Image& img, JobBudget const& budget = {});
 
 /// Renormalize RGB as unit vectors in place (8- or 16-bit). No-op for < 3 channels.
-KILN_API void renormalize(Image& img, JobBudget const& budget = {}) noexcept;
+KILN_API void renormalize(Image& img, JobBudget const& budget = {});
 
 /// Alpha-tested mips: rescales the alpha of every level after the first so it keeps the share of
 /// texels whose alpha passes `cutoff` (0..1) that level 0 has. 8- and 16-bit RGBA only; anything
 /// else is left as it is. Integer arithmetic: the same bytes on every compiler.
-KILN_API void preserve_alpha_coverage(Span<Image> chain, f32 cutoff, Allocator const* alloc) noexcept;
+KILN_API void preserve_alpha_coverage(Span<Image> chain, f32 cutoff, Allocator const* alloc);
 
 /// Full mip chain: level 0 is `src` (moved in), then downsample_2x until 1x1.
 /// `maxLevels` 0 = full chain. `budget` splits only the level 0 to 1 downsample; the
 /// smaller levels run on the calling thread.
 KILN_API Result<Vec<Image>> build_mip_chain(Image&& src, MipOptions const& opt, u32 maxLevels,
-                                            Allocator const* alloc, JobBudget const& budget = {}) noexcept;
+                                            Allocator const* alloc, JobBudget const& budget = {});
 
 } // namespace kiln::cook

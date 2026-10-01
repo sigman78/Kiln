@@ -44,13 +44,13 @@ struct ProviderDesc {
 /// mode it cooks every load and writes nothing.
 /// Call install_provider and uninstall_provider on the pump thread. destroy(ctx) frees a provider
 /// that is still installed, so uninstall_provider is needed only to remove it earlier.
-KILN_API Status install_provider(Context* ctx, ProviderDesc const& desc) noexcept;
-KILN_API void uninstall_provider(Context* ctx) noexcept;
+KILN_API Status install_provider(Context* ctx, ProviderDesc const& desc);
+KILN_API void uninstall_provider(Context* ctx);
 
 /// True if every segment of `path` (`/`-separated, relative to `root`) has the same case on
 /// disk. Case-insensitive file systems accept a name in the wrong case, which then fails
 /// elsewhere. Checked on Windows; true on other systems.
-[[nodiscard]] KILN_API bool source_case_matches(StrView root, StrView path) noexcept;
+[[nodiscard]] KILN_API bool source_case_matches(StrView root, StrView path);
 
 enum ProviderDiagCode : u32 {
     kDiagSourceKind  = 5014, ///< the name's extension does not give the requested kind

@@ -116,6 +116,6 @@ struct WriteStats {
 /// comes from `alloc` (default allocator if null) under Tag::Cook.
 KILN_API Result<Vec<u8>> write(WriteDesc const& desc, WriteOptions const& opt = {},
                                Allocator const* alloc = nullptr, DiagSink const* diag = nullptr,
-                               WriteStats* stats = nullptr) noexcept;
+                               WriteStats* stats = nullptr);
 
 } // namespace kiln::mesh

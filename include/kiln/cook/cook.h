@@ -152,7 +152,7 @@ struct CookedMesh {
 /// Failure: Status per error-model.md, one or more K1xxx diagnostics. Warnings and
 /// infos never fail the cook. In a KILN_MESH=OFF build it always fails: Unsupported, K1021.
 KILN_API Result<CookedMesh> cook_mesh(MeshSource const& src, MeshCookSettings const& settings,
-                                      TargetProfile const& target, CookEnv const& env = {}) noexcept;
+                                      TargetProfile const& target, CookEnv const& env = {});
 
 // ---------------------------------------------------------------------------
 // Texture cooking
@@ -176,7 +176,7 @@ struct CookedTexture {
 /// Cook a PNG, JPEG or WebP (decode, convert per usage, mips) or pass a suitable KTX2 through.
 /// `settings` must be resolved (resolve_texture).
 KILN_API Result<CookedTexture> cook_texture(TextureSource const& src, TextureCookSettings const& settings,
-                                            TargetProfile const& target, CookEnv const& env = {}) noexcept;
+                                            TargetProfile const& target, CookEnv const& env = {});
 
 // ---------------------------------------------------------------------------
 // Store files: atomic writes (the store writer builds on them)
@@ -189,9 +189,9 @@ KILN_API Result<CookedTexture> cook_texture(TextureSource const& src, TextureCoo
 /// on Windows holds the file open without FILE_SHARE_DELETE, the old file stays and the result is IoError, so
 /// the caller can retry.
 KILN_API Status store_write(StrView dir, StrView name, Span<u8 const> bytes, DiagSink const* diag = nullptr,
-                            bool overwrite = false) noexcept;
+                            bool overwrite = false);
 
 /// True if `<dir>/<name>` exists.
-[[nodiscard]] KILN_API bool store_exists(StrView dir, StrView name) noexcept;
+[[nodiscard]] KILN_API bool store_exists(StrView dir, StrView name);
 
 } // namespace kiln::cook

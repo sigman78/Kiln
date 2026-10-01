@@ -8,31 +8,31 @@ namespace kiln {
 
 namespace {
 
-template <class T> T rd(Span<u8 const> b, u64 off) noexcept { return read_unaligned<T>(b.data + off); }
+template <class T> T rd(Span<u8 const> b, u64 off) { return read_unaligned<T>(b.data + off); }
 
-Hash128 rd_hash(Span<u8 const> b, u64 off) noexcept {
+Hash128 rd_hash(Span<u8 const> b, u64 off) {
     Hash128 h;
     std::memcpy(h.bytes, b.data + off, sizeof h.bytes);
     return h;
 }
 
 /// -1, 0, 1 as `a` sorts before, with or after `b`: bytes, then length.
-int compare_names(StrView a, StrView b) noexcept {
+int compare_names(StrView a, StrView b) {
     usize const n = min(a.size, b.size);
     if (int const c = n ? std::memcmp(a.data, b.data, n) : 0; c != 0) return c < 0 ? -1 : 1;
     return a.size < b.size ? -1 : a.size > b.size ? 1 : 0;
 }
 
-bool all_zero(Span<u8 const> b, u64 off, u64 n) noexcept {
+bool all_zero(Span<u8 const> b, u64 off, u64 n) {
     for (u64 i = 0; i < n; ++i)
         if (b.data[off + i] != 0) return false;
     return true;
 }
 
-u64 align8(u64 v) noexcept { return (v + 7) & ~u64(7); }
+u64 align8(u64 v) { return (v + 7) & ~u64(7); }
 
 /// A string of the string section, or false when it does not lie inside it.
-bool string_at(Span<u8 const> b, u64 strings, u64 stringBytes, u32 off, u32 len, StrView* out) noexcept {
+bool string_at(Span<u8 const> b, u64 strings, u64 stringBytes, u32 off, u32 len, StrView* out) {
     if (u64(off) > stringBytes || u64(len) > stringBytes - off) return false;
     *out = StrView(reinterpret_cast<char const*>(b.data + strings + off), len);
     return true;
@@ -48,7 +48,7 @@ constexpr u64 kTotal = 16, kProfileCount = 24, kEntryCount = 32, kProfiles = 40,
 #define KILN_MANIFEST_FAIL(code, diagCode, ...)                                                              \
     return diagf(diag, make_status(code), diagCode, Severity::Error, where, "manifest", __VA_ARGS__)
 
-Result<ManifestView> ManifestView::open(Span<u8 const> b, DiagSink const* diag, StrView where) noexcept {
+Result<ManifestView> ManifestView::open(Span<u8 const> b, DiagSink const* diag, StrView where) {
     if (b.size < kManifestHeaderBytes || rd<u32>(b, 0) != kManifestMagic)
         KILN_MANIFEST_FAIL(Code::Corrupt, kDiagManifestMagic, "not a store manifest");
     u16 const major = rd<u16>(b, 4), minor = rd<u16>(b, 6);
@@ -165,7 +165,7 @@ Result<ManifestView> ManifestView::open(Span<u8 const> b, DiagSink const* diag, 
 
 #undef KILN_MANIFEST_FAIL
 
-ManifestProfile ManifestView::profile(u32 i) const noexcept {
+ManifestProfile ManifestView::profile(u32 i) const {
     KILN_ASSERT(i < profiles_);
     u64 const pOff = rd<u64>(bytes_, kProfiles), at = pOff + u64(i) * kManifestProfileBytes;
     ManifestProfile p;
@@ -182,7 +182,7 @@ ManifestProfile ManifestView::profile(u32 i) const noexcept {
     return p;
 }
 
-bool ManifestView::find_profile(StrView name, ManifestProfile* out) const noexcept {
+bool ManifestView::find_profile(StrView name, ManifestProfile* out) const {
     u32 lo = 0, hi = profiles_;
     while (lo < hi) {
         u32 const mid           = lo + (hi - lo) / 2;
@@ -200,11 +200,11 @@ bool ManifestView::find_profile(StrView name, ManifestProfile* out) const noexce
     return false;
 }
 
-Hash128 ManifestView::checksum() const noexcept {
+Hash128 ManifestView::checksum() const {
     return bytes_.empty() ? Hash128{} : rd_hash(bytes_, kManifestChecksumOffset);
 }
 
-ManifestEntry ManifestProfile::entry(u64 i) const noexcept {
+ManifestEntry ManifestProfile::entry(u64 i) const {
     KILN_ASSERT(i < count_);
     u64 const at = entries_ + (first_ + i) * kManifestEntryBytes;
     ManifestEntry e;
@@ -217,7 +217,7 @@ ManifestEntry ManifestProfile::entry(u64 i) const noexcept {
     return e;
 }
 
-bool ManifestProfile::find(AssetKind kind, StrView name, ManifestEntry* out) const noexcept {
+bool ManifestProfile::find(AssetKind kind, StrView name, ManifestEntry* out) const {
     u64 const h = hash_name(name);
     u64 lo = first_, hi = first_ + count_;
     while (lo < hi) {
@@ -237,7 +237,7 @@ bool ManifestProfile::find(AssetKind kind, StrView name, ManifestEntry* out) con
     return false;
 }
 
-char const* check_profile_name(StrView name) noexcept {
+char const* check_profile_name(StrView name) {
     if (name.empty() || name.size > 63) return "1 to 63 characters";
     for (char const c : name)
         if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' || c == '-'))
@@ -245,11 +245,11 @@ char const* check_profile_name(StrView name) noexcept {
     return nullptr;
 }
 
-usize manifest_file_path(StrView storeDir, char* out, usize cap) noexcept {
+usize manifest_file_path(StrView storeDir, char* out, usize cap) {
     return format(out, cap, "%.*s/%s", KILN_SV(storeDir), kManifestFile);
 }
 
-usize artifact_file_path(StrView storeDir, Hash128 const& key, char* out, usize cap) noexcept {
+usize artifact_file_path(StrView storeDir, Hash128 const& key, char* out, usize cap) {
     char b32[27];
     hash128_base32(key, b32);
     return format(out, cap, "%.*s/%s", KILN_SV(storeDir), b32);

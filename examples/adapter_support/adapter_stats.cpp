@@ -5,7 +5,7 @@
 
 namespace kiln::ex {
 
-void log_adapter_stats(char const* who, AdapterStats const& s) noexcept {
+void log_adapter_stats(char const* who, AdapterStats const& s) {
     using ull = unsigned long long;
     KILN_INFO(who,
               "adapter: %u live objects, %u uploads pending, %u failed, %u discarded, %llu bytes committed, "

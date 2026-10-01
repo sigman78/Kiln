@@ -49,7 +49,7 @@ TextureHandle request_texture_array(
     Context* ctx,
     StrView runtimeName,
     Span<StrView const> layers,
-    RequestOptions const& options = {}) noexcept;
+    RequestOptions const& options = {});
 ```
 
 For example, `runtimeName = "terrain/tiles"` and the ordered names `"terrain/grass"`,

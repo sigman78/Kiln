@@ -155,14 +155,14 @@ template <class T> struct Fifo {
         items.init(a, Tag::Payload);
         items.resize(cap);
     }
-    [[nodiscard]] bool empty() const noexcept { return count == 0; }
-    T& front() noexcept { return items[head]; }
-    void push(T const& v) noexcept {
+    [[nodiscard]] bool empty() const { return count == 0; }
+    T& front() { return items[head]; }
+    void push(T const& v) {
         KILN_VERIFY(count < items.size());
         items[(head + count) % items.size()] = v;
         ++count;
     }
-    void pop() noexcept {
+    void pop() {
         head = (head + 1) % items.size();
         --count;
     }
@@ -219,9 +219,9 @@ struct VkAdapter {
 
 namespace {
 
-VkAdapter* self(void* user) noexcept { return static_cast<VkAdapter*>(user); }
+VkAdapter* self(void* user) { return static_cast<VkAdapter*>(user); }
 
-u64 timeline_value(VkAdapter* a) noexcept {
+u64 timeline_value(VkAdapter* a) {
     u64 v = 0;
     VKX_CHECK(vkGetSemaphoreCounterValue(a->device, a->timeline, &v));
     return v;
@@ -229,8 +229,8 @@ u64 timeline_value(VkAdapter* a) noexcept {
 
 /// An upload token: the object's generation and its 1-based index. Stable from begin_upload on,
 /// unlike its timeline value, which commit_upload gives.
-u64 token_of(u32 index, Object const& o) noexcept { return (u64(o.generation) << 32) | (u64(index) + 1); }
-Object* object_of_token(VkAdapter* a, u64 token) noexcept {
+u64 token_of(u32 index, Object const& o) { return (u64(o.generation) << 32) | (u64(index) + 1); }
+Object* object_of_token(VkAdapter* a, u64 token) {
     u64 const index = (token & 0xFFFFFFFFu);
     if (index == 0 || index > a->objects.size()) return nullptr;
     Object& o = a->objects[usize(index - 1)];
@@ -238,7 +238,7 @@ Object* object_of_token(VkAdapter* a, u64 token) noexcept {
     return &o;
 }
 
-Object* object_of(VkAdapter* a, GpuObject obj) noexcept {
+Object* object_of(VkAdapter* a, GpuObject obj) {
     if (obj.native == 0 || obj.native > a->objects.size()) return nullptr;
     Object& o = a->objects[usize(obj.native - 1)];
     return o.state == ObjectState::Free ? nullptr : &o;
@@ -247,7 +247,7 @@ Object* object_of(VkAdapter* a, GpuObject obj) noexcept {
 // --- Staging ring -----------------------------------------------------------------------------
 
 /// Releases every reservation whose upload has completed. Caller holds the mutex.
-void ring_reclaim(VkAdapter* a, u64 completed) noexcept {
+void ring_reclaim(VkAdapter* a, u64 completed) {
     while (!a->ring.empty() && a->ring.front().value != 0 &&
            (a->ring.front().value == kDiscarded || a->ring.front().value <= completed)) {
         a->ringTail = a->ring.front().end;
@@ -257,7 +257,7 @@ void ring_reclaim(VkAdapter* a, u64 completed) noexcept {
 }
 
 /// Finds `n` bytes at `align`; false when the ring cannot fit them now. Caller holds the mutex.
-bool ring_find(VkAdapter const* a, u64 n, u64 align, u64* start) noexcept {
+bool ring_find(VkAdapter const* a, u64 n, u64 align, u64* start) {
     u64 const s = align_up(a->ringHead, align);
     // With live reservations and head <= tail the free space is [head, tail); otherwise it
     // is [head, size) followed by [0, tail).
@@ -276,21 +276,21 @@ bool ring_find(VkAdapter const* a, u64 n, u64 align, u64* start) noexcept {
     return true;
 }
 
-u64 ring_used(VkAdapter const* a) noexcept {
+u64 ring_used(VkAdapter const* a) {
     if (a->ring.empty()) return 0;
     return a->ringHead > a->ringTail ? a->ringHead - a->ringTail : a->ringSize - a->ringTail + a->ringHead;
 }
 
 // --- Command buffers and submission -----------------------------------------------------------
 
-void cmds_reclaim(VkAdapter* a, u64 completed) noexcept {
+void cmds_reclaim(VkAdapter* a, u64 completed) {
     while (!a->cmdsInFlight.empty() && a->cmdsInFlight.front().value <= completed) {
         a->freeCmds.push_back(a->cmdsInFlight.front().cmd);
         a->cmdsInFlight.pop();
     }
 }
 
-VkCommandBuffer cmd_get(VkAdapter* a) noexcept {
+VkCommandBuffer cmd_get(VkAdapter* a) {
     if (!a->freeCmds.empty()) {
         VkCommandBuffer const c = a->freeCmds.back();
         a->freeCmds.pop_back();
@@ -310,7 +310,7 @@ VkCommandBuffer cmd_get(VkAdapter* a) noexcept {
 /// timeline semaphore only accepts increasing signal values. Values are given at commit, so a
 /// small upload committed first is never held back by a larger one still being written.
 /// Caller holds the mutex.
-void submit_ready(VkAdapter* a) noexcept {
+void submit_ready(VkAdapter* a) {
     u64 next = a->submittedValue.load(std::memory_order_relaxed) + 1;
     while (next <= a->lastValue) {
         VkCommandBufferSubmitInfo cmds[kMaxSubmitBatch];
@@ -346,7 +346,7 @@ void submit_ready(VkAdapter* a) noexcept {
 
 // --- Objects ----------------------------------------------------------------------------------
 
-void object_free(VkAdapter* a, u32 index) noexcept {
+void object_free(VkAdapter* a, u32 index) {
     Object& o = a->objects[index];
     vkDestroyImageView(a->device, o.view, nullptr);
     vkDestroyImage(a->device, o.image, nullptr);
@@ -360,7 +360,7 @@ void object_free(VkAdapter* a, u32 index) noexcept {
 }
 
 Status allocate_memory(VkAdapter* a, VkMemoryRequirements const& req, bool deviceAddress,
-                       VkDeviceMemory* out) noexcept {
+                       VkDeviceMemory* out) {
     u32 const type = find_memory_type(*a->dev, req.memoryTypeBits, 0, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
     if (type == kInvalid) return make_status(Code::Unsupported);
     VkMemoryAllocateFlagsInfo flags{};
@@ -389,7 +389,7 @@ struct Sharing {
     u32 families[2]    = {};
 };
 
-Sharing sharing(VkAdapter const* a) noexcept {
+Sharing sharing(VkAdapter const* a) {
     Sharing s;
     if (a->concurrent) {
         s.mode        = VK_SHARING_MODE_CONCURRENT;
@@ -400,7 +400,7 @@ Sharing sharing(VkAdapter const* a) noexcept {
     return s;
 }
 
-Status create_buffer(VkAdapter* a, Object& o, u64 size) noexcept {
+Status create_buffer(VkAdapter* a, Object& o, u64 size) {
     Sharing const sh = sharing(a);
     VkBufferCreateInfo info{};
     info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
@@ -426,7 +426,7 @@ Status create_buffer(VkAdapter* a, Object& o, u64 size) noexcept {
     return kOk;
 }
 
-Status create_image(VkAdapter* a, Object& o, TextureDesc const& t) noexcept {
+Status create_image(VkAdapter* a, Object& o, TextureDesc const& t) {
     Sharing const sh = sharing(a);
     bool const is3d  = t.depth > 1;
     VkImageCreateInfo info{};
@@ -474,7 +474,7 @@ Status create_image(VkAdapter* a, Object& o, TextureDesc const& t) noexcept {
 }
 
 /// Binding 0 holds 2D views, 1 cube views, 2 array views; a slot index is shared by all three.
-void write_slot(VkAdapter* a, u32 slot, VkImageView view, TextureShape shape) noexcept {
+void write_slot(VkAdapter* a, u32 slot, VkImageView view, TextureShape shape) {
     VkDescriptorImageInfo image{};
     image.sampler     = a->sampler;
     image.imageView   = view;
@@ -490,7 +490,7 @@ void write_slot(VkAdapter* a, u32 slot, VkImageView view, TextureShape shape) no
     vkUpdateDescriptorSets(a->device, 1, &write, 0, nullptr);
 }
 
-void record_texture(VkAdapter* a, VkCommandBuffer cmd, Object const& o) noexcept {
+void record_texture(VkAdapter* a, VkCommandBuffer cmd, Object const& o) {
     TextureDesc const& t = o.texture;
     FormatInfo const* fi = format_info(t.format);
     u64 offsets[kMaxLevels];
@@ -551,7 +551,7 @@ void record_texture(VkAdapter* a, VkCommandBuffer cmd, Object const& o) noexcept
     vkCmdPipelineBarrier2(cmd, &dep);
 }
 
-void record_mesh(VkAdapter* a, VkCommandBuffer cmd, Object const& o) noexcept {
+void record_mesh(VkAdapter* a, VkCommandBuffer cmd, Object const& o) {
     VkBufferCopy2 region{};
     region.sType     = VK_STRUCTURE_TYPE_BUFFER_COPY_2;
     region.srcOffset = o.stagingOffset;
@@ -588,7 +588,7 @@ void record_mesh(VkAdapter* a, VkCommandBuffer cmd, Object const& o) noexcept {
 
 // --- The adapter entry points -----------------------------------------------------------------
 
-bool vk_supports_format(void* user, Format f, FormatUsage usage) noexcept {
+bool vk_supports_format(void* user, Format f, FormatUsage usage) {
     VkAdapter* a         = self(user);
     FormatInfo const* fi = format_info(f);
     if (!fi) return false;
@@ -603,13 +603,13 @@ bool vk_supports_format(void* user, Format f, FormatUsage usage) noexcept {
     return (props.optimalTilingFeatures & need) == need;
 }
 
-void vk_copy_constraints(void* /*user*/, CopyConstraints* out) noexcept {
+void vk_copy_constraints(void* /*user*/, CopyConstraints* out) {
     out->optimalRowPitchAlign = kRowPitchAlign;
     out->optimalOffsetAlign   = kOffsetAlign;
     out->bufferOffsetAlign    = kBufferOffsetAlign;
 }
 
-Status vk_begin_upload(void* user, UploadDesc const& desc, UploadTarget* out) noexcept {
+Status vk_begin_upload(void* user, UploadDesc const& desc, UploadTarget* out) {
     VkAdapter* a         = self(user);
     bool const isTexture = desc.kind == UploadKind::TextureLevels;
     if (isTexture ? !desc.texture : !desc.mesh) return make_status(Code::InvalidArgument);
@@ -683,7 +683,7 @@ Status vk_begin_upload(void* user, UploadDesc const& desc, UploadTarget* out) no
     return kOk;
 }
 
-void vk_commit_upload(void* user, u64 token) noexcept {
+void vk_commit_upload(void* user, u64 token) {
     VkAdapter* a = self(user);
     std::lock_guard<std::mutex> lock(a->mutex);
     Object* const found = object_of_token(a, token);
@@ -712,7 +712,7 @@ void vk_commit_upload(void* user, u64 token) noexcept {
 
 /// kiln's write failed: nothing was recorded, so the image or buffer goes now, and its ring range
 /// once the ranges before it are reclaimed.
-void vk_discard_upload(void* user, u64 token) noexcept {
+void vk_discard_upload(void* user, u64 token) {
     VkAdapter* a = self(user);
     std::lock_guard<std::mutex> lock(a->mutex);
     Object* const o = object_of_token(a, token);
@@ -724,7 +724,7 @@ void vk_discard_upload(void* user, u64 token) noexcept {
 }
 
 /// A submitted copy cannot fail short of a lost device (VKX_CHECK), so never Failed for a live token.
-UploadStatus vk_upload_status(void* user, u64 token, Status* failure) noexcept {
+UploadStatus vk_upload_status(void* user, u64 token, Status* failure) {
     VkAdapter* a = self(user);
     std::lock_guard<std::mutex> lock(a->mutex);
     Object const* o = object_of_token(a, token);
@@ -739,13 +739,13 @@ UploadStatus vk_upload_status(void* user, u64 token, Status* failure) noexcept {
     return UploadStatus::Complete;
 }
 
-void vk_bind(void* user, u32 slot, GpuObject obj, TextureShape shape) noexcept {
+void vk_bind(void* user, u32 slot, GpuObject obj, TextureShape shape) {
     VkAdapter* a = self(user);
     std::lock_guard<std::mutex> lock(a->mutex);
     if (Object const* o = object_of(a, obj); o && o->view) write_slot(a, slot, o->view, shape);
 }
 
-void vk_destroy(void* user, GpuObject obj) noexcept {
+void vk_destroy(void* user, GpuObject obj) {
     VkAdapter* a = self(user);
     std::lock_guard<std::mutex> lock(a->mutex);
     if (object_of(a, obj)) object_free(a, u32(obj.native - 1));
@@ -757,7 +757,7 @@ void vk_destroy(void* user, GpuObject obj) noexcept {
 
 namespace {
 
-Status create_vulkan_objects(VkAdapter* a) noexcept {
+Status create_vulkan_objects(VkAdapter* a) {
     Device const& d = *a->dev;
     VkResult r;
 
@@ -857,7 +857,7 @@ Status create_vulkan_objects(VkAdapter* a) noexcept {
 
 } // namespace
 
-Result<VkAdapter*> adapter_create(AdapterDesc const& desc, Adapter* out) noexcept {
+Result<VkAdapter*> adapter_create(AdapterDesc const& desc, Adapter* out) {
     if (!out || !desc.device || !desc.device->device || desc.maxSlots == 0 || desc.maxObjects == 0 ||
         desc.stagingBytes == 0)
         return make_status(Code::InvalidArgument);
@@ -936,7 +936,7 @@ Result<VkAdapter*> adapter_create(AdapterDesc const& desc, Adapter* out) noexcep
     return a;
 }
 
-void adapter_destroy(VkAdapter* a) noexcept {
+void adapter_destroy(VkAdapter* a) {
     if (!a) return;
     if (a->device) {
         {
@@ -957,15 +957,13 @@ void adapter_destroy(VkAdapter* a) noexcept {
     delete_object(a->alloc, a, Tag::Payload);
 }
 
-VkDescriptorSetLayout adapter_set_layout(VkAdapter* a) noexcept { return a ? a->setLayout : VK_NULL_HANDLE; }
-VkDescriptorSet adapter_descriptor_set(VkAdapter* a) noexcept { return a ? a->set : VK_NULL_HANDLE; }
-VkSemaphore adapter_timeline(VkAdapter* a) noexcept { return a ? a->timeline : VK_NULL_HANDLE; }
+VkDescriptorSetLayout adapter_set_layout(VkAdapter* a) { return a ? a->setLayout : VK_NULL_HANDLE; }
+VkDescriptorSet adapter_descriptor_set(VkAdapter* a) { return a ? a->set : VK_NULL_HANDLE; }
+VkSemaphore adapter_timeline(VkAdapter* a) { return a ? a->timeline : VK_NULL_HANDLE; }
 
-u64 adapter_upload_watermark(VkAdapter* a) noexcept {
-    return a ? a->watermark.load(std::memory_order_relaxed) : 0;
-}
+u64 adapter_upload_watermark(VkAdapter* a) { return a ? a->watermark.load(std::memory_order_relaxed) : 0; }
 
-MeshPayload adapter_mesh(VkAdapter* a, GpuObject obj) noexcept {
+MeshPayload adapter_mesh(VkAdapter* a, GpuObject obj) {
     if (!a) return {};
     std::lock_guard<std::mutex> lock(a->mutex);
     Object const* o = object_of(a, obj);
@@ -973,7 +971,7 @@ MeshPayload adapter_mesh(VkAdapter* a, GpuObject obj) noexcept {
     return MeshPayload{.buffer = o->buffer, .offset = 0, .size = o->size, .address = o->address};
 }
 
-TextureView adapter_texture(VkAdapter* a, GpuObject obj) noexcept {
+TextureView adapter_texture(VkAdapter* a, GpuObject obj) {
     if (!a) return {};
     std::lock_guard<std::mutex> lock(a->mutex);
     Object const* o = object_of(a, obj);
@@ -981,7 +979,7 @@ TextureView adapter_texture(VkAdapter* a, GpuObject obj) noexcept {
     return TextureView{.view = o->view, .shape = o->texture.shape};
 }
 
-bool adapter_read_texture(void* user, GpuObject obj, TextureDesc const& desc, Vec<u8>* out) noexcept {
+bool adapter_read_texture(void* user, GpuObject obj, TextureDesc const& desc, Vec<u8>* out) {
     VkAdapter* const a = static_cast<VkAdapter*>(user);
     std::lock_guard<std::mutex> lock(a->mutex);
     Object const* o = object_of(a, obj);
@@ -1106,7 +1104,7 @@ bool adapter_read_texture(void* user, GpuObject obj, TextureDesc const& desc, Ve
     return ok;
 }
 
-ex::AdapterStats adapter_stats(VkAdapter* a) noexcept {
+ex::AdapterStats adapter_stats(VkAdapter* a) {
     if (!a) return {};
     std::lock_guard<std::mutex> lock(a->mutex);
     u64 const completed = timeline_value(a);

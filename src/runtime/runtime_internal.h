@@ -20,10 +20,10 @@ inline constexpr usize kMaxPathLen = kMaxAssetNameLen + 1; ///< asset name incl.
 /// Context::ph holds, per shape, one placeholder per kind and then the Failed one.
 inline constexpr u32 kPlaceholdersPerShape = u32(TextureKind::Count) + 1;
 inline constexpr u32 kPlaceholderCount     = kPlaceholdersPerShape * u32(TextureShape::Count);
-constexpr u32 placeholder_index(TextureKind kind, TextureShape shape) noexcept {
+constexpr u32 placeholder_index(TextureKind kind, TextureShape shape) {
     return u32(shape) * kPlaceholdersPerShape + u32(kind);
 }
-constexpr u32 failed_placeholder_index(TextureShape shape) noexcept {
+constexpr u32 failed_placeholder_index(TextureShape shape) {
     return u32(shape) * kPlaceholdersPerShape + u32(TextureKind::Count);
 }
 
@@ -35,9 +35,9 @@ struct Buffer {
     Allocator const* alloc = nullptr;
     Tag tag                = Tag::Payload;
 
-    void allocate(Allocator const* a, usize n, Tag t) noexcept;
-    void release() noexcept;
-    Span<u8 const> span() const noexcept { return {data, size}; }
+    void allocate(Allocator const* a, usize n, Tag t);
+    void release();
+    Span<u8 const> span() const { return {data, size}; }
 };
 
 enum class Phase : u8 {
@@ -70,7 +70,7 @@ struct DiagCapture {
     u32 code          = 0;
     Severity severity = Severity::Error;
     char msg[192]     = {};
-    void reset() noexcept {
+    void reset() {
         set    = false;
         code   = 0;
         msg[0] = '\0';
@@ -116,7 +116,7 @@ struct ArrayDecl {
     usize namesLen     = 0;
     ArrayLayer* layers = nullptr;
     u32 count          = 0;
-    StrView name(ArrayLayer const& l) const noexcept { return {names + l.nameOff, l.nameLen}; }
+    StrView name(ArrayLayer const& l) const { return {names + l.nameOff, l.nameLen}; }
 };
 
 struct Watch; // watch.cpp: store poller state
@@ -319,102 +319,102 @@ struct Context {
 namespace rt {
 
 // --- registry.cpp -------------------------------------------------------------------
-Slot* resolve(Context* ctx, u64 bits, AssetKind kind) noexcept;
-HashMap<AssetId, u32>& map_for(Context* ctx, AssetKind kind) noexcept;
+Slot* resolve(Context* ctx, u64 bits, AssetKind kind);
+HashMap<AssetId, u32>& map_for(Context* ctx, AssetKind kind);
 /// Allocate and initialize a new slot (Pending, queued for the meta stage) or return an
 /// existing one. `memory` (moved in) makes it a memory source (register_*). Returns
 /// nullptr and emits a diagnostic on failure.
 Slot* request_slot(Context* ctx, AssetKind kind, StrView path, RequestOptions const& opt, Buffer* memory,
-                   bool rejectExisting) noexcept;
+                   bool rejectExisting);
 /// Allocate a texture array declaration with room for `count` layers and `namesLen` name bytes.
-ArrayDecl* new_array_decl(Allocator const* a, u32 count, usize namesLen) noexcept;
-void free_array_decl(Allocator const* a, ArrayDecl* d) noexcept;
+ArrayDecl* new_array_decl(Allocator const* a, u32 count, usize namesLen);
+void free_array_decl(Allocator const* a, ArrayDecl* d);
 /// The job data of each layer (cook output, level table), after a load settles or fails.
-void free_array_job_data(Allocator const* a, ArrayDecl& d) noexcept;
+void free_array_job_data(Allocator const* a, ArrayDecl& d);
 /// A load settled or failed: the artifacts it used become the ones later manifest checks compare.
-void adopt_job_keys(Slot& s) noexcept;
-void free_slot(Context* ctx, Slot& s) noexcept;
+void adopt_job_keys(Slot& s);
+void free_slot(Context* ctx, Slot& s);
 /// kiln no longer uses `obj` (may be null) and bindless slot `bindSlot` (may be kInvalid):
 /// released now if the host reported no frame that may still use them, else in process_retired().
-void retire(Context* ctx, GpuObject obj, u32 bindSlot) noexcept;
+void retire(Context* ctx, GpuObject obj, u32 bindSlot);
 /// Drop `s`'s upload target: it goes to Context::orphans until its upload completes.
-void orphan_upload(Context* ctx, Slot& s) noexcept;
+void orphan_upload(Context* ctx, Slot& s);
 /// Bind `s`'s bindless slot to the placeholder its state shows, or mark it pending.
-void bind_placeholder(Context* ctx, Slot& s) noexcept;
+void bind_placeholder(Context* ctx, Slot& s);
 /// Bind `s`'s bindless slot to `obj` (no-op without a slot).
-void bind_object(Context* ctx, Slot& s, GpuObject obj) noexcept;
-void free_load_data(Slot& s) noexcept;
-void free_meta_set(Allocator const* a, MetaSet& m) noexcept;
+void bind_object(Context* ctx, Slot& s, GpuObject obj);
+void free_load_data(Slot& s);
+void free_meta_set(Allocator const* a, MetaSet& m);
 /// The metadata queries show: `cur` when Ready, `next` when MetaReady, else null.
-MetaSet const* shown_meta(Slot const& s) noexcept;
-void queue_push(Context* ctx, QueueId q, Slot& s) noexcept;
-void queue_remove(Context* ctx, Slot& s) noexcept;
-GroupRec* group_of(Context* ctx, Slot const& s) noexcept;
-void boost(Context* ctx, Slot& s) noexcept;
-void boost_group(Context* ctx, Group g) noexcept;
-inline u64 handle_bits(Slot const& s) noexcept { return (u64(s.generation) << 32) | s.index; }
-inline StrView path_of(Slot const& s) noexcept { return {s.path, s.pathLen}; }
+MetaSet const* shown_meta(Slot const& s);
+void queue_push(Context* ctx, QueueId q, Slot& s);
+void queue_remove(Context* ctx, Slot& s);
+GroupRec* group_of(Context* ctx, Slot const& s);
+void boost(Context* ctx, Slot& s);
+void boost_group(Context* ctx, Group g);
+inline u64 handle_bits(Slot const& s) { return (u64(s.generation) << 32) | s.index; }
+inline StrView path_of(Slot const& s) { return {s.path, s.pathLen}; }
 /// Tex2D always; Cube and Array only when the adapter declares them (AdapterCaps).
-[[nodiscard]] inline bool shape_supported(Context const* ctx, TextureShape shape) noexcept {
+[[nodiscard]] inline bool shape_supported(Context const* ctx, TextureShape shape) {
     if (shape == TextureShape::Cube) return (ctx->adapter.caps & kCubeTextures) != 0;
     if (shape == TextureShape::Array) return (ctx->adapter.caps & kArrayTextures) != 0;
     return shape == TextureShape::Tex2D;
 }
 /// False if the adapter's caps rule out this request: a mesh without kMeshes, or a shape.
-[[nodiscard]] inline bool caps_allow(Context const* ctx, AssetKind kind, TextureShape shape) noexcept {
+[[nodiscard]] inline bool caps_allow(Context const* ctx, AssetKind kind, TextureShape shape) {
     if (kind == AssetKind::Mesh) return (ctx->adapter.caps & kMeshes) != 0;
     return shape_supported(ctx, shape);
 }
 /// The shape of a KTX2 texture; Count for one kiln does not load (a volume or a cube array).
-inline TextureShape shape_of(ktx2::TextureDesc const& d) noexcept {
+inline TextureShape shape_of(ktx2::TextureDesc const& d) {
     if (d.depth > 1 || (d.isCube && d.isArray)) return TextureShape::Count;
     return d.isCube ? TextureShape::Cube : d.isArray ? TextureShape::Array : TextureShape::Tex2D;
 }
 
 // --- loader.cpp (worker side) -------------------------------------------------------
-void run_job(void* arg) noexcept;
+void run_job(void* arg);
 /// `<store>/manifest.dir`. Returns the length `format` reports (>= cap - 1 means
 /// truncated). Reads only fields fixed at create().
-usize manifest_path(Context const* ctx, char* out, usize cap) noexcept;
+usize manifest_path(Context const* ctx, char* out, usize cap);
 /// Takes `bytes`, a validated manifest `v`, as the one in use, with the context's profile of it.
-void adopt_manifest(Context* ctx, Vec<u8>&& bytes, ManifestView const& v) noexcept;
+void adopt_manifest(Context* ctx, Vec<u8>&& bytes, ManifestView const& v);
 /// Texture upload layout: levels ascending, each at `offsetAlign`, rows padded to
 /// `pitchAlign`. Writes [dstOffset] and [rowPitch] per level; returns the total size.
 u64 texture_layout(ktx2::TextureDesc const& d, u64 pitchAlign, u64 offsetAlign, u64* outOffset,
-                   u64* outPitch) noexcept;
+                   u64* outPitch);
 
 // --- context.cpp ------------------------------------------------------------------------
 /// A reload starts and no store poller runs: read the manifest again, and use it if it changed (IO
 /// on the pump thread; reloads are a dev action). A malformed one is reported and not used.
-void refresh_manifest(Context* ctx) noexcept;
+void refresh_manifest(Context* ctx);
 
 // --- pump.cpp -------------------------------------------------------------------------
-void push_event(Context* ctx, EventKind kind, AssetKind asset, u64 bits, u32 version, Status st) noexcept;
-void fail_slot(Context* ctx, Slot& s, u32 code, Status st) noexcept;
-void submit_stage(Context* ctx, Slot& s, Stage stage) noexcept;
-PumpStats pump_impl(Context* ctx, PumpOptions const& opt, bool keepEvents) noexcept;
+void push_event(Context* ctx, EventKind kind, AssetKind asset, u64 bits, u32 version, Status st);
+void fail_slot(Context* ctx, Slot& s, u32 code, Status st);
+void submit_stage(Context* ctx, Slot& s, Stage stage);
+PumpStats pump_impl(Context* ctx, PumpOptions const& opt, bool keepEvents);
 /// request_reload(): start a reload of a settled file-source slot, or remember it
 /// (reloadPending) until the slot settles. Memory sources: K5012.
-void reload_slot(Context* ctx, Slot& s) noexcept;
+void reload_slot(Context* ctx, Slot& s);
 /// True if the manifest in use has an entry for the settled file-source `s` that names another
 /// artifact than the one it loaded or tried (or it had none).
-[[nodiscard]] bool manifest_names_other(Context const* ctx, Slot const& s) noexcept;
+[[nodiscard]] bool manifest_names_other(Context const* ctx, Slot const& s);
 /// Poll non-self-submitting placeholder uploads (create() and pump()).
-void poll_placeholders(Context* ctx) noexcept;
+void poll_placeholders(Context* ctx);
 /// Poll abandoned uploads; a completed one is retired.
-void poll_orphans(Context* ctx) noexcept;
+void poll_orphans(Context* ctx);
 /// Release the retired entries whose frame completed.
-void process_retired(Context* ctx) noexcept;
+void process_retired(Context* ctx);
 
 // --- watch.cpp (store poller; stubs without KILN_HOT_RELOAD) ----------------------------
 /// create(): start the manifest poller if `desc.watchStore`; K5011 (Warning) if it cannot run.
-void watch_start(Context* ctx, HotReloadDesc const& desc) noexcept;
+void watch_start(Context* ctx, HotReloadDesc const& desc);
 /// destroy(): stop and join the poller. Safe when not started.
-void watch_stop(Context* ctx) noexcept;
+void watch_stop(Context* ctx);
 /// destroy(), after the jobs drained: free the poller's state (the poller is joined).
-void watch_free(Context* ctx) noexcept;
+void watch_free(Context* ctx);
 /// pump(): swap in a manifest the poller loaded and reload the assets whose key changed.
-void watch_drain(Context* ctx) noexcept;
+void watch_drain(Context* ctx);
 
 } // namespace rt
 } // namespace kiln

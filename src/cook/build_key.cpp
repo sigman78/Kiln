@@ -21,11 +21,11 @@ enum : u8 {
 struct Writer {
     Vec<u8> out{default_allocator(), Tag::Cook};
 
-    void le(u64 v, usize bytes) noexcept {
+    void le(u64 v, usize bytes) {
         for (usize i = 0; i < bytes; ++i)
             out.push_back(u8(v >> (8 * i)));
     }
-    void str(StrView s) noexcept {
+    void str(StrView s) {
         le(s.size, 4);
         out.append(Span<u8 const>(reinterpret_cast<u8 const*>(s.data), s.size));
     }
@@ -33,7 +33,7 @@ struct Writer {
 
 } // namespace
 
-Hash128 build_key(BuildKeyDesc const& d) noexcept {
+Hash128 build_key(BuildKeyDesc const& d) {
     Writer w;
     w.out.reserve(64 + d.name.size + d.inputs.size * 48);
     w.le(kTagSchema, 1);

@@ -23,8 +23,8 @@ void capture_fn(void* user, Diagnostic const& d) {
         format(c->msg, sizeof c->msg, "K%04u %.*s: %.*s", d.code, KILN_SV(d.where), KILN_SV(d.message));
 }
 
-void note(DiagCapture& c, char const* fmt, ...) noexcept KILN_PRINTF(2, 3);
-void note(DiagCapture& c, char const* fmt, ...) noexcept {
+void note(DiagCapture& c, char const* fmt, ...) KILN_PRINTF(2, 3);
+void note(DiagCapture& c, char const* fmt, ...) {
     if (c.set) return;
     va_list args;
     va_start(args, fmt);
@@ -40,7 +40,7 @@ void note(DiagCapture& c, char const* fmt, ...) noexcept {
 /// nothing else is in flight, so this never deadlocks (holders never wait on the pump thread).
 class IoBytes {
 public:
-    IoBytes(Context* ctx, u64 n) noexcept : ctx_(ctx), n_(n) {
+    IoBytes(Context* ctx, u64 n) : ctx_(ctx), n_(n) {
         std::atomic<u64>& used = ctx->ioBytesInFlight;
         u64 cur                = used.load(std::memory_order_relaxed);
         for (;;) {
@@ -53,7 +53,7 @@ public:
         }
     }
     // Holders are jobs, which the context outlives, so notifying after the release is safe.
-    ~IoBytes() noexcept {
+    ~IoBytes() {
         ctx_->ioBytesInFlight.fetch_sub(n_, std::memory_order_acq_rel);
         ctx_->ioBytesInFlight.notify_all();
     }
@@ -74,12 +74,12 @@ struct Source {
     bool memory = false;
     u64 size    = 0;
 
-    Source() noexcept                = default;
+    Source()                         = default;
     Source(Source const&)            = delete;
     Source& operator=(Source const&) = delete;
-    ~Source() noexcept { close(); }
+    ~Source() { close(); }
 
-    Status read(u64 off, u64 n, void* dst) const noexcept {
+    Status read(u64 off, u64 n, void* dst) const {
         if (off > size || n > size - off) return make_status(Code::IoEof);
         if (n == 0) return kOk;
         if (memory) {
@@ -88,7 +88,7 @@ struct Source {
         }
         return io->read_range(io->user, file, off, n, dst);
     }
-    void close() noexcept {
+    void close() {
         if (!memory && file.valid()) io->close(io->user, file);
         file = {};
     }
@@ -106,7 +106,7 @@ struct Input {
     Buffer const* registered = nullptr; ///< register_*() bytes; null for store entries
 };
 
-Input slot_input(Slot& s) noexcept {
+Input slot_input(Slot& s) {
     return {s.kind,
             path_of(s),
             &s.jobKey,
@@ -116,14 +116,14 @@ Input slot_input(Slot& s) noexcept {
             s.source == SourceKind::Memory ? &s.memory : nullptr};
 }
 
-Input layer_input(Slot& s, ArrayLayer& l) noexcept {
+Input layer_input(Slot& s, ArrayLayer& l) {
     return {AssetKind::Texture, s.array->name(l), &l.jobKey, &l.jobKeyValid,
             &l.cooked,          &l.cookedValid,   nullptr};
 }
 
 /// The provider checks the asset and names its artifact, or cooks it into `*in.cooked`, which then
 /// serves both stages.
-Status prepare_source(Context* ctx, Slot& s, Input const& in, Source& src) noexcept {
+Status prepare_source(Context* ctx, Slot& s, Input const& in, Source& src) {
     Vec<u8> out(ctx->alloc, Tag::Payload);
     Hash128 key;
     DiagSink sink{&capture_fn, &s.capture};
@@ -159,7 +159,7 @@ Status prepare_source(Context* ctx, Slot& s, Input const& in, Source& src) noexc
 
 /// Resolve an input: the artifact the manifest named at dispatch, or the one the cook provider
 /// names (the meta stage asks it first when one is installed).
-Status open_source(Context* ctx, Slot& s, Input const& in, Source& src, bool allowCook) noexcept {
+Status open_source(Context* ctx, Slot& s, Input const& in, Source& src, bool allowCook) {
     if (*in.cookedValid || in.registered) {
         src.memory = true;
         src.mem    = *in.cookedValid ? in.cooked->span() : in.registered->span();
@@ -211,7 +211,7 @@ Status open_source(Context* ctx, Slot& s, Input const& in, Source& src, bool all
 // Meta stage
 // ---------------------------------------------------------------------------
 
-Status mesh_meta(Context* ctx, Slot& s, Source const& src) noexcept {
+Status mesh_meta(Context* ctx, Slot& s, Source const& src) {
     DiagSink const sink{&capture_fn, &s.capture};
     StrView const name = path_of(s);
     alignas(16) u8 hb[sizeof(mesh::FileHeader)];
@@ -257,7 +257,7 @@ struct KtxLevels {
     u64* cols  = nullptr; ///< 3 * levels values, from ctx->alloc
     u32 levels = 0;
     bool zstd  = false;
-    void release(Allocator const* a) noexcept {
+    void release(Allocator const* a) {
         if (cols) free_array(a, cols, usize(levels) * 3, Tag::Payload);
         cols = nullptr;
     }
@@ -266,7 +266,7 @@ struct KtxLevels {
 /// Reads and checks a KTX2 input's metadata. `layer` is kInvalid for a texture of its own, else the
 /// array layer being read (which must be 2D).
 Status read_ktx2_levels(Context* ctx, Slot& s, StrView name, Source const& src, TextureShape expect,
-                        u32 layer, KtxLevels* out) noexcept {
+                        u32 layer, KtxLevels* out) {
     DiagSink const sink{&capture_fn, &s.capture};
     alignas(16) u8 hb[sizeof(ktx2::Header)];
     u64 const hn = min<u64>(sizeof hb, src.size);
@@ -337,7 +337,7 @@ Status read_ktx2_levels(Context* ctx, Slot& s, StrView name, Source const& src, 
     return st;
 }
 
-Status texture_meta(Context* ctx, Slot& s, Source const& src) noexcept {
+Status texture_meta(Context* ctx, Slot& s, Source const& src) {
     KtxLevels k;
     KILN_TRY(read_ktx2_levels(ctx, s, path_of(s), src, s.texShape, kInvalid, &k));
     u32 const levels = k.levels;
@@ -355,7 +355,7 @@ Status texture_meta(Context* ctx, Slot& s, Source const& src) noexcept {
 }
 
 /// Puts the failing layer in front of the captured reason.
-void note_layer(DiagCapture& c, u32 layer, StrView name) noexcept {
+void note_layer(DiagCapture& c, u32 layer, StrView name) {
     char reason[sizeof c.msg];
     format(reason, sizeof reason, "%s", c.set ? c.msg : "load failed");
     format(c.msg, sizeof c.msg, "layer %u (%.*s): %s", layer, KILN_SV(name), reason);
@@ -368,7 +368,7 @@ void note_layer(DiagCapture& c, u32 layer, StrView name) noexcept {
 
 /// Every layer must match layer 0 in format, size and level count.
 Status check_layer(Slot& s, u32 layer, StrView name, ktx2::TextureDesc const& first,
-                   ktx2::TextureDesc const& d) noexcept {
+                   ktx2::TextureDesc const& d) {
     if (d.format == first.format && d.width == first.width && d.height == first.height &&
         d.levels == first.levels)
         return kOk;
@@ -381,7 +381,7 @@ Status check_layer(Slot& s, u32 layer, StrView name, ktx2::TextureDesc const& fi
 
 /// Each layer's metadata, checked against layer 0, then the upload layout of the whole array. Each
 /// layer keeps its level table for the upload stage.
-CompletionKind run_array_meta(Context* ctx, Slot& s) noexcept {
+CompletionKind run_array_meta(Context* ctx, Slot& s) {
     ArrayDecl& d = *s.array;
     KtxLevels first;
     Status st = kOk;
@@ -437,7 +437,7 @@ CompletionKind run_array_meta(Context* ctx, Slot& s) noexcept {
     return CompletionKind::MetaReady;
 }
 
-CompletionKind run_meta(Context* ctx, Slot& s) noexcept {
+CompletionKind run_meta(Context* ctx, Slot& s) {
     if (s.array) return run_array_meta(ctx, s);
     Source src;
     if (open_source(ctx, s, slot_input(s), src, true).failed()) return CompletionKind::Failed;
@@ -455,7 +455,7 @@ CompletionKind run_meta(Context* ctx, Slot& s) noexcept {
 // Upload stage
 // ---------------------------------------------------------------------------
 
-Status write_mesh(Context* ctx, Slot& s, Source const& src, u8* dst) noexcept {
+Status write_mesh(Context* ctx, Slot& s, Source const& src, u8* dst) {
     DiagSink const sink{&capture_fn, &s.capture};
     StrView const name        = path_of(s);
     mesh::MeshView const& v   = s.next.meshView;
@@ -493,7 +493,7 @@ Status write_mesh(Context* ctx, Slot& s, Source const& src, u8* dst) noexcept {
 
 /// Buffers one texture write reuses across its levels (and layers).
 struct LevelScratch {
-    explicit LevelScratch(Allocator const* a) noexcept : scratch(a, Tag::Io), texels(a, Tag::Io), zstd(a) {}
+    explicit LevelScratch(Allocator const* a) : scratch(a, Tag::Io), texels(a, Tag::Io), zstd(a) {}
     Vec<u8> scratch;
     Vec<u8> texels;
     fmt::ZstdDecoder zstd;
@@ -512,8 +512,7 @@ struct LevelCopy {
     StrView input = {}; ///< for the diagnostic of a frame that does not decode
 };
 
-Status write_level(Context* ctx, Slot& s, Source const& src, LevelCopy const& c, u8* out,
-                   LevelScratch& sc) noexcept {
+Status write_level(Context* ctx, Slot& s, Source const& src, LevelCopy const& c, u8* out, LevelScratch& sc) {
     u64 const rows    = c.rowBytes ? c.tLen / c.rowBytes : 0;
     bool const direct = c.pitch == c.rowBytes;
     if (direct && !c.zstd) {
@@ -553,7 +552,7 @@ Status write_level(Context* ctx, Slot& s, Source const& src, LevelCopy const& c,
 }
 
 /// Zero the gaps between levels and after the last one; `layers` layers of each level lie back to back.
-void zero_level_gaps(MetaSet const& m, u32 layers, u8* dst) noexcept {
+void zero_level_gaps(MetaSet const& m, u32 layers, u8* dst) {
     u32 const levels = m.layoutLevels;
     u64 cursor       = 0;
     for (u32 i = 0; i < levels; ++i) {
@@ -566,7 +565,7 @@ void zero_level_gaps(MetaSet const& m, u32 layers, u8* dst) noexcept {
     if (cursor < m.uploadSize) std::memset(dst + cursor, 0, usize(m.uploadSize - cursor));
 }
 
-LevelCopy level_copy(MetaSet const& m, u32 i) noexcept {
+LevelCopy level_copy(MetaSet const& m, u32 i) {
     u32 const levels = m.layoutLevels;
     return {.level    = i,
             .tLen     = m.layout[4 * levels + i],
@@ -574,7 +573,7 @@ LevelCopy level_copy(MetaSet const& m, u32 i) noexcept {
             .pitch    = m.layout[levels + i]};
 }
 
-Status write_texture(Context* ctx, Slot& s, Source const& src, u8* dst) noexcept {
+Status write_texture(Context* ctx, Slot& s, Source const& src, u8* dst) {
     MetaSet const& m = s.next;
     u32 const levels = m.layoutLevels;
     LevelScratch sc(ctx->alloc);
@@ -592,7 +591,7 @@ Status write_texture(Context* ctx, Slot& s, Source const& src, u8* dst) noexcept
 
 /// Each layer's levels into its place in the array: layer j of level i at the level's offset plus j
 /// times one layer's padded size.
-Status write_array(Context* ctx, Slot& s, u8* dst) noexcept {
+Status write_array(Context* ctx, Slot& s, u8* dst) {
     MetaSet const& m = s.next;
     ArrayDecl& d     = *s.array;
     u32 const levels = m.layoutLevels;
@@ -622,7 +621,7 @@ Status write_array(Context* ctx, Slot& s, u8* dst) noexcept {
     return kOk;
 }
 
-CompletionKind run_upload(Context* ctx, Slot& s) noexcept {
+CompletionKind run_upload(Context* ctx, Slot& s) {
     Adapter const& a = ctx->adapter;
     MetaSet const& m = s.next;
     UploadDesc ud;
@@ -713,7 +712,7 @@ CompletionKind run_upload(Context* ctx, Slot& s) noexcept {
     return CompletionKind::Uploaded;
 }
 
-void post(Context* ctx, Completion const& c) noexcept {
+void post(Context* ctx, Completion const& c) {
     std::lock_guard<std::mutex> lock(ctx->compMutex);
     KILN_VERIFY(ctx->compCount < ctx->compCap); // one job per slot: never full
     ctx->comp[(ctx->compHead + ctx->compCount) % ctx->compCap] = c;
@@ -722,12 +721,12 @@ void post(Context* ctx, Completion const& c) noexcept {
 
 } // namespace
 
-usize manifest_path(Context const* ctx, char* out, usize cap) noexcept {
+usize manifest_path(Context const* ctx, char* out, usize cap) {
     return manifest_file_path(StrView(ctx->storeDir, ctx->storeDirLen), out, cap);
 }
 
 u64 texture_layout(ktx2::TextureDesc const& d, u64 pitchAlign, u64 offsetAlign, u64* outOffset,
-                   u64* outPitch) noexcept {
+                   u64* outPitch) {
     TextureDesc const t{.format     = d.format,
                         .width      = d.width,
                         .height     = d.height,
@@ -740,7 +739,7 @@ u64 texture_layout(ktx2::TextureDesc const& d, u64 pitchAlign, u64 offsetAlign, 
     return texture_level_layout(t, c, outOffset, outPitch);
 }
 
-void run_job(void* arg) noexcept {
+void run_job(void* arg) {
     Slot& s      = *static_cast<Slot*>(arg);
     Context* ctx = s.ctx;
     s.jobStatus  = kOk;
@@ -763,7 +762,7 @@ void run_job(void* arg) noexcept {
 
 namespace kiln {
 
-u64 unsampled_block_formats(Adapter const& a) noexcept {
+u64 unsampled_block_formats(Adapter const& a) {
     if (!a.supports_format) return 0;
     u64 excluded = 0;
     for (u32 v = u32(Format::BC1_RGB_UNORM); v <= u32(Format::ASTC_12x12_SRGB); ++v)
@@ -772,14 +771,13 @@ u64 unsampled_block_formats(Adapter const& a) noexcept {
     return excluded;
 }
 
-u64 texture_level_layout(TextureDesc const& t, CopyConstraints const& c, u64* offsets,
-                         u64* pitches) noexcept {
+u64 texture_level_layout(TextureDesc const& t, CopyConstraints const& c, u64* offsets, u64* pitches) {
     FormatInfo const* fi = format_info(t.format);
     if (!fi) return 0;
     constexpr u64 kMaxAlign = u64(1) << 32;
     u64 const pitchAlign    = std::bit_ceil(clamp<u64>(c.optimalRowPitchAlign, 1, kMaxAlign));
     u64 const offsetAlign   = std::bit_ceil(clamp<u64>(c.optimalOffsetAlign, 1, kMaxAlign));
-    auto const extent       = [](u32 v, u32 level) noexcept { return level < 32 ? max(v >> level, 1u) : 1u; };
+    auto const extent       = [](u32 v, u32 level) { return level < 32 ? max(v >> level, 1u) : 1u; };
     u64 cur                 = 0;
     for (u32 i = 0; i < t.levels; ++i) {
         u32 const w = extent(t.width, i);

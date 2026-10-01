@@ -18,7 +18,7 @@ namespace {
 
 constexpr u64 kLimit32 = u64(1) << 32;
 
-u64 align16(u64 v) noexcept { return align_up(v, u64(kBlobAlign)); }
+u64 align16(u64 v) { return align_up(v, u64(kBlobAlign)); }
 
 #define KILN_WRITE_FAIL(diagCode, ...)                                                                       \
     return diagf(diag, make_status(Code::InvalidArgument), diagCode, Severity::Error, d.name, StrView{},     \
@@ -29,7 +29,7 @@ u64 align16(u64 v) noexcept { return align_up(v, u64(kBlobAlign)); }
 // ---------------------------------------------------------------------------
 
 /// Same rules as the reader's validate_layouts (spec §5.3).
-Status validate_layout(WriteDesc const& d, DiagSink const* diag, u32 li, VertexLayout const& l) noexcept {
+Status validate_layout(WriteDesc const& d, DiagSink const* diag, u32 li, VertexLayout const& l) {
     if (l.streamCount < 1 || l.streamCount > kMaxStreams || l.attribCount < 1 || l.attribCount > kMaxAttribs)
         KILN_WRITE_FAIL(kDiagLayoutRule, "layout %u: streamCount %u / attribCount %u", li,
                         unsigned(l.streamCount), unsigned(l.attribCount));
@@ -63,7 +63,7 @@ Status validate_layout(WriteDesc const& d, DiagSink const* diag, u32 li, VertexL
     return kOk;
 }
 
-Status validate(WriteDesc const& d, WriteOptions const& opt, DiagSink const* diag) noexcept {
+Status validate(WriteDesc const& d, WriteOptions const& opt, DiagSink const* diag) {
     if (opt.payloadAlignment < kPayloadBaseAlign || !is_pow2(opt.payloadAlignment))
         KILN_WRITE_FAIL(kDiagHeaderSizes, "payloadAlignment %u must be a power of two >= %u",
                         opt.payloadAlignment, kPayloadBaseAlign);
@@ -148,7 +148,7 @@ Status validate(WriteDesc const& d, WriteOptions const& opt, DiagSink const* dia
 // Builds the STRS section.
 class StringTable {
 public:
-    explicit StringTable(Allocator const* a) noexcept : bytes_(a, Tag::Cook), map_(a, Tag::Cook) {
+    explicit StringTable(Allocator const* a) : bytes_(a, Tag::Cook), map_(a, Tag::Cook) {
         (void)intern(StrView{}); // offset 0 is the empty string
     }
     u32 intern(StrView s) {
@@ -164,7 +164,7 @@ public:
         while (bytes_.size() % kBlobAlign)
             bytes_.push_back(0);
     }
-    Vec<u8> const& bytes() const noexcept { return bytes_; }
+    Vec<u8> const& bytes() const { return bytes_; }
 
 private:
     Vec<u8> bytes_;
@@ -186,7 +186,7 @@ struct Encoder {
     Vec<u8> inner;
 
     /// Zstd of `in` into `out`; false when it fails.
-    bool zstd(Span<u8 const> in, Vec<u8>& out) noexcept {
+    bool zstd(Span<u8 const> in, Vec<u8>& out) {
         out.resize(ZSTD_compressBound(in.size));
         usize const n = ZSTD_compress2(cctx, out.data(), out.size(), in.data, in.size);
         if (ZSTD_isError(n)) return false;
@@ -195,7 +195,7 @@ struct Encoder {
     }
 
     /// Fills `b.encoded` and the codec fields; leaves the blob None when nothing shrinks it.
-    bool encode(BlobOut& b, cook::CompressionScheme scheme) noexcept {
+    bool encode(BlobOut& b, cook::CompressionScheme scheme) {
         bool const index  = b.index;
         usize const n     = b.rec.decodedSize;
         usize const size  = b.rec.elementSize;
@@ -272,12 +272,12 @@ struct SectionOut {
     u64 offset;
 };
 
-void clear_bounds_pad(Bounds& b) noexcept { b._pad = 0; }
+void clear_bounds_pad(Bounds& b) { b._pad = 0; }
 
 } // namespace
 
 Result<Vec<u8>> write(WriteDesc const& desc, WriteOptions const& opt, Allocator const* alloc,
-                      DiagSink const* diag, WriteStats* stats) noexcept {
+                      DiagSink const* diag, WriteStats* stats) {
     WriteDesc const& d = desc; // for KILN_WRITE_FAIL
     if (!alloc) alloc = default_allocator();
     KILN_TRY(validate(d, opt, diag));

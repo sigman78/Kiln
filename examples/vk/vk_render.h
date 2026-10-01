@@ -26,7 +26,7 @@ struct MaterialUniforms {
 inline constexpr u32 kMaxMaterials = 128;
 
 /// The factors of `material`, or glTF's defaults when the view has no such material.
-MaterialUniforms material_uniforms(mesh::MeshView const* v, u32 material) noexcept;
+MaterialUniforms material_uniforms(mesh::MeshView const* v, u32 material);
 
 /// Set 1, binding 0 of both shaders (std140).
 struct FrameUniforms {
@@ -96,15 +96,15 @@ struct LayoutPipeline {
 
 struct Renderer;
 
-Result<Renderer*> renderer_create(RendererDesc const& desc) noexcept;
+Result<Renderer*> renderer_create(RendererDesc const& desc);
 /// Waits for the device to go idle first.
-void renderer_destroy(Renderer* r) noexcept;
+void renderer_destroy(Renderer* r);
 
 /// The pipeline for `layout`, created on first use. Null if creation failed (logged once).
-LayoutPipeline const* renderer_pipeline(Renderer* r, mesh::VertexLayout const& layout) noexcept;
-VkPipelineLayout renderer_pipeline_layout(Renderer* r) noexcept;
+LayoutPipeline const* renderer_pipeline(Renderer* r, mesh::VertexLayout const& layout);
+VkPipelineLayout renderer_pipeline_layout(Renderer* r);
 /// 64 zero bytes; bound at instance rate for vertex inputs a layout does not provide.
-VkBuffer renderer_zero_buffer(Renderer* r) noexcept;
+VkBuffer renderer_zero_buffer(Renderer* r);
 
 /// Step 1 of a frame: waits for the frame slot's fence. Returns the frame about to be recorded
 /// and the last one known complete: pump kiln after this with both (PumpOptions).
@@ -112,28 +112,28 @@ struct FrameNumbers {
     u64 frame     = 0;
     u64 completed = 0;
 };
-FrameNumbers renderer_wait_frame(Renderer* r) noexcept;
+FrameNumbers renderer_wait_frame(Renderer* r);
 /// Step 2: acquires the target, begins the command buffer and dynamic rendering, binds the
 /// bindless and frame sets. VK_NULL_HANDLE means skip this frame (minimized window).
-[[nodiscard]] VkCommandBuffer renderer_begin(Renderer* r) noexcept;
-VkExtent2D renderer_extent(Renderer* r) noexcept;
+[[nodiscard]] VkCommandBuffer renderer_begin(Renderer* r);
+VkExtent2D renderer_extent(Renderer* r);
 /// This frame's uniform block, host-visible; write it between begin and end.
-FrameUniforms* renderer_uniforms(Renderer* r) noexcept;
+FrameUniforms* renderer_uniforms(Renderer* r);
 /// Draws the cube in `push.cubeSlot` behind everything: call right after renderer_begin(),
 /// before the meshes. No depth test and no depth write.
-void renderer_draw_sky(Renderer* r, VkCommandBuffer cmd, SkyPush const& push) noexcept;
+void renderer_draw_sky(Renderer* r, VkCommandBuffer cmd, SkyPush const& push);
 /// Step 3: ends rendering and submits, waiting on the adapter's upload watermark; presents in
 /// window mode. `readback` (offscreen only) also copies the color image into the readback
 /// buffer for renderer_read_back().
-void renderer_end(Renderer* r, bool readback) noexcept;
+void renderer_end(Renderer* r, bool readback);
 /// Window mode: the framebuffer changed size; the swapchain is rebuilt before the next frame.
-void renderer_resize(Renderer* r) noexcept;
-void renderer_wait_idle(Renderer* r) noexcept;
+void renderer_resize(Renderer* r);
+void renderer_wait_idle(Renderer* r);
 
 /// After a renderer_end(r, true): waits for the device and returns the image as RGBA8,
 /// top row first (the color image is BGRA; this swizzles).
-Status renderer_read_back(Renderer* r, Vec<u8>* rgba, u32* width, u32* height) noexcept;
+Status renderer_read_back(Renderer* r, Vec<u8>* rgba, u32* width, u32* height);
 
-char const* renderer_color_format_name(Renderer* r) noexcept;
+char const* renderer_color_format_name(Renderer* r);
 
 } // namespace kiln::vkx

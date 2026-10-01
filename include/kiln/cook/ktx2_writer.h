@@ -46,7 +46,6 @@ struct WriteDesc {
 /// Serialize a KTX2 file into a new buffer allocated from `alloc` (Tag::Cook;
 /// nullptr means default_allocator()); the Zstd encoder allocates from it too. Invalid input
 /// returns InvalidArgument and emits one K41xx diagnostic.
-KILN_API Result<Vec<u8>> write(WriteDesc const& desc, Allocator const* alloc,
-                               DiagSink const* diag = nullptr) noexcept;
+KILN_API Result<Vec<u8>> write(WriteDesc const& desc, Allocator const* alloc, DiagSink const* diag = nullptr);
 
 } // namespace kiln::ktx2

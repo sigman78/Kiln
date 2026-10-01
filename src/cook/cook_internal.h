@@ -15,7 +15,7 @@ namespace kiln::cook::detail {
 /// early return). Stop stages in reverse order of creation, so zones nest.
 class Stage {
 public:
-    Stage(ProfileHooks const* hooks, char const* name, StrView asset) noexcept
+    Stage(ProfileHooks const* hooks, char const* name, StrView asset)
         : begin_(std::chrono::steady_clock::now()), hooks_(hooks && hooks->zone_begin ? hooks : nullptr),
           name_(name), asset_(asset) {
         if (hooks_) hooks_->zone_begin(hooks_->user, name_, asset_);
@@ -25,7 +25,7 @@ public:
     Stage& operator=(Stage const&) = delete;
 
     /// Microseconds since construction; the first call ends the zone, later calls return the same.
-    u64 stop() noexcept {
+    u64 stop() {
         if (!stopped_) {
             auto const dt = std::chrono::steady_clock::now() - begin_;
             us_           = u64(std::chrono::duration_cast<std::chrono::microseconds>(dt).count());
@@ -49,7 +49,7 @@ private:
 struct Stopwatch {
     std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
 
-    u64 elapsed_us() const noexcept {
+    u64 elapsed_us() const {
         auto const dt = std::chrono::steady_clock::now() - begin;
         return u64(std::chrono::duration_cast<std::chrono::microseconds>(dt).count());
     }
@@ -148,16 +148,16 @@ struct ImportScene {
 /// Parse, load buffers, validate, apply naming conventions and traverse. Everything
 /// in `out` is plain data in `arena`. Emits K1xxx diagnostics; fails per cook.h.
 Status import_gltf(MeshSource const& src, MeshCookSettings const& settings, Arena& arena,
-                   Allocator const* alloc, DiagSink const* diag, ImportScene& out) noexcept;
+                   Allocator const* alloc, DiagSink const* diag, ImportScene& out);
 
 /// The asset name used in diagnostics (sourcePath if set, else assetPath).
-inline StrView diag_asset(MeshSource const& src) noexcept {
+inline StrView diag_asset(MeshSource const& src) {
     return src.sourcePath.empty() ? src.assetPath : src.sourcePath;
 }
 
 /// The block format of an explicit encoding (Undefined for Auto and Uncompressed).
-Format encoding_format(TextureEncoding e, bool srgb) noexcept;
+Format encoding_format(TextureEncoding e, bool srgb);
 /// True when the block formats of this texture are the sRGB variants: sRGB Color and UI only.
-[[nodiscard]] bool srgb_blocks(ColorSpace cs, TextureUsage usage) noexcept;
+[[nodiscard]] bool srgb_blocks(ColorSpace cs, TextureUsage usage);
 
 } // namespace kiln::cook::detail

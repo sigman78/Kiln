@@ -9,7 +9,7 @@
 
 namespace kiln {
 
-Hash128 xxh3_128(Span<u8 const> bytes) noexcept {
+Hash128 xxh3_128(Span<u8 const> bytes) {
     XXH128_canonical_t c;
     XXH128_canonicalFromHash(&c, XXH3_128bits(bytes.data, bytes.size));
     Hash128 h;
@@ -19,7 +19,7 @@ Hash128 xxh3_128(Span<u8 const> bytes) noexcept {
 
 namespace fmt {
 
-Hash128 xxh3_128_zeroed(Span<u8 const> bytes, u64 zeroOff, u64 zeroLen) noexcept {
+Hash128 xxh3_128_zeroed(Span<u8 const> bytes, u64 zeroOff, u64 zeroLen) {
     KILN_ASSERT(zeroOff <= bytes.size && zeroLen <= bytes.size - zeroOff);
     constexpr u8 kZeros[64] = {};
     KILN_ASSERT(zeroLen <= sizeof kZeros);
@@ -38,7 +38,7 @@ Hash128 xxh3_128_zeroed(Span<u8 const> bytes, u64 zeroOff, u64 zeroLen) noexcept
 
 } // namespace fmt
 
-void hash128_base32(Hash128 const& h, char (&out)[27]) noexcept {
+void hash128_base32(Hash128 const& h, char (&out)[27]) {
     constexpr char kDigits[] = "abcdefghijklmnopqrstuvwxyz234567";
     u32 acc = 0, bits = 0;
     usize n = 0;
@@ -54,7 +54,7 @@ void hash128_base32(Hash128 const& h, char (&out)[27]) noexcept {
     out[n]   = '\0';
 }
 
-void hash128_hex(Hash128 const& h, char (&out)[33]) noexcept {
+void hash128_hex(Hash128 const& h, char (&out)[33]) {
     constexpr char kDigits[] = "0123456789abcdef";
     for (usize i = 0; i < 16; ++i) {
         out[2 * i]     = kDigits[h.bytes[i] >> 4];

@@ -10,17 +10,17 @@ namespace kiln::cook {
 
 namespace {
 
-template <class T> void wr(Vec<u8>& b, u64 off, T v) noexcept { write_unaligned<T>(b.data() + off, v); }
+template <class T> void wr(Vec<u8>& b, u64 off, T v) { write_unaligned<T>(b.data() + off, v); }
 
-bool name_less(StrView a, StrView b) noexcept {
+bool name_less(StrView a, StrView b) {
     usize const n = min(a.size, b.size);
     int const c   = n ? std::memcmp(a.data, b.data, n) : 0;
     return c != 0 ? c < 0 : a.size < b.size;
 }
 
-u16 kind_code(AssetKind k) noexcept { return k == AssetKind::Mesh ? 1 : 2; }
+u16 kind_code(AssetKind k) { return k == AssetKind::Mesh ? 1 : 2; }
 
-u64 align8(u64 v) noexcept { return (v + 7) & ~u64(7); }
+u64 align8(u64 v) { return (v + 7) & ~u64(7); }
 
 struct IndexRec {
     u64 hash, entry;
@@ -28,7 +28,7 @@ struct IndexRec {
 
 } // namespace
 
-Status write_manifest(ManifestDesc const& d, Vec<u8>* out, DiagSink const* diag) noexcept {
+Status write_manifest(ManifestDesc const& d, Vec<u8>* out, DiagSink const* diag) {
     Allocator const* alloc = out->allocator();
     usize const pc         = d.profiles.size;
 
@@ -37,7 +37,7 @@ Status write_manifest(ManifestDesc const& d, Vec<u8>* out, DiagSink const* diag)
     for (usize i = 0; i < pc; ++i)
         porder[i] = u32(i);
     std::sort(porder.begin(), porder.end(),
-              [&d](u32 a, u32 b) noexcept { return name_less(d.profiles[a].name, d.profiles[b].name); });
+              [&d](u32 a, u32 b) { return name_less(d.profiles[a].name, d.profiles[b].name); });
 
     // Every profile's entries sorted by (name, kind), one after another in profile order.
     Vec<ManifestEntry const*> entries(alloc, Tag::Cook);
@@ -54,11 +54,10 @@ Status write_manifest(ManifestDesc const& d, Vec<u8>* out, DiagSink const* diag)
         usize const first = entries.size();
         for (ManifestEntry const& e : prof.entries)
             entries.push_back(&e);
-        std::sort(entries.begin() + first, entries.end(),
-                  [](ManifestEntry const* x, ManifestEntry const* y) noexcept {
-                      if (x->name != y->name) return name_less(x->name, y->name);
-                      return kind_code(x->kind) < kind_code(y->kind);
-                  });
+        std::sort(entries.begin() + first, entries.end(), [](ManifestEntry const* x, ManifestEntry const* y) {
+            if (x->name != y->name) return name_less(x->name, y->name);
+            return kind_code(x->kind) < kind_code(y->kind);
+        });
         for (usize i = first; i < entries.size(); ++i) {
             ManifestEntry const& e = *entries[i];
             if (char const* why = check_asset_name(e.name))
@@ -96,7 +95,7 @@ Status write_manifest(ManifestDesc const& d, Vec<u8>* out, DiagSink const* diag)
     wr<u64>(*out, 72, stringBytes);
 
     u64 str               = 0;
-    auto const put_string = [&](StrView s) noexcept {
+    auto const put_string = [&](StrView s) {
         u64 const at = str;
         if (s.size) std::memcpy(out->data() + sOff + str, s.data, s.size);
         str += s.size;
@@ -126,7 +125,7 @@ Status write_manifest(ManifestDesc const& d, Vec<u8>* out, DiagSink const* diag)
             idx[usize(i)] = {hash_name(e.name), i};
         }
         std::sort(idx.begin() + first, idx.begin() + first + prof.entries.size,
-                  [](IndexRec const& a, IndexRec const& b) noexcept {
+                  [](IndexRec const& a, IndexRec const& b) {
                       return a.hash != b.hash ? a.hash < b.hash : a.entry < b.entry;
                   });
         first += prof.entries.size;

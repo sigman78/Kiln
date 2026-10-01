@@ -6,6 +6,6 @@ namespace kiln {
 
 /// Call first in main(). On Windows: crashes skip Windows Error Reporting, abort() (KILN_PANIC) shows
 /// no box, and debug CRT asserts print to stderr. Does nothing elsewhere. Process-wide.
-void no_crash_dialogs() noexcept;
+void no_crash_dialogs();
 
 } // namespace kiln

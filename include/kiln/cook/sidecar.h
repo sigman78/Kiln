@@ -13,8 +13,8 @@ inline constexpr StrView kSidecarExt = ".kiln";
 /// `file` names the sidecar in diagnostics. On failure `*s` is unchanged: K3005 for text
 /// outside the TOML subset, K3006 for an unknown key or a value of the wrong type or range.
 KILN_API Status apply_sidecar(StrView text, TextureCookSettings* s, DiagSink const* diag = nullptr,
-                              StrView file = {}) noexcept;
+                              StrView file = {});
 KILN_API Status apply_sidecar(StrView text, MeshCookSettings* s, DiagSink const* diag = nullptr,
-                              StrView file = {}) noexcept;
+                              StrView file = {});
 
 } // namespace kiln::cook

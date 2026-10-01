@@ -119,21 +119,20 @@ struct ContextDesc {
 /// twice. Placeholders are uploaded through the adapter here; with a self-submitting
 /// adapter or one with Adapter::flush, create() waits for them, otherwise gpu_object() returns a
 /// null object until the first pump() sees them complete.
-KILN_API Result<Context*> create(ContextDesc const& desc) noexcept;
+KILN_API Result<Context*> create(ContextDesc const& desc);
 /// Releases every asset (Adapter::destroy for each GpuObject, at once: the host has waited for
 /// its GPU to go idle), stops the built-in pool, frees everything. Outstanding handles become stale.
-KILN_API void destroy(Context* ctx) noexcept;
+KILN_API void destroy(Context* ctx);
 
 // ---------------------------------------------------------------------------
 // Requests (refcounted; the same path returns the same handle)
 // ---------------------------------------------------------------------------
 
-[[nodiscard]] KILN_API MeshHandle request_mesh(Context* ctx, StrView path,
-                                               RequestOptions const& opt = {}) noexcept;
+[[nodiscard]] KILN_API MeshHandle request_mesh(Context* ctx, StrView path, RequestOptions const& opt = {});
 [[nodiscard]] KILN_API TextureHandle request_texture(Context* ctx, StrView path,
-                                                     RequestOptions const& opt = {}) noexcept;
-KILN_API void release(Context* ctx, MeshHandle h) noexcept;
-KILN_API void release(Context* ctx, TextureHandle h) noexcept;
+                                                     RequestOptions const& opt = {});
+KILN_API void release(Context* ctx, MeshHandle h);
+KILN_API void release(Context* ctx, TextureHandle h);
 
 inline constexpr u32 kMaxTextureArrayLayers = 2048;
 
@@ -157,15 +156,14 @@ struct TextureArrayDesc {
 /// reloads the whole array (the old one stays until the new one is Ready). The layers are not loaded as
 /// textures of their own, and the adapter gets one upload with every layer (it needs kArrayTextures and
 /// staging for the whole array).
-[[nodiscard]] KILN_API TextureHandle request_texture_array(Context* ctx,
-                                                           TextureArrayDesc const& desc) noexcept;
+[[nodiscard]] KILN_API TextureHandle request_texture_array(Context* ctx, TextureArrayDesc const& desc);
 
 /// Handle for an asset that is already registered/requested (null otherwise).
-KILN_API MeshHandle find_mesh(Context* ctx, AssetId id) noexcept;
-KILN_API TextureHandle find_texture(Context* ctx, AssetId id) noexcept;
+KILN_API MeshHandle find_mesh(Context* ctx, AssetId id);
+KILN_API TextureHandle find_texture(Context* ctx, AssetId id);
 
 /// FNV-1a 64 of a valid asset name; 0 for an invalid one.
-KILN_API AssetId asset_id(StrView name) noexcept;
+KILN_API AssetId asset_id(StrView name);
 
 // ---------------------------------------------------------------------------
 // Asset names: `root:path/file.ext#sub` (docs/design/asset-model-next.md, Part 2).
@@ -179,9 +177,9 @@ inline constexpr usize kMaxAssetNameLen = 255;
 /// empty, `.` or `..`; no control characters and none of `\ : < > " | ? *`; at most one `#`,
 /// in the last segment, with text on both sides. Without a root prefix the path may not start
 /// with `@`, which the store uses for named roots.
-KILN_API char const* check_asset_name(StrView name) noexcept;
+KILN_API char const* check_asset_name(StrView name);
 /// Null if `root` is a valid root name (`[a-z0-9_]`, at least 2 characters), else a reason.
-KILN_API char const* check_root_name(StrView root) noexcept;
+KILN_API char const* check_root_name(StrView root);
 
 struct AssetNameParts {
     StrView root; ///< empty: the default root
@@ -189,50 +187,50 @@ struct AssetNameParts {
     StrView sub;  ///< the part after `#`; empty if none
 };
 /// Splits `name` at its first `:` and `#`. Does not check it.
-KILN_API AssetNameParts split_asset_name(StrView name) noexcept;
+KILN_API AssetNameParts split_asset_name(StrView name);
 
 /// The name that a relative URI inside the source of `owner` refers to: resolved against the
 /// owner's directory, in the owner's root. Returns the length written to `out`, or 0 if the
 /// URI is absolute, leaves the root, gives an invalid name or does not fit `cap`.
-[[nodiscard]] KILN_API usize resolve_asset_name(StrView owner, StrView uri, char* out, usize cap) noexcept;
+[[nodiscard]] KILN_API usize resolve_asset_name(StrView owner, StrView uri, char* out, usize cap);
 /// The texture asset name that binding `b` of mesh `meshName` refers to: an embedded image's name
 /// as stored, or an external URI resolved with resolve_asset_name(). Written to `out`
 /// (null-terminated) and returned; empty if the name leaves the root, is invalid or does not fit
 /// `cap` (kMaxAssetNameLen + 1 always fits).
 KILN_API StrView texture_asset_name(StrView meshName, mesh::MeshView const& v, mesh::TextureBinding const& b,
-                                    char* out, usize cap) noexcept;
+                                    char* out, usize cap);
 
 // ---------------------------------------------------------------------------
 // Queries (allocation-free table lookups; stale handles read as Unloaded)
 // ---------------------------------------------------------------------------
 
-KILN_API State state(Context* ctx, MeshHandle h) noexcept;
-KILN_API State state(Context* ctx, TextureHandle h) noexcept;
-[[nodiscard]] KILN_API bool has_meta(Context* ctx, MeshHandle h) noexcept;
-[[nodiscard]] KILN_API bool has_meta(Context* ctx, TextureHandle h) noexcept;
-[[nodiscard]] KILN_API bool is_ready(Context* ctx, MeshHandle h) noexcept;
-[[nodiscard]] KILN_API bool is_ready(Context* ctx, TextureHandle h) noexcept;
-KILN_API u32 version(Context* ctx, MeshHandle h) noexcept;
-KILN_API u32 version(Context* ctx, TextureHandle h) noexcept;
-KILN_API AssetId id_of(Context* ctx, MeshHandle h) noexcept;
-KILN_API AssetId id_of(Context* ctx, TextureHandle h) noexcept;
+KILN_API State state(Context* ctx, MeshHandle h);
+KILN_API State state(Context* ctx, TextureHandle h);
+[[nodiscard]] KILN_API bool has_meta(Context* ctx, MeshHandle h);
+[[nodiscard]] KILN_API bool has_meta(Context* ctx, TextureHandle h);
+[[nodiscard]] KILN_API bool is_ready(Context* ctx, MeshHandle h);
+[[nodiscard]] KILN_API bool is_ready(Context* ctx, TextureHandle h);
+KILN_API u32 version(Context* ctx, MeshHandle h);
+KILN_API u32 version(Context* ctx, TextureHandle h);
+KILN_API AssetId id_of(Context* ctx, MeshHandle h);
+KILN_API AssetId id_of(Context* ctx, TextureHandle h);
 
 /// Current GPU object: the placeholder while Pending/Failed (textures), the real
 /// object once Ready, the new one after a hot reload. Meshes have no placeholder:
 /// a null object until Ready. With a bindless adapter, a texture's `slot` is kiln's slot
 /// number from the request on; it does not change while the asset lives.
-KILN_API GpuObject gpu_object(Context* ctx, MeshHandle h) noexcept;
-KILN_API GpuObject gpu_object(Context* ctx, TextureHandle h) noexcept;
+KILN_API GpuObject gpu_object(Context* ctx, MeshHandle h);
+KILN_API GpuObject gpu_object(Context* ctx, TextureHandle h);
 /// The placeholder of `kind` and `shape`, the object gpu_object() serves for such a texture before
 /// it is Ready. For a host that must bind something where a material has no texture. Null if the
 /// adapter lacks the shape (AdapterCaps) or the placeholder's upload has not completed yet. It
 /// carries no bindless slot and lives until destroy().
 KILN_API GpuObject placeholder_object(Context* ctx, TextureKind kind,
-                                      TextureShape shape = TextureShape::Tex2D) noexcept;
+                                      TextureShape shape = TextureShape::Tex2D);
 
 /// Metadata view; nullptr unless has_meta(). Valid until the asset is released or
 /// reloaded (a Changed event) and never across destroy().
-KILN_API mesh::MeshView const* mesh_view(Context* ctx, MeshHandle h) noexcept;
+KILN_API mesh::MeshView const* mesh_view(Context* ctx, MeshHandle h);
 
 struct TextureInfo {
     ktx2::TextureDesc desc;            ///< of the real texture (has_meta) or the placeholder
@@ -242,10 +240,10 @@ struct TextureInfo {
     u32 version        = 0;
     bool isPlaceholder = true;
 };
-KILN_API TextureInfo texture_info(Context* ctx, TextureHandle h) noexcept;
+KILN_API TextureInfo texture_info(Context* ctx, TextureHandle h);
 
 /// Placeholder kind for a .mesh texture slot (BaseColor/Emissive -> sRGB color kinds, ...).
-KILN_API TextureKind texture_kind_for_slot(mesh::TextureSlot slot) noexcept;
+KILN_API TextureKind texture_kind_for_slot(mesh::TextureSlot slot);
 
 // ---------------------------------------------------------------------------
 // Pump and events
@@ -275,10 +273,10 @@ struct PumpStats {
 /// Drive the pipeline: hand out upload memory, collect completed reads and decodes,
 /// poll the adapter for finished uploads, publish, emit events. Never allocates in
 /// steady state.
-KILN_API PumpStats pump(Context* ctx, PumpOptions const& opt = {}) noexcept;
+KILN_API PumpStats pump(Context* ctx, PumpOptions const& opt = {});
 
 /// Events since the previous pump(), in order. The span is invalidated by the next pump().
-KILN_API Span<Event const> events(Context* ctx) noexcept;
+KILN_API Span<Event const> events(Context* ctx);
 
 // ---------------------------------------------------------------------------
 // Load groups
@@ -290,7 +288,7 @@ struct GroupStatus {
     u32 pending    = 0; ///< requested but neither Ready nor Failed yet
     u64 bytesDone  = 0;
     u64 bytesTotal = 0; ///< known once each member's metadata has been read
-    [[nodiscard]] bool settled() const noexcept { return pending == 0; }
+    [[nodiscard]] bool settled() const { return pending == 0; }
 };
 
 struct WaitOptions {
@@ -298,14 +296,14 @@ struct WaitOptions {
     u64 uploadBytesPerPump = 64u << 20;
 };
 
-[[nodiscard]] KILN_API Group group(Context* ctx) noexcept;
-KILN_API void release(Context* ctx, Group g) noexcept; ///< frees the group record only
-KILN_API GroupStatus progress(Context* ctx, Group g) noexcept;
+[[nodiscard]] KILN_API Group group(Context* ctx);
+KILN_API void release(Context* ctx, Group g); ///< frees the group record only
+KILN_API GroupStatus progress(Context* ctx, Group g);
 /// Loops pump() and a short sleep until every member is Ready or Failed, or the timeout
 /// expires (returns partial status). Raises members to High priority. Panics, never
 /// hangs, when called off the pump thread or when the adapter has neither kSelfSubmitting
 /// nor Adapter::flush.
-KILN_API GroupStatus wait(Context* ctx, Group g, WaitOptions const& opt = {}) noexcept;
+KILN_API GroupStatus wait(Context* ctx, Group g, WaitOptions const& opt = {});
 
 // ---------------------------------------------------------------------------
 // Hot reload
@@ -318,8 +316,8 @@ KILN_API GroupStatus wait(Context* ctx, Group g, WaitOptions const& opt = {}) no
 /// version + 1, bind() for a bindless slot, the old object released after the frames that use it, a Changed
 /// event. A failed reload keeps the old version and emits K5010. Memory-registered assets cannot be reloaded
 /// (K5012). Works without KILN_HOT_RELOAD; the store poller (ContextDesc::hotReload) calls this for you.
-KILN_API void request_reload(Context* ctx, MeshHandle h) noexcept;
-KILN_API void request_reload(Context* ctx, TextureHandle h) noexcept;
+KILN_API void request_reload(Context* ctx, MeshHandle h);
+KILN_API void request_reload(Context* ctx, TextureHandle h);
 
 // ---------------------------------------------------------------------------
 // In-memory registration (procedural / generated content, tests, mods)
@@ -329,9 +327,9 @@ KILN_API void request_reload(Context* ctx, TextureHandle h) noexcept;
 /// handle goes through the normal upload path and states. Fails (null handle +
 /// diagnostic) if the path is already registered or the bytes do not validate.
 [[nodiscard]] KILN_API MeshHandle register_mesh(Context* ctx, StrView path, Span<u8 const> meshFile,
-                                                RequestOptions const& opt = {}) noexcept;
+                                                RequestOptions const& opt = {});
 [[nodiscard]] KILN_API TextureHandle register_texture(Context* ctx, StrView path, Span<u8 const> ktx2File,
-                                                      RequestOptions const& opt = {}) noexcept;
+                                                      RequestOptions const& opt = {});
 
 // ---------------------------------------------------------------------------
 // Cook provider (dev builds; installed by kiln_cook, see kiln/cook/provider.h)
@@ -358,9 +356,9 @@ struct CookProvider {
     void (*release)(void* user) = nullptr;
 };
 /// Replaces the installed provider. The old one is not released: a host that wraps it keeps it.
-KILN_API void set_cook_provider(Context* ctx, CookProvider const& provider) noexcept;
+KILN_API void set_cook_provider(Context* ctx, CookProvider const& provider);
 /// The installed provider (null fn if none), so a host can wrap it.
-KILN_API CookProvider cook_provider(Context* ctx) noexcept;
+KILN_API CookProvider cook_provider(Context* ctx);
 
 // ---------------------------------------------------------------------------
 // Introspection
@@ -373,21 +371,21 @@ struct ContextStats {
     u64 ioBytesInFlight = 0;
     u32 uploadsInFlight = 0;
 };
-KILN_API ContextStats stats(Context* ctx) noexcept;
-KILN_API StrView store_dir(Context* ctx) noexcept;
+KILN_API ContextStats stats(Context* ctx);
+KILN_API StrView store_dir(Context* ctx);
 /// ContextDesc::profile (an owned copy).
-KILN_API StrView store_profile(Context* ctx) noexcept;
+KILN_API StrView store_profile(Context* ctx);
 /// The roots from ContextDesc (owned copies).
-KILN_API Span<Root const> roots(Context* ctx) noexcept;
-KILN_API Allocator const* allocator(Context* ctx) noexcept;
+KILN_API Span<Root const> roots(Context* ctx);
+KILN_API Allocator const* allocator(Context* ctx);
 /// The diagnostic sink from ContextDesc, so a cook provider reports where the host listens.
-KILN_API DiagSink const* diag_sink(Context* ctx) noexcept;
+KILN_API DiagSink const* diag_sink(Context* ctx);
 /// The job system the context runs its IO and cook jobs on: the host's JobSystem
 /// from ContextDesc, or the built-in pool. Valid until destroy(ctx).
-KILN_API JobSystem const* jobs(Context* ctx) noexcept;
-KILN_API Adapter const* adapter(Context* ctx) noexcept;
+KILN_API JobSystem const* jobs(Context* ctx);
+KILN_API Adapter const* adapter(Context* ctx);
 /// The profile hooks from ContextDesc, or nullptr when it set none.
-KILN_API ProfileHooks const* profile_hooks(Context* ctx) noexcept;
+KILN_API ProfileHooks const* profile_hooks(Context* ctx);
 
 // ---------------------------------------------------------------------------
 // Diagnostics (K5000-K5999: runtime and store). See docs/diagnostics.md.

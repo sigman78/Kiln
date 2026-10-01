@@ -26,6 +26,10 @@ compiler is too old, update it.
 - No `throw`/`try`/`catch`, no `dynamic_cast`/`typeid` in kiln code. Third-party code that may
   throw is caught only inside the `.cpp` that calls it and converted to `Status`.
 - No `<iostream>`, `<sstream>`, `<fstream>`, `<iomanip>` anywhere. Format with `kiln::format`.
+- Attributes only where they do work. `noexcept`: copy and move constructors and assignment, and
+  `swap`, only (kiln does not throw; kiln containers and `std::` read it there). `[[nodiscard]]`: bool results, calls that
+  acquire or own something, and values where 0 or null means failure (`Status` and `Result` are
+  already `[[nodiscard]]`). `constexpr`: only functions that can be evaluated at compile time.
 - Public headers use lightweight std headers only (`<cstdint> <cstddef> <cstring> <new>
   <type_traits> <bit> <atomic> <utility> <concepts>`); heavier ones live in `.cpp` files.
   Third-party headers never appear in `include/`.

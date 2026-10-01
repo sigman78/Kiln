@@ -14,10 +14,8 @@ namespace {
 
 struct DiagCapture {
     u32 code = 0;
-    static void fn(void* user, Diagnostic const& d) noexcept {
-        static_cast<DiagCapture*>(user)->code = d.code;
-    }
-    DiagSink sink() noexcept { return DiagSink{&fn, this}; }
+    static void fn(void* user, Diagnostic const& d) { static_cast<DiagCapture*>(user)->code = d.code; }
+    DiagSink sink() { return DiagSink{&fn, this}; }
 };
 
 bool file_exists(char const* path) {

@@ -12,7 +12,7 @@ KILN_GL_FUNCTIONS(KILN_GL_DEFINE)
 KILN_GL_BINDLESS_FUNCTIONS(KILN_GL_DEFINE)
 #undef KILN_GL_DEFINE
 
-bool load_gl() noexcept {
+bool load_gl() {
     bool ok = true;
 #define KILN_GL_LOAD(ret, name, params)                                                                      \
     name = reinterpret_cast<PFN_##name>(glfwGetProcAddress(#name));                                          \
@@ -25,7 +25,7 @@ bool load_gl() noexcept {
     return ok;
 }
 
-bool load_gl_bindless() noexcept {
+bool load_gl_bindless() {
     if (!glfwExtensionSupported("GL_ARB_bindless_texture")) {
         KILN_ERROR("gl", "the driver does not offer GL_ARB_bindless_texture");
         return false;

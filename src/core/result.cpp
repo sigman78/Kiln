@@ -5,7 +5,7 @@
 
 namespace kiln {
 
-char const* code_name(Code c) noexcept {
+char const* code_name(Code c) {
     switch (c) {
     case Code::Ok: return "ok";
     case Code::Unknown: return "unknown";
@@ -30,7 +30,7 @@ char const* code_name(Code c) noexcept {
     return "?";
 }
 
-char const* severity_name(Severity s) noexcept {
+char const* severity_name(Severity s) {
     switch (s) {
     case Severity::Info: return "info";
     case Severity::Warning: return "warning";
@@ -40,7 +40,7 @@ char const* severity_name(Severity s) noexcept {
 }
 
 Status diagf(DiagSink const* sink, Status status, u32 code, Severity severity, StrView asset, StrView where,
-             char const* fmt, ...) noexcept {
+             char const* fmt, ...) {
     if (!sink || !sink->fn) return status;
     char buf[kLogMessageMax];
     va_list args;
@@ -74,6 +74,6 @@ void log_diag_fn(void* /*user*/, Diagnostic const& d) {
 }
 } // namespace
 
-DiagSink log_diag_sink() noexcept { return {&log_diag_fn, nullptr}; }
+DiagSink log_diag_sink() { return {&log_diag_fn, nullptr}; }
 
 } // namespace kiln

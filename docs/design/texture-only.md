@@ -120,7 +120,7 @@ All four were decided as proposed (owner, 2026-09-28).
 2. **A stub or no declaration.** Proposed: keep `cook_mesh` declared, returning `Unsupported`, so
    host code builds against both configurations without `#if`. The alternative, a link error, finds
    the problem earlier but forces hosts to mirror the option.
-3. **A query.** Should `kiln_cook` expose `bool cook_has_meshes() noexcept` for tools and hosts
+3. **A query.** Should `kiln_cook` expose `bool cook_has_meshes()` for tools and hosts
    that want to hide mesh options? Proposed: not now; K1021 is enough.
 4. **The option name.** `KILN_MESH` matches `KILN_WEBP`. `KILN_MESH_COOK` is more exact, but the
    runtime question in section 4 may later want its own name anyway.

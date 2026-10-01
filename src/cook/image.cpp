@@ -22,13 +22,13 @@ namespace kiln::cook {
 
 namespace {
 
-bool valid_image(Image const& img) noexcept {
+bool valid_image(Image const& img) {
     return img.width > 0 && img.height > 0 && img.channels >= 1 && img.channels <= 4 &&
            (img.bitsPerChannel == 8 || img.bitsPerChannel == 16 || img.bitsPerChannel == 32) &&
            img.pixels.size() == img.byte_size();
 }
 
-Image make_image(u32 w, u32 h, u32 channels, u32 bits, Allocator const* alloc) noexcept {
+Image make_image(u32 w, u32 h, u32 channels, u32 bits, Allocator const* alloc) {
     Image img;
     img.width          = w;
     img.height         = h;
@@ -40,14 +40,14 @@ Image make_image(u32 w, u32 h, u32 channels, u32 bits, Allocator const* alloc) n
 }
 
 /// Rows of `img` for an in-place kernel.
-kernels::RowCtx in_place_rows(Image& img) noexcept {
+kernels::RowCtx in_place_rows(Image& img) {
     return kernels::RowCtx{
         .dst = img.pixels.data(), .dstRowBytes = usize(img.row_bytes()), .width = img.width};
 }
 
 /// Rows per parallel_for chunk: about 512 KiB of source bytes, and no more than
 /// kMaxChunks chunks however large the image.
-u32 row_grain(u32 rows, usize srcBytesPerRow) noexcept {
+u32 row_grain(u32 rows, usize srcBytesPerRow) {
     constexpr usize kChunkBytes = usize(512) << 10;
     constexpr u32 kMaxChunks    = 256;
     u32 const byBytes           = u32(max(kChunkBytes / max(srcBytesPerRow, usize(1)), usize(1)));
@@ -59,19 +59,19 @@ struct RowBands {
     kernels::RowFn fn;
     kernels::RowCtx ctx;
 
-    static void run(void* user, u32 begin, u32 end) noexcept {
+    static void run(void* user, u32 begin, u32 end) {
         auto const* self = static_cast<RowBands const*>(user);
         self->fn(self->ctx, begin, end);
     }
 };
 
-void in_place_bands(Image& img, kernels::RowFn fn, JobBudget const& budget) noexcept {
+void in_place_bands(Image& img, kernels::RowFn fn, JobBudget const& budget) {
     RowBands bands = {.fn = fn, .ctx = in_place_rows(img)};
     parallel_for(budget.jobs, img.pixels.allocator(), img.height,
                  row_grain(img.height, bands.ctx.dstRowBytes), &RowBands::run, &bands, budget.maxThreads);
 }
 
-void prepare_band(void* user, u32 begin, u32 end) noexcept {
+void prepare_band(void* user, u32 begin, u32 end) {
     kernels::prepare_rows(*static_cast<kernels::PrepareCtx const*>(user), begin, end);
 }
 
@@ -79,7 +79,7 @@ struct DownsampleBands {
     kernels::DownsampleFn fn;
     kernels::DownsampleCtx ctx;
 
-    static void run(void* user, u32 begin, u32 end) noexcept {
+    static void run(void* user, u32 begin, u32 end) {
         auto const* self = static_cast<DownsampleBands const*>(user);
         self->fn(self->ctx, begin, end);
     }
@@ -88,7 +88,7 @@ struct DownsampleBands {
 // --- f32 (HDR) path: plain loops, kept apart from the integer kernels ---
 
 /// Channel `i` of a row as f32: integers become v / max, no sRGB decode.
-f32 load_f32(u8 const* row, usize i, u32 bits) noexcept {
+f32 load_f32(u8 const* row, usize i, u32 bits) {
     if (bits == 8) return f32(row[i]) / 255.0f;
     if (bits == 16) {
         u16 v;
@@ -106,7 +106,7 @@ struct FloatPrepare {
     bool grayAlpha   = false;
 
     /// Same channel rules as the integer converter; alpha added as 1.0.
-    static void run(void* user, u32 begin, u32 end) noexcept {
+    static void run(void* user, u32 begin, u32 end) {
         auto const& k = *static_cast<FloatPrepare const*>(user);
         u32 const sc = k.src->channels, dc = k.dst->channels, bits = k.src->bitsPerChannel;
         for (u32 y = begin; y < end; ++y) {
@@ -137,7 +137,7 @@ struct FloatDownsample {
     Image* dst       = nullptr;
     usize colStep = 0, rowStep = 0;
 
-    static void run(void* user, u32 begin, u32 end) noexcept {
+    static void run(void* user, u32 begin, u32 end) {
         auto const& k     = *static_cast<FloatDownsample const*>(user);
         u32 const ch      = k.src->channels;
         usize const srow  = usize(k.src->row_bytes());
@@ -162,12 +162,12 @@ struct FloatDownsample {
 
 } // namespace
 
-u16 srgb8_to_linear16(u8 v) noexcept { return kernels::kSrgbToLinear16[v]; }
+u16 srgb8_to_linear16(u8 v) { return kernels::kSrgbToLinear16[v]; }
 
-u8 linear16_to_srgb8(u16 v) noexcept { return kernels::kLinear16ToSrgb8.v[v]; }
+u8 linear16_to_srgb8(u16 v) { return kernels::kLinear16ToSrgb8.v[v]; }
 
 Result<Image> prepare_image(Image const& src, u32 channels, u32 bitsPerChannel, PrepareOptions const& opt,
-                            Allocator const* alloc, JobBudget const& budget) noexcept {
+                            Allocator const* alloc, JobBudget const& budget) {
     if (!valid_image(src) || channels < 1 || channels > 4 ||
         (bitsPerChannel != 8 && bitsPerChannel != 16 && bitsPerChannel != 32))
         return make_status(Code::InvalidArgument);
@@ -203,12 +203,12 @@ Result<Image> prepare_image(Image const& src, u32 channels, u32 bitsPerChannel, 
 }
 
 Result<Image> convert_image(Image const& src, u32 channels, u32 bitsPerChannel, Allocator const* alloc,
-                            JobBudget const& budget) noexcept {
+                            JobBudget const& budget) {
     return prepare_image(src, channels, bitsPerChannel, PrepareOptions{}, alloc, budget);
 }
 
 Result<Image> downsample_2x(Image const& src, MipOptions const& opt, Allocator const* alloc,
-                            JobBudget const& budget) noexcept {
+                            JobBudget const& budget) {
     if (!valid_image(src)) return make_status(Code::InvalidArgument);
     u32 const w = max(src.width / 2, 1u);
     u32 const h = max(src.height / 2, 1u);
@@ -252,13 +252,13 @@ Result<Image> downsample_2x(Image const& src, MipOptions const& opt, Allocator c
     return dst;
 }
 
-void flip_green(Image& img, JobBudget const& budget) noexcept {
+void flip_green(Image& img, JobBudget const& budget) {
     if (!valid_image(img)) return;
     kernels::RowFn const fn = kernels::flip_green_kernel(img.bitsPerChannel, img.channels);
     if (fn) in_place_bands(img, fn, budget);
 }
 
-void renormalize(Image& img, JobBudget const& budget) noexcept {
+void renormalize(Image& img, JobBudget const& budget) {
     if (!valid_image(img)) return;
     kernels::RowFn const fn = kernels::renormalize_kernel(img.bitsPerChannel, img.channels);
     if (fn) in_place_bands(img, fn, budget);
@@ -266,14 +266,14 @@ void renormalize(Image& img, JobBudget const& budget) noexcept {
 
 namespace {
 
-u32 alpha_at(Image const& img, usize i) noexcept {
+u32 alpha_at(Image const& img, usize i) {
     if (img.bitsPerChannel == 8) return img.pixels[i * 4 + 3];
     u16 v;
     std::memcpy(&v, img.pixels.data() + (i * 4 + 3) * 2, 2);
     return v;
 }
 
-void set_alpha(Image& img, usize i, u32 v) noexcept {
+void set_alpha(Image& img, usize i, u32 v) {
     if (img.bitsPerChannel == 8) {
         img.pixels[i * 4 + 3] = u8(v);
         return;
@@ -284,7 +284,7 @@ void set_alpha(Image& img, usize i, u32 v) noexcept {
 
 } // namespace
 
-void preserve_alpha_coverage(Span<Image> chain, f32 cutoff, Allocator const* alloc) noexcept {
+void preserve_alpha_coverage(Span<Image> chain, f32 cutoff, Allocator const* alloc) {
     if (chain.size < 2 || !(cutoff > 0.0f && cutoff <= 1.0f)) return;
     Image const& top = chain[0];
     if (top.channels != 4 || (top.bitsPerChannel != 8 && top.bitsPerChannel != 16)) return;
@@ -327,7 +327,7 @@ void preserve_alpha_coverage(Span<Image> chain, f32 cutoff, Allocator const* all
 }
 
 Result<Vec<Image>> build_mip_chain(Image&& src, MipOptions const& opt, u32 maxLevels, Allocator const* alloc,
-                                   JobBudget const& budget) noexcept {
+                                   JobBudget const& budget) {
     if (!valid_image(src)) return make_status(Code::InvalidArgument);
     u32 const full  = u32(std::bit_width(max(src.width, src.height)));
     u32 const count = maxLevels == 0 ? full : min(maxLevels, full);

@@ -21,6 +21,6 @@ struct AdapterStats {
 };
 
 /// One Info line with every counter, tagged `who` (the example's log tag).
-void log_adapter_stats(char const* who, AdapterStats const& s) noexcept;
+void log_adapter_stats(char const* who, AdapterStats const& s);
 
 } // namespace kiln::ex

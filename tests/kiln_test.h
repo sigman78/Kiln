@@ -18,71 +18,71 @@ struct TestCase {
 };
 
 struct Registrar {
-    Registrar(TestCase* tc) noexcept; // NOLINT(google-explicit-constructor)
+    Registrar(TestCase* tc); // NOLINT(google-explicit-constructor)
 };
 
 /// Report a failed check. Returns false for use in expressions.
-bool fail(char const* file, int line, char const* expr, char const* fmt, ...) noexcept KILN_PRINTF(4, 5);
+bool fail(char const* file, int line, char const* expr, char const* fmt, ...) KILN_PRINTF(4, 5);
 
 /// Number of failures recorded in the currently running test.
-int current_failures() noexcept;
+int current_failures();
 
-int run_all(int argc, char** argv) noexcept;
+int run_all(int argc, char** argv);
 
 // The three directories default to paths compiled in by CMake; the flags override them.
 // They are never null: run_all() exits before any test if one is unusable.
 
 /// Scratch directory for files tests write (`--samples <dir>`). Created if missing.
-char const* sample_dir() noexcept;
+char const* sample_dir();
 
 /// The KTX2 corpus root holding manifest.txt (`--corpus <dir>`); the glTF corpus is `../gltf`.
-char const* corpus_dir() noexcept;
+char const* corpus_dir();
 
 /// Golden files: mesh/*.mesh, ktx2/*.ktx2 (`--golden <dir>`). See tests/golden/README.md.
-char const* golden_dir() noexcept;
+char const* golden_dir();
 
 /// True if `--update-golden` was given: golden-file tests write the golden instead
 /// of comparing against it. See tests/golden/README.md.
-[[nodiscard]] bool update_golden() noexcept;
+[[nodiscard]] bool update_golden();
 
 /// True if the runner's filter argument is exactly `fullName` ("Suite.Name"). Tests
 /// that must only run on request (e.g. ones that panic on purpose and are registered
 /// as separate CTest entries) return early unless this holds.
-[[nodiscard]] bool selected_exactly(char const* fullName) noexcept;
+[[nodiscard]] bool selected_exactly(char const* fullName);
 
 // Value → string helpers for KILN_CHECK_EQ messages.
-usize to_str(char* buf, usize cap, bool v) noexcept;
-usize to_str(char* buf, usize cap, char v) noexcept;
-usize to_str(char* buf, usize cap, i32 v) noexcept;
-usize to_str(char* buf, usize cap, u32 v) noexcept;
-usize to_str(char* buf, usize cap, i64 v) noexcept;
-usize to_str(char* buf, usize cap, u64 v) noexcept;
-usize to_str(char* buf, usize cap, f64 v) noexcept;
-usize to_str(char* buf, usize cap, StrView v) noexcept;
-usize to_str(char* buf, usize cap, char const* v) noexcept;
-usize to_str(char* buf, usize cap, void const* v) noexcept;
-inline usize to_str(char* buf, usize cap, f32 v) noexcept { return to_str(buf, cap, f64(v)); }
+usize to_str(char* buf, usize cap, bool v);
+usize to_str(char* buf, usize cap, char v);
+usize to_str(char* buf, usize cap, i32 v);
+usize to_str(char* buf, usize cap, u32 v);
+usize to_str(char* buf, usize cap, i64 v);
+usize to_str(char* buf, usize cap, u64 v);
+usize to_str(char* buf, usize cap, f64 v);
+usize to_str(char* buf, usize cap, StrView v);
+usize to_str(char* buf, usize cap, char const* v);
+usize to_str(char* buf, usize cap, void const* v);
+inline usize to_str(char* buf, usize cap, f32 v) { return to_str(buf, cap, f64(v)); }
 #if defined(KILN_OS_WINDOWS) || (defined(__SIZEOF_LONG__) && __SIZEOF_LONG__ == 4)
-inline usize to_str(char* buf, usize cap, long v) noexcept { return to_str(buf, cap, i64(v)); }
-inline usize to_str(char* buf, usize cap, unsigned long v) noexcept { return to_str(buf, cap, u64(v)); }
+inline usize to_str(char* buf, usize cap, long v) { return to_str(buf, cap, i64(v)); }
+inline usize to_str(char* buf, usize cap, unsigned long v) { return to_str(buf, cap, u64(v)); }
 #endif
 template <class E>
     requires std::is_scoped_enum_v<E>
-usize to_str(char* buf, usize cap, E v) noexcept {
+usize to_str(char* buf, usize cap, E v) {
     return to_str(buf, cap, i64(std::to_underlying(v)));
 }
-template <class T> usize to_str(char* buf, usize cap, T* v) noexcept {
+template <class T> usize to_str(char* buf, usize cap, T* v) {
     return to_str(buf, cap, static_cast<void const*>(v));
 }
 /// Fallback for anything else: prints "<?>" so the macro still compiles.
 template <class T>
     requires(!std::is_enum_v<T>)
-usize to_str(char* buf, usize cap, T const&) noexcept {
+usize to_str(char* buf, usize cap, T const&) {
     return format(buf, cap, "<?>");
 }
 
 template <class A, class B>
-bool check_eq(char const* file, int line, char const* expr, A const& a, B const& b) noexcept {
+bool check_eq(char const* file, int line, char const* expr, A const& a, B const& b) {
     if (a == b) return true;
     char sa[256], sb[256];
     to_str(sa, sizeof sa, a);
@@ -90,7 +90,7 @@ bool check_eq(char const* file, int line, char const* expr, A const& a, B const&
     return fail(file, line, expr, "  left:  %s\n  right: %s", sa, sb);
 }
 template <class A, class B>
-bool check_ne(char const* file, int line, char const* expr, A const& a, B const& b) noexcept {
+bool check_ne(char const* file, int line, char const* expr, A const& a, B const& b) {
     if (!(a == b)) return true;
     char sa[256];
     to_str(sa, sizeof sa, a);

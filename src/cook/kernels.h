@@ -70,7 +70,7 @@ struct Linear16ToSrgb8Table {
 /// Nearest sRGB code for every linear 16-bit value: the smallest index whose entry is
 /// >= v, then the nearer of it and its predecessor (ties go to the lower index). The
 /// search index only moves forward as v grows, so this is one sweep over both tables.
-constexpr Linear16ToSrgb8Table make_linear16_to_srgb8() noexcept {
+constexpr Linear16ToSrgb8Table make_linear16_to_srgb8() {
     Linear16ToSrgb8Table t{};
     u32 lo = 0;
     for (u32 v = 0; v < 65536; ++v) {
@@ -91,7 +91,7 @@ inline constexpr Linear16ToSrgb8Table kLinear16ToSrgb8 = make_linear16_to_srgb8(
 
 template <u32 Bits> inline constexpr u32 kMaxValue = Bits == 8 ? 255u : 65535u;
 
-template <u32 Bits> KILN_FORCEINLINE u32 load(u8 const* p) noexcept {
+template <u32 Bits> KILN_FORCEINLINE u32 load(u8 const* p) {
     if constexpr (Bits == 8) {
         return *p;
     } else {
@@ -101,7 +101,7 @@ template <u32 Bits> KILN_FORCEINLINE u32 load(u8 const* p) noexcept {
     }
 }
 
-template <u32 Bits> KILN_FORCEINLINE void store(u8* p, u32 v) noexcept {
+template <u32 Bits> KILN_FORCEINLINE void store(u8* p, u32 v) {
     if constexpr (Bits == 8) {
         *p = u8(v);
     } else {
@@ -111,7 +111,7 @@ template <u32 Bits> KILN_FORCEINLINE void store(u8* p, u32 v) noexcept {
 }
 
 /// 16 <-> 8 bit conversion rules from image.h.
-template <u32 From, u32 To> KILN_FORCEINLINE u32 convert_depth(u32 v) noexcept {
+template <u32 From, u32 To> KILN_FORCEINLINE u32 convert_depth(u32 v) {
     if constexpr (From == 16 && To == 8)
         return (v * 255u + 32767u) / 65535u;
     else if constexpr (From == 8 && To == 16)
@@ -129,7 +129,7 @@ struct UnitFrom8Table {
 /// runtime expression performs, so a lookup is bit-identical to computing it. Saves
 /// three of the seven dependent divides per texel; 16-bit keeps the divides (a
 /// 65536-entry table would not stay in cache).
-constexpr UnitFrom8Table make_unit_from8() noexcept {
+constexpr UnitFrom8Table make_unit_from8() {
     UnitFrom8Table t{};
     for (u32 i = 0; i < 256; ++i)
         t.v[i] = double(i) / 127.5 - 1.0;
@@ -139,7 +139,7 @@ constexpr UnitFrom8Table make_unit_from8() noexcept {
 inline constexpr UnitFrom8Table kUnitFrom8 = make_unit_from8();
 
 /// A channel value mapped to [-1, 1]: double(v) / half - 1.0, from kUnitFrom8 for 8-bit.
-template <u32 Bits> KILN_FORCEINLINE double to_unit(u32 v) noexcept {
+template <u32 Bits> KILN_FORCEINLINE double to_unit(u32 v) {
     if constexpr (Bits == 8)
         return kUnitFrom8.v[v];
     else
@@ -148,7 +148,7 @@ template <u32 Bits> KILN_FORCEINLINE double to_unit(u32 v) noexcept {
 
 /// Renormalize one RGB triple (values in 0..max) as a unit vector. The operation
 /// order is part of the output format: do not reorder or simplify.
-template <u32 Bits> KILN_FORCEINLINE void renormalize_px(u32* rgb) noexcept {
+template <u32 Bits> KILN_FORCEINLINE void renormalize_px(u32* rgb) {
     constexpr u32 maxv = kMaxValue<Bits>;
     double const half  = double(maxv) * 0.5; // 127.5 or 32767.5
     double const x     = to_unit<Bits>(rgb[0]);
@@ -181,12 +181,12 @@ struct RowCtx {
     u32 width         = 0;
 };
 
-using RowFn = void (*)(RowCtx const& ctx, u32 rowBegin, u32 rowEnd) noexcept;
+using RowFn = void (*)(RowCtx const& ctx, u32 rowBegin, u32 rowEnd);
 
 /// Channel count / bit depth conversion (rules in image.h). `GrayAlpha`: a 2-channel
 /// source is gray+alpha, so Y fills R, G and B and A stays alpha.
 template <u32 SrcBits, u32 SrcChannels, u32 DstBits, u32 DstChannels, bool GrayAlpha>
-KILN_HOT void convert_rows(RowCtx const& ctx, u32 rowBegin, u32 rowEnd) noexcept {
+KILN_HOT void convert_rows(RowCtx const& ctx, u32 rowBegin, u32 rowEnd) {
     constexpr u32 sbpc = SrcBits / 8, sbpp = SrcChannels * sbpc;
     constexpr u32 dbpc = DstBits / 8, dbpp = DstChannels * dbpc;
     u32 const width = ctx.width;
@@ -217,8 +217,7 @@ KILN_HOT void convert_rows(RowCtx const& ctx, u32 rowBegin, u32 rowEnd) noexcept
 }
 
 /// Green channel v -> max - v, in place.
-template <u32 Bits, u32 Channels>
-KILN_HOT void flip_green_rows(RowCtx const& ctx, u32 rowBegin, u32 rowEnd) noexcept {
+template <u32 Bits, u32 Channels> KILN_HOT void flip_green_rows(RowCtx const& ctx, u32 rowBegin, u32 rowEnd) {
     static_assert(Channels >= 2);
     constexpr u32 bpc = Bits / 8, bpp = Channels * bpc;
     u32 const width = ctx.width;
@@ -231,7 +230,7 @@ KILN_HOT void flip_green_rows(RowCtx const& ctx, u32 rowBegin, u32 rowEnd) noexc
 
 /// RGB renormalized as unit vectors, in place.
 template <u32 Bits, u32 Channels>
-KILN_HOT void renormalize_rows(RowCtx const& ctx, u32 rowBegin, u32 rowEnd) noexcept {
+KILN_HOT void renormalize_rows(RowCtx const& ctx, u32 rowBegin, u32 rowEnd) {
     static_assert(Channels >= 3);
     constexpr u32 bpc = Bits / 8, bpp = Channels * bpc;
     u32 const width = ctx.width;
@@ -253,7 +252,7 @@ KILN_HOT void renormalize_rows(RowCtx const& ctx, u32 rowBegin, u32 rowEnd) noex
 /// path: each step is the same correctly rounded IEEE double operation in the same
 /// order (divpd and sqrtpd round like divsd and sqrtsd), 8-bit values come from the
 /// same kUnitFrom8 table, and fp contract is off, so no FMA forms.
-template <u32 Bits> KILN_FORCEINLINE void renormalize_px2_sse2(u32* a, u32* b) noexcept {
+template <u32 Bits> KILN_FORCEINLINE void renormalize_px2_sse2(u32* a, u32* b) {
     constexpr u32 maxv    = kMaxValue<Bits>;
     __m128d const half    = _mm_set1_pd(double(maxv) * 0.5);
     __m128d const one     = _mm_set1_pd(1.0);
@@ -295,7 +294,7 @@ template <u32 Bits> KILN_FORCEINLINE void renormalize_px2_sse2(u32* a, u32* b) n
 
 /// renormalize_rows with two texels per step; an odd last texel takes the scalar path.
 template <u32 Bits, u32 Channels>
-KILN_HOT void renormalize_rows_sse2(RowCtx const& ctx, u32 rowBegin, u32 rowEnd) noexcept {
+KILN_HOT void renormalize_rows_sse2(RowCtx const& ctx, u32 rowBegin, u32 rowEnd) {
     static_assert(Channels >= 3);
     constexpr u32 bpc = Bits / 8, bpp = Channels * bpc;
     u32 const width = ctx.width;
@@ -331,7 +330,7 @@ struct PrepareCtx {
     RowFn renormalize = nullptr; ///< null: skip
 };
 
-KILN_HOT inline void prepare_rows(PrepareCtx const& ctx, u32 rowBegin, u32 rowEnd) noexcept {
+KILN_HOT inline void prepare_rows(PrepareCtx const& ctx, u32 rowBegin, u32 rowEnd) {
     for (u32 y = rowBegin; y < rowEnd; ++y) {
         ctx.convert(ctx.rows, y, y + 1);
         if (ctx.flipGreen) ctx.flipGreen(ctx.rows, y, y + 1);
@@ -362,12 +361,12 @@ struct DownsampleCtx {
     usize rowStep     = 0; ///< bytes from the first to the second row sample (0 or srcRowBytes)
 };
 
-using DownsampleFn = void (*)(DownsampleCtx const& ctx, u32 rowBegin, u32 rowEnd) noexcept;
+using DownsampleFn = void (*)(DownsampleCtx const& ctx, u32 rowBegin, u32 rowEnd);
 
 /// One output texel's 2x2 average; `r0` and `r1` point at the first column sample in
 /// the two source rows. Renorm averages like Linear; the caller then renormalizes.
 template <u32 Bits, u32 Channels, DownsampleMode Mode>
-KILN_FORCEINLINE void box_px(u8 const* r0, u8 const* r1, usize colStep, u32* out) noexcept {
+KILN_FORCEINLINE void box_px(u8 const* r0, u8 const* r1, usize colStep, u32* out) {
     constexpr u32 bpc    = Bits / 8;
     constexpr u32 srgbCh = Mode == DownsampleMode::Srgb ? (Channels < 3 ? Channels : 3) : 0;
     for (u32 c = 0; c < srgbCh; ++c) {
@@ -387,7 +386,7 @@ KILN_FORCEINLINE void box_px(u8 const* r0, u8 const* r1, usize colStep, u32* out
 /// renormalize_px2_sse2; an odd last texel, and every texel of the other modes, takes
 /// the one-texel loop.
 template <u32 Bits, u32 Channels, DownsampleMode Mode>
-KILN_HOT void downsample_rows(DownsampleCtx const& ctx, u32 rowBegin, u32 rowEnd) noexcept {
+KILN_HOT void downsample_rows(DownsampleCtx const& ctx, u32 rowBegin, u32 rowEnd) {
     static_assert(Mode != DownsampleMode::Srgb || Bits == 8, "sRGB averaging is 8-bit only");
     static_assert(Mode != DownsampleMode::Renorm || Channels >= 3, "renormalize needs RGB");
     constexpr u32 bpc = Bits / 8, bpp = Channels * bpc;
@@ -428,14 +427,14 @@ KILN_HOT void downsample_rows(DownsampleCtx const& ctx, u32 rowBegin, u32 rowEnd
 
 namespace detail {
 
-template <u32 SB, u32 SC, u32 DB, u32 DC> RowFn convert_pick(bool grayAlpha) noexcept {
+template <u32 SB, u32 SC, u32 DB, u32 DC> RowFn convert_pick(bool grayAlpha) {
     if constexpr (SC == 2 && DC >= 3) {
         if (grayAlpha) return &convert_rows<SB, SC, DB, DC, true>;
     }
     return &convert_rows<SB, SC, DB, DC, false>;
 }
 
-template <u32 SB, u32 SC, u32 DB> RowFn convert_dst_channels(u32 dc, bool grayAlpha) noexcept {
+template <u32 SB, u32 SC, u32 DB> RowFn convert_dst_channels(u32 dc, bool grayAlpha) {
     switch (dc) {
     case 1: return convert_pick<SB, SC, DB, 1>(grayAlpha);
     case 2: return convert_pick<SB, SC, DB, 2>(grayAlpha);
@@ -445,7 +444,7 @@ template <u32 SB, u32 SC, u32 DB> RowFn convert_dst_channels(u32 dc, bool grayAl
     }
 }
 
-template <u32 SB, u32 SC> RowFn convert_dst(u32 db, u32 dc, bool grayAlpha) noexcept {
+template <u32 SB, u32 SC> RowFn convert_dst(u32 db, u32 dc, bool grayAlpha) {
     switch (db) {
     case 8: return convert_dst_channels<SB, SC, 8>(dc, grayAlpha);
     case 16: return convert_dst_channels<SB, SC, 16>(dc, grayAlpha);
@@ -453,7 +452,7 @@ template <u32 SB, u32 SC> RowFn convert_dst(u32 db, u32 dc, bool grayAlpha) noex
     }
 }
 
-template <u32 SB> RowFn convert_src_channels(u32 sc, u32 db, u32 dc, bool grayAlpha) noexcept {
+template <u32 SB> RowFn convert_src_channels(u32 sc, u32 db, u32 dc, bool grayAlpha) {
     switch (sc) {
     case 1: return convert_dst<SB, 1>(db, dc, grayAlpha);
     case 2: return convert_dst<SB, 2>(db, dc, grayAlpha);
@@ -463,7 +462,7 @@ template <u32 SB> RowFn convert_src_channels(u32 sc, u32 db, u32 dc, bool grayAl
     }
 }
 
-template <u32 B> RowFn flip_green_for(u32 channels) noexcept {
+template <u32 B> RowFn flip_green_for(u32 channels) {
     switch (channels) {
     case 2: return &flip_green_rows<B, 2>;
     case 3: return &flip_green_rows<B, 3>;
@@ -472,7 +471,7 @@ template <u32 B> RowFn flip_green_for(u32 channels) noexcept {
     }
 }
 
-template <u32 B> RowFn renormalize_scalar_for(u32 channels) noexcept {
+template <u32 B> RowFn renormalize_scalar_for(u32 channels) {
     switch (channels) {
     case 3: return &renormalize_rows<B, 3>;
     case 4: return &renormalize_rows<B, 4>;
@@ -480,7 +479,7 @@ template <u32 B> RowFn renormalize_scalar_for(u32 channels) noexcept {
     }
 }
 
-template <u32 B> RowFn renormalize_for(u32 channels) noexcept {
+template <u32 B> RowFn renormalize_for(u32 channels) {
 #if defined(KILN_ARCH_X64)
     switch (channels) {
     case 3: return &renormalize_rows_sse2<B, 3>;
@@ -492,7 +491,7 @@ template <u32 B> RowFn renormalize_for(u32 channels) noexcept {
 #endif
 }
 
-template <u32 B, u32 C> DownsampleFn downsample_mode(DownsampleMode mode) noexcept {
+template <u32 B, u32 C> DownsampleFn downsample_mode(DownsampleMode mode) {
     if constexpr (C >= 3) {
         if (mode == DownsampleMode::Renorm) return &downsample_rows<B, C, DownsampleMode::Renorm>;
     }
@@ -502,7 +501,7 @@ template <u32 B, u32 C> DownsampleFn downsample_mode(DownsampleMode mode) noexce
     return &downsample_rows<B, C, DownsampleMode::Linear>;
 }
 
-template <u32 B> DownsampleFn downsample_for(u32 channels, DownsampleMode mode) noexcept {
+template <u32 B> DownsampleFn downsample_for(u32 channels, DownsampleMode mode) {
     switch (channels) {
     case 1: return downsample_mode<B, 1>(mode);
     case 2: return downsample_mode<B, 2>(mode);
@@ -516,8 +515,7 @@ template <u32 B> DownsampleFn downsample_for(u32 channels, DownsampleMode mode) 
 
 /// Converter between two formats; null for an unsupported one. `grayAlpha` only
 /// matters for a 2-channel source going to 3 or 4 channels.
-inline RowFn convert_kernel(u32 srcBits, u32 srcChannels, u32 dstBits, u32 dstChannels,
-                            bool grayAlpha) noexcept {
+inline RowFn convert_kernel(u32 srcBits, u32 srcChannels, u32 dstBits, u32 dstChannels, bool grayAlpha) {
     switch (srcBits) {
     case 8: return detail::convert_src_channels<8>(srcChannels, dstBits, dstChannels, grayAlpha);
     case 16: return detail::convert_src_channels<16>(srcChannels, dstBits, dstChannels, grayAlpha);
@@ -526,27 +524,27 @@ inline RowFn convert_kernel(u32 srcBits, u32 srcChannels, u32 dstBits, u32 dstCh
 }
 
 /// Null when there is nothing to flip (fewer than 2 channels) or the format is unsupported.
-inline RowFn flip_green_kernel(u32 bits, u32 channels) noexcept {
+inline RowFn flip_green_kernel(u32 bits, u32 channels) {
     return bits == 8 ? detail::flip_green_for<8>(channels)
                      : (bits == 16 ? detail::flip_green_for<16>(channels) : nullptr);
 }
 
 /// Null when there is nothing to renormalize (fewer than 3 channels) or the format is
 /// unsupported. The SSE2 path on x64, the scalar template elsewhere.
-inline RowFn renormalize_kernel(u32 bits, u32 channels) noexcept {
+inline RowFn renormalize_kernel(u32 bits, u32 channels) {
     return bits == 8 ? detail::renormalize_for<8>(channels)
                      : (bits == 16 ? detail::renormalize_for<16>(channels) : nullptr);
 }
 
 /// Always the scalar reference template: tests compare it with renormalize_kernel.
-inline RowFn renormalize_kernel_scalar(u32 bits, u32 channels) noexcept {
+inline RowFn renormalize_kernel_scalar(u32 bits, u32 channels) {
     return bits == 8 ? detail::renormalize_scalar_for<8>(channels)
                      : (bits == 16 ? detail::renormalize_scalar_for<16>(channels) : nullptr);
 }
 
 /// `mode` falls back to Linear where it does not apply (Srgb on 16-bit, Renorm on
 /// fewer than 3 channels). Null for an unsupported format.
-inline DownsampleFn downsample_kernel(u32 bits, u32 channels, DownsampleMode mode) noexcept {
+inline DownsampleFn downsample_kernel(u32 bits, u32 channels, DownsampleMode mode) {
     return bits == 8 ? detail::downsample_for<8>(channels, mode)
                      : (bits == 16 ? detail::downsample_for<16>(channels, mode) : nullptr);
 }

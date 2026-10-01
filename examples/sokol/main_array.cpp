@@ -55,7 +55,7 @@ struct App {
 };
 
 /// --dump <file.png>, --verify and --help. Returns -1 to run, else the exit code.
-int parse(int argc, char** argv, App* app) noexcept {
+int parse(int argc, char** argv, App* app) {
     ex::Options& o           = app->o;
     cli::Option const opts[] = {
         {.name = "--dump",
@@ -87,7 +87,7 @@ int parse(int argc, char** argv, App* app) noexcept {
     return -1;
 }
 
-void log_array(Context* ctx, TextureHandle h) noexcept {
+void log_array(Context* ctx, TextureHandle h) {
     TextureInfo const ti = texture_info(ctx, h);
     KILN_INFO("array", "%u layers of %s %ux%u, %u levels, version %u", ti.desc.layers,
               format_name(ti.desc.format), ti.desc.width, ti.desc.height, ti.desc.levels, ti.version);

@@ -28,13 +28,13 @@ struct ThreadPoolDesc {
 };
 
 /// The built-in pool. `destroy` waits for idle, joins the threads and frees the pool.
-KILN_API Result<JobSystem> create_thread_pool(ThreadPoolDesc const& desc) noexcept;
-KILN_API void destroy_thread_pool(JobSystem const& jobs) noexcept;
-KILN_API u32 thread_pool_thread_count(JobSystem const& jobs) noexcept;
+KILN_API Result<JobSystem> create_thread_pool(ThreadPoolDesc const& desc);
+KILN_API void destroy_thread_pool(JobSystem const& jobs);
+KILN_API u32 thread_pool_thread_count(JobSystem const& jobs);
 
 struct IoFile {
     u64 bits = 0; ///< backend-defined; 0 = invalid
-    [[nodiscard]] bool valid() const noexcept { return bits != 0; }
+    [[nodiscard]] bool valid() const { return bits != 0; }
 };
 
 /// What a file poller compares between rounds.
@@ -58,13 +58,12 @@ struct IoBackend {
 };
 
 /// The built-in compatibility backend (thread-safe, positional reads, UTF-8 paths).
-KILN_API IoBackend const* compat_io_backend() noexcept;
+KILN_API IoBackend const* compat_io_backend();
 
 /// Reads a whole file through `io` into `out` (Tag::Io).
-KILN_API Status io_read_file(IoBackend const* io, StrView path, Allocator const* alloc,
-                             Vec<u8>* out) noexcept;
+KILN_API Status io_read_file(IoBackend const* io, StrView path, Allocator const* alloc, Vec<u8>* out);
 
 /// True if `path` names an existing regular file (through the compat backend's rules).
-[[nodiscard]] KILN_API bool io_file_exists(StrView path) noexcept;
+[[nodiscard]] KILN_API bool io_file_exists(StrView path);
 
 } // namespace kiln

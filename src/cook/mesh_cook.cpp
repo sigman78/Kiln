@@ -134,7 +134,7 @@ struct TexRefBuild {
 
 struct Cook {
     Cook(MeshSource const& s, MeshCookSettings const& st, Allocator const* al, DiagSink const* d, Arena& a,
-         ImportScene const& sc) noexcept
+         ImportScene const& sc)
         : src(s), settings(st), alloc(al), diag(d), arena(a), scene(sc), asset(diag_asset(s)),
           layouts(al, Tag::Cook), parts(al, Tag::Cook), lods(al, Tag::Cook), submeshes(al, Tag::Cook),
           materials(al, Tag::Cook), bindings(al, Tag::Cook), mounts(al, Tag::Cook), matMap(al, Tag::Cook),
@@ -182,7 +182,7 @@ struct Cook {
 // ---------------------------------------------------------------------------
 
 /// IEEE binary16, round to nearest even (F. Giesen's float_to_half_fast3_rtne).
-u16 f32_to_f16(f32 f) noexcept {
+u16 f32_to_f16(f32 f) {
     u32 const f32infty    = 255u << 23;
     u32 const f16max      = (127u + 16u) << 23;
     u32 const denormMagic = ((127u - 15u) + (23u - 10u) + 1u) << 23;
@@ -205,21 +205,21 @@ u16 f32_to_f16(f32 f) noexcept {
     return u16(o | u16(sign >> 16));
 }
 
-i16 snorm16(f32 v) noexcept {
+i16 snorm16(f32 v) {
     v = clamp(v, -1.0f, 1.0f);
     return i16(std::floor(v * 32767.0f + 0.5f));
 }
-u16 unorm16(f32 v) noexcept {
+u16 unorm16(f32 v) {
     v = clamp(v, 0.0f, 1.0f);
     return u16(std::floor(v * 65535.0f + 0.5f));
 }
-u8 unorm8(f32 v) noexcept {
+u8 unorm8(f32 v) {
     v = clamp(v, 0.0f, 1.0f);
     return u8(std::floor(v * 255.0f + 0.5f));
 }
 
 /// Octahedral encoding of a unit normal into two snorm16 values.
-void oct_encode(f32 const n[3], i16 out[2]) noexcept {
+void oct_encode(f32 const n[3], i16 out[2]) {
     f32 const ax = n[0] < 0 ? -n[0] : n[0];
     f32 const ay = n[1] < 0 ? -n[1] : n[1];
     f32 const az = n[2] < 0 ? -n[2] : n[2];
@@ -239,7 +239,7 @@ void oct_encode(f32 const n[3], i16 out[2]) noexcept {
     out[1] = snorm16(y);
 }
 
-void normalize3(f32 v[3]) noexcept {
+void normalize3(f32 v[3]) {
     f32 const len2 = v[0] * v[0] + v[1] * v[1] + v[2] * v[2];
     if (!(len2 > 0)) return;
     f32 const inv = 1.0f / std::sqrt(len2);
@@ -248,17 +248,17 @@ void normalize3(f32 v[3]) noexcept {
     v[2] *= inv;
 }
 
-void mul3(Mat3 const& m, f32 const in[3], f32 out[3]) noexcept {
+void mul3(Mat3 const& m, f32 const in[3], f32 out[3]) {
     for (u32 r = 0; r < 3; ++r)
         out[r] = m.m[0 + r] * in[0] + m.m[3 + r] * in[1] + m.m[6 + r] * in[2];
 }
 
-void mul_point(Mat4 const& m, f32 const in[3], f32 out[3]) noexcept {
+void mul_point(Mat4 const& m, f32 const in[3], f32 out[3]) {
     for (u32 r = 0; r < 3; ++r)
         out[r] = m.m[0 + r] * in[0] + m.m[4 + r] * in[1] + m.m[8 + r] * in[2] + m.m[12 + r];
 }
 
-Bounds make_bounds(f32 const mn[3], f32 const mx[3], f32 radius) noexcept {
+Bounds make_bounds(f32 const mn[3], f32 const mx[3], f32 radius) {
     Bounds b{};
     for (u32 a = 0; a < 3; ++a) {
         b.center[a]      = (mn[a] + mx[a]) * 0.5f;
@@ -269,7 +269,7 @@ Bounds make_bounds(f32 const mn[3], f32 const mx[3], f32 radius) noexcept {
 }
 
 /// AABB + bounding sphere (around the AABB center) of the vertices referenced by idx[first, first+count).
-Bounds bounds_of(Vtx const* v, u32 const* idx, u32 count) noexcept {
+Bounds bounds_of(Vtx const* v, u32 const* idx, u32 count) {
     if (count == 0) return Bounds{};
     f32 mn[3], mx[3];
     for (u32 a = 0; a < 3; ++a)
@@ -336,7 +336,7 @@ void mikk_set_basic(SMikkTSpaceContext const* ctx, float const t[], float sign, 
 // ---------------------------------------------------------------------------
 
 /// -0.0 -> +0.0 on every channel so exact welding does not split on the sign of zero.
-void canonicalize(Vtx& v) noexcept {
+void canonicalize(Vtx& v) {
     f32* f = &v.p[0];
     for (u32 i = 0; i < sizeof(Vtx) / sizeof(f32); ++i)
         if (f[i] == 0.0f) f[i] = 0.0f;
@@ -581,7 +581,7 @@ void build_lod(LodTask& task, MeshCookSettings const& settings, Allocator const*
 // Materials and texture references
 // ---------------------------------------------------------------------------
 
-SlotHint slot_hint(mesh::TextureSlot s) noexcept {
+SlotHint slot_hint(mesh::TextureSlot s) {
     switch (s) {
     case mesh::TextureSlot::BaseColor: return SlotHint::BaseColor;
     case mesh::TextureSlot::Normal: return SlotHint::Normal;
@@ -592,7 +592,7 @@ SlotHint slot_hint(mesh::TextureSlot s) noexcept {
     return SlotHint::None;
 }
 
-StrView concat(Arena& arena, StrView a, StrView b, StrView c = {}) noexcept {
+StrView concat(Arena& arena, StrView a, StrView b, StrView c = {}) {
     usize const n = a.size + b.size + c.size;
     char* p       = arena.alloc_array<char>(n + 1);
     if (a.size) std::memcpy(p, a.data, a.size);
@@ -639,7 +639,7 @@ Status name_embedded_images(Cook& k) {
     return kOk;
 }
 
-StrView with_suffix(Arena& arena, StrView base, u32 n) noexcept {
+StrView with_suffix(Arena& arena, StrView base, u32 n) {
     char buf[16];
     usize const len = format(buf, sizeof buf, "_%u", n);
     return concat(arena, base, StrView(buf, len));
@@ -674,7 +674,7 @@ u32 texture_ref(Cook& k, u32 image, mesh::TextureSlot slot, StrView where) {
 }
 
 /// "name.001" -> "name" (dot followed by 3+ digits at the end).
-StrView strip_blender_suffix(StrView name) noexcept {
+StrView strip_blender_suffix(StrView name) {
     usize const dot = name.rfind('.');
     if (dot == StrView::kNpos || dot == 0 || name.size - dot - 1 < 3) return name;
     for (usize i = dot + 1; i < name.size; ++i)
@@ -683,7 +683,7 @@ StrView strip_blender_suffix(StrView name) noexcept {
 }
 
 [[nodiscard]] bool same_material(Cook const& k, mesh::MaterialDesc const& a, mesh::MaterialDesc const& b,
-                                 Span<mesh::TextureBindingDesc const> bBind) noexcept {
+                                 Span<mesh::TextureBindingDesc const> bBind) {
     if (a.flags != b.flags || a.alphaMode != b.alphaMode || a.alphaCutoff != b.alphaCutoff ||
         a.textureCount != bBind.size || a.metallicFactor != b.metallicFactor ||
         a.roughnessFactor != b.roughnessFactor || a.normalScale != b.normalScale ||
@@ -798,8 +798,7 @@ u32 material_for(Cook& k, u32 key) {
 // Quantize + pack one LOD
 // ---------------------------------------------------------------------------
 
-void add_attrib(mesh::VertexLayout& l, mesh::Semantic sem, u8 semIndex, u8 stream, Format f,
-                u16 offset) noexcept {
+void add_attrib(mesh::VertexLayout& l, mesh::Semantic sem, u8 semIndex, u8 stream, Format f, u16 offset) {
     mesh::VertexAttrib& a = l.attribs[l.attribCount++];
     a.semantic            = u8(sem);
     a.semanticIndex       = semIndex;
@@ -1157,21 +1156,21 @@ struct TaskRun {
     StrView asset;
 };
 
-void build_tasks(void* user, u32 begin, u32 end) noexcept {
+void build_tasks(void* user, u32 begin, u32 end) {
     TaskRun const& r = *static_cast<TaskRun const*>(user);
     ProfileZone const zone(r.profile, "cook.build", r.asset);
     for (u32 i = begin; i < end; ++i)
         build_lod(r.tasks[i], *r.settings, r.alloc);
 }
 
-void quantize_tasks(void* user, u32 begin, u32 end) noexcept {
+void quantize_tasks(void* user, u32 begin, u32 end) {
     TaskRun const& r = *static_cast<TaskRun const*>(user);
     ProfileZone const zone(r.profile, "cook.pack", r.asset);
     for (u32 i = begin; i < end; ++i)
         if (r.tasks[i].fate == Fate::Kept) quantize_lod(r.tasks[i]);
 }
 
-StrView last_component(StrView path) noexcept {
+StrView last_component(StrView path) {
     usize const slash = path.rfind('/');
     return slash == StrView::kNpos ? path : path.substr(slash + 1);
 }
@@ -1179,7 +1178,7 @@ StrView last_component(StrView path) noexcept {
 } // namespace
 
 Result<CookedMesh> cook_mesh(MeshSource const& src, MeshCookSettings const& settings,
-                             TargetProfile const& target, CookEnv const& env) noexcept {
+                             TargetProfile const& target, CookEnv const& env) {
     Allocator const* const alloc = env.alloc ? env.alloc : default_allocator();
     DiagSink const* const diag   = env.diag;
     Stage swTotal(env.profile, "cook.mesh", src.assetPath);

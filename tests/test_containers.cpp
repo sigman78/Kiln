@@ -13,13 +13,13 @@ namespace {
 struct Live {
     static int count;
     int v;
-    explicit Live(int x = 0) noexcept : v(x) { ++count; }
+    explicit Live(int x = 0) : v(x) { ++count; }
     Live(Live const& o) noexcept : v(o.v) { ++count; }
     Live(Live&& o) noexcept : v(o.v) {
         ++count;
         o.v = -1;
     }
-    ~Live() noexcept { --count; }
+    ~Live() { --count; }
     Live& operator=(Live const& o) noexcept {
         v = o.v;
         return *this;
@@ -37,7 +37,7 @@ struct MoveOnly {
     static int count; // number of currently-live allocations
     int* ptr = nullptr;
 
-    explicit MoveOnly(int v) noexcept {
+    explicit MoveOnly(int v) {
         ptr  = alloc_array<int>(default_allocator(), 1, Tag::Test);
         *ptr = v;
         ++count;
@@ -53,15 +53,15 @@ struct MoveOnly {
         }
         return *this;
     }
-    ~MoveOnly() noexcept { release_ptr(); }
-    void release_ptr() noexcept {
+    ~MoveOnly() { release_ptr(); }
+    void release_ptr() {
         if (ptr) {
             free_array(default_allocator(), ptr, 1, Tag::Test);
             ptr = nullptr;
             --count;
         }
     }
-    int value() const noexcept { return ptr ? *ptr : -1; }
+    int value() const { return ptr ? *ptr : -1; }
 };
 int MoveOnly::count = 0;
 
@@ -87,13 +87,13 @@ namespace user_ns {
 struct MyKey {
     u32 v;
 };
-constexpr u64 hash_of(MyKey k) noexcept { return kiln::mix64(u64(k.v)); }
-[[nodiscard]] constexpr bool operator==(MyKey a, MyKey b) noexcept { return a.v == b.v; }
+constexpr u64 hash_of(MyKey k) { return kiln::mix64(u64(k.v)); }
+[[nodiscard]] constexpr bool operator==(MyKey a, MyKey b) { return a.v == b.v; }
 } // namespace user_ns
 
 // Bad hasher: heavy collisions stress backward-shift erase.
 struct BadHash {
-    constexpr u64 operator()(u32 k) const noexcept { return u64(k % 4); }
+    constexpr u64 operator()(u32 k) const { return u64(k % 4); }
 };
 
 } // namespace

@@ -74,25 +74,23 @@ void on_key(GLFWwindow* w, int key, int /*scancode*/, int action, int /*mods*/) 
 
 } // namespace
 
-double ms_since_start() noexcept {
-    return std::chrono::duration<double, std::milli>(Clock::now() - g_start).count();
-}
+double ms_since_start() { return std::chrono::duration<double, std::milli>(Clock::now() - g_start).count(); }
 
-void install_stdout_log() noexcept { set_log_sink(LogSink{&log_fn, nullptr}); }
+void install_stdout_log() { set_log_sink(LogSink{&log_fn, nullptr}); }
 
-DiagSink stdout_diag() noexcept { return DiagSink{&diag_fn, nullptr}; }
+DiagSink stdout_diag() { return DiagSink{&diag_fn, nullptr}; }
 
 namespace {
 cli::TraceWriter* g_trace = nullptr;
 } // namespace
 
-ProfileHooks trace_hooks() noexcept {
+ProfileHooks trace_hooks() {
     if (!std::getenv("KILN_TRACE")) return {};
     if (!g_trace) g_trace = new_object<cli::TraceWriter>(default_allocator(), Tag::Io);
     return g_trace->hooks();
 }
 
-void finish_trace() noexcept {
+void finish_trace() {
     if (!g_trace) return;
     char const* path = std::getenv("KILN_TRACE");
     g_trace->log_summary();
@@ -104,7 +102,7 @@ void finish_trace() noexcept {
     g_trace = nullptr;
 }
 
-int parse_options(char const* program, int argc, char** argv, Options* o) noexcept {
+int parse_options(char const* program, int argc, char** argv, Options* o) {
     cli::Option const opts[] = {
         {.name = "--dump",
          .arg  = "<file.png>",
@@ -145,7 +143,7 @@ int parse_options(char const* program, int argc, char** argv, Options* o) noexce
     return -1;
 }
 
-MaterialFactors material_factors(mesh::MeshView const& v, u32 material) noexcept {
+MaterialFactors material_factors(mesh::MeshView const& v, u32 material) {
     MaterialFactors f{
         {1, 1, 1, 1},
         {0, 0, 0, 1},
@@ -162,7 +160,7 @@ MaterialFactors material_factors(mesh::MeshView const& v, u32 material) noexcept
     return f;
 }
 
-char const* state_name(State s) noexcept {
+char const* state_name(State s) {
     switch (s) {
     case State::Unloaded: return "Unloaded";
     case State::Pending: return "Pending";
@@ -174,7 +172,7 @@ char const* state_name(State s) noexcept {
     return "?";
 }
 
-char const* event_name(EventKind k) noexcept {
+char const* event_name(EventKind k) {
     switch (k) {
     case EventKind::MetaReady: return "MetaReady";
     case EventKind::Ready: return "Ready";
@@ -184,7 +182,7 @@ char const* event_name(EventKind k) noexcept {
     return "?";
 }
 
-void attach_camera(GLFWwindow* window, OrbitCamera* camera) noexcept {
+void attach_camera(GLFWwindow* window, OrbitCamera* camera) {
     glfwSetWindowUserPointer(window, camera);
     glfwSetMouseButtonCallback(window, &on_mouse_button);
     glfwSetCursorPosCallback(window, &on_cursor);
@@ -192,7 +190,7 @@ void attach_camera(GLFWwindow* window, OrbitCamera* camera) noexcept {
     glfwSetKeyCallback(window, &on_key);
 }
 
-View orbit_view(OrbitCamera const& camera, Vec3 center, f32 radius, f32 fovY, f32 aspect) noexcept {
+View orbit_view(OrbitCamera const& camera, Vec3 center, f32 radius, f32 fovY, f32 aspect) {
     Vec3 const dir{std::cos(camera.elevation) * std::sin(camera.azimuth), std::sin(camera.elevation),
                    std::cos(camera.elevation) * std::cos(camera.azimuth)};
     f32 const halfFov = 0.5f * (aspect < 1.0f ? 2.0f * std::atan(std::tan(fovY * 0.5f) * aspect) : fovY);
@@ -205,7 +203,7 @@ View orbit_view(OrbitCamera const& camera, Vec3 center, f32 radius, f32 fovY, f3
     return v;
 }
 
-bool write_png(char const* path, Span<u8 const> rgba, u32 width, u32 height) noexcept {
+bool write_png(char const* path, Span<u8 const> rgba, u32 width, u32 height) {
     Vec<u8> const png =
         test::png::encode({.width = width, .height = height, .colorType = 6, .depth = 8, .pixels = rgba});
     if (png.empty()) return false;
@@ -217,7 +215,7 @@ bool write_png(char const* path, Span<u8 const> rgba, u32 width, u32 height) noe
 
 namespace {
 
-TextureDesc adapter_desc(ktx2::TextureDesc const& d) noexcept {
+TextureDesc adapter_desc(ktx2::TextureDesc const& d) {
     return TextureDesc{.format = d.format,
                        .width  = d.width,
                        .height = d.height,
@@ -230,10 +228,10 @@ TextureDesc adapter_desc(ktx2::TextureDesc const& d) noexcept {
 }
 
 /// Bytes of one layer of `level`, and where layer `layer` starts in a ReadTextureFn result.
-u64 layer_bytes(TextureDesc const& d, u32 level) noexcept {
+u64 layer_bytes(TextureDesc const& d, u32 level) {
     return format_image_bytes(d.format, max(d.width >> level, 1u), max(d.height >> level, 1u));
 }
-u64 layer_offset(TextureDesc const& d, u32 level, u32 layer) noexcept {
+u64 layer_offset(TextureDesc const& d, u32 level, u32 layer) {
     u64 off = 0;
     for (u32 i = 0; i < level; ++i)
         off += layer_bytes(d, i) * d.layers;
@@ -243,7 +241,7 @@ u64 layer_offset(TextureDesc const& d, u32 level, u32 layer) noexcept {
 } // namespace
 
 bool verify_array_layers(Context* ctx, TextureHandle array, Span<TextureHandle const> layers,
-                         ReadTextureFn read, void* user) noexcept {
+                         ReadTextureFn read, void* user) {
     TextureInfo const ai = texture_info(ctx, array);
     TextureDesc const ad = adapter_desc(ai.desc);
     if (ai.isPlaceholder || ad.layers != layers.size) {

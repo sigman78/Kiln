@@ -177,7 +177,7 @@ struct Pair {
     int b;
 };
 
-int pair_sum_thunk(void* user, int x) noexcept {
+int pair_sum_thunk(void* user, int x) {
     Pair* p = static_cast<Pair*>(user);
     return p->a + p->b + x;
 }
@@ -198,7 +198,7 @@ KILN_TEST(Core, FunctionRefFromNoexceptFunctionPointer) {
 
 KILN_TEST(Core, FunctionRefFromCapturingLambda) {
     int captured            = 100;
-    auto lam                = [captured](int x) noexcept { return x + captured; };
+    auto lam                = [captured](int x) { return x + captured; };
     FunctionRef<int(int)> f = lam;
     KILN_CHECK(bool(f));
     KILN_CHECK_EQ(f(5), 105);
@@ -216,7 +216,7 @@ KILN_TEST(Core, FunctionRefBoolConversion) {
     KILN_CHECK(!bool(f));
     FunctionRef<int(int)> g = nullptr;
     KILN_CHECK(!bool(g));
-    auto lam                = [](int x) noexcept { return x * 2; };
+    auto lam                = [](int x) { return x * 2; };
     FunctionRef<int(int)> h = lam;
     KILN_CHECK(bool(h));
     KILN_CHECK_EQ(h(21), 42);

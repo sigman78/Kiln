@@ -34,15 +34,15 @@ struct CookUnit {
     Vec<UnitOutput> outputs; ///< a mesh first, then its embedded images in reference order
     Vec<char> strings;
 
-    explicit CookUnit(Allocator const* a) noexcept
+    explicit CookUnit(Allocator const* a)
         : inputs(a, Tag::Cook), outputs(a, Tag::Cook), strings(a, Tag::Cook) {}
 
-    StrView str(u32 off, u32 len) const noexcept { return {strings.data() + off, len}; }
-    StrView name(UnitOutput const& o) const noexcept { return str(o.nameOff, o.nameLen); }
+    StrView str(u32 off, u32 len) const { return {strings.data() + off, len}; }
+    StrView name(UnitOutput const& o) const { return str(o.nameOff, o.nameLen); }
     /// The output called `name` of `kind`, or null.
-    UnitOutput* find(AssetKind kind, StrView name) noexcept;
+    UnitOutput* find(AssetKind kind, StrView name);
     /// The first output that failed, else Ok.
-    Status first_failure() const noexcept;
+    Status first_failure() const;
 };
 
 struct UnitDesc {
@@ -62,24 +62,24 @@ struct UnitDesc {
 /// Reads the source, its sidecar and any external buffers, and cooks every output. A mesh source
 /// also cooks its embedded images. Fails when an input cannot be read or the first output fails;
 /// an embedded image that fails keeps its Status in its output.
-Status cook_unit(UnitDesc const& d, CookUnit* out) noexcept;
+Status cook_unit(UnitDesc const& d, CookUnit* out);
 
 /// The build inputs of `unit`, for build_key(). `out` must hold unit.inputs.size() entries.
-void unit_build_inputs(CookUnit const& unit, BuildInput* out) noexcept;
+void unit_build_inputs(CookUnit const& unit, BuildInput* out);
 
 /// What the host sets for every asset: cooker version, target, default settings, name rules, the
 /// session and `policyVersion`. Another digest means the recorded keys must be checked again.
-u64 host_digest(UnitDesc const& d, u32 policyVersion) noexcept;
+u64 host_digest(UnitDesc const& d, u32 policyVersion);
 
 /// True if the settings of `d` give every output of the recorded unit `rec` the key it has
 /// (copy_input_record()): the settings are resolved again over the recorded inputs, reading only
 /// the sidecar next to `d.sourcePath`. False when an output has no key or the sidecar cannot be read.
-[[nodiscard]] bool recorded_keys_match(UnitDesc const& d, CookUnit const& rec) noexcept;
+[[nodiscard]] bool recorded_keys_match(UnitDesc const& d, CookUnit const& rec);
 
 /// The file of a recorded input, from the unit's source as it is found now: the source itself, its
 /// `.kiln` file, or a buffer URI relative to the source's directory. Records keep no paths, so a
 /// store stays valid when the sources move. Returns what `format()` returns.
-usize input_path(StrView sourcePath, InputRole role, StrView name, char* out, usize cap) noexcept;
+usize input_path(StrView sourcePath, InputRole role, StrView name, char* out, usize cap);
 
 enum class InputsCheck : u8 {
     Unchanged, ///< every input has its recorded size and time (an absent sidecar is still absent)
@@ -89,10 +89,9 @@ enum class InputsCheck : u8 {
 
 /// Compares the recorded inputs of `rec` with the files next to `sourcePath`. A file whose size or
 /// time differs is read and hashed before it counts as changed; with `rehash`, every file is.
-[[nodiscard]] InputsCheck check_recorded_inputs(CookUnit& rec, StrView sourcePath,
-                                                bool rehash = false) noexcept;
+[[nodiscard]] InputsCheck check_recorded_inputs(CookUnit& rec, StrView sourcePath, bool rehash = false);
 
 /// Size and modification time of a file, through the compat backend's stat when it has one.
-Status stat_file(StrView path, IoStat* out) noexcept;
+Status stat_file(StrView path, IoStat* out);
 
 } // namespace kiln::cook

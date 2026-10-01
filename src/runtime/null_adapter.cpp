@@ -45,22 +45,22 @@ struct NullAdapter {
 
 namespace {
 
-NullAdapter* self(void* user) noexcept { return static_cast<NullAdapter*>(user); }
+NullAdapter* self(void* user) { return static_cast<NullAdapter*>(user); }
 
-bool null_supports_format(void* /*user*/, Format f, FormatUsage usage) noexcept {
+bool null_supports_format(void* /*user*/, Format f, FormatUsage usage) {
     FormatInfo const* info = format_info(f);
     if (!info) return false;
     return usage == FormatUsage::VertexBuffer ? !info->compressed : true;
 }
 
-void null_copy_constraints(void* user, CopyConstraints* out) noexcept {
+void null_copy_constraints(void* user, CopyConstraints* out) {
     NullAdapter* na           = self(user);
     out->optimalRowPitchAlign = na->desc.rowPitchAlign;
     out->optimalOffsetAlign   = na->desc.offsetAlign;
     out->bufferOffsetAlign    = na->desc.offsetAlign;
 }
 
-Status null_begin_upload(void* user, UploadDesc const& desc, UploadTarget* out) noexcept {
+Status null_begin_upload(void* user, UploadDesc const& desc, UploadTarget* out) {
     NullAdapter* na = self(user);
     u32 busyCallNo  = na->busyCalls.fetch_add(1, std::memory_order_relaxed) + 1;
     u32 failCallNo  = na->failCalls.fetch_add(1, std::memory_order_relaxed) + 1;
@@ -117,7 +117,7 @@ Status null_begin_upload(void* user, UploadDesc const& desc, UploadTarget* out) 
     return kOk;
 }
 
-void null_commit_upload(void* user, u64 token) noexcept {
+void null_commit_upload(void* user, u64 token) {
     NullAdapter* na = self(user);
     std::lock_guard<std::mutex> lock(na->mutex);
     ++na->stats.commits;
@@ -136,7 +136,7 @@ void null_commit_upload(void* user, u64 token) noexcept {
 }
 
 /// The upload was never committed: its object goes now, and kiln forgets both.
-void null_discard_upload(void* user, u64 token) noexcept {
+void null_discard_upload(void* user, u64 token) {
     NullAdapter* na = self(user);
     std::lock_guard<std::mutex> lock(na->mutex);
     KILN_VERIFY(token != 0 && token <= u64(na->table.size()));
@@ -149,7 +149,7 @@ void null_discard_upload(void* user, u64 token) noexcept {
     ++na->stats.discards;
 }
 
-UploadStatus null_upload_status(void* user, u64 token, Status* failure) noexcept {
+UploadStatus null_upload_status(void* user, u64 token, Status* failure) {
     NullAdapter* na = self(user);
     std::lock_guard<std::mutex> lock(na->mutex);
     if (token == 0 || token > u64(na->table.size())) return UploadStatus::Pending;
@@ -161,7 +161,7 @@ UploadStatus null_upload_status(void* user, u64 token, Status* failure) noexcept
     return st == EntryState::Complete ? UploadStatus::Complete : UploadStatus::Pending;
 }
 
-void null_bind(void* user, u32 slot, GpuObject obj, TextureShape /*shape*/) noexcept {
+void null_bind(void* user, u32 slot, GpuObject obj, TextureShape /*shape*/) {
     NullAdapter* na = self(user);
     std::lock_guard<std::mutex> lock(na->mutex);
     KILN_VERIFY(slot < na->desc.bindlessSlots);
@@ -171,7 +171,7 @@ void null_bind(void* user, u32 slot, GpuObject obj, TextureShape /*shape*/) noex
     na->slots[slot] = obj;
 }
 
-void null_destroy(void* user, GpuObject obj) noexcept {
+void null_destroy(void* user, GpuObject obj) {
     NullAdapter* na = self(user);
     std::lock_guard<std::mutex> lock(na->mutex);
     KILN_VERIFY(obj.native != 0 && obj.native <= u64(na->table.size()));
@@ -188,7 +188,7 @@ void null_destroy(void* user, GpuObject obj) noexcept {
 
 } // namespace
 
-Result<NullAdapter*> null_adapter_create(NullAdapterDesc const& desc, Adapter* out) noexcept {
+Result<NullAdapter*> null_adapter_create(NullAdapterDesc const& desc, Adapter* out) {
     if (!out) return make_status(Code::InvalidArgument);
 
     Allocator const* allocator = desc.alloc ? desc.alloc : default_allocator();
@@ -219,7 +219,7 @@ Result<NullAdapter*> null_adapter_create(NullAdapterDesc const& desc, Adapter* o
     return na;
 }
 
-void null_adapter_destroy(NullAdapter* na) noexcept {
+void null_adapter_destroy(NullAdapter* na) {
     if (!na) return;
     for (ObjectEntry& e : na->table) {
         if (e.bytes) free(na->allocator, e.bytes, e.size ? usize(e.size) : 1, e.align, Tag::Payload);
@@ -227,7 +227,7 @@ void null_adapter_destroy(NullAdapter* na) noexcept {
     delete_object(na->allocator, na, Tag::Payload);
 }
 
-Span<u8 const> null_adapter_payload(NullAdapter* na, GpuObject obj) noexcept {
+Span<u8 const> null_adapter_payload(NullAdapter* na, GpuObject obj) {
     if (!na) return {};
     std::lock_guard<std::mutex> lock(na->mutex);
     if (obj.native == 0 || obj.native > u64(na->table.size())) return {};
@@ -236,26 +236,26 @@ Span<u8 const> null_adapter_payload(NullAdapter* na, GpuObject obj) noexcept {
     return Span<u8 const>(e.bytes, usize(e.size));
 }
 
-GpuObject null_adapter_slot(NullAdapter* na, u32 slot) noexcept {
+GpuObject null_adapter_slot(NullAdapter* na, u32 slot) {
     if (!na) return {};
     std::lock_guard<std::mutex> lock(na->mutex);
     if (slot >= na->slots.size()) return {};
     return na->slots[slot];
 }
 
-NullAdapterStats null_adapter_stats(NullAdapter* na) noexcept {
+NullAdapterStats null_adapter_stats(NullAdapter* na) {
     if (!na) return {};
     std::lock_guard<std::mutex> lock(na->mutex);
     return na->stats;
 }
 
-void null_adapter_fail_uploads(NullAdapter* na, bool fail) noexcept {
+void null_adapter_fail_uploads(NullAdapter* na, bool fail) {
     if (!na) return;
     std::lock_guard<std::mutex> lock(na->mutex);
     na->failUploads = fail;
 }
 
-void null_adapter_break_targets(NullAdapter* na, bool broken) noexcept {
+void null_adapter_break_targets(NullAdapter* na, bool broken) {
     if (!na) return;
     std::lock_guard<std::mutex> lock(na->mutex);
     na->breakTargets = broken;

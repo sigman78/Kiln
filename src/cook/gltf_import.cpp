@@ -42,26 +42,24 @@ struct V3 {
     f32 x, y, z;
 };
 
-V3 sub(V3 a, V3 b) noexcept { return {a.x - b.x, a.y - b.y, a.z - b.z}; }
-V3 scale(V3 a, f32 s) noexcept { return {a.x * s, a.y * s, a.z * s}; }
-f32 dot(V3 a, V3 b) noexcept { return a.x * b.x + a.y * b.y + a.z * b.z; }
-V3 cross(V3 a, V3 b) noexcept {
-    return {a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x};
-}
-[[nodiscard]] bool normalize_to(V3 v, V3& out) noexcept {
+V3 sub(V3 a, V3 b) { return {a.x - b.x, a.y - b.y, a.z - b.z}; }
+V3 scale(V3 a, f32 s) { return {a.x * s, a.y * s, a.z * s}; }
+f32 dot(V3 a, V3 b) { return a.x * b.x + a.y * b.y + a.z * b.z; }
+V3 cross(V3 a, V3 b) { return {a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x}; }
+[[nodiscard]] bool normalize_to(V3 v, V3& out) {
     f32 const len2 = dot(v, v);
     if (!(len2 > 1e-30f)) return false;
     out = scale(v, 1.0f / std::sqrt(len2));
     return true;
 }
 
-Mat4 mat4_identity() noexcept {
+Mat4 mat4_identity() {
     Mat4 r{};
     r.m[0] = r.m[5] = r.m[10] = r.m[15] = 1.0f;
     return r;
 }
 
-Mat4 mul(Mat4 const& a, Mat4 const& b) noexcept {
+Mat4 mul(Mat4 const& a, Mat4 const& b) {
     Mat4 r{};
     for (u32 c = 0; c < 4; ++c)
         for (u32 row = 0; row < 4; ++row) {
@@ -73,7 +71,7 @@ Mat4 mul(Mat4 const& a, Mat4 const& b) noexcept {
     return r;
 }
 
-Mat4 mat4_from_mat3(Mat3 const& b) noexcept {
+Mat4 mat4_from_mat3(Mat3 const& b) {
     Mat4 r = mat4_identity();
     for (u32 c = 0; c < 3; ++c)
         for (u32 row = 0; row < 3; ++row)
@@ -93,7 +91,7 @@ struct Decomposed {
     bool mirror;         ///< det(B) < 0
 };
 
-Decomposed decompose(Mat4 const& M) noexcept {
+Decomposed decompose(Mat4 const& M) {
     Decomposed d{};
     d.t[0] = M.m[12];
     d.t[1] = M.m[13];
@@ -221,8 +219,7 @@ struct LodCand {
 };
 
 struct Ctx {
-    Ctx(MeshSource const& s, MeshCookSettings const& st, Arena& a, Allocator const* al,
-        DiagSink const* d) noexcept
+    Ctx(MeshSource const& s, MeshCookSettings const& st, Arena& a, Allocator const* al, DiagSink const* d)
         : src(s), settings(st), arena(a), alloc(al), diag(d), asset(diag_asset(s)), parts(al, Tag::Cook),
           mounts(al, Tag::Cook), lodCands(al, Tag::Cook), meshPrims(al, Tag::Cook), meshRead(al, Tag::Cook) {}
 
@@ -259,7 +256,7 @@ cgltf_result cgltf_no_file_read(cgltf_memory_options const*, cgltf_file_options 
 }
 void cgltf_no_file_release(cgltf_memory_options const*, cgltf_file_options const*, void*) {}
 
-template <class T> Span<T const> persist(Arena& arena, Vec<T> const& v) noexcept {
+template <class T> Span<T const> persist(Arena& arena, Vec<T> const& v) {
     if (v.empty()) return {};
     T* p = arena.alloc_array<T>(v.size());
     for (usize i = 0; i < v.size(); ++i)
@@ -267,9 +264,9 @@ template <class T> Span<T const> persist(Arena& arena, Vec<T> const& v) noexcept
     return {p, v.size()};
 }
 
-StrView sv(char const* s) noexcept { return s ? StrView(s) : StrView(); }
+StrView sv(char const* s) { return s ? StrView(s) : StrView(); }
 
-char const* result_name(cgltf_result r) noexcept {
+char const* result_name(cgltf_result r) {
     switch (r) {
     case cgltf_result_success: return "success";
     case cgltf_result_data_too_short: return "data too short";
@@ -292,7 +289,7 @@ char const* result_name(cgltf_result r) noexcept {
 
 /// The one place buffer-view bytes are obtained: the future EXT_meshopt_compression
 /// decode hook (docs/design/dependencies.md). Until then such files fail with K1002.
-Span<u8 const> resolve_buffer_view(cgltf_buffer_view const* view) noexcept {
+Span<u8 const> resolve_buffer_view(cgltf_buffer_view const* view) {
     if (!view || !view->buffer || !view->buffer->data) return {};
     cgltf_buffer const* b = view->buffer;
     if (view->offset > b->size || view->size > b->size - view->offset) return {};
@@ -300,14 +297,14 @@ Span<u8 const> resolve_buffer_view(cgltf_buffer_view const* view) noexcept {
 }
 
 /// Percent-decode a URI into the arena (null-terminated).
-StrView decode_uri(Arena& arena, StrView uri) noexcept {
+StrView decode_uri(Arena& arena, StrView uri) {
     StrView copy = arena.copy(uri);
     char* p      = const_cast<char*>(copy.data);
     usize n      = cgltf_decode_uri(p);
     return {p, n};
 }
 
-Status load_buffers(Ctx& c) noexcept {
+Status load_buffers(Ctx& c) {
     cgltf_data* d = c.data;
     for (cgltf_size i = 0; i < d->buffers_count; ++i) {
         cgltf_buffer& b = d->buffers[i];
@@ -358,7 +355,7 @@ Status load_buffers(Ctx& c) noexcept {
     return kOk;
 }
 
-f32 read_component(u8 const* p, cgltf_component_type ct, bool normalized) noexcept {
+f32 read_component(u8 const* p, cgltf_component_type ct, bool normalized) {
     switch (ct) {
     case cgltf_component_type_r_8: {
         f32 const v = f32(read_unaligned<i8>(p));
@@ -386,7 +383,7 @@ f32 read_component(u8 const* p, cgltf_component_type ct, bool normalized) noexce
 
 /// Byte range of accessor element storage, bounds-checked.
 Status accessor_bytes(Ctx& c, cgltf_accessor const* acc, StrView where, char const* what, Span<u8 const>& out,
-                      usize& stride) noexcept {
+                      usize& stride) {
     if (acc->is_sparse)
         IMPORT_FAIL(c, Code::Unsupported, kDiagGltfSparseAccessor, where,
                     "%s: sparse accessors are not supported", what);
@@ -412,7 +409,7 @@ Status accessor_bytes(Ctx& c, cgltf_accessor const* acc, StrView where, char con
 /// Read `acc` (count elements of `comps` components) as f32 into `out` with
 /// `outComps` floats per element (extra output components are left untouched).
 Status read_floats(Ctx& c, cgltf_accessor const* acc, StrView where, char const* what, u32 outComps,
-                   f32* out) noexcept {
+                   f32* out) {
     Span<u8 const> bytes;
     usize stride = 0;
     KILN_TRY(accessor_bytes(c, acc, where, what, bytes, stride));
@@ -428,7 +425,7 @@ Status read_floats(Ctx& c, cgltf_accessor const* acc, StrView where, char const*
     return kOk;
 }
 
-[[nodiscard]] bool is_float_or_norm(cgltf_accessor const* a) noexcept {
+[[nodiscard]] bool is_float_or_norm(cgltf_accessor const* a) {
     return a->component_type == cgltf_component_type_r_32f ||
            ((a->component_type == cgltf_component_type_r_8u ||
              a->component_type == cgltf_component_type_r_16u) &&
@@ -439,7 +436,7 @@ Status read_floats(Ctx& c, cgltf_accessor const* acc, StrView where, char const*
 // Meshes
 // ---------------------------------------------------------------------------
 
-Status read_prim(Ctx& c, cgltf_primitive const& p, StrView where, ImportPrim& ip, bool& skip) noexcept {
+Status read_prim(Ctx& c, cgltf_primitive const& p, StrView where, ImportPrim& ip, bool& skip) {
     skip                                 = false;
     cgltf_accessor const* pos            = nullptr;
     cgltf_accessor const* nrm            = nullptr;
@@ -557,7 +554,7 @@ Status read_prim(Ctx& c, cgltf_primitive const& p, StrView where, ImportPrim& ip
     return kOk;
 }
 
-Status read_mesh(Ctx& c, cgltf_node const* node, Span<ImportPrim const>& out) noexcept {
+Status read_mesh(Ctx& c, cgltf_node const* node, Span<ImportPrim const>& out) {
     cgltf_mesh const* mesh = node->mesh;
     usize const mi         = cgltf_mesh_index(c.data, mesh);
     if (c.meshRead[mi]) {
@@ -592,7 +589,7 @@ Status read_mesh(Ctx& c, cgltf_node const* node, Span<ImportPrim const>& out) no
 struct JsonCursor {
     char const* p;
     char const* end;
-    void ws() noexcept {
+    void ws() {
         while (p < end && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r'))
             ++p;
     }
@@ -616,7 +613,7 @@ void append_utf8(Vec<char>& out, u32 cp) {
     }
 }
 
-[[nodiscard]] bool parse_hex4(JsonCursor& j, u32& out) noexcept {
+[[nodiscard]] bool parse_hex4(JsonCursor& j, u32& out) {
     if (j.end - j.p < 4) return false;
     u32 v = 0;
     for (int i = 0; i < 4; ++i) {
@@ -725,7 +722,7 @@ void append_utf8(Vec<char>& out, u32 cp) {
     return true;
 }
 
-[[nodiscard]] bool contains_sep(char const* s, usize n) noexcept {
+[[nodiscard]] bool contains_sep(char const* s, usize n) {
     for (usize i = 0; i < n; ++i)
         if (s[i] == ';' || s[i] == '=') return true;
     return false;
@@ -845,7 +842,7 @@ StrView parse_extras(Ctx& c, StrView json, StrView where) {
 // ---------------------------------------------------------------------------
 
 /// "<base>_lod<N>": returns N and sets base, or kInvalid when the name does not match.
-u32 parse_lod_suffix(StrView name, StrView& base) noexcept {
+u32 parse_lod_suffix(StrView name, StrView& base) {
     usize d = name.size;
     while (d > 0 && name[d - 1] >= '0' && name[d - 1] <= '9')
         --d;
@@ -862,7 +859,7 @@ u32 parse_lod_suffix(StrView name, StrView& base) noexcept {
 constexpr u32 kMaxDepth = 256;
 
 Status visit(Ctx& c, cgltf_node const* node, u32 parentPart, Mat4 const& rel, Mat4 const& parentFrame,
-             u32 depth) noexcept {
+             u32 depth) {
     if (depth > kMaxDepth)
         IMPORT_FAIL(c, Code::ValidationFailed, kDiagGltfBadAccessor, sv(node->name),
                     "node hierarchy deeper than %u", kMaxDepth);
@@ -936,7 +933,7 @@ Status visit(Ctx& c, cgltf_node const* node, u32 parentPart, Mat4 const& rel, Ma
     return kOk;
 }
 
-Status traverse(Ctx& c) noexcept {
+Status traverse(Ctx& c) {
     cgltf_data const* d      = c.data;
     Mat4 const I             = mat4_identity();
     cgltf_scene const* scene = d->scene ? d->scene : (d->scenes_count ? &d->scenes[0] : nullptr);
@@ -954,7 +951,7 @@ Status traverse(Ctx& c) noexcept {
 // Materials and images
 // ---------------------------------------------------------------------------
 
-void read_texture_view(Ctx& c, cgltf_texture_view const& v, ImportTexture& out) noexcept {
+void read_texture_view(Ctx& c, cgltf_texture_view const& v, ImportTexture& out) {
     if (!v.texture) return;
     out.present = true;
     // The core source (PNG/JPEG) wins over EXT_texture_webp: it is never lossier.
@@ -967,7 +964,7 @@ void read_texture_view(Ctx& c, cgltf_texture_view const& v, ImportTexture& out) 
     out.texcoord = tc > 0 ? u32(tc) : 0;
 }
 
-StrView mime_from_extension(StrView uri) noexcept {
+StrView mime_from_extension(StrView uri) {
     usize const q   = uri.find('?');
     StrView const p = q == StrView::kNpos ? uri : uri.substr(0, q);
     usize const dot = p.rfind('.');
@@ -989,7 +986,7 @@ StrView mime_from_extension(StrView uri) noexcept {
     return {};
 }
 
-void read_images(Ctx& c, Vec<ImportImage>& out) noexcept {
+void read_images(Ctx& c, Vec<ImportImage>& out) {
     cgltf_data const* d = c.data;
     for (cgltf_size i = 0; i < d->images_count; ++i) {
         cgltf_image const& img = d->images[i];
@@ -1030,7 +1027,7 @@ void read_images(Ctx& c, Vec<ImportImage>& out) noexcept {
     }
 }
 
-void read_materials(Ctx& c, Vec<ImportMaterial>& out) noexcept {
+void read_materials(Ctx& c, Vec<ImportMaterial>& out) {
     cgltf_data const* d = c.data;
     for (cgltf_size i = 0; i < d->materials_count; ++i) {
         cgltf_material const& m = d->materials[i];
@@ -1071,7 +1068,7 @@ void read_materials(Ctx& c, Vec<ImportMaterial>& out) noexcept {
 // Parts and LODs
 // ---------------------------------------------------------------------------
 
-Status build_parts(Ctx& c, Vec<ImportPart>& out) noexcept {
+Status build_parts(Ctx& c, Vec<ImportPart>& out) {
     u32 const nParts = u32(c.parts.size());
 
     // LOD candidates -> owning part (first part with the base name).
@@ -1152,7 +1149,7 @@ Status build_parts(Ctx& c, Vec<ImportPart>& out) noexcept {
 } // namespace
 
 Status import_gltf(MeshSource const& src, MeshCookSettings const& settings, Arena& arena,
-                   Allocator const* alloc, DiagSink const* diag, ImportScene& out) noexcept {
+                   Allocator const* alloc, DiagSink const* diag, ImportScene& out) {
     Ctx c(src, settings, arena, alloc, diag);
 
     c.opt.memory.alloc_func = &cgltf_arena_alloc;

@@ -19,7 +19,7 @@ struct Parser {
     StrView file;
     u32 line = 0;
 
-    Status fail(char const* what) const noexcept {
+    Status fail(char const* what) const {
         char where[1100];
         format(where, sizeof where, "%.*s:%u", KILN_SV(file), line);
         return diagf(diag, make_status(Code::ParseError), kDiagSidecarSyntax, Severity::Error, file, where,
@@ -27,31 +27,31 @@ struct Parser {
     }
 };
 
-bool is_ws(char c) noexcept { return c == ' ' || c == '\t'; }
-bool is_bare(char c) noexcept {
+bool is_ws(char c) { return c == ' ' || c == '\t'; }
+bool is_bare(char c) {
     return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' || c == '-';
 }
-bool is_digit(char c) noexcept { return c >= '0' && c <= '9'; }
+bool is_digit(char c) { return c >= '0' && c <= '9'; }
 
-void skip_ws(StrView s, usize& at) noexcept {
+void skip_ws(StrView s, usize& at) {
     while (at < s.size && is_ws(s[at]))
         ++at;
 }
 
 /// After a value or header: only whitespace and a comment may follow.
-bool rest_is_empty(StrView s, usize at) noexcept {
+bool rest_is_empty(StrView s, usize at) {
     skip_ws(s, at);
     return at == s.size || s[at] == '#';
 }
 
-StrView bare_key(StrView s, usize& at) noexcept {
+StrView bare_key(StrView s, usize& at) {
     usize const start = at;
     while (at < s.size && is_bare(s[at]))
         ++at;
     return s.substr(start, at - start);
 }
 
-usize put_utf8(char* p, u32 cp) noexcept {
+usize put_utf8(char* p, u32 cp) {
     if (cp < 0x80) {
         p[0] = char(cp);
         return 1;
@@ -75,7 +75,7 @@ usize put_utf8(char* p, u32 cp) noexcept {
 }
 
 /// A "basic" or 'literal' string starting at `at` (on the quote).
-Status parse_string(Parser& ps, StrView s, usize& at, StrView& value) noexcept {
+Status parse_string(Parser& ps, StrView s, usize& at, StrView& value) {
     char const quote = s[at];
     if (at + 2 < s.size && s[at + 1] == quote && s[at + 2] == quote)
         return ps.fail("multi-line strings are not supported in .kiln files");
@@ -122,7 +122,7 @@ Status parse_string(Parser& ps, StrView s, usize& at, StrView& value) noexcept {
 }
 
 /// Decimal integer or float in TOML's grammar, without underscores, hex, inf or nan.
-Status parse_number(Parser& ps, StrView tok, TomlEntry& e) noexcept {
+Status parse_number(Parser& ps, StrView tok, TomlEntry& e) {
     usize at = 0;
     if (at < tok.size && (tok[at] == '+' || tok[at] == '-')) ++at;
     usize const intStart = at;
@@ -165,7 +165,7 @@ Status parse_number(Parser& ps, StrView tok, TomlEntry& e) noexcept {
     return kOk;
 }
 
-Status parse_value(Parser& ps, StrView s, usize& at, TomlEntry& e) noexcept {
+Status parse_value(Parser& ps, StrView s, usize& at, TomlEntry& e) {
     if (at >= s.size || s[at] == '#') return ps.fail("missing value after '='");
     char const c = s[at];
     if (c == '"' || c == '\'') {
@@ -186,7 +186,7 @@ Status parse_value(Parser& ps, StrView s, usize& at, TomlEntry& e) noexcept {
     return parse_number(ps, tok, e);
 }
 
-Status parse_header(Parser& ps, StrView s, usize at, StrView& section) noexcept {
+Status parse_header(Parser& ps, StrView s, usize at, StrView& section) {
     ++at; // '['
     if (at < s.size && s[at] == '[') return ps.fail("arrays of tables are not supported in .kiln files");
     char* buf = ps.arena.alloc_array<char>(s.size + 1);
@@ -215,7 +215,7 @@ Status parse_header(Parser& ps, StrView s, usize at, StrView& section) noexcept 
     return kOk;
 }
 
-Status parse_line(Parser& ps, StrView s, StrView& section, Vec<StrView>& sections) noexcept {
+Status parse_line(Parser& ps, StrView s, StrView& section, Vec<StrView>& sections) {
     usize at = 0;
     skip_ws(s, at);
     if (at == s.size || s[at] == '#') return kOk;
@@ -249,7 +249,7 @@ Status parse_line(Parser& ps, StrView s, StrView& section, Vec<StrView>& section
 } // namespace
 
 Status parse_toml_subset(StrView text, Arena& arena, Vec<TomlEntry>& out, DiagSink const* diag,
-                         StrView file) noexcept {
+                         StrView file) {
     Parser ps{arena, out, diag, file};
     if (text.size >= 3 && u8(text[0]) == 0xEF && u8(text[1]) == 0xBB && u8(text[2]) == 0xBF)
         text = text.substr(3);

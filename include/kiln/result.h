@@ -29,25 +29,25 @@ enum class Code : u16 {
     Count
 };
 
-KILN_API char const* code_name(Code c) noexcept;
+KILN_API char const* code_name(Code c);
 
 /// A compact status: error code plus a 16-bit code-specific detail (e.g. errno).
 struct Status {
     Code code  = Code::Ok;
     u16 detail = 0;
 
-    [[nodiscard]] constexpr bool ok() const noexcept { return code == Code::Ok; }
-    [[nodiscard]] constexpr bool failed() const noexcept { return code != Code::Ok; }
+    [[nodiscard]] constexpr bool ok() const { return code == Code::Ok; }
+    [[nodiscard]] constexpr bool failed() const { return code != Code::Ok; }
 
-    [[nodiscard]] friend constexpr bool operator==(Status a, Status b) noexcept {
+    [[nodiscard]] friend constexpr bool operator==(Status a, Status b) {
         return a.code == b.code && a.detail == b.detail;
     }
-    [[nodiscard]] friend constexpr bool operator!=(Status a, Status b) noexcept { return !(a == b); }
+    [[nodiscard]] friend constexpr bool operator!=(Status a, Status b) { return !(a == b); }
 };
 
 inline constexpr Status kOk{};
 
-constexpr Status make_status(Code c, u16 detail = 0) noexcept { return {c, detail}; }
+constexpr Status make_status(Code c, u16 detail = 0) { return {c, detail}; }
 
 /// Value-or-Status. Construct from a T (success) or a Status/Code (failure).
 /// Accessing the value of a failed Result is a programming error (asserts).
@@ -56,10 +56,10 @@ public:
     static_assert(!std::is_reference_v<T>, "Result<T&> is not supported; use Result<T*>");
     static_assert(NothrowStorable<T>, "Result<T> needs T whose copy, move and destruction never throw");
 
-    constexpr Result(Status s) noexcept : status_(s) { // NOLINT(google-explicit-constructor)
+    constexpr Result(Status s) : status_(s) { // NOLINT(google-explicit-constructor)
         KILN_ASSERT(s.failed() && "Result constructed from Ok status without a value");
     }
-    constexpr Result(Code c) noexcept : Result(make_status(c)) {} // NOLINT(google-explicit-constructor)
+    constexpr Result(Code c) : Result(make_status(c)) {} // NOLINT(google-explicit-constructor)
 
     // Not constexpr: placement new is not constant-evaluable before C++26.
     Result(T const& v) noexcept(std::is_nothrow_copy_constructible_v<T>) // NOLINT
@@ -100,30 +100,30 @@ public:
         }
         return *this;
     }
-    ~Result() noexcept { destroy(); }
+    ~Result() { destroy(); }
 
-    [[nodiscard]] constexpr bool ok() const noexcept { return status_.ok(); }
-    [[nodiscard]] constexpr bool failed() const noexcept { return status_.failed(); }
-    constexpr Status status() const noexcept { return status_; }
-    constexpr Code code() const noexcept { return status_.code; }
+    [[nodiscard]] constexpr bool ok() const { return status_.ok(); }
+    [[nodiscard]] constexpr bool failed() const { return status_.failed(); }
+    constexpr Status status() const { return status_; }
+    constexpr Code code() const { return status_.code; }
 
-    T& value() & noexcept {
+    T& value() & {
         KILN_ASSERT(ok());
         return ref();
     }
-    T const& value() const& noexcept {
+    T const& value() const& {
         KILN_ASSERT(ok());
         return ref();
     }
-    T&& value() && noexcept {
+    T&& value() && {
         KILN_ASSERT(ok());
         return std::move(ref());
     }
-    T& operator*() & noexcept { return value(); }
-    T const& operator*() const& noexcept { return value(); }
-    T&& operator*() && noexcept { return std::move(*this).value(); }
-    T* operator->() noexcept { return &value(); }
-    T const* operator->() const noexcept { return &value(); }
+    T& operator*() & { return value(); }
+    T const& operator*() const& { return value(); }
+    T&& operator*() && { return std::move(*this).value(); }
+    T* operator->() { return &value(); }
+    T const* operator->() const { return &value(); }
 
     T value_or(T fallback) const& noexcept(std::is_nothrow_copy_constructible_v<T>) {
         return ok() ? ref() : std::move(fallback);
@@ -156,9 +156,9 @@ public:
     template <class F> Result or_else(F&& f) && { return ok() ? std::move(*this) : Result(f(status_)); }
 
 private:
-    T& ref() noexcept { return *std::launder(reinterpret_cast<T*>(storage_)); }
-    T const& ref() const noexcept { return *std::launder(reinterpret_cast<T const*>(storage_)); }
-    void destroy() noexcept {
+    T& ref() { return *std::launder(reinterpret_cast<T*>(storage_)); }
+    T const& ref() const { return *std::launder(reinterpret_cast<T const*>(storage_)); }
+    void destroy() {
         if constexpr (!std::is_trivially_destructible_v<T>) {
             if (ok()) ref().~T();
         }
@@ -171,14 +171,14 @@ private:
 /// Result<void> carries only a Status.
 template <> class Result<void> {
 public:
-    constexpr Result() noexcept = default;
-    constexpr Result(Status s) noexcept : status_(s) {}            // NOLINT(google-explicit-constructor)
-    constexpr Result(Code c) noexcept : status_(make_status(c)) {} // NOLINT(google-explicit-constructor)
+    constexpr Result() = default;
+    constexpr Result(Status s) : status_(s) {}            // NOLINT(google-explicit-constructor)
+    constexpr Result(Code c) : status_(make_status(c)) {} // NOLINT(google-explicit-constructor)
 
-    [[nodiscard]] constexpr bool ok() const noexcept { return status_.ok(); }
-    [[nodiscard]] constexpr bool failed() const noexcept { return status_.failed(); }
-    constexpr Status status() const noexcept { return status_; }
-    constexpr Code code() const noexcept { return status_.code; }
+    [[nodiscard]] constexpr bool ok() const { return status_.ok(); }
+    [[nodiscard]] constexpr bool failed() const { return status_.failed(); }
+    constexpr Status status() const { return status_; }
+    constexpr Code code() const { return status_.code; }
 
     /// f() -> Result<U>; the Status is forwarded on failure.
     template <class F> auto and_then(F&& f) const -> std::invoke_result_t<F> {
@@ -214,8 +214,8 @@ private:
 #define KILN_CAT_(a, b) KILN_CAT2_(a, b)
 
 namespace detail {
-constexpr Status to_status(Status s) noexcept { return s; }
-template <class T> constexpr Status to_status(Result<T> const& r) noexcept { return r.status(); }
+constexpr Status to_status(Status s) { return s; }
+template <class T> constexpr Status to_status(Result<T> const& r) { return r.status(); }
 } // namespace detail
 
 // ---------------------------------------------------------------------------
@@ -224,7 +224,7 @@ template <class T> constexpr Status to_status(Result<T> const& r) noexcept { ret
 
 enum class Severity : u8 { Info = 0, Warning, Error };
 
-KILN_API char const* severity_name(Severity s) noexcept;
+KILN_API char const* severity_name(Severity s);
 
 /// A structured diagnostic. `code` is a stable, documentable identifier defined by
 /// the emitting module (e.g. cook diagnostics use a "Kxxxx" table); 0 = none.
@@ -244,16 +244,16 @@ struct DiagSink {
     void* user                                  = nullptr;
 };
 
-inline void emit(DiagSink const* sink, Diagnostic const& d) noexcept {
+inline void emit(DiagSink const* sink, Diagnostic const& d) {
     if (sink && sink->fn) sink->fn(sink->user, d);
 }
 
 /// Format a message (printf-style, stack buffer) and emit it. Returns `status` for
 /// `return diagf(sink, status, ...)` chains.
 KILN_API Status diagf(DiagSink const* sink, Status status, u32 code, Severity severity, StrView asset,
-                      StrView where, char const* fmt, ...) noexcept KILN_PRINTF(7, 8);
+                      StrView where, char const* fmt, ...) KILN_PRINTF(7, 8);
 
 /// A DiagSink that forwards to the log (category "diag").
-KILN_API DiagSink log_diag_sink() noexcept;
+KILN_API DiagSink log_diag_sink();
 
 } // namespace kiln

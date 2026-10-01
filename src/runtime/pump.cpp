@@ -8,7 +8,7 @@
 namespace kiln {
 namespace rt {
 
-void push_event(Context* ctx, EventKind kind, AssetKind asset, u64 bits, u32 version, Status st) noexcept {
+void push_event(Context* ctx, EventKind kind, AssetKind asset, u64 bits, u32 version, Status st) {
     if (ctx->maxEvents == 0) return;
     if (ctx->eventCount == ctx->maxEvents) { // drop the oldest
         std::memmove(static_cast<void*>(ctx->events), static_cast<void const*>(ctx->events + 1),
@@ -32,7 +32,7 @@ void push_event(Context* ctx, EventKind kind, AssetKind asset, u64 bits, u32 ver
 
 namespace {
 
-char const* failure_text(u32 code) noexcept {
+char const* failure_text(u32 code) {
     switch (code) {
     case kDiagStoreMiss: return "not in the store";
     case kDiagCookOnMissFailed: return "cook on miss failed";
@@ -45,7 +45,7 @@ char const* failure_text(u32 code) noexcept {
 }
 
 /// A slot reached Ready or Failed with no job and no queue: run the reload requested meanwhile.
-void settle(Context* ctx, Slot& s) noexcept {
+void settle(Context* ctx, Slot& s) {
     if (s.manifestCheck) {
         s.manifestCheck = false;
         if (manifest_names_other(ctx, s)) s.reloadPending = true;
@@ -57,7 +57,7 @@ void settle(Context* ctx, Slot& s) noexcept {
 
 /// A reload of a Ready slot failed: drop the new metadata and object, keep serving the
 /// current version. One K5010, no event.
-void fail_reload(Context* ctx, Slot& s, u32 code, Status st) noexcept {
+void fail_reload(Context* ctx, Slot& s, u32 code, Status st) {
     queue_remove(ctx, s);
     orphan_upload(ctx, s);
     s.reloading = false;
@@ -76,7 +76,7 @@ void fail_reload(Context* ctx, Slot& s, u32 code, Status st) noexcept {
 
 } // namespace
 
-void fail_slot(Context* ctx, Slot& s, u32 code, Status st) noexcept {
+void fail_slot(Context* ctx, Slot& s, u32 code, Status st) {
     if (st.ok()) st = make_status(Code::Unknown);
     if (s.reloading && s.state == State::Ready) {
         fail_reload(ctx, s, code, st);
@@ -109,7 +109,7 @@ void fail_slot(Context* ctx, Slot& s, u32 code, Status st) noexcept {
     settle(ctx, s);
 }
 
-bool manifest_names_other(Context const* ctx, Slot const& s) noexcept {
+bool manifest_names_other(Context const* ctx, Slot const& s) {
     ManifestEntry e;
     if (!ctx->manifestPresent) return false;
     if (!s.array) return ctx->manifest.find(s.kind, path_of(s), &e) && !(s.keyValid && s.key == e.key);
@@ -121,7 +121,7 @@ bool manifest_names_other(Context const* ctx, Slot const& s) noexcept {
     return false;
 }
 
-void reload_slot(Context* ctx, Slot& s) noexcept {
+void reload_slot(Context* ctx, Slot& s) {
     if (s.source == SourceKind::Memory) {
         (void)diagf(&ctx->diag, make_status(Code::Unsupported), kDiagReloadMemorySource, Severity::Warning,
                     path_of(s), "reload", "registered in memory: there is no file to reload from");
@@ -144,7 +144,7 @@ void reload_slot(Context* ctx, Slot& s) noexcept {
     queue_push(ctx, s.priority == Priority::High ? QueueId::MetaHigh : QueueId::MetaNormal, s);
 }
 
-void submit_stage(Context* ctx, Slot& s, Stage stage) noexcept {
+void submit_stage(Context* ctx, Slot& s, Stage stage) {
     KILN_ASSERT(!s.jobInFlight && s.queue == QueueId::None);
     s.jobStage    = stage;
     s.jobGen      = s.generation;
@@ -183,7 +183,7 @@ void submit_stage(Context* ctx, Slot& s, Stage stage) noexcept {
     ctx->jobs.submit(ctx->jobs.user, &run_job, &s);
 }
 
-void poll_placeholders(Context* ctx) noexcept {
+void poll_placeholders(Context* ctx) {
     for (Placeholder& p : ctx->ph) {
         if (!p.pending) continue;
         Status why            = make_status(Code::Unknown);
@@ -207,11 +207,11 @@ void poll_placeholders(Context* ctx) noexcept {
 
 namespace {
 
-QueueId upload_queue(Slot const& s) noexcept {
+QueueId upload_queue(Slot const& s) {
     return s.priority == Priority::High ? QueueId::UploadHigh : QueueId::UploadNormal;
 }
 
-bool formats_supported(Context* ctx, Slot& s) noexcept {
+bool formats_supported(Context* ctx, Slot& s) {
     Adapter const& a = ctx->adapter;
     if (s.kind == AssetKind::Texture) {
         if (a.supports_format(a.user, s.next.texDesc.format, FormatUsage::SampledImage)) return true;
@@ -236,7 +236,7 @@ bool formats_supported(Context* ctx, Slot& s) noexcept {
     return true;
 }
 
-void on_meta_ready(Context* ctx, Slot& s) noexcept {
+void on_meta_ready(Context* ctx, Slot& s) {
     if (!formats_supported(ctx, s)) {
         fail_slot(ctx, s, kDiagAdapterRejected, make_status(Code::Unsupported));
         return;
@@ -259,7 +259,7 @@ void on_meta_ready(Context* ctx, Slot& s) noexcept {
 /// First load and reload alike: swap `next` into `cur` and bind the new object.
 /// A reload bumps the content version and emits Changed (from Ready) or Ready (from
 /// Failed); a first load and a Failed -> Ready reload count in the group.
-void make_ready(Context* ctx, Slot& s) noexcept {
+void make_ready(Context* ctx, Slot& s) {
     if (ctx->prof) profile_interval(ctx->prof, "kiln.load", path_of(s), s.loadNs, profile_now_ns());
     bool const reload   = s.reloading;
     State const from    = s.state;
@@ -307,7 +307,7 @@ void make_ready(Context* ctx, Slot& s) noexcept {
     settle(ctx, s);
 }
 
-void process(Context* ctx, Completion const& c) noexcept {
+void process(Context* ctx, Completion const& c) {
     Slot& s = ctx->slots[c.slot];
     KILN_ASSERT(s.jobInFlight && s.jobGen == c.generation);
     s.jobInFlight = false;
@@ -335,7 +335,7 @@ void process(Context* ctx, Completion const& c) noexcept {
     }
 }
 
-void drain_completions(Context* ctx, u32 maxCompletions) noexcept {
+void drain_completions(Context* ctx, u32 maxCompletions) {
     u32 n = 0;
     {
         std::lock_guard<std::mutex> lock(ctx->compMutex);
@@ -351,7 +351,7 @@ void drain_completions(Context* ctx, u32 maxCompletions) noexcept {
 }
 
 /// The adapter failed a committed upload, for `why`. No frame has seen the object: it goes at once.
-void fail_upload(Context* ctx, Slot& s, Status why) noexcept {
+void fail_upload(Context* ctx, Slot& s, Status why) {
     ctx->adapter.destroy(ctx->adapter.user, s.target.object);
     s.hasTarget = false;
     s.capture.reset();
@@ -360,7 +360,7 @@ void fail_upload(Context* ctx, Slot& s, Status why) noexcept {
     fail_slot(ctx, s, kDiagAdapterRejected, why);
 }
 
-void poll_awaiting(Context* ctx) noexcept {
+void poll_awaiting(Context* ctx) {
     Adapter const& a = ctx->adapter;
     for (u32 i = ctx->queues[u32(QueueId::Await)].head; i != kInvalid;) {
         Slot& s               = ctx->slots[i];
@@ -379,7 +379,7 @@ void poll_awaiting(Context* ctx) noexcept {
     }
 }
 
-void dispatch_uploads(Context* ctx, u64 budget) noexcept {
+void dispatch_uploads(Context* ctx, u64 budget) {
     u64 started           = 0;
     u32 dispatched        = 0;
     QueueId const order[] = {QueueId::UploadHigh, QueueId::UploadNormal};
@@ -409,7 +409,7 @@ void dispatch_uploads(Context* ctx, u64 budget) noexcept {
     }
 }
 
-void dispatch_meta(Context* ctx) noexcept {
+void dispatch_meta(Context* ctx) {
     QueueId const order[] = {QueueId::MetaHigh, QueueId::MetaNormal};
     for (QueueId q : order) {
         List& l = ctx->queues[u32(q)];
@@ -430,7 +430,7 @@ void dispatch_meta(Context* ctx) noexcept {
     }
 }
 
-void bind_pump_thread(Context* ctx) noexcept {
+void bind_pump_thread(Context* ctx) {
     if (!ctx->pumpBound) {
         ctx->pumpThread = std::this_thread::get_id();
         ctx->pumpBound  = true;
@@ -439,7 +439,7 @@ void bind_pump_thread(Context* ctx) noexcept {
 
 } // namespace
 
-PumpStats pump_impl(Context* ctx, PumpOptions const& opt, bool keepEvents) noexcept {
+PumpStats pump_impl(Context* ctx, PumpOptions const& opt, bool keepEvents) {
     ProfileZone const zone(ctx->prof, "kiln.pump");
     ++ctx->pumpIndex;
     if (opt.frame) ctx->frame = opt.frame;
@@ -463,19 +463,19 @@ PumpStats pump_impl(Context* ctx, PumpOptions const& opt, bool keepEvents) noexc
 
 using namespace rt;
 
-PumpStats pump(Context* ctx, PumpOptions const& opt) noexcept {
+PumpStats pump(Context* ctx, PumpOptions const& opt) {
     if (!ctx) return {};
     bind_pump_thread(ctx);
     KILN_ASSERT(ctx->pumpThread == std::this_thread::get_id() && "pump() called off the pump thread");
     return pump_impl(ctx, opt, false);
 }
 
-Span<Event const> events(Context* ctx) noexcept {
+Span<Event const> events(Context* ctx) {
     if (!ctx) return {};
     return {ctx->events, ctx->eventCount};
 }
 
-GroupStatus wait(Context* ctx, Group g, WaitOptions const& opt) noexcept {
+GroupStatus wait(Context* ctx, Group g, WaitOptions const& opt) {
     if (!ctx) return {};
     if ((ctx->adapter.caps & kSelfSubmitting) == 0 && !ctx->adapter.flush)
         KILN_PANIC("K5007 wait(): the adapter has neither kSelfSubmitting nor flush, so uploads cannot "

@@ -96,14 +96,14 @@ inline constexpr NameRule kDefaultNameRules[] = {
 };
 
 /// The usage of hints_from_name(): Auto if no rule sets one.
-KILN_API TextureUsage usage_from_name(StrView path, Span<NameRule const> rules) noexcept;
+KILN_API TextureUsage usage_from_name(StrView path, Span<NameRule const> rules);
 
 struct NameHints {
     TextureUsage usage = TextureUsage::Auto;
     CookShape shape    = CookShape::Auto;
 };
 /// Usage and shape from the stacked suffixes of the file stem of `path` (see NameRule).
-KILN_API NameHints hints_from_name(StrView path, Span<NameRule const> rules) noexcept;
+KILN_API NameHints hints_from_name(StrView path, Span<NameRule const> rules);
 
 // ---------------------------------------------------------------------------
 // Mesh
@@ -165,7 +165,7 @@ inline constexpr TargetProfile kCompatTarget{};
 inline constexpr TargetProfile kDesktopTarget{.name = "desktop", .blockFormats = kDesktopBlockFormats};
 inline constexpr TargetProfile kUncompressedTarget{.name = "uncompressed", .blockFormats = 0};
 /// The built-in profile called `name` (compat, desktop, uncompressed), or nullptr.
-KILN_API TargetProfile const* target_profile(StrView name) noexcept;
+KILN_API TargetProfile const* target_profile(StrView name);
 
 enum class StoreMode : u8 { Disk = 0, Memory, None }; ///< store / cache-less / validate only
 
@@ -207,13 +207,12 @@ enum SettingsDiagCode : u32 {
 /// InvalidArgument (K3002).
 KILN_API Result<TextureCookSettings> resolve_texture(TextureCookSettings const& overrides, SlotHint hint,
                                                      TargetProfile const& target, CookSession const& session,
-                                                     DiagSink const* diag = nullptr,
-                                                     StrView asset        = {}) noexcept;
+                                                     DiagSink const* diag = nullptr, StrView asset = {});
 
 /// Resolve mesh settings: validation, session, target caps.
 KILN_API Result<MeshCookSettings> resolve_mesh(MeshCookSettings const& overrides, TargetProfile const& target,
                                                CookSession const& session, DiagSink const* diag = nullptr,
-                                               StrView asset = {}) noexcept;
+                                               StrView asset = {});
 
 // ---------------------------------------------------------------------------
 // Layered resolution (docs/design/settings.md, "Resolution layers")
@@ -255,13 +254,12 @@ struct ResolveDesc {
 /// the sidecar sets the keys it names; a still-Auto usage comes from the slot, else the name
 /// rules, else Color; the policy runs; then derived fields, validation and target caps.
 KILN_API Result<TextureCookSettings> resolve_texture_layers(TextureCookSettings const& base,
-                                                            ResolveDesc const& d) noexcept;
+                                                            ResolveDesc const& d);
 /// Layers 4 and 6 over `base`, then resolve_mesh. Meshes have no inference layer.
-KILN_API Result<MeshCookSettings> resolve_mesh_layers(MeshCookSettings const& base,
-                                                      ResolveDesc const& d) noexcept;
+KILN_API Result<MeshCookSettings> resolve_mesh_layers(MeshCookSettings const& base, ResolveDesc const& d);
 
 /// Usage inferred from a glTF slot (None -> Color).
-constexpr TextureUsage usage_from_slot(SlotHint hint) noexcept {
+constexpr TextureUsage usage_from_slot(SlotHint hint) {
     switch (hint) {
     case SlotHint::Normal: return TextureUsage::Normal;
     case SlotHint::MetallicRoughness:
@@ -273,7 +271,7 @@ constexpr TextureUsage usage_from_slot(SlotHint hint) noexcept {
     return TextureUsage::Color;
 }
 /// Default color space for a usage.
-constexpr ColorSpace color_space_for(TextureUsage u) noexcept {
+constexpr ColorSpace color_space_for(TextureUsage u) {
     return (u == TextureUsage::Color || u == TextureUsage::Ui) ? ColorSpace::Srgb : ColorSpace::Linear;
 }
 
@@ -285,18 +283,18 @@ inline constexpr u32 kTextureSettingsSchema = 2; ///< bump when a field is added
 inline constexpr u32 kMeshSettingsSchema    = 1;
 inline constexpr u32 kTargetSchema          = 2; ///< 2: blockFormats replaced blockFamily
 
-KILN_API u64 hash_settings(TextureCookSettings const& s) noexcept;
-KILN_API u64 hash_settings(MeshCookSettings const& s) noexcept;
-KILN_API u64 hash_target(TargetProfile const& t) noexcept;
+KILN_API u64 hash_settings(TextureCookSettings const& s);
+KILN_API u64 hash_settings(MeshCookSettings const& s);
+KILN_API u64 hash_target(TargetProfile const& t);
 
 /// Enum <-> string for tools and diagnostics.
-KILN_API char const* texture_usage_name(TextureUsage u) noexcept;
-KILN_API char const* color_space_name(ColorSpace c) noexcept;
-KILN_API char const* vertex_profile_name(VertexProfile p) noexcept;
-KILN_API char const* slot_hint_name(SlotHint h) noexcept;
-KILN_API char const* cook_shape_name(CookShape s) noexcept;
-KILN_API char const* texture_encoding_name(TextureEncoding e) noexcept;
-KILN_API char const* encode_quality_name(EncodeQuality q) noexcept;
-KILN_API char const* supercompression_name(Supercompression s) noexcept;
+KILN_API char const* texture_usage_name(TextureUsage u);
+KILN_API char const* color_space_name(ColorSpace c);
+KILN_API char const* vertex_profile_name(VertexProfile p);
+KILN_API char const* slot_hint_name(SlotHint h);
+KILN_API char const* cook_shape_name(CookShape s);
+KILN_API char const* texture_encoding_name(TextureEncoding e);
+KILN_API char const* encode_quality_name(EncodeQuality q);
+KILN_API char const* supercompression_name(Supercompression s);
 
 } // namespace kiln::cook

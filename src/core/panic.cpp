@@ -28,20 +28,20 @@ struct PanicState {
     std::atomic<void*> user{nullptr};
 };
 
-PanicState& panic_state() noexcept {
+PanicState& panic_state() {
     static PanicState s;
     return s;
 }
 
 } // namespace
 
-void set_panic_handler(PanicHandler handler, void* user) noexcept {
+void set_panic_handler(PanicHandler handler, void* user) {
     PanicState& s = panic_state();
     s.user.store(user, std::memory_order_relaxed);
     s.handler.store(handler ? handler : &default_panic, std::memory_order_release);
 }
 
-void panic(char const* file, int line, char const* fmt, ...) noexcept {
+void panic(char const* file, int line, char const* fmt, ...) {
     char buf[kLogMessageMax];
     va_list args;
     va_start(args, fmt);
