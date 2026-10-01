@@ -1,6 +1,7 @@
 # Project config (`kiln.toml`)
 
-**Status:** Proposed (2026-10-01). Nothing is implemented. File format: TOML (owner, 2026-10-01;
+**Status:** Proposed (2026-10-01); owner decided points 1-4 and 6 the same day, point 5 open. Nothing
+is implemented. File format: TOML (owner, 2026-10-01;
 open question 7).
 **Decides:** the project file, its syntax and parser, where its layers sit in the resolution order,
 how it reaches `kiln-cook` and the cook provider, how a change to it reaches the store and hot
@@ -59,10 +60,6 @@ maxSize = 4096
 
 [texture.usage.normal]             # after inference, for fields nothing stronger set
 maxSize = 2048
-
-[target.lowend]                    # a project profile, selected like a built-in one
-base           = "compat"
-maxTextureSize = 2048
 ```
 
 ## Decision
@@ -104,7 +101,7 @@ can grow or the library can come in behind the same `Project` struct.
 | `[texture.preset.<name>]`, `[mesh.preset.<name>]` | a named patch: the same keys. No preset inherits from another |
 | `[[texture.rule]]`, `[[mesh.rule]]` | `match` (array of globs, required), optional `preset`, optional `targets` (array of profile names), and setting keys |
 | `[texture.usage.<usage>]` | a patch for textures whose resolved usage is `<usage>` (§4) |
-| `[target.<name>]` | a project profile: `base` (a built-in profile), then `blockFormats` (array of format names), `maxTextureSize`, `maxVertexProfile`, `maxArrayLayers` |
+| `[target.<name>]` | reserved for project profiles (§5); K3006 until then |
 
 Keys are the sidecar keys, so one key means the same thing in a sidecar, a preset, a rule and
 the defaults. An unknown key, preset, usage or profile name, or a rule without `match`, is K3006.
@@ -115,9 +112,10 @@ character. A pattern without `root:` matches the default root only. `#` is an or
 so `"*.glb#*"` matches every embedded image of a glb in the folder. This gives embedded images the
 per-asset settings that sidecars cannot.
 
-**Rules** apply in file order. Every matching rule applies: its preset first, then its own keys, and
-a later rule beats an earlier one. A rule with `targets` applies only when the cook's profile is in
-the list.
+**Rules compose** (owner, 2026-10-01). Every matching rule applies, in file order: its preset
+first, then its own keys. Rules that set different keys add up. Where two set the same key, the
+later one wins. `--explain` shows the rule that set each field, and `--verbose` lists the keys a
+later rule overrode. A rule with `targets` applies only when the cook's profile is in the list.
 
 ### 4. Place in the resolution order
 
@@ -147,8 +145,9 @@ Each beats the layers above it:
 
 ### 5. Targets
 
-- A `[target.<name>]` profile is selected by name wherever a built-in one is (`--target`,
-  `[project] target`). It may not reuse a built-in name. `base` gives the fields it does not set.
+- Project profiles wait for the v0.9 mobile profiles (owner, 2026-10-01). Proposed shape then:
+  `[target.<name>]` with `base` (a built-in profile) and the `TargetProfile` fields, selected by
+  name like a built-in one. Until then the section name is reserved.
 - Profile-specific settings use rules with `targets`, not a section per profile, so there is one
   way to say "this setting, for these assets".
 - The usage → format table stays code. A project that wants another format for some assets sets
@@ -191,8 +190,7 @@ patches apply. `--explain` cooks nothing and needs no store.
 ### 8. API
 
 - `kiln/cook/project.h`: `Result<Project*> load_project(StrView path, Allocator const*,
-  DiagSink const*)`, `free_project(Project*)`, and `target_profile(Project const*, StrView name)`,
-  which finds project and built-in profiles.
+  DiagSink const*)` and `free_project(Project*)`.
 - `ResolveDesc` gains `Project const* project` (nullptr: no project layers).
 - `ProviderDesc::projectFile` (§1). `cook_cli_main` takes `--project` like the other flags.
 - The parsed `Project` is plain data (strings, arrays of patches, compiled globs), allocated with
@@ -203,7 +201,7 @@ patches apply. `--explain` cooks nothing and needs no store.
 | Code | Severity | Meaning |
 |---|---|---|
 | K3005 | Error | outside the TOML subset (existing; now also for the project file) |
-| K3006 | Error | unknown key, preset, usage or profile; wrong type; a rule without `match` (existing code, new cases) |
+| K3006 | Error | unknown key, preset or usage, a profile name in `targets` that is not built in; wrong type; a rule without `match` (existing code, new cases) |
 | K30xx | Error | a glob that does not compile (assigned at implementation) |
 | K30xx | Warning | `kiln-cook --check`: a rule that matches no source under the scanned roots |
 
@@ -227,16 +225,23 @@ patches apply. `--explain` cooks nothing and needs no store.
    3c, 3d in `resolve_*_layers`; `kiln-cook --project` and `[project]`.
 3. Host digest and the record check; the provider's `projectFile` and the poller (§6).
 4. `--explain`.
-5. Usage sections (3b), `targets` on rules, project profiles.
+5. Usage sections (3b) and `targets` on rules.
 6. Docs: `settings.md` layer table, `cook-settings.md`, CHANGELOG (the flags' new layer).
 
 Each step builds and passes on its own; steps 1 to 3 make the file useful.
 
+## Owner decisions (2026-10-01)
+
+1. `[project]` sets roots, store and target for `kiln-cook`; its own flags win.
+2. `kiln-cook` setting flags move to layer 3d: above the project file, below sidecars.
+3. Rules compose: every matching rule applies; on the same key the later rule wins.
+4. A glob without `root:` matches the default root only.
+6. Project profiles wait for the v0.9 mobile profiles.
+
 ## Open points for the owner
 
-1. `[project]` with roots, store and target for `kiln-cook` (proposed), or settings only.
-2. `kiln-cook` flags move to layer 3d, above the project file and below sidecars (proposed).
-3. All matching rules apply, later wins (proposed), or first match wins.
-4. A glob without `root:` matches the default root only (proposed), or every root.
-5. Usage sections evaluated late with "fields nothing stronger set" (proposed), or left out.
-6. Project profiles (`[target.<name>]`) in this work, or later with the v0.9 mobile profiles.
+5. Usage-scoped settings ("every normal map at most 2048"): the late `[texture.usage.*]` sections
+   of §4, or (proposed instead) a rule condition `ifUsage = ["normal"]`. With the condition, kiln
+   first works out each asset's final usage (sidecar, else rules, else inference) and then applies
+   conditioned rules in file order like any rule: one concept, no special layer. Or neither, and
+   hosts use `CookPolicy`.
