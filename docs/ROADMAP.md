@@ -52,7 +52,8 @@ Not goals for v1:
 - **Textures:** alpha-coverage-preserving mips (done 2026-10-01: texture setting `alphaCutoff`, Auto
   from a glTF Mask material). Channel packing: deferred (owner, 2026-10-01), see Unscheduled.
 - **Project settings:** config files, presets, path rules, target encodings and
-  `kiln-cook --explain` ([`cook-settings.md`](cook-settings.md); file format: open question 7).
+  `kiln-cook --explain` ([`design/project-config.md`](design/project-config.md), Proposed; TOML,
+  owner 2026-10-01).
 - **Dependency tracking for hot reload** (done 2026-10-01). A changed layer reloads the arrays that
   contain it, and a failed reload no longer repeats on every manifest change (open-questions R13).
   kiln follows no references between assets (`design/asset-model-next.md`); config files and packed
