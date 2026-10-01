@@ -69,15 +69,15 @@ struct ManifestEntry {
 /// are a binary search. Valid while the manifest's bytes are.
 class KILN_API ManifestProfile {
 public:
-    ManifestProfile() = default;
+    ManifestProfile() noexcept = default;
 
-    StrView name() const { return name_; }
-    u64 hash() const { return hash_; }                  ///< hash_target
-    u64 block_formats() const { return blockFormats_; } ///< block_format_bit() set
-    u64 size() const { return count_; }
-    ManifestEntry entry(u64 i) const;
+    StrView name() const noexcept { return name_; }
+    u64 hash() const noexcept { return hash_; }                  ///< hash_target
+    u64 block_formats() const noexcept { return blockFormats_; } ///< block_format_bit() set
+    u64 size() const noexcept { return count_; }
+    ManifestEntry entry(u64 i) const noexcept;
     /// The entry of `name` and `kind`, or false.
-    [[nodiscard]] bool find(AssetKind kind, StrView name, ManifestEntry* out) const;
+    [[nodiscard]] bool find(AssetKind kind, StrView name, ManifestEntry* out) const noexcept;
 
 private:
     friend class ManifestView;
@@ -92,18 +92,18 @@ private:
 /// profiles. Copyable, no allocation.
 class KILN_API ManifestView {
 public:
-    ManifestView() = default;
+    ManifestView() noexcept = default;
 
     /// Checks everything: header, sizes, names, order, index and checksum. On failure, emits one
     /// K42xx diagnostic and returns Corrupt (VersionMismatch for K4202).
     static Result<ManifestView> open(Span<u8 const> bytes, DiagSink const* diag = nullptr,
                                      StrView where = {});
 
-    u32 profile_count() const { return profiles_; }
-    ManifestProfile profile(u32 i) const;
+    u32 profile_count() const noexcept { return profiles_; }
+    ManifestProfile profile(u32 i) const noexcept;
     /// The profile called `name`, or false.
-    [[nodiscard]] bool find_profile(StrView name, ManifestProfile* out) const;
-    Hash128 checksum() const;
+    [[nodiscard]] bool find_profile(StrView name, ManifestProfile* out) const noexcept;
+    Hash128 checksum() const noexcept;
 
 private:
     Span<u8 const> bytes_;

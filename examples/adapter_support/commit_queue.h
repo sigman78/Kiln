@@ -14,7 +14,7 @@ namespace kiln::ex {
 /// never allocates after construction.
 class CommitQueue {
 public:
-    CommitQueue() = default;
+    CommitQueue() noexcept = default;
     CommitQueue(Allocator const* alloc, u32 capacity);
 
     CommitQueue(CommitQueue const&)            = delete;

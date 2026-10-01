@@ -97,9 +97,9 @@ public:
         Tag tag                  = Tag::General;
     };
 
-    Arena() = default;
+    Arena() noexcept = default;
     explicit Arena(Desc const& desc);
-    ~Arena();
+    ~Arena() noexcept;
     Arena(Arena&& other) noexcept;
     Arena& operator=(Arena&& other) noexcept;
     Arena(Arena const&)            = delete;
@@ -122,15 +122,15 @@ public:
     StrView copy(StrView s);
 
     /// Free all allocations. The first block is retained for reuse.
-    void reset();
+    void reset() noexcept;
     /// Free all allocations and all blocks.
-    void release();
+    void release() noexcept;
 
-    usize bytes_used() const { return used_; }
-    usize bytes_reserved() const { return reserved_; }
+    usize bytes_used() const noexcept { return used_; }
+    usize bytes_reserved() const noexcept { return reserved_; }
 
     /// View this arena as an Allocator (free is a no-op). The Arena must outlive users.
-    Allocator as_allocator();
+    Allocator as_allocator() noexcept;
 
 private:
     struct Block;

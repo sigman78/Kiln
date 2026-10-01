@@ -34,7 +34,7 @@ KILN_API u32 thread_pool_thread_count(JobSystem const& jobs);
 
 struct IoFile {
     u64 bits = 0; ///< backend-defined; 0 = invalid
-    [[nodiscard]] bool valid() const { return bits != 0; }
+    [[nodiscard]] bool valid() const noexcept { return bits != 0; }
 };
 
 /// What a file poller compares between rounds.

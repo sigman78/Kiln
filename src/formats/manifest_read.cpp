@@ -165,7 +165,7 @@ Result<ManifestView> ManifestView::open(Span<u8 const> b, DiagSink const* diag, 
 
 #undef KILN_MANIFEST_FAIL
 
-ManifestProfile ManifestView::profile(u32 i) const {
+ManifestProfile ManifestView::profile(u32 i) const noexcept {
     KILN_ASSERT(i < profiles_);
     u64 const pOff = rd<u64>(bytes_, kProfiles), at = pOff + u64(i) * kManifestProfileBytes;
     ManifestProfile p;
@@ -182,7 +182,7 @@ ManifestProfile ManifestView::profile(u32 i) const {
     return p;
 }
 
-bool ManifestView::find_profile(StrView name, ManifestProfile* out) const {
+bool ManifestView::find_profile(StrView name, ManifestProfile* out) const noexcept {
     u32 lo = 0, hi = profiles_;
     while (lo < hi) {
         u32 const mid           = lo + (hi - lo) / 2;
@@ -200,11 +200,11 @@ bool ManifestView::find_profile(StrView name, ManifestProfile* out) const {
     return false;
 }
 
-Hash128 ManifestView::checksum() const {
+Hash128 ManifestView::checksum() const noexcept {
     return bytes_.empty() ? Hash128{} : rd_hash(bytes_, kManifestChecksumOffset);
 }
 
-ManifestEntry ManifestProfile::entry(u64 i) const {
+ManifestEntry ManifestProfile::entry(u64 i) const noexcept {
     KILN_ASSERT(i < count_);
     u64 const at = entries_ + (first_ + i) * kManifestEntryBytes;
     ManifestEntry e;
@@ -217,7 +217,7 @@ ManifestEntry ManifestProfile::entry(u64 i) const {
     return e;
 }
 
-bool ManifestProfile::find(AssetKind kind, StrView name, ManifestEntry* out) const {
+bool ManifestProfile::find(AssetKind kind, StrView name, ManifestEntry* out) const noexcept {
     u64 const h = hash_name(name);
     u64 lo = first_, hi = first_ + count_;
     while (lo < hi) {

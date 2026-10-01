@@ -339,19 +339,19 @@ enum DiagCode : u32 {
 /// min(stride, sizeof(T)) bytes and zero-fills the rest (records from a newer minor).
 template <class T> class Records {
 public:
-    Records() = default;
-    Records(u8 const* base, u32 count, u32 stride) : base_(base), count_(count), stride_(stride) {}
+    Records() noexcept = default;
+    Records(u8 const* base, u32 count, u32 stride) noexcept : base_(base), count_(count), stride_(stride) {}
 
-    u32 size() const { return count_; }
-    [[nodiscard]] bool empty() const { return count_ == 0; }
-    u32 stride() const { return stride_; }
-    [[nodiscard]] bool contiguous() const { return stride_ == sizeof(T); }
+    u32 size() const noexcept { return count_; }
+    [[nodiscard]] bool empty() const noexcept { return count_ == 0; }
+    u32 stride() const noexcept { return stride_; }
+    [[nodiscard]] bool contiguous() const noexcept { return stride_ == sizeof(T); }
 
-    T const& operator[](u32 i) const {
+    T const& operator[](u32 i) const noexcept {
         KILN_ASSERT(i < count_ && stride_ >= sizeof(T));
         return *reinterpret_cast<T const*>(base_ + usize(i) * stride_);
     }
-    T get(u32 i) const {
+    T get(u32 i) const noexcept {
         KILN_ASSERT(i < count_);
         T out{};
         u32 n = stride_ < sizeof(T) ? stride_ : u32(sizeof(T));
@@ -359,7 +359,7 @@ public:
         return out;
     }
     /// Contiguous view; only valid when contiguous().
-    Span<T const> span() const {
+    Span<T const> span() const noexcept {
         KILN_ASSERT(contiguous());
         return {reinterpret_cast<T const*>(base_), count_};
     }
@@ -367,15 +367,15 @@ public:
     struct Iter {
         u8 const* p;
         u32 stride;
-        T const& operator*() const { return *reinterpret_cast<T const*>(p); }
-        Iter& operator++() {
+        T const& operator*() const noexcept { return *reinterpret_cast<T const*>(p); }
+        Iter& operator++() noexcept {
             p += stride;
             return *this;
         }
-        bool operator!=(Iter const& o) const { return p != o.p; }
+        bool operator!=(Iter const& o) const noexcept { return p != o.p; }
     };
-    Iter begin() const { return {base_, stride_}; }
-    Iter end() const { return {base_ + usize(count_) * stride_, stride_}; }
+    Iter begin() const noexcept { return {base_, stride_}; }
+    Iter end() const noexcept { return {base_ + usize(count_) * stride_, stride_}; }
 
 private:
     u8 const* base_ = nullptr;
@@ -399,42 +399,42 @@ public:
     static Result<MeshView> open(Span<u8 const> bytes, OpenOptions const& opt = {},
                                  DiagSink const* diag = nullptr, StrView assetName = {});
 
-    FileHeader const& header() const { return *header_; }
-    Span<SectionEntry const> sections() const { return sections_; }
-    SectionEntry const* find_section(u32 id) const;
+    FileHeader const& header() const noexcept { return *header_; }
+    Span<SectionEntry const> sections() const noexcept { return sections_; }
+    SectionEntry const* find_section(u32 id) const noexcept;
 
-    ModelInfo const& model() const { return *model_; }
-    StrView name() const { return str(model_->nameStr); }
-    u64 asset_id() const { return model_->assetId; }
+    ModelInfo const& model() const noexcept { return *model_; }
+    StrView name() const noexcept { return str(model_->nameStr); }
+    u64 asset_id() const noexcept { return model_->assetId; }
 
-    Records<VertexLayout> const& layouts() const { return layouts_; }
-    Records<MeshPart> const& parts() const { return parts_; }
-    Records<MeshLod> const& lods() const { return lods_; }
-    Records<Submesh> const& submeshes() const { return submeshes_; }
-    Records<MaterialSlot> const& materials() const { return materials_; }
-    Records<TextureBinding> const& textures() const { return textures_; }
-    Records<Mount> const& mounts() const { return mounts_; }
-    Records<PayloadBlob> const& blobs() const { return blobs_; }
+    Records<VertexLayout> const& layouts() const noexcept { return layouts_; }
+    Records<MeshPart> const& parts() const noexcept { return parts_; }
+    Records<MeshLod> const& lods() const noexcept { return lods_; }
+    Records<Submesh> const& submeshes() const noexcept { return submeshes_; }
+    Records<MaterialSlot> const& materials() const noexcept { return materials_; }
+    Records<TextureBinding> const& textures() const noexcept { return textures_; }
+    Records<Mount> const& mounts() const noexcept { return mounts_; }
+    Records<PayloadBlob> const& blobs() const noexcept { return blobs_; }
 
     /// String by STRS offset. Offsets are validated by open() when `validate` is on;
     /// an out-of-range offset returns an empty view. `kInvalid` returns empty.
-    StrView str(u32 offset) const;
-    Span<u8 const> strings() const { return strings_; }
+    StrView str(u32 offset) const noexcept;
+    Span<u8 const> strings() const noexcept { return strings_; }
 
     /// GPUD bytes if they were part of the span given to open(), else empty.
-    Span<u8 const> encoded() const { return encoded_; }
-    [[nodiscard]] bool payload_raw() const { return (header_->flags & kPayloadRaw) != 0; }
-    u64 decoded_size() const { return header_->payloadDecodedSize; }
-    u32 payload_alignment() const { return header_->payloadAlignment; }
+    Span<u8 const> encoded() const noexcept { return encoded_; }
+    [[nodiscard]] bool payload_raw() const noexcept { return (header_->flags & kPayloadRaw) != 0; }
+    u64 decoded_size() const noexcept { return header_->payloadDecodedSize; }
+    u32 payload_alignment() const noexcept { return header_->payloadAlignment; }
 
     /// Binary search over mounts (sorted by nameHash). nullptr if absent.
-    Mount const* find_mount(u64 nameHash) const;
+    Mount const* find_mount(u64 nameHash) const noexcept;
     /// Linear search over parts. nullptr if absent.
-    MeshPart const* find_part(u64 nameHash) const;
+    MeshPart const* find_part(u64 nameHash) const noexcept;
 
     /// Byte size of stream `s` / the index range of a LOD (0 for unused streams).
-    u64 stream_bytes(MeshLod const& lod, u32 s) const;
-    static u64 index_bytes(MeshLod const& lod) {
+    u64 stream_bytes(MeshLod const& lod, u32 s) const noexcept;
+    static u64 index_bytes(MeshLod const& lod) noexcept {
         return u64(lod.indexCount) * index_size(IndexType(lod.indexType));
     }
 

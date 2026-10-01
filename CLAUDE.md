@@ -27,7 +27,10 @@ compiler is too old, update it.
   throw is caught only inside the `.cpp` that calls it and converted to `Status`.
 - No `<iostream>`, `<sstream>`, `<fstream>`, `<iomanip>` anywhere. Format with `kiln::format`.
 - Attributes only where they do work. `noexcept`: copy and move constructors and assignment, and
-  `swap`, only (kiln does not throw; kiln containers and `std::` read it there). `[[nodiscard]]`: bool results, calls that
+  `swap` (kiln containers and `std::` read it), and members of consumer-facing classes (`include/`,
+  `examples/adapter_support/`) that cannot throw. Not where a member runs code it does not own: host
+  callbacks (`Allocator`, `DiagSink`, profile hooks), user hash or `==`, `T` constructors,
+  `std::mutex`. Internal code and free functions: none. `[[nodiscard]]`: bool results, calls that
   acquire or own something, and values where 0 or null means failure (`Status` and `Result` are
   already `[[nodiscard]]`). `constexpr`: only functions that can be evaluated at compile time.
 - Public headers use lightweight std headers only (`<cstdint> <cstddef> <cstring> <new>
