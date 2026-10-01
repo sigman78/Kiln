@@ -113,8 +113,8 @@ gpu::PSO* make_floor_pso(gpu::Device* device, gpu::Format color) {
         });
     }
     if (!pso) KILN_ERROR("nga", "the floor pipeline failed");
-    if (!vs.empty()) kiln::free(default_allocator(), vs.data, vs.size, 4, Tag::Io);
-    if (!fs.empty()) kiln::free(default_allocator(), fs.data, fs.size, 4, Tag::Io);
+    kiln::free(default_allocator(), vs.data, vs.size, 4, Tag::Io);
+    kiln::free(default_allocator(), fs.data, fs.size, 4, Tag::Io);
     return pso;
 }
 
@@ -198,8 +198,7 @@ int main(int argc, char** argv) {
                    "no NoGraphicsAPI device (error %d): it needs Vulkan 1.4 with VK_EXT_descriptor_heap, "
                    "VK_KHR_device_address_commands and VK_EXT_mesh_shader (RTX 30+, RDNA 3+)",
                    int(init.error));
-        if (window) glfwDestroyWindow(window);
-        if (window) glfwTerminate();
+        glfwTerminate(); // destroys the window; nothing when GLFW never started
         return 2;
     }
     gpu::Device* const device = init.device;
@@ -398,19 +397,16 @@ int main(int argc, char** argv) {
     destroy(ctx);
     ex::finish_trace();
     nga_adapter_destroy(*na);
-    if (colorView) gpu::destroy_render_view(colorView);
-    if (color) gpu::destroy_texture(color);
-    if (targetHeap.size) gpu::destroy_texture_heap(targetHeap);
+    gpu::destroy_render_view(colorView);
+    gpu::destroy_texture(color);
+    gpu::destroy_texture_heap(targetHeap);
     for (gpu::CommandPool* p : pools)
         gpu::destroy_command_pool(p);
     gpu::destroy_timeline_semaphore(done.semaphore);
-    if (readback.owner) gpu::destroy_gpu_heap(readback);
+    gpu::destroy_gpu_heap(readback);
     gpu::destroy_gpu_heap(frameHeap);
-    if (pso) gpu::destroy_pso(pso);
+    gpu::destroy_pso(pso);
     gpu::destroy_device(device);
-    if (window) {
-        glfwDestroyWindow(window);
-        glfwTerminate();
-    }
+    glfwTerminate(); // destroys the window; nothing when GLFW never started
     return exitCode;
 }

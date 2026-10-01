@@ -278,8 +278,8 @@ gpu::PSO* make_pso(gpu::Device* device, char const* vsPath, char const* vsEntry,
         });
     }
     if (!pso) KILN_ERROR("nga", "pipeline %s / %s failed", vsPath, fsPath);
-    if (!vs.empty()) kiln::free(default_allocator(), vs.data, vs.size, 4, Tag::Io);
-    if (!fs.empty()) kiln::free(default_allocator(), fs.data, fs.size, 4, Tag::Io);
+    kiln::free(default_allocator(), vs.data, vs.size, 4, Tag::Io);
+    kiln::free(default_allocator(), fs.data, fs.size, 4, Tag::Io);
     return pso;
 }
 
@@ -293,10 +293,10 @@ struct Targets {
     u32 width = 0, height = 0;
 
     void release() {
-        if (colorView) gpu::destroy_render_view(colorView);
-        if (color) gpu::destroy_texture(color);
-        if (depthView) gpu::destroy_render_view(depthView);
-        if (depth) gpu::destroy_texture(depth);
+        gpu::destroy_render_view(colorView);
+        gpu::destroy_texture(color);
+        gpu::destroy_render_view(depthView);
+        gpu::destroy_texture(depth);
         colorView = depthView = nullptr;
         color = depth = nullptr;
         width = height = 0;
@@ -368,8 +368,7 @@ int main(int argc, char** argv) {
                    "no NoGraphicsAPI device (error %d): it needs Vulkan 1.4 with VK_EXT_descriptor_heap, "
                    "VK_KHR_device_address_commands and VK_EXT_mesh_shader (RTX 30+, RDNA 3+)",
                    int(init.error));
-        if (window) glfwDestroyWindow(window);
-        if (window) glfwTerminate();
+        glfwTerminate(); // destroys the window; nothing when GLFW never started
         return 2;
     }
     gpu::Device* const device = init.device;
@@ -590,14 +589,11 @@ int main(int argc, char** argv) {
     for (gpu::CommandPool* p : pools)
         gpu::destroy_command_pool(p);
     gpu::destroy_timeline_semaphore(done.semaphore);
-    if (readback.owner) gpu::destroy_gpu_heap(readback);
+    gpu::destroy_gpu_heap(readback);
     gpu::destroy_gpu_heap(frameHeap);
-    if (meshPso) gpu::destroy_pso(meshPso);
-    if (skyPso) gpu::destroy_pso(skyPso);
+    gpu::destroy_pso(meshPso);
+    gpu::destroy_pso(skyPso);
     gpu::destroy_device(device);
-    if (window) {
-        glfwDestroyWindow(window);
-        glfwTerminate();
-    }
+    glfwTerminate(); // destroys the window; nothing when GLFW never started
     return exitCode;
 }

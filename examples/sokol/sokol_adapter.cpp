@@ -96,9 +96,9 @@ void free_bytes(SokolAdapter* a, Upload& u) noexcept {
 
 void release_object(SokolAdapter* a, u32 index) noexcept {
     Object& o = a->objects[index];
-    if (o.view.id) sg_destroy_view(o.view);
-    if (o.image.id) sg_destroy_image(o.image);
-    if (o.buffer.id) sg_destroy_buffer(o.buffer);
+    sg_destroy_view(o.view);
+    sg_destroy_image(o.image);
+    sg_destroy_buffer(o.buffer);
     o = Object{{}, {}, {}, o.gen + 1, false};
     std::lock_guard<std::mutex> const lock(a->mutex);
     a->freeObjects.push_back(index);

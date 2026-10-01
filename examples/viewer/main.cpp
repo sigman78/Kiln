@@ -578,7 +578,6 @@ bool write_png(char const* path, Span<u8 const> rgba, u32 w, u32 h) {
 /// Everything main() tears down, in reverse order of creation.
 struct App {
     GLFWwindow* window = nullptr;
-    bool glfw          = false;
     vkx::Device device{};
     VkSurfaceKHR surface = VK_NULL_HANDLE;
     vkx::VkAdapter* vka  = nullptr;
@@ -591,13 +590,13 @@ struct App {
 #if KILN_VIEWER_HAS_COOK
         if (provider) cook::uninstall_provider(ctx);
 #endif
-        if (ctx) destroy(ctx); // hands every GPU object to Adapter::destroy
-        if (ren) vkx::renderer_destroy(ren);
-        if (vka) vkx::adapter_destroy(vka);
+        destroy(ctx); // hands every GPU object to Adapter::destroy
+        vkx::renderer_destroy(ren);
+        vkx::adapter_destroy(vka);
+        // Offscreen runs enable no surface extension: volk leaves this function null.
         if (surface) vkDestroySurfaceKHR(device.instance, surface, nullptr);
         vkx::device_destroy(device);
-        if (window) glfwDestroyWindow(window);
-        if (glfw) glfwTerminate();
+        glfwTerminate(); // destroys the window; nothing when GLFW never started
     }
 };
 
@@ -716,7 +715,6 @@ int main(int argc, char** argv) {
     if (!o.offscreen) {
         glfwSetErrorCallback(&glfw_error);
         if (!glfwInit()) return 2;
-        app.glfw = true;
         if (!glfwVulkanSupported()) {
             KILN_ERROR("viewer", "GLFW found no Vulkan loader");
             return 2;

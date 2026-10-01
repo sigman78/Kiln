@@ -144,9 +144,9 @@ Status create_image(Renderer* r, VkFormat format, VkImageUsageFlags usage, VkIma
 }
 
 void destroy_image(Renderer* r, Image& img) noexcept {
-    if (img.view) vkDestroyImageView(r->device, img.view, nullptr);
-    if (img.image) vkDestroyImage(r->device, img.image, nullptr);
-    if (img.memory) vkFreeMemory(r->device, img.memory, nullptr);
+    vkDestroyImageView(r->device, img.view, nullptr);
+    vkDestroyImage(r->device, img.image, nullptr);
+    vkFreeMemory(r->device, img.memory, nullptr);
     img = Image{};
 }
 
@@ -174,8 +174,8 @@ Status create_buffer(Renderer* r, VkDeviceSize size, VkBufferUsageFlags usage, V
 }
 
 void destroy_buffer(Renderer* r, VkBuffer& buffer, VkDeviceMemory& memory) noexcept {
-    if (buffer) vkDestroyBuffer(r->device, buffer, nullptr);
-    if (memory) vkFreeMemory(r->device, memory, nullptr);
+    vkDestroyBuffer(r->device, buffer, nullptr);
+    vkFreeMemory(r->device, memory, nullptr);
     buffer = VK_NULL_HANDLE;
     memory = VK_NULL_HANDLE;
 }
@@ -211,15 +211,15 @@ Status create_depth(Renderer* r) noexcept {
 
 void destroy_pipelines(Renderer* r) noexcept {
     for (LayoutPipeline& p : r->pipelines)
-        if (p.pipeline) vkDestroyPipeline(r->device, p.pipeline, nullptr);
+        vkDestroyPipeline(r->device, p.pipeline, nullptr);
     r->pipelines.clear();
-    if (r->skyPipeline) vkDestroyPipeline(r->device, r->skyPipeline, nullptr);
+    vkDestroyPipeline(r->device, r->skyPipeline, nullptr);
     r->skyPipeline = VK_NULL_HANDLE;
 }
 
 void destroy_swapchain_views(Renderer* r) noexcept {
     for (u32 i = 0; i < r->imageCount; ++i) {
-        if (r->swapViews[i]) vkDestroyImageView(r->device, r->swapViews[i], nullptr);
+        vkDestroyImageView(r->device, r->swapViews[i], nullptr);
         r->swapViews[i]  = VK_NULL_HANDLE;
         r->swapImages[i] = VK_NULL_HANDLE;
     }
@@ -279,7 +279,8 @@ bool create_swapchain(Renderer* r) noexcept {
     VkSwapchainKHR next   = VK_NULL_HANDLE;
     VKX_CHECK(vkCreateSwapchainKHR(r->device, &info, nullptr, &next));
     destroy_swapchain_views(r);
-    if (r->swapchain) vkDestroySwapchainKHR(r->device, r->swapchain, nullptr);
+    if (r->swapchain) // VK_KHR_swapchain only with a window: offscreen, this function is null
+        vkDestroySwapchainKHR(r->device, r->swapchain, nullptr);
     r->swapchain = next;
 
     u32 count = 0;
@@ -729,26 +730,27 @@ void renderer_destroy(Renderer* r) noexcept {
     vkDeviceWaitIdle(r->device);
     destroy_pipelines(r);
     destroy_swapchain_views(r);
-    if (r->swapchain) vkDestroySwapchainKHR(r->device, r->swapchain, nullptr);
+    if (r->swapchain) // VK_KHR_swapchain only with a window: offscreen, this function is null
+        vkDestroySwapchainKHR(r->device, r->swapchain, nullptr);
     for (VkSemaphore& s : r->renderDone)
-        if (s) vkDestroySemaphore(r->device, s, nullptr);
+        vkDestroySemaphore(r->device, s, nullptr);
     destroy_image(r, r->color);
     destroy_image(r, r->depth);
     destroy_buffer(r, r->readback, r->readbackMem);
     for (Frame& f : r->frames) {
-        if (f.pool) vkDestroyCommandPool(r->device, f.pool, nullptr);
-        if (f.fence) vkDestroyFence(r->device, f.fence, nullptr);
-        if (f.acquired) vkDestroySemaphore(r->device, f.acquired, nullptr);
+        vkDestroyCommandPool(r->device, f.pool, nullptr);
+        vkDestroyFence(r->device, f.fence, nullptr);
+        vkDestroySemaphore(r->device, f.acquired, nullptr);
         destroy_buffer(r, f.ubo, f.uboMemory);
     }
     destroy_buffer(r, r->zero, r->zeroMemory);
-    if (r->pipelineLayout) vkDestroyPipelineLayout(r->device, r->pipelineLayout, nullptr);
-    if (r->framePool) vkDestroyDescriptorPool(r->device, r->framePool, nullptr);
-    if (r->frameSetLayout) vkDestroyDescriptorSetLayout(r->device, r->frameSetLayout, nullptr);
-    if (r->vert) vkDestroyShaderModule(r->device, r->vert, nullptr);
-    if (r->frag) vkDestroyShaderModule(r->device, r->frag, nullptr);
-    if (r->skyVert) vkDestroyShaderModule(r->device, r->skyVert, nullptr);
-    if (r->skyFrag) vkDestroyShaderModule(r->device, r->skyFrag, nullptr);
+    vkDestroyPipelineLayout(r->device, r->pipelineLayout, nullptr);
+    vkDestroyDescriptorPool(r->device, r->framePool, nullptr);
+    vkDestroyDescriptorSetLayout(r->device, r->frameSetLayout, nullptr);
+    vkDestroyShaderModule(r->device, r->vert, nullptr);
+    vkDestroyShaderModule(r->device, r->frag, nullptr);
+    vkDestroyShaderModule(r->device, r->skyVert, nullptr);
+    vkDestroyShaderModule(r->device, r->skyFrag, nullptr);
     delete_object(r->alloc, r, Tag::General);
 }
 

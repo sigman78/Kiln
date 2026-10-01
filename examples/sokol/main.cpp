@@ -100,7 +100,7 @@ void request_textures(App& app, mesh::MeshView const& v) {
 void build_pipelines(App& app, mesh::MeshView const& v) {
     for (auto& p : app.pipelines)
         for (sg_pipeline& pip : p)
-            if (pip.id) sg_destroy_pipeline(pip);
+            sg_destroy_pipeline(pip);
     std::memset(app.pipelines, 0, sizeof app.pipelines);
     app.unsupported = false;
     for (u32 li = 0; li < v.layouts().size() && li < kMaxLayouts; ++li) {
@@ -446,7 +446,7 @@ void cleanup(void* user) {
 #if KILN_SOKOL_HAS_COOK
     if (app.provider) cook::uninstall_provider(app.ctx);
 #endif
-    if (app.ctx) destroy(app.ctx);
+    destroy(app.ctx);
     ex::finish_trace();
     sokol_adapter_destroy(app.sa);
     sg_shutdown();

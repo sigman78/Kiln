@@ -328,6 +328,8 @@ void device_destroy(Device& d) noexcept {
         vkDeviceWaitIdle(d.device);
         vkDestroyDevice(d.device, nullptr);
     }
+    // Instance functions exist only once there is an instance (volk), the messenger's only with its
+    // extension.
     if (d.messenger) vkDestroyDebugUtilsMessengerEXT(d.instance, d.messenger, nullptr);
     if (d.instance) vkDestroyInstance(d.instance, nullptr);
     d = Device{};

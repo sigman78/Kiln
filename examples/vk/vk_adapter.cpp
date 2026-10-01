@@ -350,10 +350,10 @@ void submit_ready(VkAdapter* a) noexcept {
 
 void object_free(VkAdapter* a, u32 index) noexcept {
     Object& o = a->objects[index];
-    if (o.view) vkDestroyImageView(a->device, o.view, nullptr);
-    if (o.image) vkDestroyImage(a->device, o.image, nullptr);
-    if (o.buffer) vkDestroyBuffer(a->device, o.buffer, nullptr);
-    if (o.memory) vkFreeMemory(a->device, o.memory, nullptr);
+    vkDestroyImageView(a->device, o.view, nullptr);
+    vkDestroyImage(a->device, o.image, nullptr);
+    vkDestroyBuffer(a->device, o.buffer, nullptr);
+    vkFreeMemory(a->device, o.memory, nullptr);
     u32 const generation = o.generation + 1;
     o                    = Object{};
     o.generation         = generation; // tokens of the old object no longer match
@@ -948,13 +948,13 @@ void adapter_destroy(VkAdapter* a) noexcept {
         if (a->dev->transferQueue) vkQueueWaitIdle(a->dev->transferQueue);
         for (u32 i = 0; i < a->objects.size(); ++i)
             if (a->objects[i].state != ObjectState::Free) object_free(a, i);
-        if (a->sampler) vkDestroySampler(a->device, a->sampler, nullptr);
-        if (a->descPool) vkDestroyDescriptorPool(a->device, a->descPool, nullptr);
-        if (a->setLayout) vkDestroyDescriptorSetLayout(a->device, a->setLayout, nullptr);
-        if (a->pool) vkDestroyCommandPool(a->device, a->pool, nullptr);
-        if (a->timeline) vkDestroySemaphore(a->device, a->timeline, nullptr);
-        if (a->staging) vkDestroyBuffer(a->device, a->staging, nullptr);
-        if (a->stagingMem) vkFreeMemory(a->device, a->stagingMem, nullptr);
+        vkDestroySampler(a->device, a->sampler, nullptr);
+        vkDestroyDescriptorPool(a->device, a->descPool, nullptr);
+        vkDestroyDescriptorSetLayout(a->device, a->setLayout, nullptr);
+        vkDestroyCommandPool(a->device, a->pool, nullptr);
+        vkDestroySemaphore(a->device, a->timeline, nullptr);
+        vkDestroyBuffer(a->device, a->staging, nullptr);
+        vkFreeMemory(a->device, a->stagingMem, nullptr);
     }
     delete_object(a->alloc, a, Tag::Payload);
 }
@@ -1101,10 +1101,10 @@ bool adapter_read_texture(void* user, GpuObject obj, TextureDesc const& desc, Ve
         std::memcpy(out->data(), mapped, usize(total));
         vkUnmapMemory(a->device, memory);
     }
-    if (fence) vkDestroyFence(a->device, fence, nullptr);
-    if (cmd) vkFreeCommandBuffers(a->device, a->pool, 1, &cmd);
+    vkDestroyFence(a->device, fence, nullptr);
+    vkFreeCommandBuffers(a->device, a->pool, 1, &cmd);
     vkDestroyBuffer(a->device, buffer, nullptr);
-    if (memory) vkFreeMemory(a->device, memory, nullptr);
+    vkFreeMemory(a->device, memory, nullptr);
     return ok;
 }
 

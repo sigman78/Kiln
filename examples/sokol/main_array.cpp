@@ -268,7 +268,7 @@ void cleanup(void* user) {
 #if KILN_SOKOL_HAS_COOK
     if (app.provider) cook::uninstall_provider(app.ctx);
 #endif
-    if (app.ctx) destroy(app.ctx);
+    destroy(app.ctx);
     ex::finish_trace();
     sokol_adapter_destroy(app.sa);
     sg_shutdown();

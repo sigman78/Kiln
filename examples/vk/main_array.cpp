@@ -341,9 +341,9 @@ int main(int argc, char** argv) {
     vkx::renderer_destroy(ren);
     vkx::adapter_destroy(*va);
     if (!opt.bindless) destroy_sets(device.device, sets);
+    // Offscreen runs enable no surface extension: volk leaves this function null.
     if (surface) vkDestroySurfaceKHR(device.instance, surface, nullptr);
     vkx::device_destroy(device);
-    if (window) glfwDestroyWindow(window);
-    if (!o.offscreen) glfwTerminate();
+    glfwTerminate(); // destroys the window; nothing when GLFW never started
     return exitCode;
 }

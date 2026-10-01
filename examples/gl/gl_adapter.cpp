@@ -485,7 +485,7 @@ Result<GlAdapter*> gl_adapter_create(GlAdapterDesc const& desc, Adapter* out) no
 void gl_adapter_destroy(GlAdapter* a) noexcept {
     if (!a) return;
     for (u32 i = 0; i < a->uploads.capacity(); ++i)
-        if (a->uploads[i].fence) glDeleteSync(a->uploads[i].fence);
+        glDeleteSync(a->uploads[i].fence);
     for (u32 i = 0; i < a->objects.size(); ++i)
         if (a->objects[i].used) release_object(a, i);
     if (a->bindless) {

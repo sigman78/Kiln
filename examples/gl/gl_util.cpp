@@ -194,10 +194,10 @@ void Target::resize(u32 w, u32 h) noexcept {
 }
 
 void Target::release() noexcept {
-    if (fbo) glDeleteFramebuffers(1, &fbo);
-    if (color) glDeleteRenderbuffers(1, &color);
-    if (depth) glDeleteRenderbuffers(1, &depth);
-    if (frameDone) glDeleteSync(frameDone);
+    glDeleteFramebuffers(1, &fbo);
+    glDeleteRenderbuffers(1, &color);
+    glDeleteRenderbuffers(1, &depth);
+    glDeleteSync(frameDone);
     fbo = color = depth = 0;
     frameDone           = nullptr;
     width = height = 0;
@@ -231,7 +231,7 @@ void prepare_geometry(Geometry& g, mesh::MeshView const& v, StrView name) noexce
 }
 
 void release_geometry(Geometry& g) noexcept {
-    if (g.vaoCount) glDeleteVertexArrays(GLsizei(g.vaoCount), g.vaos);
+    glDeleteVertexArrays(GLsizei(g.vaoCount), g.vaos);
     g.vaoCount    = 0;
     g.unsupported = false;
 }

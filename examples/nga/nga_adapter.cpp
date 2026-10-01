@@ -167,7 +167,7 @@ namespace {
 
 void release_object(NgaAdapter* a, u32 index) noexcept {
     Object& o = a->objects[index];
-    if (o.texture) gpu::destroy_texture(o.texture);
+    gpu::destroy_texture(o.texture);
     std::lock_guard<std::mutex> const lock(a->mutex);
     if (o.kind == ObjectKind::Texture && o.heapSize) a->textureRanges.release(o.heapOffset, o.heapSize);
     if (o.kind == ObjectKind::Mesh && o.heapSize) a->meshRanges.release(o.heapOffset, o.heapSize);
@@ -533,13 +533,13 @@ void nga_adapter_destroy(NgaAdapter* a) noexcept {
     for (u32 i = 0; i < a->objects.size(); ++i)
         if (a->objects[i].used) release_object(a, i);
     for (gpu::CommandPool* p : a->pools)
-        if (p) gpu::destroy_command_pool(p);
-    if (a->timeline) gpu::destroy_timeline_semaphore(a->timeline);
-    if (a->samplers) gpu::destroy_sampler_descriptor_heap(a->samplers);
-    if (a->descriptors) gpu::destroy_texture_descriptor_heap(a->descriptors);
-    if (a->textureHeap.owner) gpu::destroy_texture_heap(a->textureHeap);
-    if (a->meshHeap.owner) gpu::destroy_gpu_heap(a->meshHeap);
-    if (a->staging.owner) gpu::destroy_gpu_heap(a->staging);
+        gpu::destroy_command_pool(p);
+    gpu::destroy_timeline_semaphore(a->timeline);
+    gpu::destroy_sampler_descriptor_heap(a->samplers);
+    gpu::destroy_texture_descriptor_heap(a->descriptors);
+    gpu::destroy_texture_heap(a->textureHeap);
+    gpu::destroy_gpu_heap(a->meshHeap);
+    gpu::destroy_gpu_heap(a->staging);
     delete_object(a->alloc, a, Tag::Payload);
 }
 
