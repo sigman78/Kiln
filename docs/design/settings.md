@@ -37,7 +37,7 @@ Texture settings schema: 2 (`shape`, `slices`). `encoding`, `quality`, `supercom
 
 ### Mesh
 
-`VertexProfile { Default, Precise }`, `CompressionScheme { None, Basic, Meshopt, MeshoptZstd }`.
+`VertexProfile { Default, Precise }`, `CompressionScheme { None, Meshopt, MeshoptZstd }`.
 
 | `MeshCookSettings` field | Default | Meaning |
 |---|---|---|
@@ -48,8 +48,8 @@ Texture settings schema: 2 (`shape`, `slices`). `encoding`, `quality`, `supercom
 | `genLods` | false | reserved: the simplifier lands in v0.7 |
 | `posTolMm` | 0.1 | quantization tolerance before falling back to float positions |
 | `weldTol` | 0 | 0 = exact-match welding only |
-| `compression` | `Meshopt` | `None`: every blob codec `None`, the cooker sets `kPayloadRaw`. `Basic`: Zstd + ByteShuffle (vertex), Zstd (index). `Meshopt`: MeshoptVertex / MeshoptIndex. `MeshoptZstd`: Meshopt + `kBlobOuterZstd` |
-| `zstdLevel` | 0 | 1..19; 0 = 3. Used by `Basic` and `MeshoptZstd`, resolved to 0 otherwise; above 19 is a K3002 error |
+| `compression` | `Meshopt` | `None`: every blob codec `None`, the cooker sets `kPayloadRaw`. `Meshopt`: MeshoptVertex / MeshoptIndex. `MeshoptZstd`: Meshopt + `kBlobOuterZstd` |
+| `zstdLevel` | 0 | 1..19; 0 = 3. Used by `MeshoptZstd` (and the Zstd fallback for strides meshopt cannot take), resolved to 0 otherwise; above 19 is a K3002 error |
 | `blobChunkSize` | 0 | reserved: decoded bytes per split blob (spec §5.9 split rule); 0 = one blob per stream / index buffer per LOD |
 
 Reserved: indexWidthPolicy, unit/axis override, name prefixes to strip.
@@ -190,7 +190,7 @@ name or an out-of-range number is K3006. An integer is accepted where a float is
 | `profile` | `"default"`, `"precise"`, `"float"` |
 | `genTangents`, `optimize`, `useAuthoredLods` | boolean |
 | `posTolMm`, `weldTol` | number |
-| `compression` | `"none"`, `"basic"`, `"meshopt"`, `"meshopt-zstd"` |
+| `compression` | `"none"`, `"meshopt"`, `"meshopt-zstd"` |
 | `zstdLevel` | integer, 0 to 19 (0 = 3) |
 
 Reserved fields (`genLods`, `blobChunkSize`, …) are not sidecar keys yet.

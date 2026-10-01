@@ -111,9 +111,8 @@ enum class VertexProfile : u8 { Default = 0, Precise, Float };
 
 enum class CompressionScheme : u8 {
     None        = 0, ///< every blob codec None; the cooker sets kPayloadRaw
-    Basic       = 1, ///< Zstd + ByteShuffle (vertex), Zstd (index)
-    Meshopt     = 2, ///< MeshoptVertex / MeshoptIndex
-    MeshoptZstd = 3, ///< Meshopt + kBlobOuterZstd
+    Meshopt     = 1, ///< MeshoptVertex / MeshoptIndex
+    MeshoptZstd = 2, ///< Meshopt + kBlobOuterZstd
 };
 
 struct MeshCookSettings {

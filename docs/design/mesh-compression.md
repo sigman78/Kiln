@@ -7,7 +7,7 @@ Measured below.
 
 ## What the branch adds
 
-- Every scheme of spec §5.9 in the writer and the runtime: `Basic` (ByteShuffle + Zstd for vertex
+- The candidate schemes of spec §5.9, measured: `Basic` (ByteShuffle + Zstd for vertex
   blobs, Zstd for indices), `Meshopt` (MeshoptVertex, MeshoptIndex) and `MeshoptZstd` (the same
   with outer Zstd). Mesh settings `compression` and `zstdLevel`, sidecar keys of the same names,
   `kiln-cook --mesh-compression` and `--mesh-zstd`. A blob that does not shrink stays `None`.
@@ -55,8 +55,9 @@ of 5, payload in cache); write is the mesh's `cook.write` zone summed over the a
 
 1. **Decided:** default `Meshopt`: half the bytes of `None`, decode at about 2.4 GB/s, a cook cost of a few ms.
 2. `MeshoptZstd` (level 3) as the size option for shipping builds, chosen per target or project.
-3. Keep `Basic` readable (the format has it) but stop offering it as a choice, or drop it from the
-   settings.
+3. **Decided (owner, 2026-10-01):** `Basic` is dropped from the settings; it is not competitive. The
+   format keeps codec `Zstd` and filter `ByteShuffle`: the writer uses them for a vertex stride above
+   256, which meshopt cannot encode.
 4. B16: no blob splitting yet. A whole mesh decodes in milliseconds on one thread; split rules can
    wait for streaming (v0.8) or GPU decompression.
 
