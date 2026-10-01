@@ -22,6 +22,7 @@ struct UnitOutput {
     u32 nameOff = 0, nameLen = 0;
     AssetKind kind   = AssetKind::Mesh;
     SlotHint slot    = SlotHint::None; ///< embedded images: the first slot that referenced them
+    f32 alphaCutoff  = 0.0f;           ///< embedded images: CookAssetInfo::alphaCutoff (a Mask material)
     u64 settingsHash = 0;
     Hash128 key;
     Vec<u8> bytes;       ///< the cooked file; empty when `status` failed

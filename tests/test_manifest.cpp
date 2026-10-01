@@ -1761,6 +1761,36 @@ KILN_TEST(StorePaths, RelativeAndAbsolute) {
     KILN_CHECK(std::strstr(out, "/../") == nullptr);
 }
 
+// The record keeps an embedded image's Mask cutoff, so checking its keys again (another host
+// digest: a provider session, a project edit) does not cook it again.
+KILN_TEST(ManifestStore, RecordKeepsTheMaskCutoff) {
+    char store[1024], source[1024];
+    fresh_dir("manifest-mask-cutoff", store, sizeof store);
+    format(source, sizeof source, "%s/../gltf/generated/alpha_mask.glb", kiln::test::corpus_dir());
+    CookUnit unit(default_allocator());
+    KILN_REQUIRE(cook_corpus("alpha_mask.glb", AssetKind::Mesh, &unit).ok());
+    ManifestStore* s = nullptr;
+    KILN_REQUIRE(open_store(store, &s).ok());
+    KILN_REQUIRE(publish_unit(s, unit, 1, nullptr).ok());
+    KILN_REQUIRE(commit_manifest(s, nullptr).ok());
+    close_manifest_store(s);
+
+    KILN_REQUIRE(open_store(store, &s).ok());
+    CookUnit rec(default_allocator());
+    u64 digest = 0;
+    KILN_REQUIRE(copy_input_record(s, "alpha_mask.glb"_sv, &rec, &digest));
+    close_manifest_store(s);
+    static MeshCookSettings const mesh;
+    static TextureCookSettings const tex;
+    UnitDesc const d{.kind            = AssetKind::Mesh,
+                     .name            = "alpha_mask.glb",
+                     .sourcePath      = StrView(source),
+                     .meshDefaults    = &mesh,
+                     .textureDefaults = &tex,
+                     .target          = &kCompatTarget};
+    KILN_CHECK(recorded_keys_match(d, rec));
+}
+
 // cook_unit passes the Mask material's cutoff to its base color image's settings.
 KILN_TEST(ManifestStore, EmbeddedImageInheritsTheMaskCutoff) {
     CookUnit unit(default_allocator());

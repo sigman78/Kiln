@@ -185,6 +185,7 @@ void cook_embedded_images(UnitDesc const& d, CookUnit& u, Span<TextureRef const>
     parallel_for(d.env.jobs, alloc, u32(jobs.size()), 1, &cook_images, &run, d.env.maxThreads);
     for (ImageJob& j : jobs) {
         UnitOutput& o = add_output(u, AssetKind::Texture, j.ref->assetPath, j.ref->slot);
+        o.alphaCutoff = j.ref->alphaCutoff;
         if (j.settings.failed()) {
             o.status = j.settings.status();
             continue;
@@ -308,7 +309,7 @@ bool recorded_keys_match(UnitDesc const& d, CookUnit const& rec) {
         // Only a source of its own has a sidecar (the first output); embedded images have a slot.
         bool const ownSidecar = i == 0;
         ResolveDesc rd{
-            .asset     = {name, d.sourcePath, o.slot},
+            .asset     = {name, d.sourcePath, o.slot, o.alphaCutoff},
             .project   = d.project,
             .nameRules = d.nameRules,
             .policy    = d.policy,

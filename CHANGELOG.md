@@ -69,6 +69,11 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
   `ProviderDesc::maxQuality` sets it for the cook provider.
 
 ### Fixed
+- **glb files with a glTF `MASK` material cooked again on every key check** (since `alphaCutoff`):
+  a record did not keep the material's cutoff, so a check under another host digest (each provider
+  session on a `kiln-cook` store, a project edit) computed another key for the base color image.
+  Records keep it now: `manifest.in` minor 4. An older `manifest.in` is dropped once, so every
+  source is checked by content and cooked again.
 - **Zstd texture uploads were about 10x slower than needed:** the upload job decoded straight into the
   adapter's staging memory, which is write-combined on GL and Vulkan, and Zstd reads its output back.
   It now decodes into its scratch buffer and copies (warm `kiln-gl`, six uploads: 276 -> 26 ms).

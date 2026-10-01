@@ -388,6 +388,7 @@ int explain_asset(Options const& o, Project const* project, CookPolicy const& po
     bool const model      = iequals(ext, "glb") || iequals(ext, "gltf");
     AssetKind const kind  = model && parts.sub.empty() ? AssetKind::Mesh : AssetKind::Texture;
     SlotHint slot         = SlotHint::None;
+    f32 alphaCutoff       = 0.0f;
     CookSession const run = {.storeMode = StoreMode::None};
     if (!parts.sub.empty()) {
         UnitDesc const owner{
@@ -411,7 +412,8 @@ int explain_asset(Options const& o, Project const* project, CookPolicy const& po
                          KILN_SV(parts.sub));
             return 3;
         }
-        slot = out->slot;
+        slot        = out->slot;
+        alphaCutoff = out->alphaCutoff;
     }
     Vec<u8> sidecar(default_allocator(), Tag::General);
     char sidecarPath[1200] = {};
@@ -424,7 +426,7 @@ int explain_asset(Options const& o, Project const* project, CookPolicy const& po
     ExplainTrace trace;
     SettingsTrace const hook{&ExplainTrace::fn, &trace};
     ResolveDesc const d{
-        .asset       = {name, StrView(source), slot},
+        .asset       = {name, StrView(source), slot, alphaCutoff},
         .project     = project,
         .sidecar     = StrView(reinterpret_cast<char const*>(sidecar.data()), sidecar.size()),
         .sidecarPath = StrView(sidecarPath),

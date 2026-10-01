@@ -6,6 +6,7 @@
 #include "kiln/log.h"
 
 #include <algorithm>
+#include <bit>
 #include <cerrno>
 #include <chrono>
 #include <mutex>
@@ -29,7 +30,7 @@ namespace {
 
 constexpr u32 kInputsMagic = fourcc('K', 'M', 'I', 'N');
 constexpr u16 kInputsMajor = 0;
-constexpr u16 kInputsMinor = 3; ///< 2: the root table; 3: outputs carry their build keys
+constexpr u16 kInputsMinor = 4; ///< 2: the root table; 3: outputs carry their build keys; 4: and alphaCutoff
 
 // ---------------------------------------------------------------------------
 // Paths and the lock
@@ -149,9 +150,10 @@ struct Entry {
 
 struct RecordOutput {
     u32 nameOff = 0, nameLen = 0; ///< into Record::strings
-    AssetKind kind = AssetKind::Mesh;
-    SlotHint slot  = SlotHint::None;
-    Hash128 key; ///< the build key the cook gave it; zero when it failed
+    AssetKind kind  = AssetKind::Mesh;
+    SlotHint slot   = SlotHint::None;
+    f32 alphaCutoff = 0.0f; ///< embedded images: the Mask material's cutoff, which their settings take
+    Hash128 key;            ///< the build key the cook gave it; zero when it failed
 };
 
 struct Record {
@@ -382,6 +384,7 @@ void encode_record(Out& o, Record const& r) {
     for (RecordOutput const& out : r.outputs) {
         o.u(u8(out.kind), 1);
         o.u(u8(out.slot), 1);
+        o.u(std::bit_cast<u32>(out.alphaCutoff), 4);
         o.str(r.str(out.nameOff, out.nameLen));
         o.hash(out.key);
     }
@@ -420,6 +423,7 @@ bool decode_record(In& in, Record& r) {
         RecordOutput x;
         u64 const k2    = in.u(1);
         u64 const slot  = in.u(1);
+        x.alphaCutoff   = std::bit_cast<f32>(u32(in.u(4)));
         StrView const n = in.str();
         x.key           = in.hash();
         if (k2 > u64(AssetKind::Texture) || slot > u64(SlotHint::Emissive) || check_asset_name(n))
@@ -716,10 +720,11 @@ Status publish_unit(ManifestStore* s, CookUnit& unit, u64 hostDigest, DiagSink c
         else
             s->put_entry(o.kind, name, o.key, checksums[i], o.bytes.size());
         RecordOutput ro;
-        ro.nameOff = next.add(name);
-        ro.nameLen = u32(name.size);
-        ro.kind    = o.kind;
-        ro.slot    = o.slot;
+        ro.nameOff     = next.add(name);
+        ro.nameLen     = u32(name.size);
+        ro.kind        = o.kind;
+        ro.slot        = o.slot;
+        ro.alphaCutoff = o.alphaCutoff;
         if (o.status.ok()) ro.key = o.key;
         next.outputs.push_back(ro);
     }
@@ -852,10 +857,11 @@ bool copy_input_record(ManifestStore* s, StrView name, CookUnit* out, u64* hostD
     out->inputs.append(r->inputs.span());
     for (RecordOutput const& ro : r->outputs) {
         UnitOutput o;
-        o.nameOff = ro.nameOff;
-        o.nameLen = ro.nameLen;
-        o.kind    = ro.kind;
-        o.slot    = ro.slot;
+        o.nameOff     = ro.nameOff;
+        o.nameLen     = ro.nameLen;
+        o.kind        = ro.kind;
+        o.slot        = ro.slot;
+        o.alphaCutoff = ro.alphaCutoff;
         // The record describes the entry only if both name the same artifact: after a crash between
         // the manifest.dir and manifest.in writes they may come from different cooks.
         u32 const e = s->find_entry(ro.kind, r->str(ro.nameOff, ro.nameLen));

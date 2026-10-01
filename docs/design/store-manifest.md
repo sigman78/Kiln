@@ -267,11 +267,12 @@ Size: about 1.1 MB for 10 000 entries (72 bytes per entry, plus names).
 
 ## Input records (`manifest.in`)
 
-The cook's own file, never read by the runtime: magic `KMIN`, major 0, minor 3, a record count, a
+The cook's own file, never read by the runtime: magic `KMIN`, major 0, minor 4, a record count, a
 root count, the roots (name, directory), then each record as its profile name and its body (unit
 name, kind, the `kCookerVersion` that wrote it in one byte (0 in files from before 2026-10-01, whose
 readers skip the byte), host digest, the inputs with role, presence, name, size, time and content hash, the
-outputs with kind, glTF slot, name and build key, zero for an output that failed), then
+outputs with kind, glTF slot, the Mask material's alpha cutoff (f32 bits; minor 4), name and build
+key, zero for an output that failed), then
 an XXH3-128 of everything before it. Records are sorted by profile name, then unit name. A file
 that does not decode is dropped with an info log.
 
