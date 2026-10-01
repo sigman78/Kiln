@@ -67,6 +67,10 @@ store (K3009).
 - Artifacts are written once; only `manifest.dir` and `manifest.in` are replaced (a temporary file,
   then a rename). A failed rewrite is tried again next round.
 - The poller is joined by `uninstall_provider`, which the host calls before `destroy(ctx)`.
+- With `ProviderDesc::projectFile`, the poller also stats `kiln.toml`. An edit is loaded again and
+  swapped in; every unit this session checked is checked again under the new settings, and only
+  those whose build keys changed cook again (`project-config.md` §6). An edit with errors keeps the
+  previous project. `kiln-cook --watch` does the same between its rounds.
 
 ### Viewer and examples
 

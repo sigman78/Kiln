@@ -1,6 +1,8 @@
 # Project config (`kiln.toml`)
 
-**Status:** Decided (owner, 2026-10-01; decisions at the end). Nothing is implemented yet.
+**Status:** Decided (owner, 2026-10-01; decisions at the end). Implemented 2026-10-01 in rollout steps 1
+to 6: `include/kiln/cook/project.h`, `src/cook/project.cpp`, `src/cook/toml_subset.cpp`; choices made
+while implementing are open-questions R15.
 File format: TOML (owner, 2026-10-01; open question 7).
 **Decides:** the project file, its syntax and parser, where its layers sit in the resolution order,
 how it reaches `kiln-cook` and the cook provider, how a change to it reaches the store and hot
@@ -212,8 +214,9 @@ patches apply. `--explain` cooks nothing and needs no store.
 |---|---|---|
 | K3005 | Error | outside the TOML subset (existing; now also for the project file) |
 | K3006 | Error | unknown key, preset or usage, a profile name in `targets` that is not built in; wrong type; a rule without `match` (existing code, new cases) |
-| K30xx | Error | a glob that does not compile (assigned at implementation) |
-| K30xx | Warning | `kiln-cook --check`: a rule that matches no source under the scanned roots |
+| K3011 | Error | a `match` pattern that is not a valid glob |
+| K3012 | Error | the project file cannot be read |
+| - | Warning | `kiln-cook --check`: a rule that matches no source under the scanned roots (not built yet, R15) |
 
 ## Alternatives considered
 

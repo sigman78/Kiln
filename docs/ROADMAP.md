@@ -51,9 +51,10 @@ Not goals for v1:
   splitting (B16) waits for streaming.
 - **Textures:** alpha-coverage-preserving mips (done 2026-10-01: texture setting `alphaCutoff`, Auto
   from a glTF Mask material). Channel packing: deferred (owner, 2026-10-01), see Unscheduled.
-- **Project settings:** config files, presets, path rules, target encodings and
-  `kiln-cook --explain` ([`design/project-config.md`](design/project-config.md), decided; TOML,
-  owner 2026-10-01).
+- **Project settings** (done 2026-10-01, [`design/project-config.md`](design/project-config.md)):
+  `kiln.toml` with defaults, presets, first-match path rules, usage sections, `[roots]` and
+  `[project]`; hot reload of the file; `kiln-cook --project` and `--explain`. Project target
+  profiles wait for v0.9.
 - **Dependency tracking for hot reload** (done 2026-10-01). A changed layer reloads the arrays that
   contain it, and a failed reload no longer repeats on every manifest change (open-questions R13).
   kiln follows no references between assets (`design/asset-model-next.md`); config files and packed

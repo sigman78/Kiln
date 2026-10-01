@@ -90,13 +90,18 @@ values; code layers fill or override them. Each layer beats the ones above it.
 | # | Layer | Kind | Sets | v0.5 |
 |---|---|---|---|---|
 | 1 | built-in defaults (the member initializers) | data | every field | **yes** |
-| 2 | host settings: `ProviderDesc::textureDefaults` / `meshDefaults`, `kiln-cook` flags | data, base | what the host changes | **yes** |
-| 3 | project config: presets, path rules (globs), target encodings | data, patch | the keys it names | reserved (v0.7) |
+| 2 | host settings: `ProviderDesc::textureDefaults` / `meshDefaults` | data, base | what the host changes | **yes** |
+| 3a | project defaults: `[texture]`, `[mesh]` in `kiln.toml` | data, patch | the keys it names | **yes** (v0.7) |
+| 3b | project usage sections `[texture.usage.<usage>]`, evaluated after layer 5 | data, patch | the keys no layer from 3c to 5 set | **yes** (v0.7) |
+| 3c | the first matching project rule, its preset first | data, patch | the keys they name | **yes** (v0.7) |
+| 3d | `kiln-cook` setting flags (`ProjectDesc::overrides`) | data, patch | the flags given | **yes** (v0.7; layer 2 before) |
 | 4 | per-asset sidecar (`<source>.kiln`) | data, patch | the keys it names | **yes** (see "Sidecar files") |
 | 5 | inference: glTF slot, else name rules, else Color | code | `usage` and `shape`, only if `Auto` | **yes** |
 | 6 | `CookPolicy` (optional) | code | anything; may refuse the asset (K3007) | **yes** |
 | - | resolve: derived fields, validation, `CookSession`, target caps | kiln | `colorSpace` if `Auto`; clears; errors | **yes** |
-| - | `kiln-cook --explain` (which layer set each field) | | | reserved (v0.7) |
+| - | `kiln-cook --explain` (which layer set each field; `ResolveDesc::trace`) | | | **yes** (v0.7) |
+
+Layer 3 is the project file (`project-config.md`). Its semantics, globs and rules are there.
 
 Why this order:
 
@@ -112,7 +117,7 @@ Why this order:
   the target.
 
 `resolve_texture_layers(base, ResolveDesc)` and `resolve_mesh_layers(base, ResolveDesc)` run layers
-4 to 6 and the resolve step over `base` (layers 1 to 3). The provider and `kiln-cook` both call
+3 to 6 and the resolve step over `base` (layers 1 and 2); `ResolveDesc::project` is layer 3. The provider and `kiln-cook` both call
 them, so a sidecar means the same in both.
 
 **`CookPolicy`** (`kiln/cook/settings.h`): a texture function and a mesh function plus `void*
@@ -171,7 +176,7 @@ Every accepted file is valid TOML.
   multi-line strings, dates and times, hex/octal/binary, underscores in numbers, `inf`, `nan`.
 - A key or table defined twice is K3005, as in TOML.
 
-**Keys are the struct field names.** An unknown key, a value of the wrong type, an unknown enum
+**Keys are the struct field names**, the same in `kiln.toml` (`project-config.md`). An unknown key, a value of the wrong type, an unknown enum
 name or an out-of-range number is K3006. An integer is accepted where a float is expected.
 
 | Texture key | Value |
@@ -275,8 +280,8 @@ type checking, allocates), and `optional<T>` per field (heavy; `Auto` covers v0.
   existing ones, as encoding, supercompression and shape were.
 - Enabling a compression scheme later needs no struct or schema change, only accepting the enum
   value. `kCookerVersion` still bumps if defaults change.
-- Layers 3 and 4 are patches, so they know which fields they set. `--explain` can record the
-  layer per field while patching, with no API change.
+- Layers 3 and 4 are patches, so they know which fields they set. `--explain` records the layer
+  per field while patching (`SettingsTrace`); code layers are reported by the fields they change.
 
 ## Open points for the owner
 

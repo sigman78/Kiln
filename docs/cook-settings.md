@@ -1,8 +1,9 @@
 # Cook settings
 
 See [`design/settings.md`](design/settings.md) for the settings structs as implemented, the
-resolution layers (which ones exist today), sidecars, and the store-key hashing rule. This file
-holds the full model that the v0.7 project-settings work fills in ([`ROADMAP.md`](ROADMAP.md)).
+resolution layers, sidecars, and the store-key hashing rule, and
+[`design/project-config.md`](design/project-config.md) for the project file `kiln.toml` (v0.7). This
+file holds the full model; groups not in the structs yet are still plans.
 
 ## Principles
 
@@ -22,9 +23,12 @@ holds the full model that the v0.7 project-settings work fills in ([`ROADMAP.md`
 - **Per-part mesh overrides** may come from glTF `extras` on nodes (for example `lod_ratio`,
   `no_simplify`), which artists set in their DCC tool.
 
-## Planned layers
+## Layers
 
-From weakest to strongest; `design/settings.md` maps them to what exists today.
+From weakest to strongest, as first planned. What was built differs in three places
+(`design/settings.md`, "Resolution layers"): target encodings stay code (the profile's usage
+table, `design/target-profiles.md`), usage defaults are `[texture.usage.*]` sections applied after
+inference, and the `kiln-cook` flags sit between the project file and sidecars.
 
 ```
 1. built-in defaults
