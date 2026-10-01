@@ -115,6 +115,12 @@ constexpr EnumName<Supercompression> kSupercompressions[] = {
     {"none", Supercompression::None},
     {"zstd", Supercompression::Zstd},
 };
+constexpr EnumName<CompressionScheme> kCompressions[] = {
+    {"none",         CompressionScheme::None       },
+    {"basic",        CompressionScheme::Basic      },
+    {"meshopt",      CompressionScheme::Meshopt    },
+    {"meshopt-zstd", CompressionScheme::MeshoptZstd},
+};
 constexpr EnumName<VertexProfile> kProfiles[] = {
     {"default", VertexProfile::Default},
     {"precise", VertexProfile::Precise},
@@ -144,6 +150,8 @@ Status set_field(TomlEntry const& e, MeshCookSettings& s, KeyError const& err) n
     if (e.key == "useAuthoredLods") return set_bool(e, s.useAuthoredLods, err);
     if (e.key == "posTolMm") return set_f32(e, s.posTolMm, err);
     if (e.key == "weldTol") return set_f32(e, s.weldTol, err);
+    if (e.key == "compression") return set_enum(e, kCompressions, s.compression, err);
+    if (e.key == "zstdLevel") return set_zstd_level(e, s.zstdLevel, err);
     return err(e, "unknown key for a mesh");
 }
 

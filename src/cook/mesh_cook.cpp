@@ -1284,7 +1284,9 @@ Result<CookedMesh> cook_mesh(MeshSource const& src, MeshCookSettings const& sett
     wd.textures   = k.bindings.span();
     wd.mounts     = k.mounts.span();
     Stage swWrite(env.profile, "cook.write", src.assetPath);
-    Result<Vec<u8>> file = mesh::write(wd, mesh::WriteOptions{}, alloc, diag);
+    Result<Vec<u8>> file = mesh::write(
+        wd, mesh::WriteOptions{.compression = settings.compression, .zstdLevel = settings.zstdLevel}, alloc,
+        diag);
     if (file.failed()) return file.status();
     u64 const writeUs = swWrite.stop();
 

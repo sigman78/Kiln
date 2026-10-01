@@ -33,6 +33,10 @@ struct ZstdMem {
 void* zstd_alloc(void* mem, usize size) noexcept;
 void zstd_free(void* mem, void* ptr) noexcept;
 
+/// The decompressed size a Zstd frame's header states, or ~0 when it states none or `src` is not a
+/// frame.
+[[nodiscard]] u64 zstd_content_size(Span<u8 const> src) noexcept;
+
 /// A Zstd decoder. Its context is made on the first decode, from `alloc` (Tag::Io), and reused.
 /// Not thread-safe: one per job.
 class ZstdDecoder {

@@ -9,6 +9,7 @@
 #include "kiln/manifest.h"
 #include "kiln/mesh.h"
 
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 
@@ -20,6 +21,7 @@ struct Options {
     char const* path = nullptr;
     bool blobs       = false;
     bool check       = false;
+    bool bench       = false;
     bool quiet       = false;
 };
 
@@ -225,6 +227,36 @@ int dump_mesh(Span<u8 const> bytes, Options const& o, DiagSink const* diag) {
         out("\ncheck: payload decoded (%llu B), checksums and index values OK\n",
             static_cast<unsigned long long>(v.decoded_size()));
     }
+    if (o.bench) {
+        if (v.encoded().empty()) {
+            std::fprintf(stderr, "%s: --bench needs the whole file (GPUD missing)\n", o.path);
+            return 4;
+        }
+        // The best of 5 rounds of at least 50 ms each, as the loader decodes (into CPU memory).
+        Vec<u8> dst(default_allocator(), Tag::Payload);
+        dst.resize(usize(v.decoded_size()));
+        using Clock = std::chrono::steady_clock;
+        double best = 0;
+        for (int round = 0; round < 5; ++round) {
+            u32 runs                   = 0;
+            Clock::time_point const t0 = Clock::now();
+            double seconds             = 0;
+            while (seconds < 0.05) {
+                if (mesh::decode_payload(v, v.encoded(), dst.span(), {.verifyChecksums = false}).failed()) {
+                    std::fprintf(stderr, "%s: payload decode failed\n", o.path);
+                    return 4;
+                }
+                ++runs;
+                seconds = std::chrono::duration<double>(Clock::now() - t0).count();
+            }
+            best = max(best, double(runs) * double(v.decoded_size()) / seconds / 1e6);
+        }
+        // Always printed, also with --quiet: the one line a benchmark script reads.
+        std::printf("bench: decoded %llu B, encoded %llu B, ratio %.3f, decode %.0f MB/s\n",
+                    static_cast<unsigned long long>(v.decoded_size()),
+                    static_cast<unsigned long long>(v.encoded().size),
+                    double(v.encoded().size) / double(max<u64>(v.decoded_size(), 1)), best);
+    }
     return 0;
 }
 
@@ -373,11 +405,14 @@ int main(int argc, char** argv) {
     no_crash_dialogs();
     Options o;
     cli::Option const opts[] = {
-        {.name = "--blobs", .help = "print the full BLOB table (default: summary only)",    .flag = &o.blobs},
+        {.name = "--blobs", .help = "print the full BLOB table (default: summary only)",      .flag = &o.blobs},
         {.name = "--check",
          .help = ".mesh: decode the payload and verify checksums and indices; .ktx2: verify every level; "
-                 "manifest: verify every artifact",                                         .flag = &o.check},
-        {.name = "--quiet", .help = "errors only (the exit code still reports the result)", .flag = &o.quiet},
+                 "manifest: verify every artifact",                                           .flag = &o.check},
+        {.name = "--bench",
+         .help = ".mesh: decode the payload repeatedly; print sizes, ratio and decoded MB/s",
+         .flag = &o.bench                                                                                     },
+        {.name = "--quiet", .help = "errors only (the exit code still reports the result)",   .flag = &o.quiet},
     };
     cli::Spec const spec{
         .program  = "kiln-info",

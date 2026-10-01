@@ -203,17 +203,33 @@ KILN_TEST(Settings, MeshGenLodsUnsupported) {
     KILN_CHECK(cap.severity == Severity::Error);
 }
 
-KILN_TEST(Settings, MeshCompressionBasicUnsupported) {
-    TargetProfile target{};
-    CookSession session{};
-    MeshCookSettings overrides{};
-    overrides.compression = CompressionScheme::Basic;
+// Every scheme resolves; a Zstd level 0 becomes the default where the scheme uses Zstd, and 0 elsewhere.
+KILN_TEST(Settings, MeshCompressionResolves) {
+    struct Case {
+        CompressionScheme scheme;
+        u8 level, want;
+    };
+    Case const cases[] = {
+        {CompressionScheme::None,        5, 0                },
+        {CompressionScheme::Basic,       0, kDefaultZstdLevel},
+        {CompressionScheme::Basic,       9, 9                },
+        {CompressionScheme::Meshopt,     9, 0                },
+        {CompressionScheme::MeshoptZstd, 0, kDefaultZstdLevel},
+    };
+    for (Case const& c : cases) {
+        DiagCapture cap;
+        DiagSink sink              = cap.sink();
+        Result<MeshCookSettings> r = resolve_mesh({.compression = c.scheme, .zstdLevel = c.level},
+                                                  TargetProfile{}, CookSession{}, &sink);
+        KILN_REQUIRE(r.ok());
+        KILN_CHECK_EQ(r->zstdLevel, c.want);
+        KILN_CHECK_EQ(cap.count, 0);
+    }
     DiagCapture cap;
-    DiagSink sink              = cap.sink();
-    Result<MeshCookSettings> r = resolve_mesh(overrides, target, session, &sink);
-    KILN_CHECK(r.failed());
-    KILN_CHECK(r.code() == Code::Unsupported);
-    KILN_CHECK_EQ(cap.code, u32(kDiagSettingsUnsupported));
+    DiagSink sink = cap.sink();
+    KILN_CHECK(resolve_mesh({.compression = CompressionScheme::Basic, .zstdLevel = 20}, TargetProfile{},
+                            CookSession{}, &sink)
+                   .code() == Code::InvalidArgument);
 }
 
 KILN_TEST(Settings, MeshBlobChunkSizeUnsupported) {
@@ -227,19 +243,6 @@ KILN_TEST(Settings, MeshBlobChunkSizeUnsupported) {
     KILN_CHECK(r.failed());
     KILN_CHECK(r.code() == Code::Unsupported);
     KILN_CHECK_EQ(cap.code, u32(kDiagSettingsUnsupported));
-}
-
-KILN_TEST(Settings, MeshZstdLevelIgnoredWithNoneWarns) {
-    TargetProfile target{};
-    CookSession session{};
-    MeshCookSettings overrides{};
-    overrides.zstdLevel = 5; // compression stays None
-    DiagCapture cap;
-    DiagSink sink              = cap.sink();
-    Result<MeshCookSettings> r = resolve_mesh(overrides, target, session, &sink);
-    KILN_REQUIRE(r.ok());
-    KILN_CHECK_EQ(cap.code, u32(kDiagSettingsInvalidCombo));
-    KILN_CHECK(cap.severity == Severity::Warning);
 }
 
 KILN_TEST(Settings, MeshProfileClampedByTargetWarns) {

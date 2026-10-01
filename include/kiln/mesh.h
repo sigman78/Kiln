@@ -316,6 +316,7 @@ enum DiagCode : u32 {
     kDiagDecodeSize      = 4021, ///< decoder produced a size != decodedSize (Corrupt)
     kDiagTruncated       = 4022, ///< buffer shorter than the header says
     kDiagBufferAlignment = 4023, ///< caller buffer not 8-byte aligned (InvalidArgument)
+    kDiagBlobDecode      = 4024, ///< a blob's Zstd or meshopt stream does not decode (Corrupt)
 };
 
 // ===========================================================================
@@ -452,8 +453,9 @@ struct DecodeOptions {
 };
 
 /// Decode one blob: `encoded` is exactly the blob's encoded range, `dst` exactly
-/// blob.decodedSize bytes. v0.5 supports Codec::None / Filter::None; anything else
-/// returns Unsupported. Compressed codecs will use `scratch` for intermediates.
+/// blob.decodedSize bytes. Supports every codec, ByteShuffle and the meshopt filters; Delta
+/// returns Unsupported (spec §10). Zstd reads its output back: give it CPU memory, not
+/// write-combined staging. `scratch` is unused; intermediates come from the default allocator.
 KILN_API Status decode_blob(PayloadBlob const& blob, Span<u8 const> encoded, Span<u8> dst,
                             DecodeOptions const& opt = {}, DiagSink const* diag = nullptr,
                             Arena* scratch = nullptr, StrView assetName = {}) noexcept;

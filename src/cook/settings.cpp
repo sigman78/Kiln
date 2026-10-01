@@ -242,19 +242,19 @@ Result<MeshCookSettings> resolve_mesh(MeshCookSettings const& overrides, TargetP
         return diagf(diag, make_status(Code::Unsupported), kDiagSettingsUnsupported, Severity::Error, asset,
                      "genLods", "LOD generation is reserved for v0.6; use useAuthoredLods instead");
     }
-    if (s.compression != CompressionScheme::None) {
-        return diagf(diag, make_status(Code::Unsupported), kDiagSettingsUnsupported, Severity::Error, asset,
-                     "compression", "compression scheme %u is reserved for v0.6; only None (0) is accepted",
-                     u32(s.compression));
-    }
     if (s.blobChunkSize != 0) {
         return diagf(diag, make_status(Code::Unsupported), kDiagSettingsUnsupported, Severity::Error, asset,
                      "blobChunkSize", "blob chunking is reserved for v0.6; blobChunkSize must be 0");
     }
-    if (s.zstdLevel != 0) {
-        (void)diagf(diag, kOk, kDiagSettingsInvalidCombo, Severity::Warning, asset, "zstdLevel",
-                    "zstdLevel ignored: compression is None");
-    }
+    bool const usesZstd =
+        s.compression == CompressionScheme::Basic || s.compression == CompressionScheme::MeshoptZstd;
+    if (s.zstdLevel > kMaxZstdLevel)
+        return diagf(diag, make_status(Code::InvalidArgument), kDiagSettingsInvalidCombo, Severity::Error,
+                     asset, "zstdLevel", "zstdLevel %u is above %u", s.zstdLevel, kMaxZstdLevel);
+    if (!usesZstd)
+        s.zstdLevel = 0;
+    else if (s.zstdLevel == 0)
+        s.zstdLevel = kDefaultZstdLevel;
 
     if (u8(s.profile) > u8(target.maxVertexProfile)) {
         (void)diagf(diag, kOk, kDiagSettingsClampedByTarget, Severity::Warning, asset, "profile",

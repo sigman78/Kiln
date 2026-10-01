@@ -34,6 +34,11 @@ void zstd_free(void* mem, void* ptr) noexcept {
     free(m->alloc, p, total, kHeader, m->tag);
 }
 
+u64 zstd_content_size(Span<u8 const> src) noexcept {
+    unsigned long long const n = ZSTD_getFrameContentSize(src.data, src.size);
+    return n == ZSTD_CONTENTSIZE_UNKNOWN || n == ZSTD_CONTENTSIZE_ERROR ? ~u64(0) : u64(n);
+}
+
 ZstdDecoder::~ZstdDecoder() noexcept {
     if (ctx_) ZSTD_freeDCtx(ctx_);
 }

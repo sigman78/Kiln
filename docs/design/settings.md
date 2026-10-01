@@ -49,17 +49,16 @@ Texture settings schema: 2 (`shape`, `slices`). `encoding`, `quality`, `supercom
 | `posTolMm` | 0.1 | quantization tolerance before falling back to float positions |
 | `weldTol` | 0 | 0 = exact-match welding only |
 | `compression` | `None` | `None`: every blob codec `None`, the cooker sets `kPayloadRaw`. `Basic`: Zstd + ByteShuffle (vertex), Zstd (index). `Meshopt`: MeshoptVertex / MeshoptIndex. `MeshoptZstd`: Meshopt + `kBlobOuterZstd` |
-| `zstdLevel` | 0 | 0 = library default; used by `Basic` and `MeshoptZstd` |
+| `zstdLevel` | 0 | 1..19; 0 = 3. Used by `Basic` and `MeshoptZstd`, resolved to 0 otherwise; above 19 is a K3002 error |
 | `blobChunkSize` | 0 | reserved: decoded bytes per split blob (spec §5.9 split rule); 0 = one blob per stream / index buffer per LOD |
 
 Reserved: indexWidthPolicy, unit/axis override, name prefixes to strip.
 
-**Compression group (Proposed):**
+**Compression group:**
 
-- The fields exist from v0.5 so the struct and the hash layout do not change when codecs land.
-- Only `None` is accepted in v0.5; other schemes and a non-zero `blobChunkSize` are K3001 errors.
-  A non-zero `zstdLevel` is a K3002 warning and is ignored.
-- The schemes map to the candidate schemes in mesh-format-spec §5.9.
+- The schemes are the candidate schemes of mesh-format-spec §5.9. Every scheme is accepted
+  (branch `mesh-compression`); the default stays `None` until the measurements pick one.
+- A non-zero `blobChunkSize` is a K3001 error: blobs are not split yet (B16).
 - Later the scheme becomes selectable **per target** (a default in `TargetProfile`) and **per
   asset** (presets and rules in v0.7).
 - The **default scheme is picked by measurement** (ratio and decode MB/s on real assets) in
@@ -191,8 +190,10 @@ name or an out-of-range number is K3006. An integer is accepted where a float is
 | `profile` | `"default"`, `"precise"`, `"float"` |
 | `genTangents`, `optimize`, `useAuthoredLods` | boolean |
 | `posTolMm`, `weldTol` | number |
+| `compression` | `"none"`, `"basic"`, `"meshopt"`, `"meshopt-zstd"` |
+| `zstdLevel` | integer, 0 to 19 (0 = 3) |
 
-Reserved fields (compression, `genLods`, …) are not sidecar keys yet.
+Reserved fields (`genLods`, `blobChunkSize`, …) are not sidecar keys yet.
 
 A sidecar is layer 4: its keys beat the host settings, and only the policy beats a sidecar.
 
@@ -206,7 +207,8 @@ A sidecar is layer 4: its keys beat the host settings, and only the policy beats
 | `encoding` that the usage cannot take (for example `BC4` for `Color`, `BC6H` for anything but `Hdr`, any BC for `Lut`), or `BC4` / `BC5` / `BC6H` with `colorSpace = Srgb` | K3002 error |
 | a BC `encoding` whose format the target's profile does not have | K3002 error |
 | `genLods = true` | K3001 error, unsupported |
-| `compression` other than `None`, or `blobChunkSize != 0` | K3001 error, unsupported |
+| `blobChunkSize != 0` | K3001 error, unsupported |
+| mesh `zstdLevel` above 19 | K3002 error |
 | `profile` above the target's `maxVertexProfile` | K3003 warning; clamped |
 | `posTolMm <= 0` or NaN | K3002 error |
 | `weldTol < 0` or NaN | K3002 error |

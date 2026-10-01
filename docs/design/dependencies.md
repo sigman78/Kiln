@@ -13,7 +13,8 @@ links it.
 | PNG, JPEG, WebP decode | **wuffs** (WebP only with `KILN_WEBP=ON`) | Apache-2.0 | cook only | vendored single release `.c` file in `third_party/wuffs/` |
 | KTX2 read | **own** minimal reader | n/a | runtime | in-tree `src/formats/` |
 | KTX2 write | **own** minimal writer (raw and BC formats) | n/a | cook only | in-tree `src/formats/` |
-| Mesh optimization | **meshoptimizer** | MIT | cook only, `KILN_MESH=ON` (decoder sources may later join `kiln_runtime`) | FetchContent, commit hash |
+| Mesh optimization | **meshoptimizer** | MIT | cook only, `KILN_MESH=ON` | FetchContent, commit hash |
+| Mesh payload codecs | **meshoptimizer**'s `vertexcodec`, `indexcodec`, `vertexfilter` (same commit) | MIT | `kiln_runtime` (decode), `kiln_cook` (encode) | vendored in `third_party/meshopt_decode/`, functions renamed `kiln_meshopt_*` |
 | Tangents | **MikkTSpace** (reference `mikktspace.c/.h`) | zlib | cook only, `KILN_MESH=ON` | vendored in `third_party/mikktspace/` |
 | Zstd | **zstd** 1.5.7 | BSD | runtime decoder-only build (`kiln_zstd`), cook encoder (`kiln_zstd_enc`) | vendored `lib/` in `third_party/zstd/` |
 | BC1/3/4/5/7 encoders | **bc7enc_rdo**: `rgbcx`, `bc7enc` | MIT or public domain | cook only | vendored in `third_party/bc7enc_rdo/` |
