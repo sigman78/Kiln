@@ -2175,7 +2175,7 @@ KILN_TEST(Runtime, TextureArrayStorePoller) {
 #endif
 
 // release() while an array is still loading frees its slot and declaration at once: no leak, no
-// event for the released handle, and the name is free for a fresh, even different, declaration.
+// event for the handle after its release, and the name is free for a fresh, even different, declaration.
 KILN_TEST(Runtime, TextureArrayReleaseWhileLoading) {
     ArrayStore store;
     if (!store.init("arrays_release_loading")) return;
@@ -2186,11 +2186,11 @@ KILN_TEST(Runtime, TextureArrayReleaseWhileLoading) {
         cd.storeDir = StrView(store.hand.dir());
         if (!rt.init({}, cd)) return;
         for (int round = 0; round < 4; ++round) {
-            usize const ev0       = rt.events.size();
             TextureHandle const t = request_array(rt, "arr/ab", {"tex/a", "tex/b"});
             KILN_REQUIRE(!t.is_null());
             for (int i = 0; i < round; ++i)
                 rt.pump_once(); // 0: right after the request; 1..3: meta or upload job in flight
+            usize const ev0 = rt.events.size(); // events before the release are legitimate
             release(rt.ctx, t);
             KILN_CHECK_EQ(state(rt.ctx, t), State::Unloaded);
             KILN_REQUIRE(rt.pump_until([&] { return stats(rt.ctx).ioJobsInFlight == 0; }));
@@ -2223,13 +2223,13 @@ KILN_TEST(Runtime, TextureArrayReleaseDuringReload) {
         if (!rt.init({}, cd)) return;
         TextureHandle const t = request_array(rt, "arr/ab", {"tex/a", "tex/b"});
         KILN_REQUIRE(rt.pump_until([&] { return is_ready(rt.ctx, t); }));
-        usize const ev0 = rt.events.size();
 
         // `plain` keeps tex/b's format, so the abandoned reload (and later requests) stay valid.
         KILN_REQUIRE(store.hand.put("tex/b", AssetKind::Texture, store.plain.span()));
         request_reload(rt.ctx, t);
         rt.pump_once(); // dispatches the reload's meta job
         KILN_CHECK(stats(rt.ctx).ioJobsInFlight > 0);
+        usize const ev0 = rt.events.size();
         release(rt.ctx, t);
         KILN_CHECK_EQ(state(rt.ctx, t), State::Unloaded);
         KILN_REQUIRE(rt.pump_until([&] { return stats(rt.ctx).ioJobsInFlight == 0; }));
