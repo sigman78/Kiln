@@ -155,7 +155,7 @@ if(KILN_WARNINGS_AS_ERRORS)
         kiln_apply_warnings(kiln_probe_${_probe})
         add_test(NAME compile_fail_${_probe}
                  COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR} --target kiln_probe_${_probe} --config $<CONFIG>)
-        set_tests_properties(compile_fail_${_probe} PROPERTIES PASS_REGULAR_EXPRESSION "C4834|'nodiscard'")
+        set_tests_properties(compile_fail_${_probe} PROPERTIES PASS_REGULAR_EXPRESSION "C4834|unused-result|'nodiscard' attribute")
     endforeach()
 endif()
 
