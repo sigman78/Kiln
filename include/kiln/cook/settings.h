@@ -111,9 +111,9 @@ enum class VertexProfile : u8 { Default = 0, Precise, Float };
 
 enum class CompressionScheme : u8 {
     None        = 0, ///< every blob codec None; the cooker sets kPayloadRaw
-    Basic       = 1, ///< Zstd + ByteShuffle (vertex), Zstd (index)      (post-v0.5)
-    Meshopt     = 2, ///< MeshoptVertex / MeshoptIndex                    (post-v0.5)
-    MeshoptZstd = 3, ///< Meshopt + kBlobOuterZstd                        (post-v0.5)
+    Basic       = 1, ///< Zstd + ByteShuffle (vertex), Zstd (index)
+    Meshopt     = 2, ///< MeshoptVertex / MeshoptIndex
+    MeshoptZstd = 3, ///< Meshopt + kBlobOuterZstd
 };
 
 struct MeshCookSettings {
@@ -125,10 +125,10 @@ struct MeshCookSettings {
     f32 posTolMm          = 0.1f;  ///< quantization tolerance before falling back to float positions
     f32 weldTol           = 0.0f;  ///< 0 = exact-match welding only
 
-    // Compression group (reserved, post-v0.5; mesh-format-spec §5.9)
-    CompressionScheme compression = CompressionScheme::None; ///< only None accepted in v0.5
-    u8 zstdLevel                  = 0;                       ///< 0 = library default
-    u32 blobChunkSize             = 0;                       ///< reserved; non-zero is a K3xxx error in v0.5
+    // Payload compression (mesh-format-spec §5.9)
+    CompressionScheme compression = CompressionScheme::Meshopt; ///< docs/design/mesh-compression.md
+    u8 zstdLevel                  = 0;                          ///< 1..19; 0 = 3 where the scheme uses Zstd
+    u32 blobChunkSize             = 0;                          ///< reserved (B16); non-zero is a K3001 error
     // reserved: indexWidthPolicy, unit/axis override, name prefixes to strip
 };
 

@@ -14,7 +14,8 @@ the same input with the same settings ever produce different bytes, a golden tes
 - `mesh/<stem>.mesh` — one entry per `ok` row of `tests/corpus/gltf/manifest.txt`, cooked
   with `resolve_mesh(MeshCookSettings{}, TargetProfile{}, CookSession{})` (the library's
   default resolved settings). `<stem>` is the corpus file's name without directory or
-  extension (e.g. `generated/cube_basic.glb` -> `cube_basic.mesh`).
+  extension (e.g. `generated/cube_basic.glb` -> `cube_basic.mesh`). The default
+  compression is `Meshopt`, so they also pin meshoptimizer's encoder bytes.
 - `ktx2/<case>.ktx2` — three PNGs generated in-process by `tests/png_writer.h`
   (deterministic, no external files), one per texture usage the cooker treats
   differently: `color_srgb` (sRGB, mips), `normal` (renormalized), `height16` (16-bit,

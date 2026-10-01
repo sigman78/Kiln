@@ -1065,6 +1065,7 @@ KILN_TEST(MeshCook, CompressionRoundTrip) {
             if (!KILN_CHECK_MSG(corpus::read_file(path, bytes), "cannot read %s", path)) continue;
             cook::MeshCookSettings s = default_settings();
             s.profile                = profile;
+            s.compression            = cook::CompressionScheme::None;
             Diags d;
             Result<cook::CookedMesh> plain = cook_bytes(bytes.span(), "test/mesh.glb", d, s);
             if (!KILN_CHECK_MSG(plain.ok(), "%s: %s", file, d.msg)) continue;

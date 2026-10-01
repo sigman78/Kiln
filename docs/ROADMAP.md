@@ -46,9 +46,9 @@ Not goals for v1:
   intervals into the host's profiler; `kiln-cook --trace` and `KILN_TRACE` write a Chrome trace.
   Follow-ups from the first traces: a glTF's images cook in parallel and Zstd uploads decode into
   scratch memory, 10x faster (both done 2026-09-30); parallel PNG decode is left.
-- **`.mesh` payload compression.** Implement the candidate schemes (Zstd + byte shuffle,
-  meshopt, both), measure ratio and decode MB/s on real assets, pick a default. Settle the
-  split-blob rules (mesh-format-spec §10, open-questions B16).
+- **`.mesh` payload compression** (done 2026-10-01, [`design/mesh-compression.md`](design/mesh-compression.md)):
+  Basic, Meshopt and MeshoptZstd in the writer and the runtime; `Meshopt` by default (owner). Blob
+  splitting (B16) waits for streaming.
 - **Textures:** alpha-coverage-preserving mips, channel packing (for example ORM from separate
   images).
 - **Project settings:** config files, presets, path rules, target encodings and

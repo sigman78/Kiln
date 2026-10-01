@@ -48,7 +48,7 @@ Texture settings schema: 2 (`shape`, `slices`). `encoding`, `quality`, `supercom
 | `genLods` | false | reserved: the simplifier lands in v0.7 |
 | `posTolMm` | 0.1 | quantization tolerance before falling back to float positions |
 | `weldTol` | 0 | 0 = exact-match welding only |
-| `compression` | `None` | `None`: every blob codec `None`, the cooker sets `kPayloadRaw`. `Basic`: Zstd + ByteShuffle (vertex), Zstd (index). `Meshopt`: MeshoptVertex / MeshoptIndex. `MeshoptZstd`: Meshopt + `kBlobOuterZstd` |
+| `compression` | `Meshopt` | `None`: every blob codec `None`, the cooker sets `kPayloadRaw`. `Basic`: Zstd + ByteShuffle (vertex), Zstd (index). `Meshopt`: MeshoptVertex / MeshoptIndex. `MeshoptZstd`: Meshopt + `kBlobOuterZstd` |
 | `zstdLevel` | 0 | 1..19; 0 = 3. Used by `Basic` and `MeshoptZstd`, resolved to 0 otherwise; above 19 is a K3002 error |
 | `blobChunkSize` | 0 | reserved: decoded bytes per split blob (spec §5.9 split rule); 0 = one blob per stream / index buffer per LOD |
 
@@ -56,8 +56,8 @@ Reserved: indexWidthPolicy, unit/axis override, name prefixes to strip.
 
 **Compression group:**
 
-- The schemes are the candidate schemes of mesh-format-spec §5.9. Every scheme is accepted
-  (branch `mesh-compression`); the default stays `None` until the measurements pick one.
+- The schemes are the candidate schemes of mesh-format-spec §5.9. `Meshopt` is the default (owner,
+  2026-10-01, from the measurements in `mesh-compression.md`); `MeshoptZstd` is the size option.
 - A non-zero `blobChunkSize` is a K3001 error: blobs are not split yet (B16).
 - Later the scheme becomes selectable **per target** (a default in `TargetProfile`) and **per
   asset** (presets and rules in v0.7).
