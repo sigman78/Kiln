@@ -22,6 +22,7 @@
 #include <string.h>
 
 #include <bit>
+#include <climits>
 #include <cmath>
 #include <cstdint>
 #include <utility>
