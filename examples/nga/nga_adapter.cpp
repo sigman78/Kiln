@@ -201,14 +201,16 @@ Record record_texture(NgaAdapter* a, gpu::CommandBuffer* cmd, Upload& u) noexcep
     Object& o            = a->objects[u.object];
     TextureDesc const& t = u.tex;
     gpu::TextureDesc d{};
-    d.type                  = t.shape == TextureShape::Cube    ? gpu::TextureType::cube
-                              : t.shape == TextureShape::Array ? gpu::TextureType::two_d_array
-                                                               : gpu::TextureType::two_d;
-    d.extent                = {.x = t.width, .y = t.height, .z = 1};
-    d.mip_levels            = t.levels;
-    d.layer_count           = t.layers; // cube faces are layers
-    d.format                = gpu_format(t.format);
-    d.usage                 = gpu::TextureUsage::sampled | gpu::TextureUsage::transfer_destination;
+    d.type        = t.shape == TextureShape::Cube    ? gpu::TextureType::cube
+                    : t.shape == TextureShape::Array ? gpu::TextureType::two_d_array
+                                                     : gpu::TextureType::two_d;
+    d.extent      = {.x = t.width, .y = t.height, .z = 1};
+    d.mip_levels  = t.levels;
+    d.layer_count = t.layers; // cube faces are layers
+    d.format      = gpu_format(t.format);
+    // transfer_source only for --verify (nga_texture).
+    d.usage = gpu::TextureUsage::sampled | gpu::TextureUsage::transfer_destination |
+              gpu::TextureUsage::transfer_source;
     gpu::SizeAlign const sa = gpu::get_texture_size_align(a->device, d);
     u64 offset              = 0;
     if (sa.size > a->desc.textureBytes) {
@@ -564,6 +566,13 @@ NgaMesh nga_mesh(NgaAdapter* a, GpuObject obj) noexcept {
     Object const& o = a->objects[obj.native - 1];
     if (!o.used) return {};
     return NgaMesh{.gpu = reinterpret_cast<u64>(a->meshHeap.range.gpu + o.heapOffset), .size = o.heapSize};
+}
+
+gpu::Texture* nga_texture(NgaAdapter* a, GpuObject obj) noexcept {
+    if (obj.native == 0 || obj.native > a->objects.size() || obj.kind != u32(ObjectKind::Texture))
+        return nullptr;
+    Object const& o = a->objects[obj.native - 1];
+    return o.used ? o.texture : nullptr;
 }
 
 } // namespace kiln::nga

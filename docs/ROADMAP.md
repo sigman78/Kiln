@@ -35,15 +35,13 @@ Not goals for v1:
 - **Runtime texture arrays** ([`design/runtime-texture-arrays.md`](design/runtime-texture-arrays.md);
   runtime and the examples `kiln-gl-array`, `kiln-vk-array` done 2026-09-30). Independently cooked 2D assets assembled into one GPU array at load time. First
   version (owner, 2026-09-30): one aggregate upload within today's adapter contract, file-backed 2D
-  members, whole-array reload. Range uploads wait for v0.8. Still to do: an array mode in the
-  sokol and NGA examples (a `--dump` frame; byte-exact `--verify` where the API can read a texture
-  back; sokol cannot). Moves to v0.8 if it needs adapter changes.
+  members, whole-array reload. Range uploads wait for v0.8. `kiln-sokol-array` and `kiln-nga-array`
+  (2026-10-01) complete the examples; the NGA one awaits hardware with `VK_EXT_descriptor_heap`.
 - **Faster BC encoding** (done 2026-09-30: Basis `bc7f` for BC7 Fast and Normal, the provider at
   Fast; open-questions R14). Was: decide from the direct-encoder benchmark in
   [`design/bcn-encoding.md`](design/bcn-encoding.md) (Basis `bc7f` / `bc6hf` as fast presets,
   scalar `bc7e` as an offline quality mode, or SIMD in the current encoders). The output stays
   deterministic across threads and compilers.
-- **RDO** for BC textures (deferred from the BC rollout).
 - **Profiling hooks** ([`design/cook-tracing.md`](design/cook-tracing.md); done 2026-09-30): zones and
   intervals into the host's profiler; `kiln-cook --trace` and `KILN_TRACE` write a Chrome trace.
   Follow-ups from the first traces: a glTF's images cook in parallel and Zstd uploads decode into
@@ -51,7 +49,6 @@ Not goals for v1:
 - **`.mesh` payload compression.** Implement the candidate schemes (Zstd + byte shuffle,
   meshopt, both), measure ratio and decode MB/s on real assets, pick a default. Settle the
   split-blob rules (mesh-format-spec §10, open-questions B16).
-- **LOD generation** (simplifier), which fills `MeshLod.geometricError`.
 - **Textures:** alpha-coverage-preserving mips, channel packing (for example ORM from separate
   images).
 - **Project settings:** config files, presets, path rules, target encodings and
@@ -82,6 +79,8 @@ Not goals for v1:
 
 ## Unscheduled
 
+- **LOD generation** (simplifier), which fills `MeshLod.geometricError`, and **RDO** for BC textures:
+  postponed from v0.7 (owner, 2026-10-01).
 - `EXT_meshopt_compression` input (the importer's buffer-view resolution leaves room for a decode
   step).
 - GPU decompression of chunked blobs.

@@ -85,7 +85,8 @@ endif()
 set(_spv_dir ${CMAKE_CURRENT_BINARY_DIR}/shaders)
 set(_spv_files)
 foreach(entry IN ITEMS "scene.slang meshVertex vertex" "scene.slang meshFragment fragment"
-                       "sky.slang skyVertex vertex" "sky.slang skyFragment fragment")
+                       "sky.slang skyVertex vertex" "sky.slang skyFragment fragment"
+                       "floor.slang floorVertex vertex" "floor.slang floorFragment fragment")
     separate_arguments(entry)
     list(GET entry 0 _src)
     list(GET entry 1 _name)
@@ -118,4 +119,24 @@ endif()
 if(WIN32)
     add_custom_command(TARGET kiln-nga POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:vulkan> $<TARGET_FILE_DIR:kiln-nga>)
+endif()
+
+# kiln-nga-array: one texture array assembled from separate tiles (runtime-texture-arrays.md)
+add_executable(kiln-nga-array main_array.cpp nga_adapter.h nga_adapter.cpp floor.slang ${_spv_files})
+set_source_files_properties(floor.slang PROPERTIES HEADER_FILE_ONLY TRUE)
+kiln_apply_defaults(kiln-nga-array)
+target_compile_definitions(kiln-nga-array PRIVATE KILN_NGA_SHADER_DIR="${_spv_dir}"
+    KILN_EXAMPLE_ASSETS_DIR="${CMAKE_SOURCE_DIR}/examples/assets"
+    KILN_EXAMPLE_STORE_DIR="${CMAKE_BINARY_DIR}/example-store")
+target_link_libraries(kiln-nga-array PRIVATE kiln_runtime kiln_example_common kiln_example_adapter_support
+                                             kiln_nga_lib kiln_cli)
+if(TARGET kiln_cook)
+    target_link_libraries(kiln-nga-array PRIVATE kiln_cook)
+    target_compile_definitions(kiln-nga-array PRIVATE KILN_NGA_HAS_COOK=1)
+else()
+    target_compile_definitions(kiln-nga-array PRIVATE KILN_NGA_HAS_COOK=0)
+endif()
+if(WIN32)
+    add_custom_command(TARGET kiln-nga-array POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:vulkan> $<TARGET_FILE_DIR:kiln-nga-array>)
 endif()

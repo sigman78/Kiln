@@ -1,6 +1,6 @@
 # examples/sokol — kiln-sokol: kiln with sokol_gfx and sokol_app (docs/design/integration-examples.md).
 # sokol (headers) and sokol-shdc (a prebuilt shader compiler) are fetched at pinned commits;
-# scene.glsl is compiled into scene.glsl.h at build time. Backends: D3D11 on Windows, Metal on
+# scene.glsl and array.glsl are compiled into headers at build time. Backends: D3D11 on Windows, Metal on
 # macOS, GL 4.3 core elsewhere.
 
 include(FetchContent)
@@ -42,12 +42,14 @@ endif()
 
 set(_shader_dir ${CMAKE_CURRENT_BINARY_DIR}/shaders)
 file(MAKE_DIRECTORY ${_shader_dir})
-add_custom_command(
-    OUTPUT ${_shader_dir}/scene.glsl.h
-    COMMAND ${KILN_SOKOL_SHDC} --input ${CMAKE_CURRENT_SOURCE_DIR}/scene.glsl --output ${_shader_dir}/scene.glsl.h
-            --slang glsl430:hlsl5:metal_macos
-    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/scene.glsl
-    COMMENT "sokol-shdc scene.glsl")
+foreach(_shader scene array)
+    add_custom_command(
+        OUTPUT ${_shader_dir}/${_shader}.glsl.h
+        COMMAND ${KILN_SOKOL_SHDC} --input ${CMAKE_CURRENT_SOURCE_DIR}/${_shader}.glsl
+                --output ${_shader_dir}/${_shader}.glsl.h --slang glsl430:hlsl5:metal_macos
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/${_shader}.glsl
+        COMMENT "sokol-shdc ${_shader}.glsl")
+endforeach()
 
 # The sokol implementation: third-party C, compiled quietly (third_party/CMakeLists.txt does the same).
 add_library(kiln_sokol_impl STATIC sokol_impl.c)
@@ -74,14 +76,29 @@ else()
     target_compile_options(kiln_sokol_impl PRIVATE -w)
 endif()
 
-add_executable(kiln-sokol main.cpp sokol_adapter.h sokol_adapter.cpp readback.h readback.cpp scene.glsl
-                          ${_shader_dir}/scene.glsl.h)
-kiln_apply_defaults(kiln-sokol)
-target_include_directories(kiln-sokol SYSTEM PRIVATE ${_shader_dir}) # generated code: not held to kiln's warnings
-target_link_libraries(kiln-sokol PRIVATE kiln_runtime kiln_example_common kiln_example_adapter_support kiln_sokol_impl)
-if(TARGET kiln_cook)
-    target_link_libraries(kiln-sokol PRIVATE kiln_cook)
-    target_compile_definitions(kiln-sokol PRIVATE KILN_SOKOL_HAS_COOK=1)
-else()
-    target_compile_definitions(kiln-sokol PRIVATE KILN_SOKOL_HAS_COOK=0)
-endif()
+# The adapter and the readback, shared by both programs.
+add_library(kiln_sokol_example STATIC sokol_adapter.h sokol_adapter.cpp readback.h readback.cpp)
+kiln_apply_defaults(kiln_sokol_example)
+target_include_directories(kiln_sokol_example PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(kiln_sokol_example PUBLIC kiln_runtime kiln_example_adapter_support kiln_sokol_impl)
+
+function(kiln_sokol_example name main shader)
+    add_executable(${name} ${main} ${shader}.glsl ${_shader_dir}/${shader}.glsl.h)
+    kiln_apply_defaults(${name})
+    target_include_directories(${name} SYSTEM PRIVATE ${_shader_dir}) # generated code: not held to kiln's warnings
+    target_link_libraries(${name} PRIVATE kiln_sokol_example kiln_example_common)
+    if(TARGET kiln_cook)
+        target_link_libraries(${name} PRIVATE kiln_cook)
+        target_compile_definitions(${name} PRIVATE KILN_SOKOL_HAS_COOK=1)
+    else()
+        target_compile_definitions(${name} PRIVATE KILN_SOKOL_HAS_COOK=0)
+    endif()
+endfunction()
+
+kiln_sokol_example(kiln-sokol main.cpp scene)
+# kiln-sokol-array: one texture array assembled from separate tiles (runtime-texture-arrays.md)
+kiln_sokol_example(kiln-sokol-array main_array.cpp array)
+target_link_libraries(kiln-sokol-array PRIVATE kiln_cli)
+target_compile_definitions(kiln-sokol-array PRIVATE
+    KILN_EXAMPLE_ASSETS_DIR="${CMAKE_SOURCE_DIR}/examples/assets"
+    KILN_EXAMPLE_STORE_DIR="${CMAKE_BINARY_DIR}/example-store")

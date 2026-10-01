@@ -19,6 +19,9 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
   assembled from `examples/assets/tiles/tile0.png` ... `tile5.png`, with hot reload.
 - **Example `kiln-vk-array`** (built with `KILN_EXAMPLE_VK_BASIC`): the same floor through Vulkan,
   with a descriptor set rewritten on kiln's events or, with `--bindless`, through kiln's slot.
+- **Examples `kiln-sokol-array` and `kiln-nga-array`:** the texture array floor through sokol_gfx and
+  NoGraphicsAPI, with `--dump` and `--verify`. The sokol adapter and readback moved into
+  `kiln_sokol_example`; the NGA adapter's textures have `transfer_source` usage (`nga_texture()`).
 - **`--verify` in `kiln-gl-array` and `kiln-vk-array`:** reads the array back from the GPU and
   compares every layer and level, byte for byte, with the same tile loaded as a texture of its own;
   exit 1 on a difference. The Vulkan example adapter's images now also have `TRANSFER_SRC` usage.

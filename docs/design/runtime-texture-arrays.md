@@ -1,8 +1,9 @@
 # Runtime texture arrays from independent assets
 
 **Status:** First version implemented and decided (v0.7, 2026-09-30; owner): one aggregate upload; the
-other choices are open-questions R12. `kiln-gl-array` and `kiln-vk-array` (descriptor sets or bindless)
-show it, and their `--verify` checks it on the GPU. Range uploads (v0.8) and benchmarks are still open.
+other choices are open-questions R12. `kiln-gl-array`, `kiln-vk-array` (descriptor sets or bindless),
+`kiln-sokol-array` and `kiln-nga-array` show it, and their `--verify` checks it on the GPU. Range
+uploads (v0.8) and benchmarks are still open.
 **Decides:** How a runtime request can assemble independently cooked 2D textures into one GPU
 array, without producing a combined cooked file or changing the one-source-file rule.
 
@@ -151,8 +152,8 @@ Current backend implications:
 |---|---|---|
 | Vulkan | One array image; buffer-to-image copies select destination layers/mips | `vkCmdCopyImage`; the example adapter's images have transfer-source usage (for `--verify`), but synchronization must change |
 | OpenGL | Array storage and subimage uploads; current adapter already uploads complete arrays | `glCopyImageSubData`; add entry point and completion/lifetime handling |
-| sokol | Current adapter supplies all mip/layer bytes together to `sg_make_image`; aggregate staging fits this path | Native API support does not establish support through sokol; investigate before exposing this capability |
-| NoGraphicsAPI | Current adapter supports arrays; inspect range-copy interface and barriers in the implementation spike | Needs a separate capability audit |
+| sokol | The aggregate upload is one `sg_make_image` (first version: `kiln-sokol-array`, D3D11 byte-exact); range uploads would need `sg_update_image`, which replaces whole images | Native API support does not establish support through sokol; investigate before exposing this capability |
+| NoGraphicsAPI | The aggregate upload is one copy per level (first version: `kiln-nga-array`, built, not run yet); `copy_memory_to_texture` takes a slice range, so range uploads fit | Needs a separate capability audit |
 | Null | Model allocation, writes, completion and failure for deterministic tests | Optional simulated copies for contract tests |
 
 No backend performance claim has been measured yet.

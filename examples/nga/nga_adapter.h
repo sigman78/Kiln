@@ -51,5 +51,7 @@ struct NgaMesh {
 };
 /// The mesh payload behind a GpuObject that gpu_object() returned (zero until Ready).
 [[nodiscard]] NgaMesh nga_mesh(NgaAdapter* a, GpuObject obj) noexcept;
+/// The texture behind a GpuObject, or null. Created with transfer_source usage, for --verify.
+[[nodiscard]] gpu::Texture* nga_texture(NgaAdapter* a, GpuObject obj) noexcept;
 
 } // namespace kiln::nga
