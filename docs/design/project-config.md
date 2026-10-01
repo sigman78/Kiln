@@ -1,6 +1,6 @@
 # Project config (`kiln.toml`)
 
-**Status:** Proposed (2026-10-01). Owner decisions below; point 5 is open. Nothing is implemented.
+**Status:** Decided (owner, 2026-10-01; decisions at the end). Nothing is implemented yet.
 File format: TOML (owner, 2026-10-01; open question 7).
 **Decides:** the project file, its syntax and parser, where its layers sit in the resolution order,
 how it reaches `kiln-cook` and the cook provider, how a change to it reaches the store and hot
@@ -24,8 +24,11 @@ format table stays code (`target-profiles.md` §1).
 
 ```toml
 # kiln.toml
+[roots]                            # kiln-cook only; --root wins
+default = "assets"                 # the default root: names without "root:"
+m       = "../mods"                # named root m: ("m:hud/icon.png")
+
 [project]
-roots  = ["assets", "m=../mods"]   # kiln-cook only; --root wins
 store  = "build/store"             # kiln-cook only; --store wins
 target = "desktop"                 # kiln-cook only; --target wins
 
@@ -96,7 +99,13 @@ can grow or the library can come in behind the same `Project` struct.
 
 | Section | Contents |
 |---|---|
-| `[project]` | `roots` (as `--root`), `store` (as `--store`), `target` (as `--target`). Read by `kiln-cook` only; its own flags win. The provider ignores it: the host's `ContextDesc` already names roots and store |
+| `[roots]` | `<name> = "<dir>"`, one key per root, as `--root [name=]dir`. The key `default` is the default root (names without `root:`); any other key is a root name (`[a-z0-9_]`, two or more characters). Read by `kiln-cook` only; any `--root` flag replaces the whole table |
+| `[project]` | `store` (as `--store`), `target` (as `--target`). Read by `kiln-cook` only; its own flags win |
+
+`[roots]` and `[project]` are ignored by the provider: the host's `ContextDesc` already names the
+roots and the store. `default` becomes a reserved root name everywhere (`check_root_name`), so
+the file and `--root` cannot disagree on what it means; a root named `default` was valid before,
+so this is a CHANGELOG break.
 | `[texture]`, `[mesh]` | project defaults: the sidecar keys of `settings.md` |
 | `[texture.preset.<name>]`, `[mesh.preset.<name>]` | a named patch: the same keys. No preset inherits from another |
 | `[[texture.rule]]`, `[[mesh.rule]]` | `match` (array of globs, required), optional `preset`, optional `targets` (array of profile names), and setting keys |
@@ -223,7 +232,7 @@ patches apply. `--explain` cooks nothing and needs no store.
 1. Parser: arrays, arrays of tables, deeper and quoted headers; tests and a new fuzz target
    (`fuzz/fuzz_toml_subset.cpp`).
 2. `Project` and `load_project`: defaults, presets, rules, globs; `ResolveDesc::project`; layers 3a,
-   3c, 3d in `resolve_*_layers`; `kiln-cook --project` and `[project]`.
+   3c, 3d in `resolve_*_layers`; `kiln-cook --project`, `[roots]` and `[project]`; `default` reserved.
 3. Host digest and the record check; the provider's `projectFile` and the poller (§6).
 4. `--explain`.
 5. Usage sections (3b) and `targets` on rules.
@@ -233,17 +242,11 @@ Each step builds and passes on its own; steps 1 to 3 make the file useful.
 
 ## Owner decisions (2026-10-01)
 
-1. `[project]` sets roots, store and target for `kiln-cook`; its own flags win.
+1. `[roots]` (a table of `name = "dir"`, `default` for the default root) and `[project]` (store,
+   target) configure `kiln-cook`; its own flags win.
 2. `kiln-cook` setting flags move to layer 3d: above the project file, below sidecars.
 3. The first matching rule wins (composition was proposed first and rejected).
 4. A glob without `root:` matches the default root only.
+5. Usage sections (`[texture.usage.<usage>]`) are kept: per-kind defaults that rules cannot
+   express, because a glb's embedded images share a path.
 6. Project profiles wait for the v0.9 mobile profiles.
-
-## Open points for the owner
-
-5. Usage sections: keep, or leave out. Their use case: rules key on where a texture lives, but
-   the images embedded in one glb share a path, so a rule cannot tell its normal map from its
-   albedo; only the usage (from the glTF slot) can. `[texture.usage.normal] maxSize = 2048` sets
-   a default for every normal map, wherever it is; a rule still beats it on the fields the rule
-   sets. Without the sections, the same needs `CookPolicy` code or globs on image names. It is the
-   last rollout step, so leaving it out costs nothing now.
