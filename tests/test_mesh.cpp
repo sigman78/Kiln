@@ -840,7 +840,7 @@ KILN_TEST(Mesh, BlobElementLimits) {
     Vec<u8> bytes      = write_ok(m.desc(), {.compression = cook::CompressionScheme::Meshopt});
     Result<MeshView> v = open_bytes(bytes);
     KILN_REQUIRE(v.ok());
-    PayloadBlob good;
+    PayloadBlob good{};
     KILN_REQUIRE(find_blob(*v, Codec::None, 16, &good)); // hull LOD0 stream 1 (pattern data: stored as it is)
     Span<u8 const> const encoded = v->encoded().subspan(good.encodedOffset, good.encodedSize);
 
@@ -903,7 +903,7 @@ KILN_TEST(Mesh, WideStrideFallsBackToZstd) {
         Vec<u8> bytes      = write_ok(m.desc(), {.compression = scheme});
         Result<MeshView> v = open_bytes(bytes);
         KILN_REQUIRE(v.ok());
-        PayloadBlob b;
+        PayloadBlob b{};
         KILN_CHECK(!find_blob(*v, Codec::MeshoptVertex, 260, &b));
         KILN_REQUIRE(find_blob(*v, Codec::Zstd, 260, &b) || find_blob(*v, Codec::None, 260, &b));
         Vec<u8> dst(nullptr, Tag::Test); // indices may come back rotated (MeshoptIndex): compare the stream
