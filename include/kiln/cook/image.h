@@ -22,9 +22,9 @@ struct Image {
     u32 bitsPerChannel = 0; ///< 8, 16 (native-endian u16) or 32 (f32: HDR, linear, not clamped)
     Vec<u8> pixels;         ///< width * height * channels * (bits / 8) bytes
 
-    [[nodiscard]] u32 bytes_per_pixel() const noexcept { return channels * (bitsPerChannel / 8); }
-    [[nodiscard]] u64 row_bytes() const noexcept { return u64(width) * bytes_per_pixel(); }
-    [[nodiscard]] u64 byte_size() const noexcept { return row_bytes() * height; }
+    u32 bytes_per_pixel() const noexcept { return channels * (bitsPerChannel / 8); }
+    u64 row_bytes() const noexcept { return u64(width) * bytes_per_pixel(); }
+    u64 byte_size() const noexcept { return row_bytes() * height; }
 };
 
 // ---------------------------------------------------------------------------
@@ -90,18 +90,18 @@ KILN_API Result<Image> decode_image(Span<u8 const> bytes, Allocator const* alloc
 
 /// IEEE 754 binary16 from f32, round to nearest even. Values beyond the half range saturate to
 /// +-65504 instead of becoming infinity, so one bright texel cannot poison filtering; NaN becomes 0.
-[[nodiscard]] KILN_API u16 float_to_half(f32 v) noexcept;
-[[nodiscard]] KILN_API f32 half_to_float(u16 h) noexcept;
+KILN_API u16 float_to_half(f32 v) noexcept;
+KILN_API f32 half_to_float(u16 h) noexcept;
 
 // ---------------------------------------------------------------------------
 // sRGB transfer, integer-exact
 // ---------------------------------------------------------------------------
 
 /// sRGB-encoded 8-bit value -> linear 16-bit (0..65535), from a fixed table.
-[[nodiscard]] KILN_API u16 srgb8_to_linear16(u8 v) noexcept;
+KILN_API u16 srgb8_to_linear16(u8 v) noexcept;
 /// Linear 16-bit -> nearest sRGB-encoded 8-bit value (ties to the lower code), from a
 /// 64 KiB table derived from the same 256 entries.
-[[nodiscard]] KILN_API u8 linear16_to_srgb8(u16 v) noexcept;
+KILN_API u8 linear16_to_srgb8(u16 v) noexcept;
 
 // ---------------------------------------------------------------------------
 // Operations (all deterministic; results allocated from `alloc`, Tag::Cook)

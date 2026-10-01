@@ -66,7 +66,7 @@ struct FeatureChain {
         f14.pNext = nullptr;
     }
 
-    [[nodiscard]] char const* missing() const noexcept {
+    char const* missing() const noexcept {
         if (!f12.timelineSemaphore) return "timelineSemaphore";
         if (!f12.descriptorIndexing) return "descriptorIndexing";
         if (!f12.shaderSampledImageArrayNonUniformIndexing)

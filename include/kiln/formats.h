@@ -113,7 +113,7 @@ enum class FormatUsage : u8 {
 
 /// A set of block-compressed formats, one bit per format from BC1_RGB_UNORM (131) to
 /// ASTC_12x12_SRGB (184): bit (value - 131). The bit of any other format is 0.
-[[nodiscard]] constexpr u64 block_format_bit(Format f) noexcept {
+constexpr u64 block_format_bit(Format f) noexcept {
     u32 const v = u32(f);
     return v >= u32(Format::BC1_RGB_UNORM) && v <= u32(Format::ASTC_12x12_SRGB)
                ? u64(1) << (v - u32(Format::BC1_RGB_UNORM))
@@ -221,17 +221,17 @@ inline constexpr FormatInfo kFormatTable[] = {
 inline constexpr usize kFormatCount = countof(detail::kFormatTable);
 
 /// Property row for a format, or nullptr if kiln does not know it.
-[[nodiscard]] constexpr FormatInfo const* format_info(Format f) noexcept {
+constexpr FormatInfo const* format_info(Format f) noexcept {
     for (FormatInfo const& e : detail::kFormatTable)
         if (e.format == f) return &e;
     return nullptr;
 }
 [[nodiscard]] constexpr bool is_known_format(Format f) noexcept { return format_info(f) != nullptr; }
-[[nodiscard]] constexpr char const* format_name(Format f) noexcept {
+constexpr char const* format_name(Format f) noexcept {
     FormatInfo const* i = format_info(f);
     return i ? i->name : "UNDEFINED";
 }
-[[nodiscard]] constexpr u32 format_block_bytes(Format f) noexcept {
+constexpr u32 format_block_bytes(Format f) noexcept {
     FormatInfo const* i = format_info(f);
     return i ? i->bytesPerBlock : 0;
 }
@@ -244,25 +244,25 @@ inline constexpr usize kFormatCount = countof(detail::kFormatTable);
     return i && i->compressed;
 }
 /// Linear twin of an sRGB format (or the format itself when already linear / no twin).
-[[nodiscard]] constexpr Format linear_format(Format f) noexcept {
+constexpr Format linear_format(Format f) noexcept {
     FormatInfo const* i = format_info(f);
     return (i && i->srgb && i->srgbPair != Format::Undefined) ? i->srgbPair : f;
 }
 /// sRGB twin of a linear format (or the format itself when already sRGB / no twin).
-[[nodiscard]] constexpr Format srgb_format(Format f) noexcept {
+constexpr Format srgb_format(Format f) noexcept {
     FormatInfo const* i = format_info(f);
     return (i && !i->srgb && i->srgbPair != Format::Undefined) ? i->srgbPair : f;
 }
 
 /// Bytes of one tightly packed row of `width` texels (whole blocks for compressed formats).
-[[nodiscard]] constexpr u64 format_row_bytes(Format f, u32 width) noexcept {
+constexpr u64 format_row_bytes(Format f, u32 width) noexcept {
     FormatInfo const* i = format_info(f);
     if (!i) return 0;
     u64 blocks = (u64(width) + i->blockWidth - 1) / i->blockWidth;
     return blocks * i->bytesPerBlock;
 }
 /// Bytes of one tightly packed 2D image (whole blocks for compressed formats).
-[[nodiscard]] constexpr u64 format_image_bytes(Format f, u32 width, u32 height) noexcept {
+constexpr u64 format_image_bytes(Format f, u32 width, u32 height) noexcept {
     FormatInfo const* i = format_info(f);
     if (!i) return 0;
     u64 rows = (u64(height) + i->blockHeight - 1) / i->blockHeight;

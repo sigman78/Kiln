@@ -33,13 +33,13 @@ int run_all(int argc, char** argv) noexcept;
 // They are never null: run_all() exits before any test if one is unusable.
 
 /// Scratch directory for files tests write (`--samples <dir>`). Created if missing.
-[[nodiscard]] char const* sample_dir() noexcept;
+char const* sample_dir() noexcept;
 
 /// The KTX2 corpus root holding manifest.txt (`--corpus <dir>`); the glTF corpus is `../gltf`.
-[[nodiscard]] char const* corpus_dir() noexcept;
+char const* corpus_dir() noexcept;
 
 /// Golden files: mesh/*.mesh, ktx2/*.ktx2 (`--golden <dir>`). See tests/golden/README.md.
-[[nodiscard]] char const* golden_dir() noexcept;
+char const* golden_dir() noexcept;
 
 /// True if `--update-golden` was given: golden-file tests write the golden instead
 /// of comparing against it. See tests/golden/README.md.

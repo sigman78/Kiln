@@ -28,7 +28,7 @@ public:
         std::filesystem::create_directories(dir_, ec);
         return KILN_CHECK_MSG(std::filesystem::is_directory(dir_, ec), "cannot create %s", dir_);
     }
-    [[nodiscard]] char const* dir() const { return dir_; }
+    char const* dir() const { return dir_; }
     /// The profile's block formats the manifest records (none by default: create() checks none).
     void set_block_formats(u64 formats) { blockFormats_ = formats; }
 
@@ -67,7 +67,7 @@ private:
         AssetKind kind = AssetKind::Mesh;
         Hash128 key;
         u64 bytes = 0;
-        [[nodiscard]] StrView view() const { return {name, nameLen}; }
+        StrView view() const { return {name, nameLen}; }
     };
 
     Item* find(StrView name, AssetKind kind) {

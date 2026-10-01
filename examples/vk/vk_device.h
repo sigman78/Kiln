@@ -36,14 +36,14 @@ struct Device {
 /// Loads volk, creates the instance, picks a Vulkan 1.4 device with the features listed in
 /// docs/design/viewer.md, creates the queues. Fails with Code::Unsupported when no device
 /// qualifies and Code::Internal for any Vulkan error (the VkResult name is in the diagnostic).
-[[nodiscard]] Result<Device> device_create(DeviceDesc const& desc, DiagSink const* diag = nullptr) noexcept;
+Result<Device> device_create(DeviceDesc const& desc, DiagSink const* diag = nullptr) noexcept;
 void device_destroy(Device& d) noexcept;
 
 /// Memory type index with every `required` flag, preferring one that also has `preferred`.
-[[nodiscard]] u32 find_memory_type(Device const& d, u32 typeBits, VkMemoryPropertyFlags required,
-                                   VkMemoryPropertyFlags preferred = 0) noexcept;
+u32 find_memory_type(Device const& d, u32 typeBits, VkMemoryPropertyFlags required,
+                     VkMemoryPropertyFlags preferred = 0) noexcept;
 
-[[nodiscard]] char const* result_name(VkResult r) noexcept;
+char const* result_name(VkResult r) noexcept;
 
 } // namespace kiln::vkx
 

@@ -64,7 +64,7 @@ namespace {
 
 /// Process- and call-unique id for temp file names. It only has to avoid collisions
 /// with other writers racing on the same store directory.
-[[nodiscard]] u64 next_tmp_id() noexcept {
+u64 next_tmp_id() noexcept {
     static std::atomic<u64> counter{0};
 #if defined(KILN_OS_WINDOWS)
     u64 const pid = u64(GetCurrentProcessId());

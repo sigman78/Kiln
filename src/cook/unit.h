@@ -37,12 +37,12 @@ struct CookUnit {
     explicit CookUnit(Allocator const* a) noexcept
         : inputs(a, Tag::Cook), outputs(a, Tag::Cook), strings(a, Tag::Cook) {}
 
-    [[nodiscard]] StrView str(u32 off, u32 len) const noexcept { return {strings.data() + off, len}; }
-    [[nodiscard]] StrView name(UnitOutput const& o) const noexcept { return str(o.nameOff, o.nameLen); }
+    StrView str(u32 off, u32 len) const noexcept { return {strings.data() + off, len}; }
+    StrView name(UnitOutput const& o) const noexcept { return str(o.nameOff, o.nameLen); }
     /// The output called `name` of `kind`, or null.
-    [[nodiscard]] UnitOutput* find(AssetKind kind, StrView name) noexcept;
+    UnitOutput* find(AssetKind kind, StrView name) noexcept;
     /// The first output that failed, else Ok.
-    [[nodiscard]] Status first_failure() const noexcept;
+    Status first_failure() const noexcept;
 };
 
 struct UnitDesc {
@@ -62,14 +62,14 @@ struct UnitDesc {
 /// Reads the source, its sidecar and any external buffers, and cooks every output. A mesh source
 /// also cooks its embedded images. Fails when an input cannot be read or the first output fails;
 /// an embedded image that fails keeps its Status in its output.
-[[nodiscard]] Status cook_unit(UnitDesc const& d, CookUnit* out) noexcept;
+Status cook_unit(UnitDesc const& d, CookUnit* out) noexcept;
 
 /// The build inputs of `unit`, for build_key(). `out` must hold unit.inputs.size() entries.
 void unit_build_inputs(CookUnit const& unit, BuildInput* out) noexcept;
 
 /// What the host sets for every asset: cooker version, target, default settings, name rules, the
 /// session and `policyVersion`. Another digest means the recorded keys must be checked again.
-[[nodiscard]] u64 host_digest(UnitDesc const& d, u32 policyVersion) noexcept;
+u64 host_digest(UnitDesc const& d, u32 policyVersion) noexcept;
 
 /// True if the settings of `d` give every output of the recorded unit `rec` the key it has
 /// (copy_input_record()): the settings are resolved again over the recorded inputs, reading only
@@ -93,6 +93,6 @@ enum class InputsCheck : u8 {
                                                 bool rehash = false) noexcept;
 
 /// Size and modification time of a file, through the compat backend's stat when it has one.
-[[nodiscard]] Status stat_file(StrView path, IoStat* out) noexcept;
+Status stat_file(StrView path, IoStat* out) noexcept;
 
 } // namespace kiln::cook

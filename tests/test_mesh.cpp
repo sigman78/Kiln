@@ -19,7 +19,7 @@ struct DiagCapture {
     u32 count         = 0;
     char message[256]{};
 
-    [[nodiscard]] DiagSink sink() noexcept { return DiagSink{&DiagCapture::on_diag, this}; }
+    DiagSink sink() noexcept { return DiagSink{&DiagCapture::on_diag, this}; }
     void reset() noexcept { *this = DiagCapture{}; }
 
     static void on_diag(void* user, Diagnostic const& d) {
@@ -172,7 +172,7 @@ struct TestMesh {
     TestMesh(TestMesh const&)            = delete;
     TestMesh& operator=(TestMesh const&) = delete;
 
-    [[nodiscard]] WriteDesc desc() const noexcept {
+    WriteDesc desc() const noexcept {
         WriteDesc d;
         d.name       = "ships/test_hauler";
         d.sourceHash = 0x1122334455667788ull;

@@ -182,7 +182,7 @@ struct Cook {
 // ---------------------------------------------------------------------------
 
 /// IEEE binary16, round to nearest even (F. Giesen's float_to_half_fast3_rtne).
-[[nodiscard]] u16 f32_to_f16(f32 f) noexcept {
+u16 f32_to_f16(f32 f) noexcept {
     u32 const f32infty    = 255u << 23;
     u32 const f16max      = (127u + 16u) << 23;
     u32 const denormMagic = ((127u - 15u) + (23u - 10u) + 1u) << 23;
@@ -205,15 +205,15 @@ struct Cook {
     return u16(o | u16(sign >> 16));
 }
 
-[[nodiscard]] i16 snorm16(f32 v) noexcept {
+i16 snorm16(f32 v) noexcept {
     v = clamp(v, -1.0f, 1.0f);
     return i16(std::floor(v * 32767.0f + 0.5f));
 }
-[[nodiscard]] u16 unorm16(f32 v) noexcept {
+u16 unorm16(f32 v) noexcept {
     v = clamp(v, 0.0f, 1.0f);
     return u16(std::floor(v * 65535.0f + 0.5f));
 }
-[[nodiscard]] u8 unorm8(f32 v) noexcept {
+u8 unorm8(f32 v) noexcept {
     v = clamp(v, 0.0f, 1.0f);
     return u8(std::floor(v * 255.0f + 0.5f));
 }
@@ -258,7 +258,7 @@ void mul_point(Mat4 const& m, f32 const in[3], f32 out[3]) noexcept {
         out[r] = m.m[0 + r] * in[0] + m.m[4 + r] * in[1] + m.m[8 + r] * in[2] + m.m[12 + r];
 }
 
-[[nodiscard]] Bounds make_bounds(f32 const mn[3], f32 const mx[3], f32 radius) noexcept {
+Bounds make_bounds(f32 const mn[3], f32 const mx[3], f32 radius) noexcept {
     Bounds b{};
     for (u32 a = 0; a < 3; ++a) {
         b.center[a]      = (mn[a] + mx[a]) * 0.5f;
@@ -269,7 +269,7 @@ void mul_point(Mat4 const& m, f32 const in[3], f32 out[3]) noexcept {
 }
 
 /// AABB + bounding sphere (around the AABB center) of the vertices referenced by idx[first, first+count).
-[[nodiscard]] Bounds bounds_of(Vtx const* v, u32 const* idx, u32 count) noexcept {
+Bounds bounds_of(Vtx const* v, u32 const* idx, u32 count) noexcept {
     if (count == 0) return Bounds{};
     f32 mn[3], mx[3];
     for (u32 a = 0; a < 3; ++a)
@@ -581,7 +581,7 @@ void build_lod(LodTask& task, MeshCookSettings const& settings, Allocator const*
 // Materials and texture references
 // ---------------------------------------------------------------------------
 
-[[nodiscard]] SlotHint slot_hint(mesh::TextureSlot s) noexcept {
+SlotHint slot_hint(mesh::TextureSlot s) noexcept {
     switch (s) {
     case mesh::TextureSlot::BaseColor: return SlotHint::BaseColor;
     case mesh::TextureSlot::Normal: return SlotHint::Normal;
@@ -592,7 +592,7 @@ void build_lod(LodTask& task, MeshCookSettings const& settings, Allocator const*
     return SlotHint::None;
 }
 
-[[nodiscard]] StrView concat(Arena& arena, StrView a, StrView b, StrView c = {}) noexcept {
+StrView concat(Arena& arena, StrView a, StrView b, StrView c = {}) noexcept {
     usize const n = a.size + b.size + c.size;
     char* p       = arena.alloc_array<char>(n + 1);
     if (a.size) std::memcpy(p, a.data, a.size);
@@ -639,7 +639,7 @@ Status name_embedded_images(Cook& k) {
     return kOk;
 }
 
-[[nodiscard]] StrView with_suffix(Arena& arena, StrView base, u32 n) noexcept {
+StrView with_suffix(Arena& arena, StrView base, u32 n) noexcept {
     char buf[16];
     usize const len = format(buf, sizeof buf, "_%u", n);
     return concat(arena, base, StrView(buf, len));
@@ -674,7 +674,7 @@ u32 texture_ref(Cook& k, u32 image, mesh::TextureSlot slot, StrView where) {
 }
 
 /// "name.001" -> "name" (dot followed by 3+ digits at the end).
-[[nodiscard]] StrView strip_blender_suffix(StrView name) noexcept {
+StrView strip_blender_suffix(StrView name) noexcept {
     usize const dot = name.rfind('.');
     if (dot == StrView::kNpos || dot == 0 || name.size - dot - 1 < 3) return name;
     for (usize i = dot + 1; i < name.size; ++i)
@@ -1171,7 +1171,7 @@ void quantize_tasks(void* user, u32 begin, u32 end) noexcept {
         if (r.tasks[i].fate == Fate::Kept) quantize_lod(r.tasks[i]);
 }
 
-[[nodiscard]] StrView last_component(StrView path) noexcept {
+StrView last_component(StrView path) noexcept {
     usize const slash = path.rfind('/');
     return slash == StrView::kNpos ? path : path.substr(slash + 1);
 }

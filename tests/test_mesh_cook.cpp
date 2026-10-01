@@ -40,7 +40,7 @@ struct Diags {
         }
     }
     DiagSink sink() { return DiagSink{&fn, this}; }
-    [[nodiscard]] int count_of(u32 code, Severity sev) const {
+    int count_of(u32 code, Severity sev) const {
         int n = 0;
         for (int i = 0; i < count && i < 256; ++i)
             n += items[i].code == code && items[i].sev == sev;

@@ -158,7 +158,7 @@ struct UnitRequest {
     StrView owner;                        ///< the unit's name: `name` without `#<image>`
     AssetKind unitKind = AssetKind::Mesh; ///< Mesh: a glb/gltf source; Texture: an image of its own
     FoundSource src;
-    [[nodiscard]] StrView source_path() const noexcept { return {src.path, src.len}; }
+    StrView source_path() const noexcept { return {src.path, src.len}; }
 };
 
 Status resolve_request(Provider const& p, AssetKind kind, StrView name, UnitRequest* out,

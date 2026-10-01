@@ -61,7 +61,7 @@ struct MoveOnly {
             --count;
         }
     }
-    [[nodiscard]] int value() const noexcept { return ptr ? *ptr : -1; }
+    int value() const noexcept { return ptr ? *ptr : -1; }
 };
 int MoveOnly::count = 0;
 
@@ -87,13 +87,13 @@ namespace user_ns {
 struct MyKey {
     u32 v;
 };
-[[nodiscard]] constexpr u64 hash_of(MyKey k) noexcept { return kiln::mix64(u64(k.v)); }
+constexpr u64 hash_of(MyKey k) noexcept { return kiln::mix64(u64(k.v)); }
 [[nodiscard]] constexpr bool operator==(MyKey a, MyKey b) noexcept { return a.v == b.v; }
 } // namespace user_ns
 
 // Bad hasher: heavy collisions stress backward-shift erase.
 struct BadHash {
-    [[nodiscard]] constexpr u64 operator()(u32 k) const noexcept { return u64(k % 4); }
+    constexpr u64 operator()(u32 k) const noexcept { return u64(k % 4); }
 };
 
 } // namespace

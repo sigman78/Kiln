@@ -45,7 +45,7 @@ struct NullAdapter {
 
 namespace {
 
-[[nodiscard]] NullAdapter* self(void* user) noexcept { return static_cast<NullAdapter*>(user); }
+NullAdapter* self(void* user) noexcept { return static_cast<NullAdapter*>(user); }
 
 bool null_supports_format(void* /*user*/, Format f, FormatUsage usage) noexcept {
     FormatInfo const* info = format_info(f);

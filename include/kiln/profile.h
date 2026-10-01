@@ -21,7 +21,7 @@ struct ProfileHooks {
 };
 
 /// Nanoseconds of the steady clock that `interval` spans use.
-[[nodiscard]] KILN_API u64 profile_now_ns() noexcept;
+KILN_API u64 profile_now_ns() noexcept;
 
 /// zone_begin now, zone_end at scope exit. With null hooks it costs one branch.
 class ProfileZone {

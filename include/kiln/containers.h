@@ -79,45 +79,45 @@ public:
         return *this;
     }
 
-    [[nodiscard]] constexpr usize size() const noexcept { return size_; }
-    [[nodiscard]] static constexpr usize capacity() noexcept { return N; }
+    constexpr usize size() const noexcept { return size_; }
+    static constexpr usize capacity() noexcept { return N; }
     [[nodiscard]] constexpr bool empty() const noexcept { return size_ == 0; }
     [[nodiscard]] constexpr bool full() const noexcept { return size_ == N; }
 
-    [[nodiscard]] T* data() noexcept { return ptr(); }
-    [[nodiscard]] T const* data() const noexcept { return ptr(); }
-    [[nodiscard]] T* begin() noexcept { return ptr(); }
-    [[nodiscard]] T* end() noexcept { return ptr() + size_; }
-    [[nodiscard]] T const* begin() const noexcept { return ptr(); }
-    [[nodiscard]] T const* end() const noexcept { return ptr() + size_; }
+    T* data() noexcept { return ptr(); }
+    T const* data() const noexcept { return ptr(); }
+    T* begin() noexcept { return ptr(); }
+    T* end() noexcept { return ptr() + size_; }
+    T const* begin() const noexcept { return ptr(); }
+    T const* end() const noexcept { return ptr() + size_; }
 
-    [[nodiscard]] T& operator[](usize i) noexcept {
+    T& operator[](usize i) noexcept {
         KILN_ASSERT(i < size_);
         return ptr()[i];
     }
-    [[nodiscard]] T const& operator[](usize i) const noexcept {
+    T const& operator[](usize i) const noexcept {
         KILN_ASSERT(i < size_);
         return ptr()[i];
     }
-    [[nodiscard]] T& front() noexcept {
+    T& front() noexcept {
         KILN_ASSERT(size_ > 0);
         return ptr()[0];
     }
-    [[nodiscard]] T& back() noexcept {
+    T& back() noexcept {
         KILN_ASSERT(size_ > 0);
         return ptr()[size_ - 1];
     }
-    [[nodiscard]] T const& front() const noexcept {
+    T const& front() const noexcept {
         KILN_ASSERT(size_ > 0);
         return ptr()[0];
     }
-    [[nodiscard]] T const& back() const noexcept {
+    T const& back() const noexcept {
         KILN_ASSERT(size_ > 0);
         return ptr()[size_ - 1];
     }
 
-    [[nodiscard]] Span<T> span() noexcept { return {ptr(), size_}; }
-    [[nodiscard]] Span<T const> span() const noexcept { return {ptr(), size_}; }
+    Span<T> span() noexcept { return {ptr(), size_}; }
+    Span<T const> span() const noexcept { return {ptr(), size_}; }
 
     /// Append. Panics when full.
     T& push_back(T const& v) {
@@ -215,46 +215,46 @@ public:
         return c;
     }
 
-    [[nodiscard]] usize size() const noexcept { return size_; }
-    [[nodiscard]] usize capacity() const noexcept { return cap_; }
+    usize size() const noexcept { return size_; }
+    usize capacity() const noexcept { return cap_; }
     [[nodiscard]] bool empty() const noexcept { return size_ == 0; }
-    [[nodiscard]] Allocator const* allocator() const noexcept { return alloc_; }
-    [[nodiscard]] Tag tag() const noexcept { return tag_; }
+    Allocator const* allocator() const noexcept { return alloc_; }
+    Tag tag() const noexcept { return tag_; }
 
-    [[nodiscard]] T* data() noexcept { return data_; }
-    [[nodiscard]] T const* data() const noexcept { return data_; }
-    [[nodiscard]] T* begin() noexcept { return data_; }
-    [[nodiscard]] T* end() noexcept { return data_ + size_; }
-    [[nodiscard]] T const* begin() const noexcept { return data_; }
-    [[nodiscard]] T const* end() const noexcept { return data_ + size_; }
+    T* data() noexcept { return data_; }
+    T const* data() const noexcept { return data_; }
+    T* begin() noexcept { return data_; }
+    T* end() noexcept { return data_ + size_; }
+    T const* begin() const noexcept { return data_; }
+    T const* end() const noexcept { return data_ + size_; }
 
-    [[nodiscard]] T& operator[](usize i) noexcept {
+    T& operator[](usize i) noexcept {
         KILN_ASSERT(i < size_);
         return data_[i];
     }
-    [[nodiscard]] T const& operator[](usize i) const noexcept {
+    T const& operator[](usize i) const noexcept {
         KILN_ASSERT(i < size_);
         return data_[i];
     }
-    [[nodiscard]] T& front() noexcept {
+    T& front() noexcept {
         KILN_ASSERT(size_ > 0);
         return data_[0];
     }
-    [[nodiscard]] T& back() noexcept {
+    T& back() noexcept {
         KILN_ASSERT(size_ > 0);
         return data_[size_ - 1];
     }
-    [[nodiscard]] T const& front() const noexcept {
+    T const& front() const noexcept {
         KILN_ASSERT(size_ > 0);
         return data_[0];
     }
-    [[nodiscard]] T const& back() const noexcept {
+    T const& back() const noexcept {
         KILN_ASSERT(size_ > 0);
         return data_[size_ - 1];
     }
 
-    [[nodiscard]] Span<T> span() noexcept { return {data_, size_}; }
-    [[nodiscard]] Span<T const> span() const noexcept { return {data_, size_}; }
+    Span<T> span() noexcept { return {data_, size_}; }
+    Span<T const> span() const noexcept { return {data_, size_}; }
 
     void reserve(usize n) {
         if (n > cap_) grow_to(n);
@@ -283,7 +283,7 @@ public:
     }
     /// Grow size by `n` uninitialized elements and return a span of them.
     /// The caller writes them. Use only for trivial T.
-    [[nodiscard]] Span<T> append_uninit(usize n) {
+    Span<T> append_uninit(usize n) {
         usize old = size_;
         if (n > cap_ - size_) grow_to(grown(n));
         size_ += n;
@@ -349,7 +349,7 @@ public:
 
 private:
     /// size_ + n, panicking on overflow.
-    [[nodiscard]] usize grown(usize n) const noexcept {
+    usize grown(usize n) const noexcept {
         usize total = 0;
         KILN_VERIFY(checked_add(size_, n, total) && "Vec: size overflows");
         return total;
@@ -432,8 +432,8 @@ public:
         tag_   = tag;
     }
 
-    [[nodiscard]] usize size() const noexcept { return size_; }
-    [[nodiscard]] usize capacity() const noexcept { return cap_; }
+    usize size() const noexcept { return size_; }
+    usize capacity() const noexcept { return cap_; }
     [[nodiscard]] bool empty() const noexcept { return size_ == 0; }
 
     /// Ensure room for `n` entries without rehashing.
@@ -442,11 +442,11 @@ public:
         if (need > cap_) rehash(need);
     }
 
-    [[nodiscard]] V* find(K const& key) noexcept {
+    V* find(K const& key) noexcept {
         Entry* e = find_entry(key);
         return e ? &e->value : nullptr;
     }
-    [[nodiscard]] V const* find(K const& key) const noexcept {
+    V const* find(K const& key) const noexcept {
         Entry const* e = find_entry(key);
         return e ? &e->value : nullptr;
     }
@@ -551,27 +551,27 @@ public:
     using iterator       = Iter<false>;
     using const_iterator = Iter<true>;
 
-    [[nodiscard]] iterator begin() noexcept { return {this, 0}; }
-    [[nodiscard]] iterator end() noexcept { return {this, cap_}; }
-    [[nodiscard]] const_iterator begin() const noexcept { return {this, 0}; }
-    [[nodiscard]] const_iterator end() const noexcept { return {this, cap_}; }
+    iterator begin() noexcept { return {this, 0}; }
+    iterator end() noexcept { return {this, cap_}; }
+    const_iterator begin() const noexcept { return {this, 0}; }
+    const_iterator end() const noexcept { return {this, cap_}; }
 
 private:
     static constexpr usize kNpos   = ~usize(0);
     static constexpr usize kMinCap = 8;
 
-    [[nodiscard]] static u64 hash_key(K const& key) noexcept {
+    static u64 hash_key(K const& key) noexcept {
         u64 h = Hash{}(key);
         return h == 0 ? 1 : h; // 0 is the empty marker
     }
-    [[nodiscard]] static constexpr usize cap_for(usize n) noexcept {
+    static constexpr usize cap_for(usize n) noexcept {
         // smallest power of two with n <= cap * 7/8
         usize cap = kMinCap;
         while (n * 8 > cap * 7)
             cap *= 2;
         return cap;
     }
-    [[nodiscard]] static usize alloc_bytes(usize cap) noexcept {
+    static usize alloc_bytes(usize cap) noexcept {
         usize hashes = 0, entries = 0, total = 0;
         KILN_VERIFY(checked_mul(cap, sizeof(u64), hashes) && checked_mul(cap, sizeof(Entry), entries) &&
                     checked_add(align_up(hashes, alignof(Entry)), entries, total) &&
@@ -581,7 +581,7 @@ private:
 
     /// Slot pointer for `key`, or nullptr. Kept separate from find_index so the
     /// address is only formed on the found path (keeps gcc's -Wnull-dereference quiet).
-    [[nodiscard]] Entry* find_entry(K const& key) const noexcept {
+    Entry* find_entry(K const& key) const noexcept {
         if (!cap_) return nullptr;
         u64 h   = hash_key(key);
         usize m = cap_ - 1;
@@ -593,7 +593,7 @@ private:
         }
     }
 
-    [[nodiscard]] usize find_index(K const& key) const noexcept {
+    usize find_index(K const& key) const noexcept {
         if (!cap_) return kNpos;
         u64 h   = hash_key(key);
         usize m = cap_ - 1;

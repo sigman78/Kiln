@@ -42,10 +42,10 @@ struct V3 {
     f32 x, y, z;
 };
 
-[[nodiscard]] V3 sub(V3 a, V3 b) noexcept { return {a.x - b.x, a.y - b.y, a.z - b.z}; }
-[[nodiscard]] V3 scale(V3 a, f32 s) noexcept { return {a.x * s, a.y * s, a.z * s}; }
-[[nodiscard]] f32 dot(V3 a, V3 b) noexcept { return a.x * b.x + a.y * b.y + a.z * b.z; }
-[[nodiscard]] V3 cross(V3 a, V3 b) noexcept {
+V3 sub(V3 a, V3 b) noexcept { return {a.x - b.x, a.y - b.y, a.z - b.z}; }
+V3 scale(V3 a, f32 s) noexcept { return {a.x * s, a.y * s, a.z * s}; }
+f32 dot(V3 a, V3 b) noexcept { return a.x * b.x + a.y * b.y + a.z * b.z; }
+V3 cross(V3 a, V3 b) noexcept {
     return {a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x};
 }
 [[nodiscard]] bool normalize_to(V3 v, V3& out) noexcept {
@@ -55,13 +55,13 @@ struct V3 {
     return true;
 }
 
-[[nodiscard]] Mat4 mat4_identity() noexcept {
+Mat4 mat4_identity() noexcept {
     Mat4 r{};
     r.m[0] = r.m[5] = r.m[10] = r.m[15] = 1.0f;
     return r;
 }
 
-[[nodiscard]] Mat4 mul(Mat4 const& a, Mat4 const& b) noexcept {
+Mat4 mul(Mat4 const& a, Mat4 const& b) noexcept {
     Mat4 r{};
     for (u32 c = 0; c < 4; ++c)
         for (u32 row = 0; row < 4; ++row) {
@@ -73,7 +73,7 @@ struct V3 {
     return r;
 }
 
-[[nodiscard]] Mat4 mat4_from_mat3(Mat3 const& b) noexcept {
+Mat4 mat4_from_mat3(Mat3 const& b) noexcept {
     Mat4 r = mat4_identity();
     for (u32 c = 0; c < 3; ++c)
         for (u32 row = 0; row < 3; ++row)
@@ -259,7 +259,7 @@ cgltf_result cgltf_no_file_read(cgltf_memory_options const*, cgltf_file_options 
 }
 void cgltf_no_file_release(cgltf_memory_options const*, cgltf_file_options const*, void*) {}
 
-template <class T> [[nodiscard]] Span<T const> persist(Arena& arena, Vec<T> const& v) noexcept {
+template <class T> Span<T const> persist(Arena& arena, Vec<T> const& v) noexcept {
     if (v.empty()) return {};
     T* p = arena.alloc_array<T>(v.size());
     for (usize i = 0; i < v.size(); ++i)
@@ -267,9 +267,9 @@ template <class T> [[nodiscard]] Span<T const> persist(Arena& arena, Vec<T> cons
     return {p, v.size()};
 }
 
-[[nodiscard]] StrView sv(char const* s) noexcept { return s ? StrView(s) : StrView(); }
+StrView sv(char const* s) noexcept { return s ? StrView(s) : StrView(); }
 
-[[nodiscard]] char const* result_name(cgltf_result r) noexcept {
+char const* result_name(cgltf_result r) noexcept {
     switch (r) {
     case cgltf_result_success: return "success";
     case cgltf_result_data_too_short: return "data too short";
@@ -292,7 +292,7 @@ template <class T> [[nodiscard]] Span<T const> persist(Arena& arena, Vec<T> cons
 
 /// The one place buffer-view bytes are obtained: the future EXT_meshopt_compression
 /// decode hook (docs/design/dependencies.md). Until then such files fail with K1002.
-[[nodiscard]] Span<u8 const> resolve_buffer_view(cgltf_buffer_view const* view) noexcept {
+Span<u8 const> resolve_buffer_view(cgltf_buffer_view const* view) noexcept {
     if (!view || !view->buffer || !view->buffer->data) return {};
     cgltf_buffer const* b = view->buffer;
     if (view->offset > b->size || view->size > b->size - view->offset) return {};
@@ -300,7 +300,7 @@ template <class T> [[nodiscard]] Span<T const> persist(Arena& arena, Vec<T> cons
 }
 
 /// Percent-decode a URI into the arena (null-terminated).
-[[nodiscard]] StrView decode_uri(Arena& arena, StrView uri) noexcept {
+StrView decode_uri(Arena& arena, StrView uri) noexcept {
     StrView copy = arena.copy(uri);
     char* p      = const_cast<char*>(copy.data);
     usize n      = cgltf_decode_uri(p);
@@ -358,7 +358,7 @@ Status load_buffers(Ctx& c) noexcept {
     return kOk;
 }
 
-[[nodiscard]] f32 read_component(u8 const* p, cgltf_component_type ct, bool normalized) noexcept {
+f32 read_component(u8 const* p, cgltf_component_type ct, bool normalized) noexcept {
     switch (ct) {
     case cgltf_component_type_r_8: {
         f32 const v = f32(read_unaligned<i8>(p));
@@ -845,7 +845,7 @@ StrView parse_extras(Ctx& c, StrView json, StrView where) {
 // ---------------------------------------------------------------------------
 
 /// "<base>_lod<N>": returns N and sets base, or kInvalid when the name does not match.
-[[nodiscard]] u32 parse_lod_suffix(StrView name, StrView& base) noexcept {
+u32 parse_lod_suffix(StrView name, StrView& base) noexcept {
     usize d = name.size;
     while (d > 0 && name[d - 1] >= '0' && name[d - 1] <= '9')
         --d;
@@ -967,7 +967,7 @@ void read_texture_view(Ctx& c, cgltf_texture_view const& v, ImportTexture& out) 
     out.texcoord = tc > 0 ? u32(tc) : 0;
 }
 
-[[nodiscard]] StrView mime_from_extension(StrView uri) noexcept {
+StrView mime_from_extension(StrView uri) noexcept {
     usize const q   = uri.find('?');
     StrView const p = q == StrView::kNpos ? uri : uri.substr(0, q);
     usize const dot = p.rfind('.');

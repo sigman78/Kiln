@@ -96,14 +96,14 @@ inline constexpr NameRule kDefaultNameRules[] = {
 };
 
 /// The usage of hints_from_name(): Auto if no rule sets one.
-[[nodiscard]] KILN_API TextureUsage usage_from_name(StrView path, Span<NameRule const> rules) noexcept;
+KILN_API TextureUsage usage_from_name(StrView path, Span<NameRule const> rules) noexcept;
 
 struct NameHints {
     TextureUsage usage = TextureUsage::Auto;
     CookShape shape    = CookShape::Auto;
 };
 /// Usage and shape from the stacked suffixes of the file stem of `path` (see NameRule).
-[[nodiscard]] KILN_API NameHints hints_from_name(StrView path, Span<NameRule const> rules) noexcept;
+KILN_API NameHints hints_from_name(StrView path, Span<NameRule const> rules) noexcept;
 
 // ---------------------------------------------------------------------------
 // Mesh
@@ -165,7 +165,7 @@ inline constexpr TargetProfile kCompatTarget{};
 inline constexpr TargetProfile kDesktopTarget{.name = "desktop", .blockFormats = kDesktopBlockFormats};
 inline constexpr TargetProfile kUncompressedTarget{.name = "uncompressed", .blockFormats = 0};
 /// The built-in profile called `name` (compat, desktop, uncompressed), or nullptr.
-[[nodiscard]] KILN_API TargetProfile const* target_profile(StrView name) noexcept;
+KILN_API TargetProfile const* target_profile(StrView name) noexcept;
 
 enum class StoreMode : u8 { Disk = 0, Memory, None }; ///< store / cache-less / validate only
 
@@ -261,7 +261,7 @@ KILN_API Result<MeshCookSettings> resolve_mesh_layers(MeshCookSettings const& ba
                                                       ResolveDesc const& d) noexcept;
 
 /// Usage inferred from a glTF slot (None -> Color).
-[[nodiscard]] constexpr TextureUsage usage_from_slot(SlotHint hint) noexcept {
+constexpr TextureUsage usage_from_slot(SlotHint hint) noexcept {
     switch (hint) {
     case SlotHint::Normal: return TextureUsage::Normal;
     case SlotHint::MetallicRoughness:
@@ -273,7 +273,7 @@ KILN_API Result<MeshCookSettings> resolve_mesh_layers(MeshCookSettings const& ba
     return TextureUsage::Color;
 }
 /// Default color space for a usage.
-[[nodiscard]] constexpr ColorSpace color_space_for(TextureUsage u) noexcept {
+constexpr ColorSpace color_space_for(TextureUsage u) noexcept {
     return (u == TextureUsage::Color || u == TextureUsage::Ui) ? ColorSpace::Srgb : ColorSpace::Linear;
 }
 
@@ -285,18 +285,18 @@ inline constexpr u32 kTextureSettingsSchema = 2; ///< bump when a field is added
 inline constexpr u32 kMeshSettingsSchema    = 1;
 inline constexpr u32 kTargetSchema          = 2; ///< 2: blockFormats replaced blockFamily
 
-[[nodiscard]] KILN_API u64 hash_settings(TextureCookSettings const& s) noexcept;
-[[nodiscard]] KILN_API u64 hash_settings(MeshCookSettings const& s) noexcept;
-[[nodiscard]] KILN_API u64 hash_target(TargetProfile const& t) noexcept;
+KILN_API u64 hash_settings(TextureCookSettings const& s) noexcept;
+KILN_API u64 hash_settings(MeshCookSettings const& s) noexcept;
+KILN_API u64 hash_target(TargetProfile const& t) noexcept;
 
 /// Enum <-> string for tools and diagnostics.
-[[nodiscard]] KILN_API char const* texture_usage_name(TextureUsage u) noexcept;
-[[nodiscard]] KILN_API char const* color_space_name(ColorSpace c) noexcept;
-[[nodiscard]] KILN_API char const* vertex_profile_name(VertexProfile p) noexcept;
-[[nodiscard]] KILN_API char const* slot_hint_name(SlotHint h) noexcept;
-[[nodiscard]] KILN_API char const* cook_shape_name(CookShape s) noexcept;
-[[nodiscard]] KILN_API char const* texture_encoding_name(TextureEncoding e) noexcept;
-[[nodiscard]] KILN_API char const* encode_quality_name(EncodeQuality q) noexcept;
-[[nodiscard]] KILN_API char const* supercompression_name(Supercompression s) noexcept;
+KILN_API char const* texture_usage_name(TextureUsage u) noexcept;
+KILN_API char const* color_space_name(ColorSpace c) noexcept;
+KILN_API char const* vertex_profile_name(VertexProfile p) noexcept;
+KILN_API char const* slot_hint_name(SlotHint h) noexcept;
+KILN_API char const* cook_shape_name(CookShape s) noexcept;
+KILN_API char const* texture_encoding_name(TextureEncoding e) noexcept;
+KILN_API char const* encode_quality_name(EncodeQuality q) noexcept;
+KILN_API char const* supercompression_name(Supercompression s) noexcept;
 
 } // namespace kiln::cook

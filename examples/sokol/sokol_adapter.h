@@ -22,18 +22,18 @@ struct SokolAdapterDesc {
 
 /// After sg_setup(), whose buffer, image and view pools must each hold maxObjects more than the
 /// host's own (InvalidArgument otherwise). Fills `out`.
-[[nodiscard]] Result<SokolAdapter*> sokol_adapter_create(SokolAdapterDesc const& desc, Adapter* out) noexcept;
+Result<SokolAdapter*> sokol_adapter_create(SokolAdapterDesc const& desc, Adapter* out) noexcept;
 /// After destroy(ctx), before sg_shutdown().
 void sokol_adapter_destroy(SokolAdapter* a) noexcept;
 /// The counters shared by every example adapter; any thread. Staging is the CPU memory uploads
 /// hold until flush (stagingSize 0: no fixed ring).
-[[nodiscard]] ex::AdapterStats sokol_adapter_stats(SokolAdapter* a) noexcept;
+ex::AdapterStats sokol_adapter_stats(SokolAdapter* a) noexcept;
 
 /// The texture view behind a GpuObject that gpu_object() returned; invalid until flush made it.
-[[nodiscard]] sg_view sokol_texture(SokolAdapter const* a, GpuObject obj) noexcept;
+sg_view sokol_texture(SokolAdapter const* a, GpuObject obj) noexcept;
 /// The buffer behind a mesh's GpuObject: vertices and indices, payload at offset 0.
-[[nodiscard]] sg_buffer sokol_buffer(SokolAdapter const* a, GpuObject obj) noexcept;
+sg_buffer sokol_buffer(SokolAdapter const* a, GpuObject obj) noexcept;
 /// SG_VERTEXFORMAT_INVALID for a format sokol cannot fetch.
-[[nodiscard]] sg_vertex_format sokol_vertex_format(Format f) noexcept;
+sg_vertex_format sokol_vertex_format(Format f) noexcept;
 
 } // namespace kiln::sk

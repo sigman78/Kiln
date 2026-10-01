@@ -53,7 +53,7 @@ struct DiagLog {
             if (codes[i] == code) return true;
         return false;
     }
-    [[nodiscard]] DiagSink sink() { return {&fn, this}; }
+    DiagSink sink() { return {&fn, this}; }
 };
 
 // Fixture: null adapter + context.
@@ -106,7 +106,7 @@ struct Rt {
     }
 
     /// Index of the first event of `kind` for `bits` at or after `from`, or -1.
-    [[nodiscard]] int find_event(EventKind kind, u64 bits, usize from = 0) const {
+    int find_event(EventKind kind, u64 bits, usize from = 0) const {
         for (usize i = from; i < events.size(); ++i)
             if (events[i].kind == kind && events[i].handle == bits) return int(i);
         return -1;

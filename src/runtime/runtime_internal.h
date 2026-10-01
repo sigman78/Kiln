@@ -20,10 +20,10 @@ inline constexpr usize kMaxPathLen = kMaxAssetNameLen + 1; ///< asset name incl.
 /// Context::ph holds, per shape, one placeholder per kind and then the Failed one.
 inline constexpr u32 kPlaceholdersPerShape = u32(TextureKind::Count) + 1;
 inline constexpr u32 kPlaceholderCount     = kPlaceholdersPerShape * u32(TextureShape::Count);
-[[nodiscard]] constexpr u32 placeholder_index(TextureKind kind, TextureShape shape) noexcept {
+constexpr u32 placeholder_index(TextureKind kind, TextureShape shape) noexcept {
     return u32(shape) * kPlaceholdersPerShape + u32(kind);
 }
-[[nodiscard]] constexpr u32 failed_placeholder_index(TextureShape shape) noexcept {
+constexpr u32 failed_placeholder_index(TextureShape shape) noexcept {
     return u32(shape) * kPlaceholdersPerShape + u32(TextureKind::Count);
 }
 
@@ -37,7 +37,7 @@ struct Buffer {
 
     void allocate(Allocator const* a, usize n, Tag t) noexcept;
     void release() noexcept;
-    [[nodiscard]] Span<u8 const> span() const noexcept { return {data, size}; }
+    Span<u8 const> span() const noexcept { return {data, size}; }
 };
 
 enum class Phase : u8 {
@@ -116,7 +116,7 @@ struct ArrayDecl {
     usize namesLen     = 0;
     ArrayLayer* layers = nullptr;
     u32 count          = 0;
-    [[nodiscard]] StrView name(ArrayLayer const& l) const noexcept { return {names + l.nameOff, l.nameLen}; }
+    StrView name(ArrayLayer const& l) const noexcept { return {names + l.nameOff, l.nameLen}; }
 };
 
 struct Watch; // watch.cpp: store poller state
@@ -352,8 +352,8 @@ void queue_remove(Context* ctx, Slot& s) noexcept;
 GroupRec* group_of(Context* ctx, Slot const& s) noexcept;
 void boost(Context* ctx, Slot& s) noexcept;
 void boost_group(Context* ctx, Group g) noexcept;
-[[nodiscard]] inline u64 handle_bits(Slot const& s) noexcept { return (u64(s.generation) << 32) | s.index; }
-[[nodiscard]] inline StrView path_of(Slot const& s) noexcept { return {s.path, s.pathLen}; }
+inline u64 handle_bits(Slot const& s) noexcept { return (u64(s.generation) << 32) | s.index; }
+inline StrView path_of(Slot const& s) noexcept { return {s.path, s.pathLen}; }
 /// Tex2D always; Cube and Array only when the adapter declares them (AdapterCaps).
 [[nodiscard]] inline bool shape_supported(Context const* ctx, TextureShape shape) noexcept {
     if (shape == TextureShape::Cube) return (ctx->adapter.caps & kCubeTextures) != 0;
@@ -366,7 +366,7 @@ void boost_group(Context* ctx, Group g) noexcept;
     return shape_supported(ctx, shape);
 }
 /// The shape of a KTX2 texture; Count for one kiln does not load (a volume or a cube array).
-[[nodiscard]] inline TextureShape shape_of(ktx2::TextureDesc const& d) noexcept {
+inline TextureShape shape_of(ktx2::TextureDesc const& d) noexcept {
     if (d.depth > 1 || (d.isCube && d.isArray)) return TextureShape::Count;
     return d.isCube ? TextureShape::Cube : d.isArray ? TextureShape::Array : TextureShape::Tex2D;
 }

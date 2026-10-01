@@ -19,7 +19,7 @@ enum class Tag : u8 {
     Count
 };
 
-[[nodiscard]] KILN_API char const* tag_name(Tag tag) noexcept;
+KILN_API char const* tag_name(Tag tag) noexcept;
 
 inline constexpr usize kDefaultAlign = alignof(std::max_align_t);
 
@@ -35,7 +35,7 @@ struct Allocator {
 };
 
 /// The built-in allocator: malloc/free (aligned) plus per-tag statistics.
-[[nodiscard]] KILN_API Allocator const* default_allocator() noexcept;
+KILN_API Allocator const* default_allocator() noexcept;
 
 /// Per-tag statistics for the default allocator.
 struct AllocStats {
@@ -46,7 +46,7 @@ struct AllocStats {
 };
 
 /// Stats for one tag, or the sum over all tags when `tag == Tag::Count`.
-[[nodiscard]] KILN_API AllocStats default_alloc_stats(Tag tag = Tag::Count) noexcept;
+KILN_API AllocStats default_alloc_stats(Tag tag = Tag::Count) noexcept;
 
 /// Allocate or return nullptr.
 [[nodiscard]] inline void* try_alloc(Allocator const* a, usize size, usize align, Tag tag) noexcept {
@@ -119,18 +119,18 @@ public:
     }
 
     /// Copy a string into the arena, null-terminated. Returns a view of the copy.
-    [[nodiscard]] StrView copy(StrView s) noexcept;
+    StrView copy(StrView s) noexcept;
 
     /// Free all allocations. The first block is retained for reuse.
     void reset() noexcept;
     /// Free all allocations and all blocks.
     void release() noexcept;
 
-    [[nodiscard]] usize bytes_used() const noexcept { return used_; }
-    [[nodiscard]] usize bytes_reserved() const noexcept { return reserved_; }
+    usize bytes_used() const noexcept { return used_; }
+    usize bytes_reserved() const noexcept { return reserved_; }
 
     /// View this arena as an Allocator (free is a no-op). The Arena must outlive users.
-    [[nodiscard]] Allocator as_allocator() noexcept;
+    Allocator as_allocator() noexcept;
 
 private:
     struct Block;

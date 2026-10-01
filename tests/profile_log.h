@@ -20,12 +20,12 @@ public:
         u64 beginNs, endNs;
     };
 
-    [[nodiscard]] ProfileHooks hooks() noexcept {
+    ProfileHooks hooks() noexcept {
         return {.zone_begin = &begin, .zone_end = &end, .interval = &interval, .user = this};
     }
 
     /// Events named `name`, of `kind`, for `asset` ("": any asset).
-    [[nodiscard]] u32 count(char kind, char const* name, char const* asset = "") {
+    u32 count(char kind, char const* name, char const* asset = "") {
         std::lock_guard<std::mutex> const lock(mutex_);
         u32 n = 0;
         for (Event const& e : events_)

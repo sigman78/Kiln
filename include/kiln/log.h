@@ -9,7 +9,7 @@ namespace kiln {
 
 enum class LogLevel : u8 { Trace = 0, Debug, Info, Warn, Error, Off };
 
-[[nodiscard]] KILN_API char const* log_level_name(LogLevel l) noexcept;
+KILN_API char const* log_level_name(LogLevel l) noexcept;
 
 /// The sink receives fully formatted, null-terminated messages (message.data[message.size] == '\0').
 /// `category` is a short static string such as "io", "cook", "registry".
@@ -21,14 +21,14 @@ struct LogSink {
 /// Install the process-wide sink. Null fn disables logging. Not synchronized with
 /// concurrent log() calls: set it once during startup.
 KILN_API void set_log_sink(LogSink sink) noexcept;
-[[nodiscard]] KILN_API LogSink log_sink() noexcept;
+KILN_API LogSink log_sink() noexcept;
 
 /// Messages below this level are dropped before formatting. Default: Info.
 KILN_API void set_log_level(LogLevel level) noexcept;
-[[nodiscard]] KILN_API LogLevel log_level() noexcept;
+KILN_API LogLevel log_level() noexcept;
 
 /// The built-in sink: writes "[level] category: message\n" to stderr via fputs.
-[[nodiscard]] KILN_API LogSink stderr_log_sink() noexcept;
+KILN_API LogSink stderr_log_sink() noexcept;
 
 /// Format and deliver a message. Messages are truncated to an internal buffer
 /// (kLogMessageMax bytes including terminator). Never allocates.

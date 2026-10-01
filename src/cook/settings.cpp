@@ -295,7 +295,7 @@ Result<MeshCookSettings> resolve_mesh(MeshCookSettings const& overrides, TargetP
 namespace {
 
 /// Floats are hashed by bit pattern after folding -0.0f to 0.0f.
-[[nodiscard]] u32 hashable_float_bits(f32 v) noexcept {
+u32 hashable_float_bits(f32 v) noexcept {
     if (v == 0.0f) v = 0.0f;
     return std::bit_cast<u32>(v);
 }
