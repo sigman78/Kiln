@@ -53,9 +53,10 @@ preset  = "foliage"
 maxSize = 2048
 
 [[texture.rule]]
-match   = ["**"]
+match   = ["env/sky/**"]
 targets = ["compat"]              # only when cooking for compat
-maxSize = 4096
+maxSize = 2048
+
 
 [texture.usage.normal]             # after inference, for fields nothing stronger set
 maxSize = 2048
@@ -111,10 +112,11 @@ character. A pattern without `root:` matches the default root only. `#` is an or
 so `"*.glb#*"` matches every embedded image of a glb in the folder. This gives embedded images the
 per-asset settings that sidecars cannot.
 
-**Rules compose** (owner, 2026-10-01). Every matching rule applies, in file order: its preset
-first, then its own keys. Rules that set different keys add up. Where two set the same key, the
-later one wins. `--explain` shows the rule that set each field, and `--verbose` lists the keys a
-later rule overrode. A rule with `targets` applies only when the cook's profile is in the list.
+**The first matching rule wins** (owner, 2026-10-01). Rules are tried in file order; the first
+one whose globs match the asset applies, its preset first, then its own keys, and no later rule
+is tried. So specific rules come first and a catch-all `**`, if any, comes last. A rule with
+`targets` matches only when the cook's profile is in the list. An asset no rule matches gets the
+project defaults (and usage sections) only.
 
 ### 4. Place in the resolution order
 
@@ -127,7 +129,7 @@ Each beats the layers above it:
 | 2 | host settings (`ProviderDesc` structs) | data, base |
 | 3a | project defaults `[texture]` / `[mesh]` | patch |
 | 3b | project usage sections `[texture.usage.*]`, evaluated late (below) | patch |
-| 3c | project rules in file order, each with its preset | patch |
+| 3c | the first matching project rule, with its preset | patch |
 | 3d | `kiln-cook` setting flags (`--quality`, `--no-mips`, ...) | patch |
 | 4 | sidecar | patch |
 | 5 | inference (glTF slot, name rules) | code |
@@ -210,7 +212,7 @@ patches apply. `--explain` cooks nothing and needs no store.
 |---|---|
 | A full TOML library | See §2: a dependency for forms the file does not need |
 | A config per directory (`.kiln` files up the tree) | Spreads one project's rules over many files, and makes "which file set this" harder; rules with globs cover it |
-| First matching rule wins | Common case "all of `env/**`, and these few differently" needs the general rule last and the exceptions first, the reverse of how people write it |
+| Every matching rule applies, later wins per key (composition) | Proposed first; rejected by the owner: an asset's settings then depend on every rule above it, which is hard to read and to review. First match keeps one rule per asset |
 | Project file beats `kiln-cook` flags | A flag typed for one run would be silently ignored |
 | Per-usage defaults as an ordinary early layer | Inference sets the usage later, so a usage patch cannot run before it |
 | A section per target (`[target.desktop.texture]`) | A second way to scope settings next to rules |
@@ -233,14 +235,15 @@ Each step builds and passes on its own; steps 1 to 3 make the file useful.
 
 1. `[project]` sets roots, store and target for `kiln-cook`; its own flags win.
 2. `kiln-cook` setting flags move to layer 3d: above the project file, below sidecars.
-3. Rules compose: every matching rule applies; on the same key the later rule wins.
+3. The first matching rule wins (composition was proposed first and rejected).
 4. A glob without `root:` matches the default root only.
 6. Project profiles wait for the v0.9 mobile profiles.
 
 ## Open points for the owner
 
-5. Usage-scoped settings ("every normal map at most 2048"): the late `[texture.usage.*]` sections
-   of §4, or (proposed instead) a rule condition `ifUsage = ["normal"]`. With the condition, kiln
-   first works out each asset's final usage (sidecar, else rules, else inference) and then applies
-   conditioned rules in file order like any rule: one concept, no special layer. Or neither, and
-   hosts use `CookPolicy`.
+5. Usage sections: keep, or leave out. Their use case: rules key on where a texture lives, but
+   the images embedded in one glb share a path, so a rule cannot tell its normal map from its
+   albedo; only the usage (from the glTF slot) can. `[texture.usage.normal] maxSize = 2048` sets
+   a default for every normal map, wherever it is; a rule still beats it on the fields the rule
+   sets. Without the sections, the same needs `CookPolicy` code or globs on image names. It is the
+   last rollout step, so leaving it out costs nothing now.
