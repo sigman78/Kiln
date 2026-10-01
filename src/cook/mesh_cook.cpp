@@ -126,9 +126,10 @@ struct TexRefBuild {
     StrView path; ///< "<asset>#<name>" (arena), or the URI of an external image
     StrView mime;
     Span<u8 const> embedded;
-    SlotHint slot = SlotHint::None;
-    bool srgb     = false;
-    bool external = false;
+    SlotHint slot   = SlotHint::None;
+    bool srgb       = false;
+    bool external   = false;
+    f32 alphaCutoff = 0.0f; ///< base color of a Mask material: its cutoff
 };
 
 struct Cook {
@@ -746,6 +747,9 @@ u32 material_for(Cook& k, u32 key) {
                 continue;
             }
             u32 const r = texture_ref(k, t.image, slot, where);
+            if (slot == mesh::TextureSlot::BaseColor && im.alphaMode == mesh::AlphaMode::Mask &&
+                k.refs[r].alphaCutoff == 0.0f)
+                k.refs[r].alphaCutoff = im.alphaCutoff;
             mesh::TextureBindingDesc b;
             b.path  = k.refs[r].path;
             b.slot  = slot;
@@ -1344,8 +1348,9 @@ Result<CookedMesh> cook_mesh(MeshSource const& src, MeshCookSettings const& sett
         if (o.embLen)
             t.embedded = o.embInSrc ? Span<u8 const>(src.bytes.data + o.emb, o.embLen)
                                     : Span<u8 const>(reinterpret_cast<u8 const*>(s + o.emb), o.embLen);
-        t.slot = r.slot;
-        t.srgb = r.srgb;
+        t.slot        = r.slot;
+        t.srgb        = r.srgb;
+        t.alphaCutoff = r.alphaCutoff;
         out.textures.push_back(t);
     }
 

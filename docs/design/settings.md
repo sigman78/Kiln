@@ -30,10 +30,12 @@ BC4, BC5, BC6H, BC7 }`, `EncodeQuality { Fast, Normal, High }`.
 | `quality` | `Normal` | Encoder effort: `Fast`, `Normal`, `High`. Resolved to `Normal` when nothing is encoded; `fastPreview` sets `Fast`; `CookSession::maxQuality` caps it |
 | `supercompression` | `Zstd` | `Zstd`: each stored level is one Zstd frame (KTX2 scheme 2; `bcn-encoding.md` step 6). Smaller files and reads, same GPU memory. `None`: levels as they are |
 | `zstdLevel` | 0 | 1..19; 0 = 3. `fastPreview` sets 1. Resolved to 0 with `None`; above 19 is a K3002 error. The cook still stores a file plain when Zstd saves under 10% of it in 4 KiB blocks (`kZstdMinSaving`) |
+| `alphaCutoff` | -1 (Auto) | Alpha-tested textures: every mip level keeps the share of texels whose alpha passes the cutoff that level 0 has, so cutouts do not thin out with distance. Auto: the `alphaCutoff` of the glTF material whose `MASK` base color this image is, else off. 0: off. Above 1 or NaN is a K3002 error; a usage other than `Color` or `Ui` clears it with a K3002 warning; resolved to 0 without mips. 8- and 16-bit RGBA only. An image that a glTF references by URI gets it only from a sidecar |
 
-Reserved: alphaMode, premultiply, dilation, residentMips.
+Reserved: premultiply, dilation, residentMips.
 Texture settings schema: 2 (`shape`, `slices`). `encoding`, `quality`, `supercompression` and
-`zstdLevel` are hashed behind tags (see "Hashing rule"), so they did not bump it.
+`zstdLevel` are hashed behind tags (see "Hashing rule"), so they did not bump it; so is
+`alphaCutoff`, when it is above 0.
 
 ### Mesh
 
@@ -184,6 +186,7 @@ name or an out-of-range number is K3006. An integer is accepted where a float is
 | `quality` | `"fast"`, `"normal"`, `"high"` |
 | `supercompression` | `"none"`, `"zstd"` |
 | `zstdLevel` | integer, 0 to 19 (0 = 3) |
+| `alphaCutoff` | number, 0 to 1 (0 = off) |
 
 | Mesh key | Value |
 |---|---|

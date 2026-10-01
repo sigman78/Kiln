@@ -160,6 +160,11 @@ KILN_API void flip_green(Image& img, JobBudget const& budget = {}) noexcept;
 /// Renormalize RGB as unit vectors in place (8- or 16-bit). No-op for < 3 channels.
 KILN_API void renormalize(Image& img, JobBudget const& budget = {}) noexcept;
 
+/// Alpha-tested mips: rescales the alpha of every level after the first so it keeps the share of
+/// texels whose alpha passes `cutoff` (0..1) that level 0 has. 8- and 16-bit RGBA only; anything
+/// else is left as it is. Integer arithmetic: the same bytes on every compiler.
+KILN_API void preserve_alpha_coverage(Span<Image> chain, f32 cutoff, Allocator const* alloc) noexcept;
+
 /// Full mip chain: level 0 is `src` (moved in), then downsample_2x until 1x1.
 /// `maxLevels` 0 = full chain. `budget` splits only the level 0 to 1 downsample; the
 /// smaller levels run on the calling thread.

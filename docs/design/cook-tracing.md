@@ -66,4 +66,5 @@ to 100 ms per texture. Both are fixed:
   the job's scratch buffer and copying cut a warm `kiln-gl` run's six uploads from 276 to 26 ms
   (Zstd 272 → 16 ms, plus 2 ms of copying); `kiln-vk-basic` 280 → 28 ms.
 
-Parallel PNG decode is left: wuffs decodes one PNG as one stream.
+Parallel PNG decode is dropped (owner, 2026-10-01): wuffs decodes one PNG as one stream, and
+the gain is not worth a second decoder.

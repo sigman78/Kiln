@@ -856,6 +856,27 @@ def build_external_uri():
     print(f"  {gltf_name} + {bin_name} + {png_name}: {total} bytes total")
 
 
+def build_alpha_mask():
+    # A quad with an alpha-tested (MASK) material and a 32x32 RGBA base color with soft, noisy alpha:
+    # 26% of the texels pass the 0.5 cutoff, but plain box-filtered mips fall below it from 8x8 down.
+    # Exercises alpha-coverage-preserving mips.
+    doc = Doc()
+    def leaves(x, y):
+        h = (x * x * 13 + y * y * 7 + x * y * 29 + x * 5 + y * 11) % 256
+        a = h * h // 255
+        return (60 + (x * 4) % 120, 140 + (y * 3) % 100, 50, a)
+    leaf_png = write_png_bytes(32, 32, leaves)
+    leaf_img = doc.add_embedded_image(leaf_png, "leaves")
+    leaf_tex = doc.add_texture(leaf_img)
+    mat = doc.add_material("foliage", base_color=(1.0, 1.0, 1.0, 1.0), base_color_texture={"index": leaf_tex},
+                           metallic=0.0, roughness=0.9, alpha_mode="MASK", alpha_cutoff=0.5)
+    pos, nrm, uv, idx = quad()
+    prim = doc.make_primitive(pos, idx, normals=nrm, uv0=uv, material=mat)
+    node, _ = doc.add_mesh_node("leaves", [prim])
+    doc.add_root(node)
+    doc.write("alpha_mask.glb")
+
+
 FILES = [
     build_cube_basic,
     build_hierarchy_parts,
@@ -870,6 +891,7 @@ FILES = [
     build_draco_required,
     build_sparse_accessor,
     build_non_triangle,
+    build_alpha_mask,
 ]
 
 

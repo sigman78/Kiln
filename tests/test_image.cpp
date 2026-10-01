@@ -1135,3 +1135,89 @@ KILN_TEST(image, downsample_renormalize_matches_reference) {
             }
         }
 }
+
+// ---------------------------------------------------------------------------
+// Alpha-coverage-preserving mips
+// ---------------------------------------------------------------------------
+
+namespace {
+
+/// 32x32 RGBA with soft, noisy alpha (the alpha_mask.glb pattern): 26% pass a 0.5 cutoff.
+Image leaves_rgba(u32 bits) {
+    Image im{.width          = 32,
+             .height         = 32,
+             .channels       = 4,
+             .bitsPerChannel = bits,
+             .pixels         = Vec<u8>(default_allocator(), Tag::Test)};
+    u32 const bytes = bits / 8, maxv = bits == 8 ? 255u : 65535u;
+    im.pixels.resize(usize(32) * 32 * 4 * bytes, u8(0));
+    for (u32 y = 0; y < 32; ++y)
+        for (u32 x = 0; x < 32; ++x) {
+            u32 const h    = (x * x * 13 + y * y * 7 + x * y * 29 + x * 5 + y * 11) % 256;
+            u32 const a    = h * h / 255 * (maxv / 255);
+            usize const at = (usize(y) * 32 + x) * 4 + 3;
+            if (bits == 8)
+                im.pixels[at] = u8(a);
+            else {
+                u16 const v = u16(a);
+                std::memcpy(im.pixels.data() + at * 2, &v, 2);
+            }
+        }
+    return im;
+}
+
+/// Share of texels whose alpha is at least `ref`.
+double coverage(Image const& im, u32 ref) {
+    usize const n = usize(im.width) * im.height;
+    usize pass    = 0;
+    for (usize i = 0; i < n; ++i) {
+        u32 a;
+        if (im.bitsPerChannel == 8) {
+            a = im.pixels[i * 4 + 3];
+        } else {
+            u16 v;
+            std::memcpy(&v, im.pixels.data() + (i * 4 + 3) * 2, 2);
+            a = v;
+        }
+        pass += a >= ref;
+    }
+    return double(pass) / double(n);
+}
+
+} // namespace
+
+// Plain box-filtered mips of soft, noisy alpha fall below the cutoff and vanish; with coverage kept,
+// every level of 4x4 and up keeps level 0's share of passing texels, in 8 and 16 bits.
+KILN_TEST(Image, AlphaCoverageKeepsTheCutoffShare) {
+    for (u32 bits : {8u, 16u}) {
+        u32 const ref            = bits == 8 ? 128u : 32768u; // a cutoff of 0.5
+        Result<Vec<Image>> plain = build_mip_chain(leaves_rgba(bits), MipOptions{}, 0, nullptr);
+        Result<Vec<Image>> kept  = build_mip_chain(leaves_rgba(bits), MipOptions{}, 0, nullptr);
+        KILN_REQUIRE(plain.ok() && kept.ok());
+        preserve_alpha_coverage(Span<Image>(kept->data(), kept->size()), 0.5f, nullptr);
+        double const c0 = coverage((*kept)[0], ref);
+        KILN_CHECK(c0 > 0.2 && c0 < 0.3);
+        KILN_CHECK_MSG(coverage((*plain)[2], ref) < 0.05, "%u-bit: plain mips should vanish", bits);
+        for (usize l = 1; l < kept->size(); ++l) {
+            Image const& m = (*kept)[l];
+            if (m.width < 4) break;
+            double const c = coverage(m, ref);
+            KILN_CHECK_MSG(c > c0 - 0.1 && c < c0 + 0.1, "%u-bit level %zu: coverage %.3f, level 0 %.3f",
+                           bits, l, c, c0);
+        }
+    }
+}
+
+// Anything but 8- or 16-bit RGBA, and a cutoff outside (0, 1], is left as it is.
+KILN_TEST(Image, AlphaCoverageLeavesOtherImagesAlone) {
+    Result<Vec<Image>> chain = build_mip_chain(leaves_rgba(8), MipOptions{}, 0, nullptr);
+    KILN_REQUIRE(chain.ok());
+    Vec<u8> before(default_allocator(), Tag::Test);
+    before.append((*chain)[1].pixels.span());
+    preserve_alpha_coverage(Span<Image>(chain->data(), chain->size()), 0.0f, nullptr);
+    KILN_CHECK(std::memcmp(before.data(), (*chain)[1].pixels.data(), before.size()) == 0);
+    for (Image& m : *chain)
+        m.channels = 3; // pretend: no alpha channel
+    preserve_alpha_coverage(Span<Image>(chain->data(), chain->size()), 0.5f, nullptr);
+    KILN_CHECK(std::memcmp(before.data(), (*chain)[1].pixels.data(), before.size()) == 0);
+}

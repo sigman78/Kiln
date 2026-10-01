@@ -172,9 +172,10 @@ void cook_embedded_images(UnitDesc const& d, CookUnit& u, Span<TextureRef const>
         ImageJob& j = jobs.emplace_back();
         j.ref       = &t;
         Layers layers;
-        Status const st = prepare_layers(d, u, t.assetPath, t.slot, false, alloc, &layers);
-        j.settings      = st.ok() ? resolve_texture_layers(*d.textureDefaults, layers.desc)
-                                  : Result<TextureCookSettings>(st);
+        Status const st               = prepare_layers(d, u, t.assetPath, t.slot, false, alloc, &layers);
+        layers.desc.asset.alphaCutoff = t.alphaCutoff;
+        j.settings                    = st.ok() ? resolve_texture_layers(*d.textureDefaults, layers.desc)
+                                                : Result<TextureCookSettings>(st);
     }
     LockedDiag locked{d.env.diag, {}};
     DiagSink const sink{&LockedDiag::fn, &locked};

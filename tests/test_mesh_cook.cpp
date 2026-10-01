@@ -1089,3 +1089,49 @@ KILN_TEST(MeshCook, CompressionRoundTrip) {
         }
     }
 }
+
+// alpha_mask.glb: the Mask material's cutoff reaches its base color image, and the image cooked with it
+// keeps its passing share on every mip level of 4x4 and up; without it the small levels vanish.
+KILN_TEST(MeshCook, AlphaMaskMaterialKeepsCoverage) {
+    char path[1024];
+    format(path, sizeof path, "%s/../gltf/generated/alpha_mask.glb", kiln::test::corpus_dir());
+    Vec<u8> bytes(default_allocator(), Tag::Test);
+    KILN_REQUIRE(corpus::read_file(path, bytes));
+    Diags d;
+    Result<cook::CookedMesh> m = cook_bytes(bytes.span(), "alpha_mask.glb", d, default_settings());
+    KILN_REQUIRE(m.ok());
+    KILN_REQUIRE_EQ(m->textures.size(), usize(1));
+    cook::TextureRef const& t = m->textures[0];
+    KILN_CHECK(t.slot == cook::SlotHint::BaseColor);
+    KILN_CHECK_EQ(t.alphaCutoff, 0.5f);
+
+    for (f32 cutoff : {0.5f, 0.0f}) {
+        cook::TextureCookSettings s{};
+        s.alphaCutoff      = cutoff;
+        s.supercompression = cook::Supercompression::None;
+        cook::TargetProfile const raw{.blockFormats = 0};
+        Result<cook::TextureCookSettings> rs = cook::resolve_texture(s, cook::SlotHint::BaseColor, raw, {});
+        KILN_REQUIRE(rs.ok());
+        Result<cook::CookedTexture> tex = cook::cook_texture(
+            {.bytes = t.embedded, .assetPath = t.assetPath, .sourcePath = "alpha_mask.glb"}, *rs, raw, {});
+        KILN_REQUIRE(tex.ok());
+        Result<ktx2::Ktx2View> v = ktx2::Ktx2View::open(tex->file.span());
+        KILN_REQUIRE(v.ok());
+        auto cov = [&](u32 level) {
+            Vec<u8> const px = corpus::texels(*v, level);
+            usize pass = 0, n = px.size() / 4;
+            for (usize i = 0; i < n; ++i)
+                pass += px[i * 4 + 3] >= 128;
+            return double(pass) / double(n);
+        };
+        double const c0 = cov(0);
+        for (u32 l = 1; l < v->desc().levels && v->level_width(l) >= 4; ++l) {
+            double const c = cov(l);
+            if (cutoff > 0.0f)
+                KILN_CHECK_MSG(c > c0 - 0.1 && c < c0 + 0.1, "level %u: coverage %.3f, level 0 %.3f", l, c,
+                               c0);
+            else if (l >= 2)
+                KILN_CHECK_MSG(c < 0.05, "level %u: coverage %.3f without alphaCutoff", l, c);
+        }
+    }
+}

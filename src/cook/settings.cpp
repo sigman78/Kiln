@@ -102,6 +102,18 @@ Result<TextureCookSettings> resolve_texture(TextureCookSettings const& overrides
         s.flipGreen         = false;
     }
 
+    // Alpha coverage: Auto that no layer filled is off. Only usages that keep alpha, and only with mips.
+    if (s.alphaCutoff < 0.0f) s.alphaCutoff = 0.0f;
+    if (!(s.alphaCutoff <= 1.0f)) // also NaN
+        return diagf(diag, make_status(Code::InvalidArgument), kDiagSettingsInvalidCombo, Severity::Error,
+                     asset, "alphaCutoff", "alphaCutoff %g is outside 0..1", double(s.alphaCutoff));
+    if (s.alphaCutoff > 0.0f && s.usage != TextureUsage::Color && s.usage != TextureUsage::Ui) {
+        (void)diagf(diag, kOk, kDiagSettingsInvalidCombo, Severity::Warning, asset, "alphaCutoff",
+                    "alphaCutoff ignored for usage %s", texture_usage_name(s.usage));
+        s.alphaCutoff = 0.0f;
+    }
+    if (!s.genMips) s.alphaCutoff = 0.0f;
+
     if (s.shape != CookShape::Array && s.slices != 0) {
         (void)diagf(diag, kOk, kDiagSettingsInvalidCombo, Severity::Warning, asset, "slices",
                     "slices ignored for shape %s", cook_shape_name(s.shape));
@@ -175,6 +187,7 @@ Result<TextureCookSettings> resolve_texture_layers(TextureCookSettings const& ba
         if (s.usage == TextureUsage::Auto) s.usage = TextureUsage::Color;
     }
     if (s.shape == CookShape::Auto) s.shape = hints.shape;
+    if (s.alphaCutoff < 0.0f) s.alphaCutoff = d.asset.alphaCutoff; // the Mask material's cutoff, or 0
     if (d.policy.texture) {
         Status const st = d.policy.texture(d.policy.user, d.asset, d.target, &s, d.diag);
         if (st.failed()) return refused(d, st);
@@ -307,6 +320,10 @@ u64 hash_settings(TextureCookSettings const& s) noexcept {
     if (s.supercompression != Supercompression::None) {
         h.update_value(u16(0x300u | u8(s.supercompression)));
         h.update_value(u16(0x400u | s.zstdLevel));
+    }
+    if (s.alphaCutoff > 0.0f) {
+        h.update_value(u16(0x500u));
+        h.update_value(hashable_float_bits(s.alphaCutoff));
     }
     return h.digest();
 }

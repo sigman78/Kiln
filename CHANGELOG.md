@@ -8,6 +8,11 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
 ## [Unreleased]
 
 ### Added
+- **Alpha-coverage-preserving mips:** texture setting `alphaCutoff` (sidecar key too). Each mip level
+  keeps the share of texels whose alpha passes the cutoff, so alpha-tested foliage and fences do not
+  thin out with distance. Auto takes the cutoff of the glTF material whose `MASK` base color the image
+  is; `TextureRef::alphaCutoff` and `CookAssetInfo::alphaCutoff` carry it. `preserve_alpha_coverage()`
+  in `kiln/cook/image.h`. Off, the settings hash is unchanged, so existing cooks keep their keys.
 - **No crash dialogs in kiln's own programs:** every `main()` of the tests, tools and examples calls
   `no_crash_dialogs()` (`tools/no_crash_dialogs.h`, target `kiln_no_crash_dialogs`). On Windows a crash,
   `abort()` (`KILN_PANIC`) or a debug CRT assert ends the process with a message and exit code 3 instead

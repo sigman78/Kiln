@@ -139,6 +139,7 @@ Status set_field(TomlEntry const& e, TextureCookSettings& s, KeyError const& err
     if (e.key == "slices") return set_u32(e, s.slices, err);
     if (e.key == "supercompression") return set_enum(e, kSupercompressions, s.supercompression, err);
     if (e.key == "zstdLevel") return set_zstd_level(e, s.zstdLevel, err);
+    if (e.key == "alphaCutoff") return set_f32(e, s.alphaCutoff, err);
     return err(e, "unknown key for a texture");
 }
 

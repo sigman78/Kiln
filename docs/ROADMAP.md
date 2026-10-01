@@ -45,12 +45,12 @@ Not goals for v1:
 - **Profiling hooks** ([`design/cook-tracing.md`](design/cook-tracing.md); done 2026-09-30): zones and
   intervals into the host's profiler; `kiln-cook --trace` and `KILN_TRACE` write a Chrome trace.
   Follow-ups from the first traces: a glTF's images cook in parallel and Zstd uploads decode into
-  scratch memory, 10x faster (both done 2026-09-30); parallel PNG decode is left.
+  scratch memory, 10x faster (both done 2026-09-30). Parallel PNG decode: dropped (owner, not worth it).
 - **`.mesh` payload compression** (done 2026-10-01, [`design/mesh-compression.md`](design/mesh-compression.md)):
   Basic, Meshopt and MeshoptZstd in the writer and the runtime; `Meshopt` by default (owner). Blob
   splitting (B16) waits for streaming.
-- **Textures:** alpha-coverage-preserving mips, channel packing (for example ORM from separate
-  images).
+- **Textures:** alpha-coverage-preserving mips (done 2026-10-01: texture setting `alphaCutoff`, Auto
+  from a glTF Mask material); channel packing (for example ORM from separate images).
 - **Project settings:** config files, presets, path rules, target encodings and
   `kiln-cook --explain` ([`cook-settings.md`](cook-settings.md); file format: open question 7).
 - **Fuller dependency tracking for hot reload.** Texture arrays need it too: a changed member

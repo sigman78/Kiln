@@ -524,3 +524,52 @@ KILN_TEST(Settings, TargetHashCoversBlockFormats) {
     same.blockFormats |= block_format_bit(Format::BC4_UNORM); // same name, other formats
     KILN_CHECK(hash_target(kCompatTarget) != hash_target(same));
 }
+
+// alphaCutoff: Auto takes the Mask material's cutoff (or nothing); explicit values beat it; usages without
+// alpha warn and clear; out of range is an error; no mips, no coverage. Off hashes as before the field.
+KILN_TEST(Settings, AlphaCutoffResolves) {
+    ResolveDesc d{
+        .asset = {
+                  .name = "m.glb#leaves", .sourcePath = "m.glb", .slot = SlotHint::BaseColor, .alphaCutoff = 0.5f}
+    };
+    Result<TextureCookSettings> r = resolve_texture_layers(TextureCookSettings{}, d);
+    KILN_REQUIRE(r.ok());
+    KILN_CHECK_EQ(r->alphaCutoff, 0.5f);
+
+    TextureCookSettings off{};
+    off.alphaCutoff = 0.0f;
+    r               = resolve_texture_layers(off, d);
+    KILN_REQUIRE(r.ok());
+    KILN_CHECK_EQ(r->alphaCutoff, 0.0f);
+
+    ResolveDesc sidecar = d;
+    sidecar.sidecar     = "alphaCutoff = 0.3";
+    r                   = resolve_texture_layers(TextureCookSettings{}, sidecar);
+    KILN_REQUIRE(r.ok());
+    KILN_CHECK_EQ(r->alphaCutoff, 0.3f);
+
+    ResolveDesc plain       = d;
+    plain.asset.alphaCutoff = 0.0f;
+    r                       = resolve_texture_layers(TextureCookSettings{}, plain);
+    KILN_REQUIRE(r.ok());
+    KILN_CHECK_EQ(r->alphaCutoff, 0.0f);
+    Result<TextureCookSettings> const before =
+        resolve_texture({.alphaCutoff = 0.0f}, SlotHint::BaseColor, {}, {});
+    KILN_REQUIRE(before.ok());
+    KILN_CHECK_EQ(hash_settings(*r), hash_settings(*before));
+    KILN_CHECK(hash_settings(*r) != hash_settings(*resolve_texture_layers(TextureCookSettings{}, d)));
+
+    DiagCapture cap;
+    DiagSink sink = cap.sink();
+    r = resolve_texture({.usage = TextureUsage::Normal, .alphaCutoff = 0.5f}, SlotHint::None, {}, {}, &sink);
+    KILN_REQUIRE(r.ok());
+    KILN_CHECK_EQ(r->alphaCutoff, 0.0f);
+    KILN_CHECK_EQ(cap.code, u32(kDiagSettingsInvalidCombo));
+    KILN_CHECK(
+        resolve_texture({.usage = TextureUsage::Color, .alphaCutoff = 1.5f}, SlotHint::None, {}, {}).code() ==
+        Code::InvalidArgument);
+    r = resolve_texture({.usage = TextureUsage::Color, .genMips = false, .alphaCutoff = 0.5f}, SlotHint::None,
+                        {}, {});
+    KILN_REQUIRE(r.ok());
+    KILN_CHECK_EQ(r->alphaCutoff, 0.0f);
+}

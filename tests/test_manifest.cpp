@@ -1760,3 +1760,19 @@ KILN_TEST(StorePaths, RelativeAndAbsolute) {
     KILN_CHECK(StrView(out, n).ends_with("/paths-probe/file"_sv));
     KILN_CHECK(std::strstr(out, "/../") == nullptr);
 }
+
+// cook_unit passes the Mask material's cutoff to its base color image's settings.
+KILN_TEST(ManifestStore, EmbeddedImageInheritsTheMaskCutoff) {
+    CookUnit unit(default_allocator());
+    KILN_REQUIRE(cook_corpus("alpha_mask.glb", AssetKind::Mesh, &unit).ok());
+    UnitOutput const* o = unit.find(AssetKind::Texture, "alpha_mask.glb#leaves"_sv);
+    KILN_REQUIRE(o != nullptr);
+    ResolveDesc d{
+        .asset  = {.name = "alpha_mask.glb#leaves", .slot = SlotHint::BaseColor, .alphaCutoff = 0.5f},
+        .target = kCompatTarget
+    };
+    Result<TextureCookSettings> const want = resolve_texture_layers(TextureCookSettings{}, d);
+    KILN_REQUIRE(want.ok());
+    KILN_CHECK_EQ(want->alphaCutoff, 0.5f);
+    KILN_CHECK_EQ(o->settingsHash, hash_settings(*want));
+}

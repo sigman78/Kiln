@@ -264,6 +264,68 @@ void renormalize(Image& img, JobBudget const& budget) noexcept {
     if (fn) in_place_bands(img, fn, budget);
 }
 
+namespace {
+
+u32 alpha_at(Image const& img, usize i) noexcept {
+    if (img.bitsPerChannel == 8) return img.pixels[i * 4 + 3];
+    u16 v;
+    std::memcpy(&v, img.pixels.data() + (i * 4 + 3) * 2, 2);
+    return v;
+}
+
+void set_alpha(Image& img, usize i, u32 v) noexcept {
+    if (img.bitsPerChannel == 8) {
+        img.pixels[i * 4 + 3] = u8(v);
+        return;
+    }
+    u16 const w = u16(v);
+    std::memcpy(img.pixels.data() + (i * 4 + 3) * 2, &w, 2);
+}
+
+} // namespace
+
+void preserve_alpha_coverage(Span<Image> chain, f32 cutoff, Allocator const* alloc) noexcept {
+    if (chain.size < 2 || !(cutoff > 0.0f && cutoff <= 1.0f)) return;
+    Image const& top = chain[0];
+    if (top.channels != 4 || (top.bitsPerChannel != 8 && top.bitsPerChannel != 16)) return;
+    u32 const maxv = top.bitsPerChannel == 8 ? 255u : 65535u;
+    u32 const ref  = max(1u, u32(cutoff * f32(maxv) + 0.5f)); // passes: alpha >= ref
+    usize const n0 = usize(top.width) * top.height;
+    u64 pass0      = 0;
+    for (usize i = 0; i < n0; ++i)
+        pass0 += alpha_at(top, i) >= ref;
+
+    Vec<u32> hist(alloc ? alloc : default_allocator(), Tag::Cook);
+    for (usize l = 1; l < chain.size; ++l) {
+        Image& img    = chain[l];
+        usize const n = usize(img.width) * img.height;
+        hist.clear();
+        hist.resize(usize(maxv) + 1, 0u);
+        for (usize i = 0; i < n; ++i)
+            ++hist[alpha_at(img, i)];
+        // The threshold t whose pass count is closest to pass0 * n / n0 (compared without division:
+        // |count * n0 - pass0 * n|); on a tie the higher t, which changes alpha least.
+        u64 const want = pass0 * n;
+        u64 count = 0, bestErr = ~u64(0);
+        u32 best = ref;
+        for (u32 t = maxv; t >= 1; --t) {
+            count += hist[t];
+            u64 const have = count * n0;
+            u64 const err  = have > want ? have - want : want - have;
+            if (err < bestErr) {
+                bestErr = err;
+                best    = t;
+            }
+        }
+        if (best == ref) continue;
+        // Scale so `best` lands on `ref`: texels at or above it pass, the rest do not.
+        for (usize i = 0; i < n; ++i) {
+            u64 const a = (u64(alpha_at(img, i)) * ref + best / 2) / best;
+            set_alpha(img, i, u32(min<u64>(a, maxv)));
+        }
+    }
+}
+
 Result<Vec<Image>> build_mip_chain(Image&& src, MipOptions const& opt, u32 maxLevels, Allocator const* alloc,
                                    JobBudget const& budget) noexcept {
     if (!valid_image(src)) return make_status(Code::InvalidArgument);

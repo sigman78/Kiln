@@ -135,6 +135,7 @@ struct TextureRef {
     StrView mimeType        = {}; ///< "image/png", "image/jpeg", ... (may be empty)
     SlotHint slot;                ///< first slot that referenced it
     bool srgb;                    ///< as inferred from the slot
+    f32 alphaCutoff = 0.0f;       ///< base color of a Mask material: its cutoff (the first such); else 0
 };
 
 struct CookedMesh {

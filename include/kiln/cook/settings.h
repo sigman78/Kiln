@@ -52,7 +52,11 @@ struct TextureCookSettings {
     EncodeQuality quality             = EncodeQuality::Normal; ///< resolved to Normal when nothing is encoded
     Supercompression supercompression = Supercompression::Zstd;
     u8 zstdLevel                      = 0; ///< 1..19; 0 = kDefaultZstdLevel. Resolved to 0 without Zstd
-    // reserved: alphaMode, premultiply, dilation, residentMips
+    /// Alpha-tested textures: each mip level keeps the share of texels whose alpha passes this cutoff
+    /// (0..1], so cutouts do not thin out with distance. -1 (Auto): the cutoff of the glTF material
+    /// whose Mask base color this is, else off. 0: off. Color and Ui only, with mips.
+    f32 alphaCutoff = -1.0f;
+    // reserved: premultiply, dilation, residentMips
 };
 
 /// The glTF material slot a texture was referenced from (for usage inference).
@@ -220,6 +224,7 @@ struct CookAssetInfo {
     StrView name       = {};             ///< the asset name, e.g. "props/chair.glb#wood"
     StrView sourcePath = {};             ///< the file the cook reads; for an embedded image, its model
     SlotHint slot      = SlotHint::None; ///< textures: the glTF slot of an embedded image
+    f32 alphaCutoff    = 0.0f;           ///< textures: the material's cutoff for a Mask base color, else 0
 };
 
 /// The host's last word on settings (layer 6), called once per cooked asset after every other

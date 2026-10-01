@@ -314,6 +314,9 @@ Result<CookedTexture> cook_decoded(TextureSource const& src, TextureCookSettings
         }
         img.pixels.release();
     }
+    if (settings.alphaCutoff > 0.0f)
+        for (Vec<Image>& chain : chains)
+            preserve_alpha_coverage(Span<Image>(chain.data(), chain.size()), settings.alphaCutoff, alloc);
     u64 const mipsUs     = swMips.stop();
     u32 const levelCount = u32(chains[0].size()) - drop;
     KILN_VERIFY(levelCount >= 1 && levelCount <= ktx2::kMaxLevels);
