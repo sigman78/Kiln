@@ -75,7 +75,7 @@ Status fail(DiagSink const* diag, StrView asset, Code code, u32 diagCode, char c
 
 } // namespace
 
-u64 Ktx2View::metadata_size(Header const& h) {
+u64 Ktx2View::metadata_size(Header const& h) noexcept {
     u64 end = sizeof(Header) + u64(max(h.levelCount, 1u)) * sizeof(LevelIndex);
     if (h.dfdByteLength != 0) end = max(end, u64(h.dfdByteOffset) + h.dfdByteLength);
     if (h.kvdByteLength != 0) end = max(end, u64(h.kvdByteOffset) + h.kvdByteLength);
@@ -253,13 +253,13 @@ Result<Ktx2View> Ktx2View::open(Span<u8 const> bytes, DiagSink const* diag, StrV
     return v;
 }
 
-u64 Ktx2View::level_image_bytes(u32 level) const {
+u64 Ktx2View::level_image_bytes(u32 level) const noexcept {
     if (info_ == nullptr || level >= desc_.levels) return 0;
     u64 n = 0;
     return image_bytes(*info_, level_width(level), level_height(level), level_depth(level), n) ? n : 0;
 }
 
-Span<u8 const> Ktx2View::level_data(u32 level) const {
+Span<u8 const> Ktx2View::level_data(u32 level) const noexcept {
     if (level >= desc_.levels) return {};
     LevelIndex const& li = levels_[level];
     if (li.byteOffset > bytes_.size || li.byteLength > bytes_.size - li.byteOffset) return {};
@@ -290,19 +290,19 @@ Status Ktx2View::decode_level(u32 level, Span<u8> out, Allocator const* alloc, D
     return kOk;
 }
 
-bool Ktx2View::has_all_level_data() const {
+bool Ktx2View::has_all_level_data() const noexcept {
     for (u32 i = 0; i < desc_.levels; ++i)
         if (level_data(i).empty()) return false;
     return desc_.levels > 0;
 }
 
-u32 Ktx2View::dfd_sample_count() const {
+u32 Ktx2View::dfd_sample_count() const noexcept {
     if (dfd_.size < 4 + kDfdBasicBlockHeaderSize) return 0;
     u32 const blockSize = read_unaligned<u32>(dfd_.data + 8) >> 16;
     return blockSize < kDfdBasicBlockHeaderSize ? 0 : (blockSize - kDfdBasicBlockHeaderSize) / kDfdSampleSize;
 }
 
-Span<u8 const> Ktx2View::find_key(StrView key) const {
+Span<u8 const> Ktx2View::find_key(StrView key) const noexcept {
     Span<u8 const> found;
     (void)walk_kvd(kvd_, [&](StrView k, Span<u8 const> value) {
         if (k != key) return false;

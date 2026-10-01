@@ -288,7 +288,7 @@ struct GroupStatus {
     u32 pending    = 0; ///< requested but neither Ready nor Failed yet
     u64 bytesDone  = 0;
     u64 bytesTotal = 0; ///< known once each member's metadata has been read
-    [[nodiscard]] bool settled() const { return pending == 0; }
+    [[nodiscard]] bool settled() const noexcept { return pending == 0; }
 };
 
 struct WaitOptions {

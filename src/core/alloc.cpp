@@ -122,7 +122,7 @@ static constexpr usize kBlockHeader = align_up(usize(2 * sizeof(void*)), kDefaul
 
 Arena::Arena(Desc const& desc) { init(desc); }
 
-Arena::~Arena() { release(); }
+Arena::~Arena() noexcept { release(); }
 
 Arena::Arena(Arena&& o) noexcept
     : desc_(o.desc_), head_(o.head_), cur_(o.cur_), end_(o.end_), used_(o.used_), reserved_(o.reserved_) {
@@ -193,7 +193,7 @@ StrView Arena::copy(StrView s) {
     return {p, s.size};
 }
 
-void Arena::reset() {
+void Arena::reset() noexcept {
     if (!head_) return;
     // Free every block except the oldest (bottom of the chain) and rewind into it.
     Block* b = head_;
@@ -209,7 +209,7 @@ void Arena::reset() {
     used_ = 0;
 }
 
-void Arena::release() {
+void Arena::release() noexcept {
     Block* b = head_;
     while (b) {
         Block* prev = b->prev;
@@ -228,6 +228,6 @@ void* arena_alloc_thunk(void* user, usize size, usize align, Tag /*tag*/) {
 void arena_free_thunk(void*, void*, usize, usize, Tag) {}
 } // namespace
 
-Allocator Arena::as_allocator() { return {&arena_alloc_thunk, &arena_free_thunk, this}; }
+Allocator Arena::as_allocator() noexcept { return {&arena_alloc_thunk, &arena_free_thunk, this}; }
 
 } // namespace kiln

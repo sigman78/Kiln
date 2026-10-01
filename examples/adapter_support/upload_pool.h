@@ -42,7 +42,7 @@ constexpr UploadStatus status_of(UploadState s) {
 /// thread-safe: the adapter guards acquire() and release() with its own lock.
 template <class T> class UploadPool {
 public:
-    UploadPool() = default;
+    UploadPool() noexcept = default;
     UploadPool(Allocator const* alloc, u32 capacity)
         : records_(alloc ? alloc : default_allocator(), Tag::Payload),
           free_(alloc ? alloc : default_allocator(), Tag::Payload) {
@@ -54,7 +54,7 @@ public:
 
     /// A free record, reset to T{} and Writing, or kInvalid when every record is in use (Busy:
     /// uploads in flight give theirs back).
-    [[nodiscard]] u32 acquire() {
+    [[nodiscard]] u32 acquire() noexcept {
         if (free_.empty()) return kInvalid;
         u32 const i = free_.back();
         free_.pop_back();
@@ -63,40 +63,40 @@ public:
         return i;
     }
     /// Back to the free list; the token of the record goes stale. From a terminal state only.
-    void release(u32 index) {
+    void release(u32 index) noexcept {
         KILN_ASSERT(records_[index].state == UploadState::Complete ||
                     records_[index].state == UploadState::Failed);
         free_record(index);
     }
     /// discard_upload: kiln never committed the record, so it goes straight back from Writing.
-    void discard(u32 index) {
+    void discard(u32 index) noexcept {
         KILN_ASSERT(records_[index].state == UploadState::Writing);
         free_record(index);
     }
 
-    u64 token(u32 index) const { return (u64(records_[index].gen) << 32) | (index + 1); }
+    u64 token(u32 index) const noexcept { return (u64(records_[index].gen) << 32) | (index + 1); }
     /// The record `token` names, or kInvalid if it is stale, free or not a token of this pool.
-    u32 index_of(u64 token) const {
+    u32 index_of(u64 token) const noexcept {
         u32 const i = u32(token & 0xFFFFFFFFu) - 1; // token 0 wraps to kInvalid
         if (i >= records_.size()) return kInvalid;
         Record const& r = records_[i];
         return r.state != UploadState::Free && r.gen == u32(token >> 32) ? i : kInvalid;
     }
 
-    UploadState state(u32 index) const { return records_[index].state; }
-    void advance(u32 index, UploadState to) {
+    UploadState state(u32 index) const noexcept { return records_[index].state; }
+    void advance(u32 index, UploadState to) noexcept {
         KILN_ASSERT(can_advance(records_[index].state, to) && "UploadPool: illegal transition");
         records_[index].state = to;
     }
 
-    T& operator[](u32 index) { return records_[index].data; }
-    T const& operator[](u32 index) const { return records_[index].data; }
-    u32 capacity() const { return u32(records_.size()); }
-    u32 in_use() const { return capacity() - u32(free_.size()); }
-    [[nodiscard]] bool full() const { return free_.empty(); } ///< acquire() would fail
+    T& operator[](u32 index) noexcept { return records_[index].data; }
+    T const& operator[](u32 index) const noexcept { return records_[index].data; }
+    u32 capacity() const noexcept { return u32(records_.size()); }
+    u32 in_use() const noexcept { return capacity() - u32(free_.size()); }
+    [[nodiscard]] bool full() const noexcept { return free_.empty(); } ///< acquire() would fail
 
 private:
-    void free_record(u32 index) {
+    void free_record(u32 index) noexcept {
         Record& r = records_[index];
         r.state   = UploadState::Free;
         r.gen     = r.gen + 1 == 0 ? 1 : r.gen + 1;

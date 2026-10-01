@@ -2,7 +2,7 @@
 
 namespace kiln {
 
-void Xxh64State::reset(u64 seed) {
+void Xxh64State::reset(u64 seed) noexcept {
     using namespace detail;
     seed_   = seed;
     acc_[0] = seed + kXxhP1 + kXxhP2;
@@ -13,7 +13,7 @@ void Xxh64State::reset(u64 seed) {
     total_  = 0;
 }
 
-void Xxh64State::update(void const* data, usize len) {
+void Xxh64State::update(void const* data, usize len) noexcept {
     using namespace detail;
     u8 const* p   = static_cast<u8 const*>(data);
     u8 const* end = p + len;
@@ -55,7 +55,7 @@ void Xxh64State::update(void const* data, usize len) {
     }
 }
 
-u64 Xxh64State::digest() const {
+u64 Xxh64State::digest() const noexcept {
     using namespace detail;
     u64 h;
     if (total_ >= 32) {

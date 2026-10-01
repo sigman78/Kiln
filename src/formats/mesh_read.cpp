@@ -463,15 +463,15 @@ Result<MeshView> MeshView::open(Span<u8 const> bytes, OpenOptions const& opt, Di
     return v;
 }
 
-SectionEntry const* MeshView::find_section(u32 id) const { return find_sec(sections_, id); }
+SectionEntry const* MeshView::find_section(u32 id) const noexcept { return find_sec(sections_, id); }
 
-StrView MeshView::str(u32 offset) const {
+StrView MeshView::str(u32 offset) const noexcept {
     if (offset == kInvalid || offset >= strings_.size) return {};
     char const* p = reinterpret_cast<char const*>(strings_.data + offset);
     return {p, StrView::cstr_len(p)}; // STRS ends with '\0' (checked in open)
 }
 
-Mount const* MeshView::find_mount(u64 nameHash) const {
+Mount const* MeshView::find_mount(u64 nameHash) const noexcept {
     u32 lo = 0, hi = mounts_.size();
     while (lo < hi) {
         u32 mid        = lo + (hi - lo) / 2;
@@ -486,13 +486,13 @@ Mount const* MeshView::find_mount(u64 nameHash) const {
     return nullptr;
 }
 
-MeshPart const* MeshView::find_part(u64 nameHash) const {
+MeshPart const* MeshView::find_part(u64 nameHash) const noexcept {
     for (MeshPart const& p : parts_)
         if (p.nameHash == nameHash) return &p;
     return nullptr;
 }
 
-u64 MeshView::stream_bytes(MeshLod const& lod, u32 s) const {
+u64 MeshView::stream_bytes(MeshLod const& lod, u32 s) const noexcept {
     if (s >= kMaxStreams || lod.layout >= layouts_.size()) return 0;
     VertexLayout const& lay = layouts_[lod.layout];
     if (s >= lay.streamCount) return 0;

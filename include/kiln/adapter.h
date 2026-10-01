@@ -80,7 +80,7 @@ struct GpuObject {
     u32 slot   = kInvalid; ///< bindless descriptor slot, if the adapter uses them
     u32 kind   = 0;        ///< adapter-defined tag
 
-    [[nodiscard]] bool is_null() const { return native == 0 && slot == kInvalid; }
+    [[nodiscard]] bool is_null() const noexcept { return native == 0 && slot == kInvalid; }
 };
 
 /// An upload after commit_upload, as Adapter::upload_status reports it.

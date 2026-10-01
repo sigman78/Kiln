@@ -229,44 +229,44 @@ template <class T> struct Span {
     T* data    = nullptr;
     usize size = 0;
 
-    constexpr Span() = default;
-    constexpr Span(T* p, usize n) : data(p), size(n) {}
+    constexpr Span() noexcept = default;
+    constexpr Span(T* p, usize n) noexcept : data(p), size(n) {}
     template <usize N>
-    constexpr Span(T (&arr)[N]) : data(arr), size(N) {} // NOLINT(google-explicit-constructor)
+    constexpr Span(T (&arr)[N]) noexcept : data(arr), size(N) {} // NOLINT(google-explicit-constructor)
     /// Span<T const> from Span<T>.
     template <class U>
         requires(std::is_const_v<T> && std::is_same_v<std::remove_const_t<T>, U>)
-    constexpr Span(Span<U> other) : data(other.data), size(other.size) {} // NOLINT
+    constexpr Span(Span<U> other) noexcept : data(other.data), size(other.size) {} // NOLINT
 
-    [[nodiscard]] constexpr bool empty() const { return size == 0; }
-    constexpr usize size_bytes() const { return size * sizeof(T); }
-    constexpr T* begin() const { return data; }
-    constexpr T* end() const { return data + size; }
-    constexpr T& front() const {
+    [[nodiscard]] constexpr bool empty() const noexcept { return size == 0; }
+    constexpr usize size_bytes() const noexcept { return size * sizeof(T); }
+    constexpr T* begin() const noexcept { return data; }
+    constexpr T* end() const noexcept { return data + size; }
+    constexpr T& front() const noexcept {
         KILN_ASSERT(size > 0);
         return data[0];
     }
-    constexpr T& back() const {
+    constexpr T& back() const noexcept {
         KILN_ASSERT(size > 0);
         return data[size - 1];
     }
-    constexpr T& operator[](usize i) const {
+    constexpr T& operator[](usize i) const noexcept {
         KILN_ASSERT(i < size);
         return data[i];
     }
-    constexpr Span<T> first(usize n) const {
+    constexpr Span<T> first(usize n) const noexcept {
         KILN_ASSERT(n <= size);
         return {data, n};
     }
-    constexpr Span<T> last(usize n) const {
+    constexpr Span<T> last(usize n) const noexcept {
         KILN_ASSERT(n <= size);
         return {data + (size - n), n};
     }
-    constexpr Span<T> subspan(usize off, usize n) const {
+    constexpr Span<T> subspan(usize off, usize n) const noexcept {
         KILN_ASSERT(off <= size && n <= size - off);
         return {data + off, n};
     }
-    constexpr Span<T> subspan(usize off) const {
+    constexpr Span<T> subspan(usize off) const noexcept {
         KILN_ASSERT(off <= size);
         return {data + off, size - off};
     }
@@ -291,62 +291,62 @@ struct StrView {
     char const* data = nullptr;
     usize size       = 0;
 
-    constexpr StrView() = default;
-    constexpr StrView(char const* p, usize n) : data(p), size(n) {}
-    constexpr StrView(char const* cstr) // NOLINT(google-explicit-constructor)
+    constexpr StrView() noexcept = default;
+    constexpr StrView(char const* p, usize n) noexcept : data(p), size(n) {}
+    constexpr StrView(char const* cstr) noexcept // NOLINT(google-explicit-constructor)
         : data(cstr), size(cstr ? cstr_len(cstr) : 0) {}
 
-    [[nodiscard]] constexpr bool empty() const { return size == 0; }
-    constexpr char const* begin() const { return data; }
-    constexpr char const* end() const { return data + size; }
-    constexpr char operator[](usize i) const {
+    [[nodiscard]] constexpr bool empty() const noexcept { return size == 0; }
+    constexpr char const* begin() const noexcept { return data; }
+    constexpr char const* end() const noexcept { return data + size; }
+    constexpr char operator[](usize i) const noexcept {
         KILN_ASSERT(i < size);
         return data[i];
     }
-    constexpr char front() const {
+    constexpr char front() const noexcept {
         KILN_ASSERT(size > 0);
         return data[0];
     }
-    constexpr char back() const {
+    constexpr char back() const noexcept {
         KILN_ASSERT(size > 0);
         return data[size - 1];
     }
-    constexpr StrView substr(usize off, usize n) const {
+    constexpr StrView substr(usize off, usize n) const noexcept {
         KILN_ASSERT(off <= size);
         return {data + off, min(n, size - off)};
     }
-    constexpr StrView substr(usize off) const {
+    constexpr StrView substr(usize off) const noexcept {
         KILN_ASSERT(off <= size);
         return {data + off, size - off};
     }
-    [[nodiscard]] constexpr bool starts_with(StrView p) const {
+    [[nodiscard]] constexpr bool starts_with(StrView p) const noexcept {
         return size >= p.size && equal_n(data, p.data, p.size);
     }
-    [[nodiscard]] constexpr bool ends_with(StrView p) const {
+    [[nodiscard]] constexpr bool ends_with(StrView p) const noexcept {
         return size >= p.size && equal_n(data + (size - p.size), p.data, p.size);
     }
     /// Index of first occurrence of `c` at or after `from`, or kNpos.
-    constexpr usize find(char c, usize from = 0) const {
+    constexpr usize find(char c, usize from = 0) const noexcept {
         for (usize i = from; i < size; ++i)
             if (data[i] == c) return i;
         return kNpos;
     }
-    constexpr usize rfind(char c) const {
+    constexpr usize rfind(char c) const noexcept {
         for (usize i = size; i-- > 0;)
             if (data[i] == c) return i;
         return kNpos;
     }
-    constexpr Span<char const> bytes() const { return {data, size}; }
+    constexpr Span<char const> bytes() const noexcept { return {data, size}; }
 
     static constexpr usize kNpos = ~usize(0);
 
-    static constexpr usize cstr_len(char const* s) {
+    static constexpr usize cstr_len(char const* s) noexcept {
         usize n = 0;
         while (s[n] != '\0')
             ++n;
         return n;
     }
-    static constexpr bool equal_n(char const* a, char const* b, usize n) {
+    static constexpr bool equal_n(char const* a, char const* b, usize n) noexcept {
         for (usize i = 0; i < n; ++i)
             if (a[i] != b[i]) return false;
         return true;
@@ -378,15 +378,15 @@ template <class Tag> struct Handle {
     u32 index      = 0;
     u32 generation = 0;
 
-    [[nodiscard]] constexpr bool is_null() const { return generation == 0; }
-    [[nodiscard]] constexpr explicit operator bool() const { return !is_null(); }
-    constexpr u64 bits() const { return (u64(generation) << 32) | index; }
-    static constexpr Handle from_bits(u64 b) { return {u32(b), u32(b >> 32)}; }
+    [[nodiscard]] constexpr bool is_null() const noexcept { return generation == 0; }
+    [[nodiscard]] constexpr explicit operator bool() const noexcept { return !is_null(); }
+    constexpr u64 bits() const noexcept { return (u64(generation) << 32) | index; }
+    static constexpr Handle from_bits(u64 b) noexcept { return {u32(b), u32(b >> 32)}; }
 
-    [[nodiscard]] friend constexpr bool operator==(Handle a, Handle b) {
+    [[nodiscard]] friend constexpr bool operator==(Handle a, Handle b) noexcept {
         return a.index == b.index && a.generation == b.generation;
     }
-    [[nodiscard]] friend constexpr bool operator!=(Handle a, Handle b) { return !(a == b); }
+    [[nodiscard]] friend constexpr bool operator!=(Handle a, Handle b) noexcept { return !(a == b); }
 };
 
 /// Non-owning reference to any callable.
@@ -394,22 +394,22 @@ template <class Sig> class FunctionRef;
 
 template <class R, class... Args> class FunctionRef<R(Args...)> {
 public:
-    constexpr FunctionRef() = default;
-    constexpr FunctionRef(std::nullptr_t) {} // NOLINT(google-explicit-constructor)
+    constexpr FunctionRef() noexcept = default;
+    constexpr FunctionRef(std::nullptr_t) noexcept {} // NOLINT(google-explicit-constructor)
 
     /// From a plain function pointer.
-    FunctionRef(R (*fn)(Args...)) // NOLINT(google-explicit-constructor)
+    FunctionRef(R (*fn)(Args...)) noexcept // NOLINT(google-explicit-constructor)
         : obj_(reinterpret_cast<void*>(fn)), thunk_(&fn_thunk) {}
 
     /// From a C-style `fn(user, args...)` pair.
-    constexpr FunctionRef(R (*fn)(void*, Args...), void* user) : obj_(user), thunk_(fn) {}
+    constexpr FunctionRef(R (*fn)(void*, Args...), void* user) noexcept : obj_(user), thunk_(fn) {}
 
     /// From any callable object. The object must outlive the FunctionRef.
     template <class F>
         requires(!std::is_same_v<std::remove_cvref_t<F>, FunctionRef> &&
                  !std::is_function_v<std::remove_pointer_t<std::remove_reference_t<F>>> &&
                  std::is_invocable_r_v<R, F&, Args...>)
-    FunctionRef(F&& f) // NOLINT(google-explicit-constructor)
+    FunctionRef(F&& f) noexcept // NOLINT(google-explicit-constructor)
         : obj_(const_cast<void*>(static_cast<void const*>(&f))),
           thunk_(&obj_thunk<std::remove_reference_t<F>>) {}
 
@@ -417,7 +417,7 @@ public:
         KILN_ASSERT(thunk_ != nullptr);
         return thunk_(obj_, std::forward<Args>(args)...);
     }
-    [[nodiscard]] constexpr explicit operator bool() const { return thunk_ != nullptr; }
+    [[nodiscard]] constexpr explicit operator bool() const noexcept { return thunk_ != nullptr; }
 
 private:
     static R fn_thunk(void* obj, Args... args) {

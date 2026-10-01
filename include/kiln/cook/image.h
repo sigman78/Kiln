@@ -22,9 +22,9 @@ struct Image {
     u32 bitsPerChannel = 0; ///< 8, 16 (native-endian u16) or 32 (f32: HDR, linear, not clamped)
     Vec<u8> pixels;         ///< width * height * channels * (bits / 8) bytes
 
-    u32 bytes_per_pixel() const { return channels * (bitsPerChannel / 8); }
-    u64 row_bytes() const { return u64(width) * bytes_per_pixel(); }
-    u64 byte_size() const { return row_bytes() * height; }
+    u32 bytes_per_pixel() const noexcept { return channels * (bitsPerChannel / 8); }
+    u64 row_bytes() const noexcept { return u64(width) * bytes_per_pixel(); }
+    u64 byte_size() const noexcept { return row_bytes() * height; }
 };
 
 // ---------------------------------------------------------------------------

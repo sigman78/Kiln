@@ -62,15 +62,18 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
   released.
 
 ### Changed
-- **Attributes:** kiln functions are no longer `noexcept`, except copy and move constructors and
-  assignment and `swap` (kiln never throws; kiln containers require nothrow copy and move).
-  `[[nodiscard]]` stays on bool results, on calls that acquire or own something and on lengths where
-  0 means failure; `Status` and `Result<T>` keep it as classes. `constexpr` is gone from
-  `GpuObject::is_null`, `adapter_is_valid`, `GroupStatus::settled`, `IoFile::valid`,
-  `mesh::Records`, `as_bytes`, `as_writable_bytes`, pointer `hash_of` and `FunctionRef`'s pointer
-  and callable constructors and call. Migration: a host that used one of these in a constant
-  expression evaluates it at run time; a host whose function pointer type requires `noexcept` drops
-  it.
+- **Attributes:** kiln free functions and internal code are no longer `noexcept` (kiln never
+  throws). It stays on copy and move constructors and assignment and `swap` (kiln containers require
+  nothrow copy and move), and on members of public classes that cannot throw. It is gone from
+  members that run host or user code: `Ktx2View::open`, `decode_level`, `for_each_key`,
+  `MeshView::open`, `ManifestView::open`, the allocating `Arena` members, `ProfileZone`, `HashMap`
+  lookups and `erase`, `FixedArray::resize`. `[[nodiscard]]` stays on bool results, on calls that
+  acquire or own something and on lengths where 0 means failure; `Status` and `Result<T>` keep it as
+  classes. `constexpr` is gone from `GpuObject::is_null`, `adapter_is_valid`,
+  `GroupStatus::settled`, `IoFile::valid`, `mesh::Records`, `as_bytes`, `as_writable_bytes`, pointer
+  `hash_of` and `FunctionRef`'s pointer and callable constructors and call. Migration: a host that
+  used one of these in a constant expression evaluates it at run time; a host whose function pointer
+  type requires `noexcept` drops it.
 - **Meshes cook with `Meshopt` payload compression by default** (owner, from the measurements in
   docs/design/mesh-compression.md): about half the payload, decoded at about 2.4 GB/s. Every mesh
   store entry cooks again once (its resolved settings changed). Migration: `compression = "none"`

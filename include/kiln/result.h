@@ -36,13 +36,13 @@ struct [[nodiscard]] Status {
     Code code  = Code::Ok;
     u16 detail = 0;
 
-    [[nodiscard]] constexpr bool ok() const { return code == Code::Ok; }
-    [[nodiscard]] constexpr bool failed() const { return code != Code::Ok; }
+    [[nodiscard]] constexpr bool ok() const noexcept { return code == Code::Ok; }
+    [[nodiscard]] constexpr bool failed() const noexcept { return code != Code::Ok; }
 
-    [[nodiscard]] friend constexpr bool operator==(Status a, Status b) {
+    [[nodiscard]] friend constexpr bool operator==(Status a, Status b) noexcept {
         return a.code == b.code && a.detail == b.detail;
     }
-    [[nodiscard]] friend constexpr bool operator!=(Status a, Status b) { return !(a == b); }
+    [[nodiscard]] friend constexpr bool operator!=(Status a, Status b) noexcept { return !(a == b); }
 };
 
 inline constexpr Status kOk{};
@@ -56,10 +56,10 @@ public:
     static_assert(!std::is_reference_v<T>, "Result<T&> is not supported; use Result<T*>");
     static_assert(NothrowStorable<T>, "Result<T> needs T whose copy, move and destruction never throw");
 
-    constexpr Result(Status s) : status_(s) { // NOLINT(google-explicit-constructor)
+    constexpr Result(Status s) noexcept : status_(s) { // NOLINT(google-explicit-constructor)
         KILN_ASSERT(s.failed() && "Result constructed from Ok status without a value");
     }
-    constexpr Result(Code c) : Result(make_status(c)) {} // NOLINT(google-explicit-constructor)
+    constexpr Result(Code c) noexcept : Result(make_status(c)) {} // NOLINT(google-explicit-constructor)
 
     // Not constexpr: placement new is not constant-evaluable before C++26.
     Result(T const& v) noexcept(std::is_nothrow_copy_constructible_v<T>) // NOLINT
@@ -100,30 +100,30 @@ public:
         }
         return *this;
     }
-    ~Result() { destroy(); }
+    ~Result() noexcept { destroy(); }
 
-    [[nodiscard]] constexpr bool ok() const { return status_.ok(); }
-    [[nodiscard]] constexpr bool failed() const { return status_.failed(); }
-    constexpr Status status() const { return status_; }
-    constexpr Code code() const { return status_.code; }
+    [[nodiscard]] constexpr bool ok() const noexcept { return status_.ok(); }
+    [[nodiscard]] constexpr bool failed() const noexcept { return status_.failed(); }
+    constexpr Status status() const noexcept { return status_; }
+    constexpr Code code() const noexcept { return status_.code; }
 
-    T& value() & {
+    T& value() & noexcept {
         KILN_ASSERT(ok());
         return ref();
     }
-    T const& value() const& {
+    T const& value() const& noexcept {
         KILN_ASSERT(ok());
         return ref();
     }
-    T&& value() && {
+    T&& value() && noexcept {
         KILN_ASSERT(ok());
         return std::move(ref());
     }
-    T& operator*() & { return value(); }
-    T const& operator*() const& { return value(); }
-    T&& operator*() && { return std::move(*this).value(); }
-    T* operator->() { return &value(); }
-    T const* operator->() const { return &value(); }
+    T& operator*() & noexcept { return value(); }
+    T const& operator*() const& noexcept { return value(); }
+    T&& operator*() && noexcept { return std::move(*this).value(); }
+    T* operator->() noexcept { return &value(); }
+    T const* operator->() const noexcept { return &value(); }
 
     T value_or(T fallback) const& { return ok() ? ref() : std::move(fallback); }
     T value_or(T fallback) && { return ok() ? std::move(ref()) : std::move(fallback); }
@@ -152,9 +152,9 @@ public:
     template <class F> Result or_else(F&& f) && { return ok() ? std::move(*this) : Result(f(status_)); }
 
 private:
-    T& ref() { return *std::launder(reinterpret_cast<T*>(storage_)); }
-    T const& ref() const { return *std::launder(reinterpret_cast<T const*>(storage_)); }
-    void destroy() {
+    T& ref() noexcept { return *std::launder(reinterpret_cast<T*>(storage_)); }
+    T const& ref() const noexcept { return *std::launder(reinterpret_cast<T const*>(storage_)); }
+    void destroy() noexcept {
         if constexpr (!std::is_trivially_destructible_v<T>) {
             if (ok()) ref().~T();
         }
@@ -167,14 +167,14 @@ private:
 /// Result<void> carries only a Status.
 template <> class Result<void> {
 public:
-    constexpr Result() = default;
-    constexpr Result(Status s) : status_(s) {}            // NOLINT(google-explicit-constructor)
-    constexpr Result(Code c) : status_(make_status(c)) {} // NOLINT(google-explicit-constructor)
+    constexpr Result() noexcept = default;
+    constexpr Result(Status s) noexcept : status_(s) {}            // NOLINT(google-explicit-constructor)
+    constexpr Result(Code c) noexcept : status_(make_status(c)) {} // NOLINT(google-explicit-constructor)
 
-    [[nodiscard]] constexpr bool ok() const { return status_.ok(); }
-    [[nodiscard]] constexpr bool failed() const { return status_.failed(); }
-    constexpr Status status() const { return status_; }
-    constexpr Code code() const { return status_.code; }
+    [[nodiscard]] constexpr bool ok() const noexcept { return status_.ok(); }
+    [[nodiscard]] constexpr bool failed() const noexcept { return status_.failed(); }
+    constexpr Status status() const noexcept { return status_; }
+    constexpr Code code() const noexcept { return status_.code; }
 
     /// f() -> Result<U>; the Status is forwarded on failure.
     template <class F> auto and_then(F&& f) const -> std::invoke_result_t<F> {

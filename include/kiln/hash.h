@@ -234,28 +234,28 @@ inline u32 xxh32(void const* p, usize len, u32 seed = 0) {
 struct Hash128 {
     u8 bytes[16] = {};
 
-    [[nodiscard]] friend bool operator==(Hash128 const& a, Hash128 const& b) {
+    [[nodiscard]] friend bool operator==(Hash128 const& a, Hash128 const& b) noexcept {
         return std::memcmp(a.bytes, b.bytes, sizeof a.bytes) == 0;
     }
-    [[nodiscard]] bool is_zero() const { return *this == Hash128{}; }
+    [[nodiscard]] bool is_zero() const noexcept { return *this == Hash128{}; }
 };
 
 /// Streaming XXH64 for hashing several buffers (settings structs, file chunks).
 class KILN_API Xxh64State {
 public:
-    explicit Xxh64State(u64 seed = 0) { reset(seed); }
-    void reset(u64 seed = 0);
-    void update(void const* data, usize len);
-    void update(Span<u8 const> b) { update(b.data, b.size); }
-    void update(StrView s) { update(s.data, s.size); }
+    explicit Xxh64State(u64 seed = 0) noexcept { reset(seed); }
+    void reset(u64 seed = 0) noexcept;
+    void update(void const* data, usize len) noexcept;
+    void update(Span<u8 const> b) noexcept { update(b.data, b.size); }
+    void update(StrView s) noexcept { update(s.data, s.size); }
     /// Hash one scalar (integer, float, enum, bool). Structs are rejected: their padding
     /// bytes are indeterminate. Hash structs field by field (see docs/design/settings.md).
     template <class T>
         requires(std::is_arithmetic_v<T> || std::is_enum_v<T>)
-    void update_value(T const& v) {
+    void update_value(T const& v) noexcept {
         update(&v, sizeof(T));
     }
-    u64 digest() const;
+    u64 digest() const noexcept;
 
 private:
     u64 acc_[4];
