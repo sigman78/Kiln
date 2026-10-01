@@ -22,29 +22,11 @@
 #
 # This directory is only added when KILN_BUILD_COOK is ON (see root
 # CMakeLists.txt), so a shipping configure (KILN_BUILD_COOK=OFF) never even
-# evaluates this file: no FetchContent network access, no third-party
-# compilation, in a shipping build.
+# evaluates this file. A shipping configure fetches only meshoptimizer, whose
+# codecs kiln_runtime uses (third_party/meshoptimizer.cmake).
 
 include(FetchContent)
 set(FETCHCONTENT_UPDATES_DISCONNECTED ON CACHE BOOL "" FORCE)
-
-# ---------------------------------------------------------------------------
-# meshoptimizer -- pinned to the commit the v1.3 tag resolves to (never a
-# floating branch or bare tag; see docs/design/dependencies.md rules).
-# ---------------------------------------------------------------------------
-# KILN_MESH=OFF (a texture-only cook) fetches nothing: meshoptimizer is used by mesh_cook.cpp only.
-if(KILN_MESH)
-    set(MESHOPT_BUILD_DEMO OFF CACHE BOOL "" FORCE)
-    set(MESHOPT_BUILD_GLTFPACK OFF CACHE BOOL "" FORCE)
-    set(MESHOPT_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
-    set(MESHOPT_INSTALL OFF CACHE BOOL "" FORCE)
-
-    FetchContent_Declare(meshoptimizer
-        GIT_REPOSITORY https://github.com/zeux/meshoptimizer.git
-        GIT_TAG 9e1f07b159d3cb777f1c67ed31fc11fd117986f4 # v1.3
-    )
-    FetchContent_MakeAvailable(meshoptimizer)
-endif()
 
 # ---------------------------------------------------------------------------
 # kiln_third_party_cook -- one static lib for the vendored C dependencies.
@@ -120,12 +102,9 @@ if(KILN_MESH)
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/mikktspace>)
 endif()
 
-# meshoptimizer is linked PUBLIC so kiln_cook picks it up transitively through
-# kiln_third_party_cook (kiln_cook's own link to kiln_third_party_cook is
-# PRIVATE, so this still does not escape kiln_cook's own build).
-if(KILN_MESH)
-    target_link_libraries(kiln_third_party_cook PUBLIC meshoptimizer)
-endif()
+# meshoptimizer (third_party/meshoptimizer.cmake, also kiln_runtime's) is linked PUBLIC so kiln_cook
+# picks it up transitively through kiln_third_party_cook: the .mesh writer encodes with its codecs.
+target_link_libraries(kiln_third_party_cook PUBLIC meshoptimizer)
 
 # ---------------------------------------------------------------------------
 # Install / export.
@@ -146,10 +125,7 @@ endif()
 # installed kiln::cook consumer's include path.
 # ---------------------------------------------------------------------------
 if(KILN_INSTALL)
-    set(_kiln_tp_targets kiln_third_party_cook)
-    if(KILN_MESH)
-        list(APPEND _kiln_tp_targets meshoptimizer)
-    endif()
+    set(_kiln_tp_targets kiln_third_party_cook) # meshoptimizer is in kilnRuntimeTargets
     install(TARGETS ${_kiln_tp_targets}
         EXPORT kilnCookTargets
         COMPONENT cook

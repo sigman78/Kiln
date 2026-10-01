@@ -4,7 +4,6 @@
 #include "formats_internal.h"
 #include "kiln/log.h"
 
-#include "kiln_meshopt_prefix.h" // before meshoptimizer.h: the vendored codec's names
 #include "meshoptimizer.h"
 
 namespace kiln::mesh {

@@ -21,7 +21,9 @@ A product that ships pre-cooked assets links **`kiln_core` + `kiln_runtime` only
   construction when `kiln_cook` is not linked.
 - Third-party code inside `kiln_runtime`: only decoders, built from source (`dependencies.md`).
   Since 2026-09-29 that is zstd's decoder (`kiln_zstd`, for Zstd-supercompressed KTX2), installed
-  with the runtime; meshoptimizer's decoder sources may follow.
+  with the runtime. meshoptimizer joins it for compressed `.mesh` payloads: the runtime links the
+  library, and a static link takes only its codec objects. A shipping configure fetches it unless
+  the host already has a `meshoptimizer` target (v1.3 or newer).
 - `kiln-info` is read-only and links only `kiln_runtime`. It installs with the runtime, but the
   shipping presets do not build tools.
 
