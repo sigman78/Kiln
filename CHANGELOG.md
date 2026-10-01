@@ -12,10 +12,13 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
   `no_crash_dialogs()` (`tools/no_crash_dialogs.h`, target `kiln_no_crash_dialogs`). On Windows a crash,
   `abort()` (`KILN_PANIC`) or a debug CRT assert ends the process with a message and exit code 3 instead
   of a dialog box, so automated runs never hang. The library itself changes no process-wide setting.
-- **`.mesh` payload compression** (docs/design/mesh-compression.md): mesh settings `compression`
-  (`Basic`, `Meshopt`, `MeshoptZstd`) and `zstdLevel`, the same sidecar keys, `kiln-cook
-  --mesh-compression` and `--mesh-zstd`. The runtime decodes every scheme: `kiln_runtime` now links
-  meshoptimizer (v1.3, fetched also by a shipping configure unless the host provides the target). New diagnostic K4024. `kiln-info --bench`. The default stays `None`.
+- **`.mesh` payload compression** (docs/design/mesh-compression.md): mesh settings `compression` (`Basic`,
+  `Meshopt`, `MeshoptZstd`) and `zstdLevel`, the same sidecar keys, `kiln-cook --mesh-compression` and
+  `--mesh-zstd`. The runtime decodes every scheme: `kiln_runtime` now links meshoptimizer (v1.3, fetched
+  also by a shipping configure unless the host provides the target). New diagnostic K4024. `kiln-info
+  --bench`. `DecodeOptions::alloc` gives decoding its allocator (the runtime passes the context's). The
+  reader and `decode_blob()` refuse a blob whose element size breaks meshoptimizer's limits (K4014); the
+  writer takes Zstd for a stride meshopt cannot encode (above 256).
 - **Runtime texture arrays** (docs/design/runtime-texture-arrays.md, first version):
   `request_texture_array(ctx, TextureArrayDesc{name, layers, ...})` assembles separately cooked 2D
   textures into one `TextureShape::Array` texture at load time, with the usual states, events,
