@@ -28,7 +28,7 @@ The notes follow mesh-format-spec draft v0.5 (magic `KMSH`, namespace
 | [shipping-split.md](shipping-split.md) | The read-only shipping contract: the `kiln_runtime` / `kiln_cook` boundary, the `include/kiln/cook/` header split, install components, shipping presets and the shipping CI job |
 | [mesh-cook.md](mesh-cook.md) | The glTF to `.mesh` cooker stage order and its determinism rules |
 | [cook-kernels.md](cook-kernels.md) | Kernel contract for the cooker's hot paths, SIMD rules, row and item splitting, `CookEnv`, rollout order |
-| [mesh-compression.md](mesh-compression.md) | Implemented on a branch 2026-10-01, default awaits the owner: `.mesh` payload compression (Basic, Meshopt, MeshoptZstd) measured on the Pacer and the Khronos models |
+| [mesh-compression.md](mesh-compression.md) | Implemented and decided 2026-10-01 (default `Meshopt`): `.mesh` payload compression (Basic, Meshopt, MeshoptZstd) measured on the Pacer and the Khronos models |
 | [cook-tracing.md](cook-tracing.md) | Implemented 2026-09-30: profiling hooks (`kiln/profile.h`) that report zones and intervals of loads and cooks to the host's profiler; `kiln-cook --trace` and the examples' `KILN_TRACE` write a Chrome trace |
 | [hot-reload.md](hot-reload.md) | M5: store poller in the runtime, source poller in the cook provider, reload swap through a `next` metadata set, `request_reload`, `IoBackend::stat` |
 | [texture-shapes.md](texture-shapes.md) | Cube maps and arrays from one strip image (`shape`, `slices`, name hints), KTX2 pass-through, the shape at the adapter boundary and in `RequestOptions` |

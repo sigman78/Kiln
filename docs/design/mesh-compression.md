@@ -1,7 +1,7 @@
 # `.mesh` payload compression
 
-**Status:** Implemented on branch `mesh-compression` (2026-10-01); the default scheme awaits the
-owner. Measured below.
+**Status:** Implemented 2026-10-01. Decided (owner, 2026-10-01): `Meshopt` is the default.
+Measured below.
 **Decides:** which payload compression scheme the cooker uses by default (mesh-format-spec §5.9,
 §10), and whether blobs need splitting yet (B16).
 
@@ -51,9 +51,9 @@ of 5, payload in cache); write is the mesh's `cook.write` zone summed over the a
   about 1 GB/s. Level 19 gains 1–3% for a 6x slower write.
 - Every scheme decodes the Pacer (the largest asset) in under 7 ms on one thread.
 
-## Proposal
+## Decision and proposals
 
-1. Default `Meshopt`: half the bytes of `None`, decode at about 2.4 GB/s, a cook cost of a few ms.
+1. **Decided:** default `Meshopt`: half the bytes of `None`, decode at about 2.4 GB/s, a cook cost of a few ms.
 2. `MeshoptZstd` (level 3) as the size option for shipping builds, chosen per target or project.
 3. Keep `Basic` readable (the format has it) but stop offering it as a choice, or drop it from the
    settings.

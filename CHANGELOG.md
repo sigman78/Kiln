@@ -54,6 +54,11 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
   released.
 
 ### Changed
+- **Meshes cook with `Meshopt` payload compression by default** (owner, from the measurements in
+  docs/design/mesh-compression.md): about half the payload, decoded at about 2.4 GB/s. Every mesh
+  store entry cooks again once (its resolved settings changed). Migration: `compression = "none"`
+  (sidecar), `--mesh-compression none` or `MeshCookSettings::compression = None` keeps the raw
+  payload (`kPayloadRaw`, one read straight into staging).
 - **A glTF's embedded images cook in parallel** (on the cook's job system, up to `CookEnv::maxThreads`).
   Outputs and keys are as before; only the order of diagnostics between images may differ.
   WaterBottle at `Fast` on all cores: 336 -> 157 ms.

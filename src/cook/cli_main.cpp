@@ -69,7 +69,7 @@ struct Options {
     bool verbose                = false;
     u32 threads                 = 0; ///< cooking threads including the main one; 0 = auto, 1 = no pool
     char const* profile         = "default";
-    char const* meshCompression = "none";
+    char const* meshCompression = nullptr; ///< null: MeshCookSettings's default
     u32 meshZstd                = 0;       ///< 0: kDefaultZstdLevel when the scheme uses Zstd
     char const* targetName      = nullptr; ///< null: compat when cooking, every profile for --export
     char const* quality         = "normal";
@@ -680,7 +680,7 @@ int kiln::cook::cook_cli_main(int argc, char** argv, CookPolicy const& policy, u
          .max    = kMaxZstdLevel},
         {.name    = "--mesh-compression",
          .arg     = "<scheme>",
-         .help    = "mesh payload compression (docs/mesh-format-spec.md 5.9)",
+         .help    = "mesh payload compression (default meshopt; docs/design/mesh-compression.md)",
          .str     = &o.meshCompression,
          .choices = kMeshCompressions},
         {.name   = "--mesh-zstd",
@@ -777,15 +777,16 @@ int kiln::cook::cook_cli_main(int argc, char** argv, CookPolicy const& policy, u
                                                           : EncodeQuality::Normal;
     o.tex.supercompression = o.zstd != 0 ? Supercompression::Zstd : Supercompression::None;
     o.tex.zstdLevel        = u8(o.zstd);
-    o.mesh.compression     = std::strcmp(o.meshCompression, "basic") == 0     ? CompressionScheme::Basic
+    if (o.meshCompression)
+        o.mesh.compression = std::strcmp(o.meshCompression, "basic") == 0     ? CompressionScheme::Basic
                              : std::strcmp(o.meshCompression, "meshopt") == 0 ? CompressionScheme::Meshopt
                              : std::strcmp(o.meshCompression, "meshopt-zstd") == 0
                                  ? CompressionScheme::MeshoptZstd
                                  : CompressionScheme::None;
-    o.mesh.zstdLevel       = u8(o.meshZstd);
-    o.mesh.profile         = std::strcmp(o.profile, "float") == 0     ? VertexProfile::Float
-                             : std::strcmp(o.profile, "precise") == 0 ? VertexProfile::Precise
-                                                                      : VertexProfile::Default;
+    o.mesh.zstdLevel = u8(o.meshZstd);
+    o.mesh.profile   = std::strcmp(o.profile, "float") == 0     ? VertexProfile::Float
+                       : std::strcmp(o.profile, "precise") == 0 ? VertexProfile::Precise
+                                                                : VertexProfile::Default;
 
     Ctx c{
         o, ds, DiagSink{&diag_fn,                                    &ds  },
