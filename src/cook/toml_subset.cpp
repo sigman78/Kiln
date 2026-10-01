@@ -78,7 +78,7 @@ struct Parser {
     }
     void newline() {
         if (at >= s.size) return;
-        at += s[at] == '\r' ? 2 : 1;
+        at += s[at] == '\r' ? 2u : 1u;
         ++line;
     }
 

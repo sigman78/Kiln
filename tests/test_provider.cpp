@@ -855,6 +855,112 @@ KILN_TEST(Provider, PolicyOverridesSidecarAndCanRefuse) {
     KILN_CHECK_EQ(pump_until_settled(tc.ctx, big), State::Failed);
 }
 
+namespace {
+
+void write_text_file(char const* path, char const* text) {
+    replace_file(path, Span<u8 const>(reinterpret_cast<u8 const*>(text), std::strlen(text)));
+}
+
+} // namespace
+
+// ProviderDesc::projectFile: kiln.toml's rules apply to what the provider cooks; an error in the file
+// fails the install.
+KILN_TEST(Provider, ProjectFileSetsSettings) {
+    char root[1024], storeDir[1024], dir[1024], project[1100], path[1100];
+    scratch_dir("provider_project_src", root, sizeof root);
+    scratch_dir("provider_project_store", storeDir, sizeof storeDir);
+    scratch_dir("provider_project_dir", dir, sizeof dir);
+    make_dir(root);
+    make_dir(dir);
+    u8 rgba[4 * 4 * 4];
+    test_pixels(rgba, 9);
+    for (char const* name : {"ui/button.png", "rock.png"}) {
+        format(path, sizeof path, "%s/%s", root, name);
+        if (std::strchr(name, '/')) {
+            char sub[1100];
+            format(sub, sizeof sub, "%s/ui", root);
+            make_dir(sub);
+        }
+        replace_file(path, test_png(rgba).span());
+    }
+    format(project, sizeof project, "%s/kiln.toml", dir);
+    write_text_file(project, "[[texture.rule]]\nmatch = [\"ui/**\"]\ngenMips = false\n");
+
+    Root const roots[] = {
+        {{}, StrView(root)}
+    };
+    TestContext tc;
+    if (!tc.init(StrView(storeDir), Span<Root const>(roots, 1))) return;
+    KILN_REQUIRE(
+        cook::install_provider(tc.ctx, {.storeMode = cook::StoreMode::Memory, .projectFile = project}).ok());
+    TextureHandle const ui   = request_texture(tc.ctx, "ui/button.png");
+    TextureHandle const rock = request_texture(tc.ctx, "rock.png");
+    KILN_REQUIRE_EQ(pump_until_settled(tc.ctx, ui), State::Ready);
+    KILN_REQUIRE_EQ(pump_until_settled(tc.ctx, rock), State::Ready);
+    KILN_CHECK_EQ(texture_info(tc.ctx, ui).desc.levels, 1u);
+    KILN_CHECK_EQ(texture_info(tc.ctx, rock).desc.levels, 3u);
+    cook::uninstall_provider(tc.ctx);
+
+    write_text_file(project, "[texture]\nnoSuchKey = 1\n");
+    KILN_CHECK(cook::install_provider(tc.ctx, {.storeMode = cook::StoreMode::Memory, .projectFile = project})
+                   .failed());
+}
+
+#if defined(KILN_HOT_RELOAD) && KILN_HOT_RELOAD
+// With both pollers on, an edit to kiln.toml cooks the assets it changes again and the runtime
+// reloads them; an edit with errors keeps the previous project.
+KILN_TEST(Provider, ProjectEditReloads) {
+    char root[1024], storeDir[1024], dir[1024], project[1100], path[1100];
+    scratch_dir("provider_project_watch_src", root, sizeof root);
+    scratch_dir("provider_project_watch_store", storeDir, sizeof storeDir);
+    scratch_dir("provider_project_watch_dir", dir, sizeof dir);
+    make_dir(root);
+    make_dir(dir);
+    u8 rgba[4 * 4 * 4];
+    test_pixels(rgba, 11);
+    format(path, sizeof path, "%s/tile.png", root);
+    replace_file(path, test_png(rgba).span());
+    format(project, sizeof project, "%s/kiln.toml", dir);
+    write_text_file(project, "[texture]\ngenMips = false\n");
+
+    Root const roots[] = {
+        {{}, StrView(root)}
+    };
+    TestContext tc;
+    if (!tc.init(StrView(storeDir), Span<Root const>(roots, 1), {}, {.watchStore = true, .pollMs = 20}))
+        return;
+    cook::ProviderDesc desc = kWatchDesc;
+    desc.projectFile        = project;
+    KILN_REQUIRE(cook::install_provider(tc.ctx, desc).ok());
+    TextureHandle const tex = request_texture(tc.ctx, "tile.png");
+    KILN_REQUIRE_EQ(pump_until_settled(tc.ctx, tex), State::Ready);
+    KILN_CHECK_EQ(texture_info(tc.ctx, tex).desc.levels, 1u);
+
+    auto pump_for_ms = [&](int ms) {
+        for (int i = 0; i < ms / 10; ++i) {
+            pump(tc.ctx, {});
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+    };
+    std::this_thread::sleep_for(std::chrono::milliseconds(50)); // past file-time granularity
+    write_text_file(project, "[texture]\ngenMips = maybe\n");   // an error: nothing changes
+    pump_for_ms(300);
+    KILN_CHECK_EQ(texture_info(tc.ctx, tex).version, 1u);
+
+    write_text_file(project, "[texture]\ngenMips = true\n");
+    bool reloaded = false;
+    for (int i = 0; i < 500 && !reloaded; ++i) {
+        pump(tc.ctx, {});
+        reloaded = texture_info(tc.ctx, tex).version > 1;
+        if (!reloaded) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    cook::uninstall_provider(tc.ctx);
+    if (!KILN_CHECK_MSG(reloaded, "the texture did not reload after kiln.toml changed")) return;
+    KILN_CHECK_EQ(texture_info(tc.ctx, tex).desc.levels, 3u);
+    release(tc.ctx, tex);
+}
+#endif
+
 // A project cook tool is cook_cli_main plus its policy.
 KILN_TEST(Provider, CliMainAppliesThePolicy) {
     char root[1024], storeDir[1024];

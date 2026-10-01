@@ -18,6 +18,7 @@
 
 #include "kiln/cook/cook.h"
 #include "kiln/cook/image.h"
+#include "kiln/cook/project.h"
 #include "kiln/io.h"
 #include "kiln/log.h"
 
@@ -40,6 +41,21 @@ constexpr usize kSourceLockStripes = 64;
 /// A cook on a request rewrites the manifest at most this often.
 constexpr u32 kCommitIntervalMs = 1000;
 
+/// The project and the host digest it gives. Requests hold a reference while they cook, so the
+/// poller can swap in an edited project (docs/design/project-config.md §6).
+struct ProjectVersion {
+    Allocator const* alloc = nullptr;
+    Project* project       = nullptr; ///< null: no project file
+    u64 hostDigest         = 0;       ///< host_digest() of the desc with this project
+    std::atomic<u32> refs{1};         ///< the provider's own reference while it is current
+};
+
+void release_version(ProjectVersion* v) {
+    if (!v || v->refs.fetch_sub(1, std::memory_order_acq_rel) != 1) return;
+    free_project(v->project);
+    delete_object(v->alloc, v, Tag::Cook);
+}
+
 /// Allocated once by install_provider(); its settings are immutable once published.
 struct Provider {
     ProviderDesc desc;
@@ -57,7 +73,10 @@ struct Provider {
 
     // Disk mode: the store writer for the profile (it holds the store lock). Null in Memory mode.
     ManifestStore* store = nullptr;
-    u64 hostDigest       = 0; ///< host_digest() of desc
+
+    Vec<char> projectPath; ///< owned copy of desc.projectFile, NUL-terminated; empty: none
+    std::mutex versionMutex;
+    ProjectVersion* version = nullptr; ///< current; swapped by the poller under versionMutex
 
     std::mutex sourceLocks[kSourceLockStripes];
 
@@ -68,7 +87,22 @@ struct Provider {
 
     explicit Provider(Allocator const* a)
         : storeDirBuf(a, Tag::Cook), rootsBuf(a, Tag::Cook), roots(a, Tag::Cook), ruleStrings(a, Tag::Cook),
-          nameRules(a, Tag::Cook), alloc(a) {}
+          nameRules(a, Tag::Cook), alloc(a), projectPath(a, Tag::Cook) {}
+
+    /// The current version with a reference the caller releases (release_version).
+    ProjectVersion* acquire_version() {
+        std::lock_guard<std::mutex> const lock(versionMutex);
+        version->refs.fetch_add(1, std::memory_order_relaxed);
+        return version;
+    }
+    /// RAII for acquire_version().
+    struct VersionRef {
+        ProjectVersion* v;
+        explicit VersionRef(Provider& p) : v(p.acquire_version()) {}
+        VersionRef(VersionRef const&)            = delete;
+        VersionRef& operator=(VersionRef const&) = delete;
+        ~VersionRef() { release_version(v); }
+    };
 };
 
 // Context* -> Provider* registry, under registry_mutex().
@@ -133,8 +167,8 @@ Status find_source(Provider const& p, StrView owner, FoundSource& out, DiagSink 
 }
 
 /// The unit of the source `sourcePath`, named `name` (a mesh, or a texture of its own).
-UnitDesc unit_desc(Provider const& p, AssetKind kind, StrView name, StrView sourcePath,
-                   Allocator const* alloc, DiagSink const* diag) {
+UnitDesc unit_desc(Provider const& p, ProjectVersion const& v, AssetKind kind, StrView name,
+                   StrView sourcePath, Allocator const* alloc, DiagSink const* diag) {
     return UnitDesc{
         .kind            = kind,
         .name            = name,
@@ -142,6 +176,7 @@ UnitDesc unit_desc(Provider const& p, AssetKind kind, StrView name, StrView sour
         .meshDefaults    = &p.desc.meshDefaults,
         .textureDefaults = &p.desc.textureDefaults,
         .nameRules       = Span<NameRule const>(p.nameRules.data(), p.nameRules.size()),
+        .project         = v.project,
         .policy          = p.desc.policy,
         .target          = &p.desc.target,
         .session         = p.session,
@@ -182,11 +217,11 @@ Status resolve_request(Provider const& p, AssetKind kind, StrView name, UnitRequ
 // ---------------------------------------------------------------------------
 
 /// Cooks a unit and, with a store, publishes it and rewrites the manifest. `unit` keeps the outputs.
-Status cook_and_publish(Provider& p, UnitDesc d, DiagSink const* diag, CookUnit* unit) {
+Status cook_and_publish(Provider& p, u64 hostDigest, UnitDesc d, DiagSink const* diag, CookUnit* unit) {
     d.statInputs = true;
     KILN_TRY(cook_unit(d, unit));
     if (!p.store) return kOk;
-    KILN_TRY(publish_unit(p.store, *unit, p.hostDigest, diag));
+    KILN_TRY(publish_unit(p.store, *unit, hostDigest, diag));
     // The entry is in memory and `prepare` answers from it. Rewriting the manifest at most once a
     // second keeps a first session's many misses from rewriting it per cook; the poller and
     // release write the rest. A failed rewrite is retried later.
@@ -203,17 +238,18 @@ Status provider_prepare(void* user, AssetKind kind, StrView name, PrepareMode mo
     StrView const sourcePath = r.source_path();
     // One check or cook per source at a time: a mesh and its images often arrive together.
     std::lock_guard<std::mutex> const lock(source_lock(*p, sourcePath));
-    UnitDesc const d = unit_desc(*p, r.unitKind, r.owner, sourcePath, alloc, diag);
+    Provider::VersionRef const ref(*p);
+    UnitDesc const d = unit_desc(*p, *ref.v, r.unitKind, r.owner, sourcePath, alloc, diag);
 
     // Recheck: the host saw a change the session's earlier check cannot know of.
     bool const fresh = p->store && mode == PrepareMode::Normal && is_fresh(p->store, r.owner);
-    if (p->store && (fresh || record_is_current(p->store, d, p->hostDigest, false))) {
+    if (p->store && (fresh || record_is_current(p->store, d, ref.v->hostDigest, false))) {
         mark_fresh(p->store, r.owner, sourcePath);
         if (manifest_find(p->store, kind, name, key)) return kOk;
         // Fresh, but without this output (an image that failed): cook again and report why.
     }
     CookUnit unit(alloc);
-    KILN_TRY(cook_and_publish(*p, d, diag, &unit));
+    KILN_TRY(cook_and_publish(*p, ref.v->hostDigest, d, diag, &unit));
     UnitOutput* o = unit.find(kind, name);
     if (!o) return make_status(Code::NotFound);
     if (o->status.failed()) return o->status;
@@ -260,10 +296,59 @@ u64 inputs_digest(CookUnit const& rec, StrView sourcePath) {
     return h.digest();
 }
 
-/// Re-cooks every fresh unit whose inputs changed, then rewrites the manifest once.
-/// False when asked to stop.
-bool poll_round(Provider* p, Vec<char>& units, HashMap<u64, FailedUnit>& failed) {
+/// The project file as the poller last saw it.
+struct ProjectWatch {
+    bool present  = false;
+    IoStat stat   = {};
+    bool reported = false; ///< its last load failed and was logged; wait for the next change
+    bool init     = false;
+};
+
+/// Loads the project file again when its size or time changed, and makes it current. True when it
+/// was swapped in: every unit is then checked against the new settings.
+bool poll_project(Provider* p, ProjectWatch& w) {
+    if (p->projectPath.empty()) return false;
+    StrView const path(p->projectPath.data(), p->projectPath.size() - 1);
+    IoStat now{};
+    bool const present = stat_file(path, &now).ok();
+    bool const changed =
+        !w.init || present != w.present || now.size != w.stat.size || now.mtimeNs != w.stat.mtimeNs;
+    bool const first = !w.init;
+    w.init           = true;
+    w.present        = present;
+    w.stat           = now;
+    if (!changed || first) return false;
+    LogDiag logDiag;
+    DiagSink const sink{&LogDiag::fn, &logDiag};
+    Result<Project*> const loaded = load_project({.path = path}, p->alloc, &sink);
+    if (loaded.failed()) {
+        if (!w.reported)
+            KILN_ERROR("cook", "%.*s has errors; the previous project stays in use", KILN_SV(path));
+        w.reported = true;
+        return false;
+    }
+    w.reported = false;
+    auto* v    = new_object<ProjectVersion>(p->alloc, Tag::Cook);
+    v->alloc   = p->alloc;
+    v->project = *loaded;
+    v->hostDigest =
+        host_digest(unit_desc(*p, *v, AssetKind::Mesh, {}, {}, p->alloc, nullptr), p->desc.policyVersion);
+    ProjectVersion* old = nullptr;
+    {
+        std::lock_guard<std::mutex> const lock(p->versionMutex);
+        old        = p->version;
+        p->version = v;
+    }
+    release_version(old);
+    KILN_INFO("cook", "reloaded %.*s", KILN_SV(path));
+    return true;
+}
+
+/// Re-cooks every fresh unit whose inputs changed (with `recheckAll`, also those whose settings
+/// changed), then rewrites the manifest once. False when asked to stop.
+bool poll_round(Provider* p, Vec<char>& units, HashMap<u64, FailedUnit>& failed, bool recheckAll) {
     fresh_units(p->store, &units);
+    Provider::VersionRef const ref(*p);
     CookUnit rec(p->alloc);
     for (usize at = 0; at < units.size();) {
         if (p->stopping.load()) return false;
@@ -276,20 +361,26 @@ bool poll_round(Provider* p, Vec<char>& units, HashMap<u64, FailedUnit>& failed)
             continue;
         InputsCheck const inputs = check_recorded_inputs(rec, sourcePath);
         if (inputs == InputsCheck::Touched) set_record_stats(p->store, name, rec);
-        if (inputs != InputsCheck::Changed) continue;
+        if (inputs != InputsCheck::Changed) {
+            // A new project: the record check resolves the unit again and compares its keys.
+            if (!recheckAll) continue;
+            UnitDesc const check =
+                unit_desc(*p, *ref.v, rec.outputs[0].kind, name, sourcePath, p->alloc, nullptr);
+            if (record_is_current(p->store, check, ref.v->hostDigest, false)) continue;
+        }
         u64 const now          = inputs_digest(rec, sourcePath);
         FailedUnit const* last = failed.find(hash_name(name));
-        if (last && !last->retry && last->inputs == now) continue;
+        if (last && !last->retry && last->inputs == now && !recheckAll) continue;
 
         std::lock_guard<std::mutex> const lock(source_lock(*p, sourcePath));
         LogDiag logDiag;
         logDiag.quiet = last && last->inputs == now;
         DiagSink const sink{&LogDiag::fn, &logDiag};
         CookUnit unit(p->alloc);
-        UnitDesc d   = unit_desc(*p, rec.outputs[0].kind, name, sourcePath, p->alloc, &sink);
+        UnitDesc d   = unit_desc(*p, *ref.v, rec.outputs[0].kind, name, sourcePath, p->alloc, &sink);
         d.statInputs = true;
         Status s     = cook_unit(d, &unit);
-        if (s.ok()) s = publish_unit(p->store, unit, p->hostDigest, &sink);
+        if (s.ok()) s = publish_unit(p->store, unit, ref.v->hostDigest, &sink);
         if (s.ok()) {
             failed.erase(hash_name(name));
             if (Status const images = unit.first_failure(); images.failed())
@@ -317,13 +408,16 @@ void poller_main(Provider* p) {
     Vec<char> units(p->alloc, Tag::Cook);
     HashMap<u64, FailedUnit> failed(p->alloc, Tag::Cook);
     auto const period = std::chrono::milliseconds(p->desc.pollMs > 0 ? p->desc.pollMs : 1u);
+    ProjectWatch project;
+    (void)poll_project(p, project); // the file as install_provider() loaded it
 
     for (;;) {
         {
             std::unique_lock<std::mutex> lock(p->pollMutex);
             if (p->pollWake.wait_for(lock, period, [p] { return p->stopping.load(); })) return;
         }
-        if (!poll_round(p, units, failed)) return;
+        bool const recheck = poll_project(p, project);
+        if (!poll_round(p, units, failed, recheck)) return;
     }
 }
 
@@ -396,6 +490,7 @@ void provider_release(void* user) {
         if (Provider** found = registry().find(p->ctx); found && *found == p) registry().erase(p->ctx);
     }
     stop_poller(p); // joined before anything it reads is freed
+    release_version(p->version);
     if (p->store) {
         if (Status const st = commit_manifest(p->store, nullptr); st.failed())
             KILN_WARN("cook", "cannot rewrite the manifest (%s)", code_name(st.code));
@@ -483,13 +578,31 @@ Status install_provider(Context* ctx, ProviderDesc const& desc) {
                      "the context reads profile '%.*s'; the provider cooks for '%.*s'", KILN_SV(profile),
                      KILN_SV(effective.target.name));
     }
-    p->hostDigest =
-        host_digest(unit_desc(*p, AssetKind::Mesh, {}, {}, alloc, nullptr), effective.policyVersion);
+    // The project file: loaded here, so an error fails the install; the poller reloads it.
+    Project* project = nullptr;
+    if (!effective.projectFile.empty()) {
+        p->projectPath.resize(effective.projectFile.size + 1);
+        std::memcpy(p->projectPath.data(), effective.projectFile.data, effective.projectFile.size);
+        p->projectPath[effective.projectFile.size] = '\0';
+        Result<Project*> const loaded = load_project({.path = effective.projectFile}, alloc, diag_sink(ctx));
+        if (loaded.failed()) {
+            delete_object(alloc, p, Tag::Cook);
+            return loaded.status();
+        }
+        project = *loaded;
+    }
+    p->desc.projectFile    = {}; // the host's string may not outlive install_provider
+    p->version             = new_object<ProjectVersion>(alloc, Tag::Cook);
+    p->version->alloc      = alloc;
+    p->version->project    = project;
+    p->version->hostDigest = host_digest(unit_desc(*p, *p->version, AssetKind::Mesh, {}, {}, alloc, nullptr),
+                                         effective.policyVersion);
     if (effective.storeMode == StoreMode::Disk) {
         Status const opened = open_manifest_store(
             {.storeDir = p->storeDir, .target = &p->desc.target, .alloc = alloc, .diag = diag_sink(ctx)},
             &p->store);
         if (opened.failed()) {
+            release_version(p->version);
             delete_object(alloc, p, Tag::Cook);
             return opened;
         }

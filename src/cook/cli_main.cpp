@@ -80,6 +80,8 @@ struct Options {
     char const* quality         = nullptr;
     u32 zstd                    = kNotGiven; ///< 0: texture levels stay plain
     bool projectRoots           = false;     ///< the roots came from kiln.toml
+    char const* projectFile     = nullptr;   ///< the project file in use, if any
+    char projectOverrides[1024] = {};        ///< the flags as layer 3d (load_cli_project)
     MeshCookSettings mesh;
     TextureCookSettings tex;
     TargetProfile target;
@@ -312,6 +314,15 @@ void failed_paths(char const* path, CookUnit const& unit, Vec<char>& out) {
         if (in.role == InputRole::Buffer) add(unit.str(in.pathOff, in.pathLen));
 }
 
+/// Owns the loaded project for the rest of cook_cli_main.
+struct ProjectHolder {
+    Project* p                                     = nullptr;
+    ProjectHolder()                                = default;
+    ProjectHolder(ProjectHolder const&)            = delete;
+    ProjectHolder& operator=(ProjectHolder const&) = delete;
+    ~ProjectHolder() { free_project(p); }
+};
+
 struct Ctx {
     Options const& opt;
     DiagState& ds;
@@ -323,7 +334,10 @@ struct Ctx {
     ProfileHooks const* profile = nullptr; ///< --trace
     CookPolicy policy           = {};
     ManifestStore* store        = nullptr; ///< the store writer; null with --check
-    Project const* project      = nullptr; ///< kiln.toml and the flags (layers 3a to 3d)
+    ProjectHolder* project      = nullptr; ///< kiln.toml and the flags (layers 3a to 3d)
+    u32 policyVersion           = 0;
+    IoStat projectStat          = {}; ///< --watch: the project file as last loaded
+    bool projectPresent         = false;
     u64 hostDigest              = 0;
     char const* defaultRootDir  = nullptr;                ///< the default root of this run, if one is known
     Vec<char> scanned{default_allocator(), Tag::General}; ///< inputs scanned this round, NUL-separated
@@ -415,7 +429,7 @@ void cook_file(Ctx& c, char const* path, char const* root) {
         .meshDefaults    = &c.opt.mesh,
         .textureDefaults = &c.opt.tex,
         .nameRules       = kDefaultNameRules,
-        .project         = c.project,
+        .project         = c.project->p,
         .policy          = c.policy,
         .target          = &c.opt.target,
         .session         = c.session,
@@ -565,6 +579,42 @@ void print_gc(void* user, StrView file, u64 bytes) {
 
 /// --watch: cooks what changed or appeared, twice a second, until the timeout (or forever). Each
 /// round writes the manifest once, so an app with a store poller reloads the round together.
+/// What every unit's record is checked against: target, defaults, policy, project and flags.
+u64 cli_host_digest(Ctx const& c) {
+    UnitDesc const host{.meshDefaults    = &c.opt.mesh,
+                        .textureDefaults = &c.opt.tex,
+                        .nameRules       = kDefaultNameRules,
+                        .project         = c.project->p,
+                        .policy          = c.policy,
+                        .target          = &c.opt.target,
+                        .session         = c.session};
+    return host_digest(host, c.policyVersion);
+}
+
+/// --watch: loads the project file again when it changed. The next scan then checks every unit
+/// against the new settings; an edit with errors keeps the previous project.
+void reload_project(Ctx& c) {
+    if (!c.opt.projectFile) return;
+    StrView const path(c.opt.projectFile);
+    IoStat now{};
+    bool const present = stat_file(path, &now).ok();
+    if (present == c.projectPresent && now.size == c.projectStat.size && now.mtimeNs == c.projectStat.mtimeNs)
+        return;
+    c.projectPresent = present;
+    c.projectStat    = now;
+    Result<Project*> const loaded =
+        load_project({.path = path, .overrides = StrView(c.opt.projectOverrides)}, nullptr, &c.sink);
+    if (loaded.failed()) {
+        std::fprintf(stderr, "kiln-cook: %s has errors; the previous project stays in use\n",
+                     c.opt.projectFile);
+        return;
+    }
+    free_project(c.project->p);
+    c.project->p = *loaded;
+    c.hostDigest = cli_host_digest(c);
+    if (!c.opt.quiet) std::printf("watch: reloaded %s\n", c.opt.projectFile);
+}
+
 void watch_inputs(Ctx& c) {
     auto const start = std::chrono::steady_clock::now();
     c.rescan         = true;
@@ -575,6 +625,7 @@ void watch_inputs(Ctx& c) {
             std::chrono::steady_clock::now() - start >= std::chrono::seconds(c.opt.timeoutS))
             return;
         u32 const cooked = c.cooked, failed = c.failed;
+        reload_project(c);
         cook_inputs(c);
         if (Status const st = commit_manifest(c.store, &c.sink); st.failed())
             std::fprintf(stderr, "kiln-cook: cannot write the manifest (%s); retrying\n", code_name(st.code));
@@ -626,15 +677,6 @@ bool add_root(void* user, char const* arg) {
     return true;
 }
 
-/// Owns the loaded project for the rest of cook_cli_main.
-struct ProjectHolder {
-    Project* p                                     = nullptr;
-    ProjectHolder()                                = default;
-    ProjectHolder(ProjectHolder const&)            = delete;
-    ProjectHolder& operator=(ProjectHolder const&) = delete;
-    ~ProjectHolder() { free_project(p); }
-};
-
 /// The setting flags as layer 3d (they beat kiln.toml, sidecars beat them): only the ones given.
 void flag_overrides(Options const& o, bool noTangents, bool noOptimize, bool noMips, bool noLods, char* out,
                     usize cap) {
@@ -657,9 +699,10 @@ void flag_overrides(Options const& o, bool noTangents, bool noOptimize, bool noM
 /// left open from [roots] and [project]: flags win, and any --root replaces the whole table.
 bool load_cli_project(Options& o, bool noTangents, bool noOptimize, bool noMips, bool noLods,
                       DiagSink const* sink, ProjectHolder* out) {
-    char overrides[1024];
-    flag_overrides(o, noTangents, noOptimize, noMips, noLods, overrides, sizeof overrides);
+    char* overrides = o.projectOverrides;
+    flag_overrides(o, noTangents, noOptimize, noMips, noLods, overrides, sizeof o.projectOverrides);
     char const* path = o.project ? o.project : file_exists("kiln.toml") ? "kiln.toml" : nullptr;
+    o.projectFile    = path;
     Result<Project*> const loaded =
         load_project({.path = StrView(path ? path : ""), .overrides = StrView(overrides)}, nullptr, sink);
     if (loaded.failed()) {
@@ -848,8 +891,10 @@ int kiln::cook::cook_cli_main(int argc, char** argv, CookPolicy const& policy, u
         o, ds, DiagSink{&diag_fn,                                    &ds  },
           CookSession{o.check ? StoreMode::None : StoreMode::Disk, false}
     };
-    c.policy  = policy;
-    c.project = project.p;
+    c.policy        = policy;
+    c.project       = &project;
+    c.policyVersion = policyVersion;
+    if (o.projectFile) c.projectPresent = stat_file(StrView(o.projectFile), &c.projectStat).ok();
     if (o.map && !o.check) {
         c.map = std::fopen(o.map, "ab");
         if (!c.map) {
@@ -929,14 +974,7 @@ int kiln::cook::cook_cli_main(int argc, char** argv, CookPolicy const& policy, u
             used.push_back(Root{StrView(r.name), StrView(r.dir)});
         record_store_roots(c.store, used.span());
 
-        UnitDesc const host{.meshDefaults    = &o.mesh,
-                            .textureDefaults = &o.tex,
-                            .nameRules       = kDefaultNameRules,
-                            .project         = project.p,
-                            .policy          = policy,
-                            .target          = &o.target,
-                            .session         = c.session};
-        c.hostDigest = host_digest(host, policyVersion);
+        c.hostDigest = cli_host_digest(c);
     }
 
     cli::TraceWriter trace;

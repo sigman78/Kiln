@@ -30,6 +30,11 @@ struct ProviderDesc {
     /// they change (docs/design/hot-reload.md). The runtime's store poller then reloads them.
     bool watchSources = false;
     u32 pollMs        = 250;
+    /// The project file (kiln.toml, docs/design/project-config.md): settings layers 3a to 3c between
+    /// the defaults above and sidecars. Its [roots] and [project] tables are not used here. An error
+    /// in it fails install_provider. With `watchSources`, an edit is loaded again and the assets it
+    /// changes cook again; an edit with errors keeps the previous project. Empty: none.
+    StrView projectFile = {};
 };
 
 /// Register the provider. The source of `root:path` is `<dir of root>/path`; the extension
