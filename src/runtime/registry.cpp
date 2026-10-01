@@ -203,13 +203,26 @@ void free_array_decl(Allocator const* a, ArrayDecl* d) {
 }
 
 void adopt_job_keys(Slot& s) {
-    s.key      = s.jobKey;
-    s.keyValid = s.jobKeyValid;
+    s.key            = s.jobKey;
+    s.keyValid       = s.jobKeyValid;
+    s.failedKeyValid = false;
     if (!s.array) return;
     for (u32 i = 0; i < s.array->count; ++i) {
-        ArrayLayer& l = s.array->layers[i];
-        l.key         = l.jobKey;
-        l.keyValid    = l.jobKeyValid;
+        ArrayLayer& l    = s.array->layers[i];
+        l.key            = l.jobKey;
+        l.keyValid       = l.jobKeyValid;
+        l.failedKeyValid = false;
+    }
+}
+
+void remember_failed_keys(Slot& s) {
+    s.failedKey      = s.jobKey;
+    s.failedKeyValid = s.jobKeyValid;
+    if (!s.array) return;
+    for (u32 i = 0; i < s.array->count; ++i) {
+        ArrayLayer& l    = s.array->layers[i];
+        l.failedKey      = l.jobKey;
+        l.failedKeyValid = l.jobKeyValid;
     }
 }
 

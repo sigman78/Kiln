@@ -53,8 +53,10 @@ Not goals for v1:
   from a glTF Mask material); channel packing (for example ORM from separate images).
 - **Project settings:** config files, presets, path rules, target encodings and
   `kiln-cook --explain` ([`cook-settings.md`](cook-settings.md); file format: open question 7).
-- **Fuller dependency tracking for hot reload.** Texture arrays need it too: a changed member
-  must reach the arrays that contain it.
+- **Dependency tracking for hot reload** (done 2026-10-01). A changed layer reloads the arrays that
+  contain it, and a failed reload no longer repeats on every manifest change (open-questions R13).
+  kiln follows no references between assets (`design/asset-model-next.md`); config files and packed
+  textures add their inputs to the cook records when they land.
 
 ## v0.8: streaming
 

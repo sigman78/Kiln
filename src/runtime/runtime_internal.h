@@ -100,6 +100,8 @@ struct ArrayLayer {
     u32 nameLen = 0;
     Hash128 key;           ///< the artifact the settled load used
     bool keyValid = false; ///< false: none (a miss, provider bytes, not loaded yet)
+    Hash128 failedKey;     ///< the artifact a failed reload of a Ready array tried
+    bool failedKeyValid = false;
     Hash128 jobKey;
     bool jobKeyValid = false;
     Vec<u8> cooked; ///< cook provider output
@@ -170,15 +172,16 @@ struct Slot {
     u32 pathLen            = 0;
     Hash128 jobKey;                  ///< the artifact to load, from the manifest at dispatch or the provider
     bool jobKeyValid        = false; ///< false: the name missed the manifest
-    bool jobManifestPresent = false;
+    bool jobManifestPresent = false; ///< Context::manifestPresent at dispatch
     bool jobRecheck         = false; ///< the provider checks the sources again (PrepareMode::Recheck)
-    bool recheck = false; ///< pump thread: request_reload() asked for it; the next load takes it ///<
-                          ///< Context::manifestPresent at dispatch
+    bool recheck            = false; ///< pump thread: request_reload() asked for it; the next load takes it
 
     // --- keys (pump thread) ---------------------------------------------------------
     bool manifestCheck = false; ///< a new manifest came during the load: compare keys when it settles
     Hash128 key;                ///< the build key `cur` came from, or that a failed load tried
     bool keyValid = false;      ///< false: no artifact (provider bytes, a miss) or not loaded
+    Hash128 failedKey;          ///< the build key a failed reload of a Ready slot tried
+    bool failedKeyValid = false;
 
     // --- metadata (docs/design/hot-reload.md) ----------------------------------------
     // Queries answer from `cur` once Ready. The meta stage (worker) writes only `next`;
@@ -333,6 +336,8 @@ void free_array_decl(Allocator const* a, ArrayDecl* d);
 void free_array_job_data(Allocator const* a, ArrayDecl& d);
 /// A load settled or failed: the artifacts it used become the ones later manifest checks compare.
 void adopt_job_keys(Slot& s);
+/// A reload of a Ready slot failed: later manifest checks skip the artifacts it tried.
+void remember_failed_keys(Slot& s);
 void free_slot(Context* ctx, Slot& s);
 /// kiln no longer uses `obj` (may be null) and bindless slot `bindSlot` (may be kInvalid):
 /// released now if the host reported no frame that may still use them, else in process_retired().

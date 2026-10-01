@@ -38,7 +38,8 @@ store (K3009).
   binds a bindless slot to the new object, releases the old object after the host's frames that
   used it (`adapter-frames-slots.md`) and emits `Changed`. The first load uses the same path: `next` is filled, then swapped in with `Ready`.
 - **A failed reload changes nothing** except one Error diagnostic (K5010) and the `next` set being
-  discarded. A `Failed` asset that reloads successfully becomes `Ready` with `Ready` (not
+  discarded. The slot remembers the artifacts the failed attempt tried, so the store poller reloads
+  it only for an entry that neither the loaded version nor the failed attempt used. A `Failed` asset that reloads successfully becomes `Ready` with `Ready` (not
   `Changed`); one that fails again stays `Failed` and emits `Failed` with the new status.
 - Reload never emits `MetaReady` and never touches the handle generation. A reload of a `Ready`
   asset never touches load group counters (the group already counted it); a `Failed` asset that

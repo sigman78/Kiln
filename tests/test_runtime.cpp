@@ -1494,6 +1494,44 @@ KILN_TEST(Runtime, StorePollerDetectsChange) {
     KILN_CHECK_EQ(rt.diags.count, 0u);
     release(rt.ctx, m);
 }
+
+/// Pumps for about `ms` milliseconds while the store poller runs.
+void pump_for(Rt& rt, int ms) {
+    for (int i = 0; i < ms / 5; ++i) {
+        rt.pump_once();
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+}
+
+// After a failed reload, a change to another asset's entry does not reload this one again
+// (open-questions R13); a new entry for it does.
+KILN_TEST(Runtime, StorePollerSkipsFailedKey) {
+    ReloadStore store;
+    if (!store.init("poller_failed")) return;
+    KILN_REQUIRE(put_golden(store, "mesh/Box", ".mesh"));
+    Vec<u8> other(default_allocator(), Tag::Test);
+    KILN_REQUIRE(read_golden("mesh/MultiUVTest", ".mesh", other));
+
+    Rt rt;
+    ContextDesc cd;
+    cd.storeDir  = store.dir;
+    cd.hotReload = {.watchStore = true, .pollMs = 20};
+    if (!rt.init({}, cd)) return;
+    MeshHandle m = request_mesh(rt.ctx, "mesh/thing");
+    KILN_REQUIRE(rt.pump_until([&] { return is_ready(rt.ctx, m); }));
+
+    KILN_REQUIRE(put_garbage(store));
+    KILN_REQUIRE(rt.pump_until([&] { return rt.diags.has(kDiagReloadFailed); }));
+    KILN_REQUIRE(store.hand.put("mesh/other", AssetKind::Mesh, other.span()));
+    pump_for(rt, 200);
+    KILN_CHECK_EQ(count_code(rt.diags, kDiagReloadFailed), 1u);
+
+    usize const ev0 = rt.events.size();
+    KILN_REQUIRE(put_golden(store, "mesh/MultiUVTest", ".mesh"));
+    KILN_REQUIRE(rt.pump_until([&] { return rt.find_event(EventKind::Changed, m.bits(), ev0) >= 0; }));
+    KILN_CHECK_EQ(version(rt.ctx, m), 2u);
+    release(rt.ctx, m);
+}
 #endif
 
 KILN_TEST(RuntimePanic, WaitOffThread) {
@@ -2170,6 +2208,32 @@ KILN_TEST(Runtime, TextureArrayStorePoller) {
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
     KILN_CHECK_EQ(count_events(rt, EventKind::Changed, t.bits(), ev1), 0u);
+    release(rt.ctx, t);
+}
+
+// After a failed reload, an array reloads only for a layer entry that neither the loaded array nor
+// the failed attempt used (open-questions R13).
+KILN_TEST(Runtime, TextureArrayStorePollerSkipsFailedKey) {
+    ArrayStore store;
+    if (!store.init("arrays_poller_failed")) return;
+    Rt rt;
+    ContextDesc cd;
+    cd.storeDir  = StrView(store.hand.dir());
+    cd.hotReload = {.watchStore = true, .pollMs = 20};
+    if (!rt.init({}, cd)) return;
+    TextureHandle const t = request_array(rt, "arr/ab", {"tex/a", "tex/b"});
+    KILN_REQUIRE(rt.pump_until([&] { return is_ready(rt.ctx, t); }));
+
+    KILN_REQUIRE(store.hand.put("tex/b", AssetKind::Texture, store.zstd.span()));
+    KILN_REQUIRE(rt.pump_until([&] { return rt.diags.has(kDiagReloadFailed); }));
+    KILN_REQUIRE(store.hand.put("tex/other", AssetKind::Texture, store.plain.span()));
+    pump_for(rt, 200);
+    KILN_CHECK_EQ(count_code(rt.diags, kDiagReloadFailed), 1u);
+
+    usize const ev0 = rt.events.size();
+    KILN_REQUIRE(store.hand.put("tex/b", AssetKind::Texture, store.plain.span()));
+    KILN_REQUIRE(rt.pump_until([&] { return rt.find_event(EventKind::Changed, t.bits(), ev0) >= 0; }));
+    check_layer_uploaded(rt, t, 1, store.plain.span(), "b after the failed reload");
     release(rt.ctx, t);
 }
 #endif

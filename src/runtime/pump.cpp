@@ -62,6 +62,7 @@ void fail_reload(Context* ctx, Slot& s, u32 code, Status st) {
     orphan_upload(ctx, s);
     s.reloading = false;
     s.phase     = Phase::Done;
+    remember_failed_keys(s);
     free_meta_set(ctx->alloc, s.next);
     s.cooked.release();
     s.cookedValid = false;
@@ -109,13 +110,26 @@ void fail_slot(Context* ctx, Slot& s, u32 code, Status st) {
     settle(ctx, s);
 }
 
+namespace {
+
+/// An entry is new to a slot or layer if neither its loaded version nor a failed reload used it.
+bool key_is_new(Hash128 const& entry, bool keyValid, Hash128 const& key, bool failedValid,
+                Hash128 const& failed) {
+    return !(keyValid && key == entry) && !(failedValid && failed == entry);
+}
+
+} // namespace
+
 bool manifest_names_other(Context const* ctx, Slot const& s) {
     ManifestEntry e;
     if (!ctx->manifestPresent) return false;
-    if (!s.array) return ctx->manifest.find(s.kind, path_of(s), &e) && !(s.keyValid && s.key == e.key);
+    if (!s.array)
+        return ctx->manifest.find(s.kind, path_of(s), &e) &&
+               key_is_new(e.key, s.keyValid, s.key, s.failedKeyValid, s.failedKey);
     for (u32 i = 0; i < s.array->count; ++i) {
         ArrayLayer const& l = s.array->layers[i];
-        if (ctx->manifest.find(AssetKind::Texture, s.array->name(l), &e) && !(l.keyValid && l.key == e.key))
+        if (ctx->manifest.find(AssetKind::Texture, s.array->name(l), &e) &&
+            key_is_new(e.key, l.keyValid, l.key, l.failedKeyValid, l.failedKey))
             return true;
     }
     return false;

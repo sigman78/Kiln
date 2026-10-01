@@ -60,6 +60,10 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
   It now decodes into its scratch buffer and copies (warm `kiln-gl`, six uploads: 276 -> 26 ms).
 - `destroy()` leaked the declaration (layer names and table) of a texture array the host had not
   released.
+- **A failed reload repeated on every manifest change** (open-questions R13): after a failed reload,
+  each later manifest change, even to another asset, loaded the asset again and logged K5010 again (an
+  array re-read every layer). The store poller now reloads it only for an entry that neither the loaded
+  version nor the failed attempt used.
 
 ### Changed
 - **Attributes:** kiln free functions and internal code are no longer `noexcept` (kiln never
