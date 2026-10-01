@@ -33,6 +33,9 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
   `ProviderDesc::maxQuality` sets it for the cook provider.
 
 ### Fixed
+- **Zstd texture uploads were about 10x slower than needed:** the upload job decoded straight into the
+  adapter's staging memory, which is write-combined on GL and Vulkan, and Zstd reads its output back.
+  It now decodes into its scratch buffer and copies (warm `kiln-gl`, six uploads: 276 -> 26 ms).
 - `destroy()` leaked the declaration (layer names and table) of a texture array the host had not
   released.
 

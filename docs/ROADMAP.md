@@ -46,8 +46,8 @@ Not goals for v1:
 - **RDO** for BC textures (deferred from the BC rollout).
 - **Profiling hooks** ([`design/cook-tracing.md`](design/cook-tracing.md); done 2026-09-30): zones and
   intervals into the host's profiler; `kiln-cook --trace` and `KILN_TRACE` write a Chrome trace.
-  Follow-ups from the first traces: a glTF's images cook in parallel (done 2026-09-30); the upload
-  job's time (up to 100 ms per 2048² texture); parallel PNG decode.
+  Follow-ups from the first traces: a glTF's images cook in parallel and Zstd uploads decode into
+  scratch memory, 10x faster (both done 2026-09-30); parallel PNG decode is left.
 - **`.mesh` payload compression.** Implement the candidate schemes (Zstd + byte shuffle,
   meshopt, both), measure ratio and decode MB/s on real assets, pick a default. Settle the
   split-blob rules (mesh-format-spec §10, open-questions B16).

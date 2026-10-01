@@ -523,20 +523,19 @@ Status write_level(Context* ctx, Slot& s, Source const& src, LevelCopy const& c,
         from = sc.scratch.data();
     }
     if (c.zstd) {
-        // Straight into the adapter's memory unless its rows are padded.
-        u8* texels = out;
-        if (!direct) {
-            sc.texels.resize(usize(c.tLen));
-            texels = sc.texels.data();
-        }
-        if (!sc.zstd.decode(Span<u8 const>(from, usize(c.sLen)), Span<u8>(texels, usize(c.tLen)))) {
+        // Never straight into the adapter's memory: staging is often write-combined, and Zstd reads
+        // its output back for matches (cook-tracing.md, "First findings").
+        sc.texels.resize(usize(c.tLen));
+        if (!sc.zstd.decode(Span<u8 const>(from, usize(c.sLen)), sc.texels.span())) {
             DiagSink const sink{&capture_fn, &s.capture};
             return diagf(&sink, make_status(Code::Corrupt), ktx2::kDiagKtxLevelDecode, Severity::Error,
                          c.input, "levelIndex", "level %u does not decode: %s", c.level, sc.zstd.error());
         }
-        from = texels;
+        from = sc.texels.data();
     }
-    if (!direct)
+    if (direct)
+        std::memcpy(out, from, usize(c.tLen));
+    else
         for (u64 r = 0; r < rows; ++r) {
             u8* row = out + r * c.pitch;
             std::memcpy(row, from + r * c.rowBytes, usize(c.rowBytes));

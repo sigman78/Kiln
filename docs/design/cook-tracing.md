@@ -58,6 +58,12 @@ plot. kiln does not depend on Tracy.
 `kiln-cook --trace` on WaterBottle at `Fast`, after the `bc7f` change: `cook.decode` 144 ms for four
 2048² PNGs (up to 52 ms each, one thread), `cook.write` 78 ms, `cook.encode` 45 ms. The four images
 of one glTF cook one after another inside one `cook.unit`. A cold `kiln-gl` showed `kiln.upload` up
-to 100 ms per texture. The cheap next steps are therefore parallel PNG decode, cooking a glTF's
-images in parallel, and a look at the upload job (a guess to check: Zstd decoding straight into
-write-combined staging memory, which Zstd reads back for its matches).
+to 100 ms per texture. Both are fixed:
+
+- A glTF's images now cook in parallel: WaterBottle at `Fast` on all cores, 336 → 157 ms.
+- The upload job decoded Zstd straight into the adapter's staging memory. That memory is
+  write-combined on GL and Vulkan, and Zstd reads its output back for its matches. Decoding into
+  the job's scratch buffer and copying cut a warm `kiln-gl` run's six uploads from 276 to 26 ms
+  (Zstd 272 → 16 ms, plus 2 ms of copying); `kiln-vk-basic` 280 → 28 ms.
+
+Parallel PNG decode is left: wuffs decodes one PNG as one stream.
