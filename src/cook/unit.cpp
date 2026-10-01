@@ -1,9 +1,12 @@
 // One cook of one source file, with a record of every input it read (unit.h).
 #include "unit.h"
 
+#include "parallel.h"
+
 #include "kiln/cook/sidecar.h"
 
 #include <cerrno>
+#include <mutex>
 
 #if defined(KILN_OS_WINDOWS)
 #include <windows.h> // GetFileAttributesExW; WIN32_LEAN_AND_MEAN/NOMINMAX set by kiln_apply_defaults
@@ -123,6 +126,78 @@ Status cook_one_texture(UnitDesc const& d, CookUnit& u, Span<u8 const> bytes, St
     return kOk;
 }
 
+/// One embedded image of a mesh unit, cooked on a worker: the inputs are set before, the outputs
+/// read after the parallel_for.
+struct ImageJob {
+    TextureRef const* ref = nullptr;
+    Result<TextureCookSettings> settings{make_status(Code::Unknown)};
+    Result<CookedTexture> cooked{make_status(Code::Unknown)};
+};
+
+/// The images' diagnostics, one at a time: the host's sink need not be thread-safe.
+struct LockedDiag {
+    DiagSink const* inner = nullptr;
+    std::mutex mutex;
+    static void fn(void* user, Diagnostic const& d) {
+        auto* l = static_cast<LockedDiag*>(user);
+        std::lock_guard<std::mutex> const lock(l->mutex);
+        emit(l->inner, d);
+    }
+};
+
+struct ImageRun {
+    UnitDesc const* d = nullptr;
+    CookEnv env;
+    ImageJob* jobs = nullptr;
+};
+
+void cook_images(void* user, u32 begin, u32 end) noexcept {
+    ImageRun const& r = *static_cast<ImageRun const*>(user);
+    for (u32 i = begin; i < end; ++i) {
+        ImageJob& j = r.jobs[i];
+        if (j.settings.failed()) continue;
+        j.cooked = cook_texture(
+            {.bytes = j.ref->embedded, .assetPath = j.ref->assetPath, .sourcePath = r.d->sourcePath},
+            *j.settings, *r.d->target, r.env);
+    }
+}
+
+/// Cooks a mesh's embedded images in parallel. Outputs keep the order of `refs`, so the unit is the
+/// same as a serial cook's; only the order of diagnostics between images may differ.
+void cook_embedded_images(UnitDesc const& d, CookUnit& u, Span<TextureRef const> refs,
+                          Allocator const* alloc) noexcept {
+    Vec<ImageJob> jobs(alloc, Tag::Cook);
+    for (TextureRef const& t : refs) {
+        if (t.embedded.empty()) continue;
+        ImageJob& j = jobs.emplace_back();
+        j.ref       = &t;
+        Layers layers;
+        Status const st = prepare_layers(d, u, t.assetPath, t.slot, false, alloc, &layers);
+        j.settings      = st.ok() ? resolve_texture_layers(*d.textureDefaults, layers.desc)
+                                  : Result<TextureCookSettings>(st);
+    }
+    LockedDiag locked{d.env.diag, {}};
+    DiagSink const sink{&LockedDiag::fn, &locked};
+    ImageRun run{&d, d.env, jobs.data()};
+    run.env.diag = d.env.diag ? &sink : nullptr;
+    parallel_for(d.env.jobs, alloc, u32(jobs.size()), 1, &cook_images, &run, d.env.maxThreads);
+    for (ImageJob& j : jobs) {
+        UnitOutput& o = add_output(u, AssetKind::Texture, j.ref->assetPath, j.ref->slot);
+        if (j.settings.failed()) {
+            o.status = j.settings.status();
+            continue;
+        }
+        if (j.cooked.failed()) {
+            o.status = j.cooked.status();
+            continue;
+        }
+        o.settingsHash = hash_settings(*j.settings);
+        o.key          = output_key(d, u, AssetKind::Texture, j.ref->assetPath, o.settingsHash);
+        o.bytes        = std::move(j.cooked->file);
+        o.stats        = j.cooked->stats;
+    }
+}
+
 struct ResolverCtx {
     UnitDesc const* d = nullptr;
     CookUnit* u       = nullptr;
@@ -162,8 +237,7 @@ Status cook_mesh_unit(UnitDesc const& d, CookUnit& u, Span<u8 const> bytes, Allo
     mesh.bytes        = std::move(r->file);
     mesh.stats        = r->stats;
 
-    for (TextureRef const& t : r->textures)
-        if (!t.embedded.empty()) (void)cook_one_texture(d, u, t.embedded, t.assetPath, t.slot, false, alloc);
+    cook_embedded_images(d, u, r->textures.span(), alloc);
     return kOk;
 }
 

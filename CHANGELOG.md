@@ -37,6 +37,9 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
   released.
 
 ### Changed
+- **A glTF's embedded images cook in parallel** (on the cook's job system, up to `CookEnv::maxThreads`).
+  Outputs and keys are as before; only the order of diagnostics between images may differ.
+  WaterBottle at `Fast` on all cores: 336 -> 157 ms.
 - **BC7 `Fast` and `Normal` use Basis Universal's `bc7f`** (extracted into `third_party/basis_bc7f`,
   Apache-2.0): `Fast` the default flags, `Normal` the extended search. `High` keeps `bc7enc`. A
   WaterBottle cook at `Fast` is 5x faster on one thread, `Normal` 1.7x. `kCookerVersion` is 6, so
