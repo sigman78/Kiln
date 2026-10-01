@@ -481,11 +481,12 @@ Status write_mesh(Context* ctx, Slot& s, Source const& src, u8* dst) noexcept {
         KILN_TRY(src.read(h.gpuDataOffset, h.gpuDataSize, encoded.data()));
         gpud = encoded.span();
     }
-    if (v.payload_raw()) return mesh::decode_payload(v, gpud, out, {}, &sink, nullptr, name);
+    mesh::DecodeOptions const dopt{.alloc = ctx->alloc};
+    if (v.payload_raw()) return mesh::decode_payload(v, gpud, out, dopt, &sink, nullptr, name);
     // Never straight into the adapter's memory: Zstd reads its output back (as in write_level).
     Vec<u8> decoded(ctx->alloc, Tag::Io);
     decoded.resize(out.size);
-    KILN_TRY(mesh::decode_payload(v, gpud, decoded.span(), {}, &sink, nullptr, name));
+    KILN_TRY(mesh::decode_payload(v, gpud, decoded.span(), dopt, &sink, nullptr, name));
     if (out.size) std::memcpy(out.data, decoded.data(), out.size);
     return kOk;
 }

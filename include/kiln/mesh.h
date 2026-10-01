@@ -284,6 +284,17 @@ static_assert(sizeof(PayloadBlob) == 32);
 [[nodiscard]] constexpr bool is_meshopt_codec(Codec c) noexcept {
     return c == Codec::MeshoptVertex || c == Codec::MeshoptIndex || c == Codec::MeshoptIndexSeq;
 }
+/// Why `elementSize` cannot go to the codec or filter (meshoptimizer's limits), or nullptr when it can.
+[[nodiscard]] constexpr char const* blob_element_problem(Codec c, Filter f, u32 elementSize) noexcept {
+    if (c == Codec::MeshoptVertex && (elementSize % 4 != 0 || elementSize > 256))
+        return "MeshoptVertex needs an element size that is a multiple of 4, at most 256";
+    if ((c == Codec::MeshoptIndex || c == Codec::MeshoptIndexSeq) && elementSize != 2 && elementSize != 4)
+        return "the meshopt index codecs need 2- or 4-byte indices";
+    if (f == Filter::MeshoptOct && elementSize != 4 && elementSize != 8)
+        return "MeshoptOct needs 4- or 8-byte elements";
+    if (f == Filter::MeshoptQuat && elementSize != 8) return "MeshoptQuat needs 8-byte elements";
+    return nullptr; // MeshoptExp only follows MeshoptVertex, whose limit it shares
+}
 
 // ===========================================================================
 // Diagnostic codes (K4000-K4999: .mesh / KTX2 validation). See docs/diagnostics.md.
@@ -449,13 +460,15 @@ private:
 // ===========================================================================
 
 struct DecodeOptions {
-    bool verifyChecksums = KILN_DEBUG != 0; ///< check PayloadBlob.checksum when non-zero
+    bool verifyChecksums   = KILN_DEBUG != 0; ///< check PayloadBlob.checksum when non-zero
+    Allocator const* alloc = nullptr;         ///< the Zstd context and intermediates; nullptr = default
 };
 
 /// Decode one blob: `encoded` is exactly the blob's encoded range, `dst` exactly
 /// blob.decodedSize bytes. Supports every codec, ByteShuffle and the meshopt filters; Delta
 /// returns Unsupported (spec §10). Zstd reads its output back: give it CPU memory, not
-/// write-combined staging. `scratch` is unused; intermediates come from the default allocator.
+/// write-combined staging. `scratch` is unused; intermediates come from `opt.alloc`. The blob is
+/// checked (codec, filter, element size) before anything decodes.
 KILN_API Status decode_blob(PayloadBlob const& blob, Span<u8 const> encoded, Span<u8> dst,
                             DecodeOptions const& opt = {}, DiagSink const* diag = nullptr,
                             Arena* scratch = nullptr, StrView assetName = {}) noexcept;

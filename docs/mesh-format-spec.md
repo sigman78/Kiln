@@ -555,7 +555,7 @@ In practice steps 1 and 2 can be merged by reading the first 64 KB speculatively
 - stream and index ranges are inside the decoded payload (`payloadDecodedSize`)
 - `BLOB` is present; entries are sorted by `encodedOffset` with non-decreasing `lodRank`; encoded ranges lie inside `GPUD` and don't overlap; decoded ranges don't overlap and cover every range `LODS` references (`Corrupt`)
 - encoded and decoded offsets are 16-B aligned; `elementSize` is non-zero and `decodedSize` is a multiple of it (of 3 × index size for `MeshoptIndex`) (`ValidationFailed`)
-- codec and filter IDs are known and supported (`Unsupported` otherwise); the codec/filter pair is allowed, `kBlobOuterZstd` appears only with `Meshopt*` codecs, and U8 index blobs use only `None` or `Zstd` (`ValidationFailed`)
+- codec and filter IDs are known and supported (`Unsupported` otherwise); the codec/filter pair is allowed, `kBlobOuterZstd` appears only with `Meshopt*` codecs, `elementSize` fits meshoptimizer's limits (`MeshoptVertex`: a multiple of 4, at most 256; `MeshoptIndex`/`MeshoptIndexSeq`: 2 or 4; `MeshoptOct`: 4 or 8; `MeshoptQuat`: 8; meshoptimizer only asserts them), and U8 index blobs use only `None` or `Zstd` (`ValidationFailed`)
 - with `kPayloadRaw`, every blob meets the identity conditions of §5.9 (`Corrupt`)
 - decoders produce exactly `decodedSize` bytes, never more or less (`Corrupt`)
 - if `checksum != 0`, the decoded bytes match it (tools and debug builds)

@@ -802,3 +802,131 @@ KILN_TEST(Mesh, WriteSampleFiles) {
     KILN_REQUIRE(!padded.empty());
     write_sample_file(dir, "sample_padded.mesh", padded.span());
 }
+
+// ---------------------------------------------------------------------------
+// Payload compression: meshoptimizer's limits, wide strides, the decode allocator
+// ---------------------------------------------------------------------------
+
+namespace {
+
+/// The first blob of `v` with codec `c` and element size `size`, or false.
+bool find_blob(MeshView const& v, Codec c, u32 size, PayloadBlob* out) {
+    for (u32 i = 0; i < v.blobs().size(); ++i)
+        if (Codec(v.blobs()[i].codec) == c && v.blobs()[i].elementSize == size) {
+            *out = v.blobs()[i];
+            return true;
+        }
+    return false;
+}
+
+struct CountingAllocator {
+    u32 allocs = 0;
+    Allocator a{&CountingAllocator::alloc_fn, &CountingAllocator::free_fn, this};
+    static void* alloc_fn(void* user, usize size, usize align, Tag tag) {
+        ++static_cast<CountingAllocator*>(user)->allocs;
+        return kiln::alloc(default_allocator(), size, align, tag);
+    }
+    static void free_fn(void*, void* ptr, usize size, usize align, Tag tag) {
+        kiln::free(default_allocator(), ptr, size, align, tag);
+    }
+};
+
+} // namespace
+
+// meshoptimizer only asserts its size limits: a blob that breaks one fails validation in decode_blob() and in
+// MeshView::open(), before any decoder runs.
+KILN_TEST(Mesh, BlobElementLimits) {
+    TestMesh m;
+    Vec<u8> bytes      = write_ok(m.desc(), {.compression = cook::CompressionScheme::Meshopt});
+    Result<MeshView> v = open_bytes(bytes);
+    KILN_REQUIRE(v.ok());
+    PayloadBlob good;
+    KILN_REQUIRE(find_blob(*v, Codec::None, 16, &good)); // hull LOD0 stream 1 (pattern data: stored as it is)
+    Span<u8 const> const encoded = v->encoded().subspan(good.encodedOffset, good.encodedSize);
+
+    struct Case {
+        char const* what;
+        u8 codec, filter;
+        u16 elementSize;
+        u32 decodedSize;
+    };
+    Case const cases[] = {
+        {"Quat on 16-byte elements",      u8(Codec::MeshoptVertex), u8(Filter::MeshoptQuat), 16,  good.decodedSize},
+        {"Oct on 16-byte elements",       u8(Codec::MeshoptVertex), u8(Filter::MeshoptOct),  16,  good.decodedSize},
+        {"a 260-byte vertex",             u8(Codec::MeshoptVertex), u8(Filter::None),        260, 260             },
+        {"a 6-byte vertex",               u8(Codec::MeshoptVertex), u8(Filter::None),        6,   12              },
+        {"3-byte indices",                u8(Codec::MeshoptIndex),  u8(Filter::None),        3,   9               },
+        {"indices that are no triangles", u8(Codec::MeshoptIndex),  u8(Filter::None),        2,   8               },
+    };
+    for (Case const& c : cases) {
+        PayloadBlob bad = good;
+        bad.codec       = c.codec;
+        bad.filter      = c.filter;
+        bad.elementSize = c.elementSize;
+        bad.decodedSize = c.decodedSize;
+        Vec<u8> dst(nullptr, Tag::Test);
+        dst.resize(c.decodedSize);
+        Status const st = decode_blob(bad, encoded, dst.span());
+        KILN_CHECK_MSG(st.code == Code::ValidationFailed, "%s: %s", c.what, code_name(st.code));
+    }
+
+    // That blob record in the file as MeshoptVertex with filter Quat: open() refuses the file.
+    Vec<u8> tampered(nullptr, Tag::Test);
+    tampered.resize(bytes.size());
+    std::memcpy(tampered.data(), bytes.data(), bytes.size());
+    u8 record[sizeof(PayloadBlob)];
+    std::memcpy(record, &good, sizeof record);
+    usize at = 0;
+    while (at + sizeof record <= tampered.size() &&
+           std::memcmp(tampered.data() + at, record, sizeof record) != 0)
+        at += 4;
+    KILN_REQUIRE(at + sizeof record <= tampered.size());
+    PayloadBlob bad = good;
+    bad.codec       = u8(Codec::MeshoptVertex);
+    bad.filter      = u8(Filter::MeshoptQuat);
+    std::memcpy(tampered.data() + at, &bad, sizeof bad);
+    DiagCapture cap;
+    DiagSink sink       = cap.sink();
+    Result<MeshView> rv = open_bytes(tampered, {}, &sink);
+    KILN_CHECK(rv.code() == Code::ValidationFailed);
+    KILN_CHECK_EQ(cap.code, u32(kDiagBlobEncoding));
+}
+
+// A stride meshopt cannot take (above 256) is encoded with Zstd instead, and decodes to the input.
+KILN_TEST(Mesh, WideStrideFallsBackToZstd) {
+    TestMesh m;
+    m.layouts[1].strides[1] = 260;
+    fill_pattern(m.streams[2][1], 9 * 260, 6);
+    m.lods[2].streams[1] = cspan(m.streams[2][1]);
+    for (cook::CompressionScheme scheme :
+         {cook::CompressionScheme::Meshopt, cook::CompressionScheme::MeshoptZstd}) {
+        Vec<u8> bytes      = write_ok(m.desc(), {.compression = scheme});
+        Result<MeshView> v = open_bytes(bytes);
+        KILN_REQUIRE(v.ok());
+        PayloadBlob b;
+        KILN_CHECK(!find_blob(*v, Codec::MeshoptVertex, 260, &b));
+        KILN_REQUIRE(find_blob(*v, Codec::Zstd, 260, &b) || find_blob(*v, Codec::None, 260, &b));
+        Vec<u8> dst(nullptr, Tag::Test); // indices may come back rotated (MeshoptIndex): compare the stream
+        dst.resize(usize(v->decoded_size()));
+        KILN_REQUIRE(decode_payload(*v, v->encoded(), dst.span(), {.verifyChecksums = true}).ok());
+        KILN_CHECK(std::memcmp(dst.data() + b.decodedOffset, m.streams[2][1].data(), 9 * 260) == 0);
+    }
+}
+
+// Decoding takes its Zstd context and intermediates from DecodeOptions::alloc.
+KILN_TEST(Mesh, DecodeUsesTheGivenAllocator) {
+    TestMesh m;
+    Vec<u8> bytes      = write_ok(m.desc(), {.compression = cook::CompressionScheme::Basic});
+    Result<MeshView> v = open_bytes(bytes);
+    KILN_REQUIRE(v.ok());
+    Vec<u8> dst(nullptr, Tag::Test);
+    dst.resize(usize(v->decoded_size()));
+    CountingAllocator counting;
+    u64 const io0 = default_alloc_stats(Tag::Io).allocCount;
+    KILN_REQUIRE(
+        decode_payload(*v, v->encoded(), dst.span(), {.verifyChecksums = true, .alloc = &counting.a}).ok());
+    KILN_CHECK(counting.allocs > 0);
+    KILN_CHECK_EQ(default_alloc_stats(Tag::Io).allocCount,
+                  io0 + counting.allocs); // all of it, and only through it
+    check_payload_matches(*v, m);
+}

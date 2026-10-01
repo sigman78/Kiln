@@ -206,14 +206,16 @@ struct Encoder {
         Codec codec   = Codec::Zstd;
         Filter filter = Filter::None;
         u16 flags     = 0;
-        if (meshopt && !index) {
+        // meshopt only where its limits allow (a stride above 256 takes the Zstd path).
+        if (meshopt && !index && !blob_element_problem(Codec::MeshoptVertex, Filter::None, u32(size))) {
             inner.resize(meshopt_encodeVertexBufferBound(count, size));
             usize const m =
                 meshopt_encodeVertexBufferLevel(inner.data(), inner.size(), b.src, count, size, 2, 1);
             if (m == 0) return false;
             inner.resize(m);
             codec = Codec::MeshoptVertex;
-        } else if (meshopt && size != 1 && count % 3 == 0) {
+        } else if (meshopt && index && !blob_element_problem(Codec::MeshoptIndex, Filter::None, u32(size)) &&
+                   count % 3 == 0) {
             inner.resize(meshopt_encodeIndexBufferBound(count, size == 2 ? usize(1) << 16 : usize(1) << 31));
             usize const m = size == 2 ? meshopt_encodeIndexBuffer(inner.data(), inner.size(),
                                                                   reinterpret_cast<u16 const*>(b.src), count)

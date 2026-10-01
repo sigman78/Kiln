@@ -173,9 +173,9 @@ Status validate_blobs(Ctx& ctx, FileHeader const& h, Records<PayloadBlob> const&
         if ((b.decodedSize % unit) != 0)
             KILN_MESH_FAIL(ctx, ValidationFailed, kDiagBlobEncoding,
                            "blob %u: decodedSize %u not a multiple of %u", i, b.decodedSize, unit);
-        if (b.elementSize == 1 && is_meshopt_codec(c))
-            KILN_MESH_FAIL(ctx, ValidationFailed, kDiagBlobEncoding,
-                           "blob %u: U8 indices with a meshopt codec", i);
+        if (char const* why = blob_element_problem(c, f, b.elementSize))
+            KILN_MESH_FAIL(ctx, ValidationFailed, kDiagBlobEncoding, "blob %u: element size %u: %s", i,
+                           unsigned(b.elementSize), why);
         if (h.flags & kPayloadRaw) {
             if (c != Codec::None || f != Filter::None || b.flags != 0 || b.encodedOffset != b.decodedOffset ||
                 b.encodedSize != b.decodedSize)
@@ -503,9 +503,12 @@ namespace {
 
 /// What decoding a payload's blobs reuses: the Zstd context and two buffers.
 struct BlobDecoder {
-    fmt::ZstdDecoder zstd{default_allocator()};
-    Vec<u8> inner{default_allocator(), Tag::Io};    ///< outer Zstd output
-    Vec<u8> shuffled{default_allocator(), Tag::Io}; ///< ByteShuffle input
+    explicit BlobDecoder(Allocator const* a) noexcept
+        : zstd(a ? a : default_allocator()), inner(a ? a : default_allocator(), Tag::Io),
+          shuffled(a ? a : default_allocator(), Tag::Io) {}
+    fmt::ZstdDecoder zstd;
+    Vec<u8> inner;    ///< outer Zstd output
+    Vec<u8> shuffled; ///< ByteShuffle input
 };
 
 /// ByteShuffle undone: byte b of element i is at src[b * count + i].
@@ -524,10 +527,26 @@ Status decode_one(PayloadBlob const& blob, Span<u8 const> encoded, Span<u8> dst,
         KILN_MESH_FAIL(ctx, InvalidArgument, kDiagDecodeSize, "encoded span is %llu bytes, blob says %u",
                        static_cast<unsigned long long>(encoded.size), blob.encodedSize);
 
-    Codec const c     = Codec(blob.codec);
-    Filter const f    = Filter(blob.filter);
+    // decode_blob() may get a blob that MeshView::open never saw: meshoptimizer's limits are only asserts.
+    if (blob.codec > kKnownCodecMax || blob.filter > kKnownFilterMax)
+        KILN_MESH_FAIL(ctx, Unsupported, kDiagBlobUnsupported, "unknown codec %u / filter %u",
+                       unsigned(blob.codec), unsigned(blob.filter));
+    Codec const c  = Codec(blob.codec);
+    Filter const f = Filter(blob.filter);
+    if (!is_allowed_blob_encoding(c, f) || ((blob.flags & kBlobOuterZstd) && !is_meshopt_codec(c)) ||
+        (blob.flags & ~u16(kBlobOuterZstd)) || blob.elementSize == 0 || dst.size % blob.elementSize != 0)
+        KILN_MESH_FAIL(ctx, ValidationFailed, kDiagBlobEncoding,
+                       "codec %s, filter %s, flags 0x%x, element size %u", codec_name(c), filter_name(f),
+                       unsigned(blob.flags), unsigned(blob.elementSize));
+    if (char const* why = blob_element_problem(c, f, blob.elementSize))
+        KILN_MESH_FAIL(ctx, ValidationFailed, kDiagBlobEncoding, "element size %u: %s",
+                       unsigned(blob.elementSize), why);
     usize const size  = blob.elementSize;
-    usize const count = size ? dst.size / size : 0;
+    usize const count = dst.size / size;
+    if (c == Codec::MeshoptIndex && count % 3 != 0)
+        KILN_MESH_FAIL(ctx, ValidationFailed, kDiagBlobEncoding,
+                       "MeshoptIndex: %llu indices, not whole triangles",
+                       static_cast<unsigned long long>(count));
     if (f == Filter::Delta)
         KILN_MESH_FAIL(ctx, Unsupported, kDiagBlobUnsupported,
                        "filter Delta is not specified (spec section 10)");
@@ -599,7 +618,7 @@ Status decode_one(PayloadBlob const& blob, Span<u8 const> encoded, Span<u8> dst,
 Status decode_blob(PayloadBlob const& blob, Span<u8 const> encoded, Span<u8> dst, DecodeOptions const& opt,
                    DiagSink const* diag, Arena* /*scratch*/, StrView assetName) noexcept {
     Ctx ctx{diag, assetName};
-    BlobDecoder d;
+    BlobDecoder d(opt.alloc);
     return decode_one(blob, encoded, dst, opt, ctx, d);
 }
 
@@ -635,7 +654,7 @@ Status decode_payload(MeshView const& v, Span<u8 const> gpud, Span<u8> dst, Deco
     // General path: zero-fill everything (covers the gaps), then decode blob by blob.
     (void)scratch;
     if (h.payloadDecodedSize) std::memset(dst.data, 0, h.payloadDecodedSize);
-    BlobDecoder d;
+    BlobDecoder d(opt.alloc);
     for (u32 i = 0; i < v.blobs().size(); ++i) {
         PayloadBlob const& b = v.blobs()[i];
         KILN_TRY(decode_one(b, gpud.subspan(b.encodedOffset, b.encodedSize),
