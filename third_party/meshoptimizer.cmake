@@ -6,6 +6,7 @@
 
 if(TARGET meshoptimizer)
     set(KILN_OWNS_MESHOPTIMIZER OFF)
+    set_property(TARGET meshoptimizer PROPERTY SYSTEM TRUE) # its header stays out of kiln's warning set
     return()
 endif()
 set(KILN_OWNS_MESHOPTIMIZER ON)
@@ -21,3 +22,4 @@ FetchContent_Declare(meshoptimizer
     GIT_TAG 9e1f07b159d3cb777f1c67ed31fc11fd117986f4 # v1.3
 )
 FetchContent_MakeAvailable(meshoptimizer)
+set_property(TARGET meshoptimizer PROPERTY SYSTEM TRUE) # its header stays out of kiln's warning set
