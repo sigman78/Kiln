@@ -6,6 +6,7 @@
 
 #include "cook_internal.h"
 #include "project_internal.h"
+#include "settings_keys.h"
 
 #include "kiln/log.h"
 
@@ -178,33 +179,47 @@ Status refused(ResolveDesc const& d, Status st) {
 
 Result<TextureCookSettings> resolve_texture_layers(TextureCookSettings const& base, ResolveDesc const& d) {
     TextureCookSettings s = base;
-    if (d.project) KILN_TRY(detail::apply_project(*d.project, d.asset, d.target, &s, d.diag));
-    if (!d.sidecar.empty()) KILN_TRY(apply_sidecar(d.sidecar, &s, d.diag, d.sidecarPath));
+    if (d.project) KILN_TRY(detail::apply_project(*d.project, d.asset, d.target, &s, d.diag, d.trace));
+    if (!d.sidecar.empty())
+        KILN_TRY(detail::apply_sidecar_traced(d.sidecar, &s, d.diag, d.sidecarPath, d.trace));
     NameHints hints =
         d.asset.slot == SlotHint::None ? hints_from_name(d.asset.name, d.nameRules) : NameHints{};
     if (d.asset.slot == SlotHint::None && has_hdr_extension(d.asset.name)) hints.usage = TextureUsage::Hdr;
+    TextureCookSettings const layered = s;
     if (s.usage == TextureUsage::Auto) {
         s.usage = d.asset.slot != SlotHint::None ? usage_from_slot(d.asset.slot) : hints.usage;
         if (s.usage == TextureUsage::Auto) s.usage = TextureUsage::Color;
     }
     if (s.shape == CookShape::Auto) s.shape = hints.shape;
     if (s.alphaCutoff < 0.0f) s.alphaCutoff = d.asset.alphaCutoff; // the Mask material's cutoff, or 0
+    detail::trace_changes(layered, s, d.trace, "inferred",
+                          d.asset.slot != SlotHint::None ? StrView("glTF slot") : StrView("name or default"));
     if (d.policy.texture) {
-        Status const st = d.policy.texture(d.policy.user, d.asset, d.target, &s, d.diag);
+        TextureCookSettings const before = s;
+        Status const st                  = d.policy.texture(d.policy.user, d.asset, d.target, &s, d.diag);
         if (st.failed()) return refused(d, st);
+        detail::trace_changes(before, s, d.trace, "policy", {});
     }
-    return resolve_texture(s, d.asset.slot, d.target, d.session, d.diag, d.asset.name);
+    Result<TextureCookSettings> r =
+        resolve_texture(s, d.asset.slot, d.target, d.session, d.diag, d.asset.name);
+    if (r.ok()) detail::trace_changes(s, *r, d.trace, "resolve", {});
+    return r;
 }
 
 Result<MeshCookSettings> resolve_mesh_layers(MeshCookSettings const& base, ResolveDesc const& d) {
     MeshCookSettings s = base;
-    if (d.project) KILN_TRY(detail::apply_project(*d.project, d.asset, d.target, &s, d.diag));
-    if (!d.sidecar.empty()) KILN_TRY(apply_sidecar(d.sidecar, &s, d.diag, d.sidecarPath));
+    if (d.project) KILN_TRY(detail::apply_project(*d.project, d.asset, d.target, &s, d.diag, d.trace));
+    if (!d.sidecar.empty())
+        KILN_TRY(detail::apply_sidecar_traced(d.sidecar, &s, d.diag, d.sidecarPath, d.trace));
     if (d.policy.mesh) {
-        Status const st = d.policy.mesh(d.policy.user, d.asset, d.target, &s, d.diag);
+        MeshCookSettings const before = s;
+        Status const st               = d.policy.mesh(d.policy.user, d.asset, d.target, &s, d.diag);
         if (st.failed()) return refused(d, st);
+        detail::trace_changes(before, s, d.trace, "policy", {});
     }
-    return resolve_mesh(s, d.target, d.session, d.diag, d.asset.name);
+    Result<MeshCookSettings> r = resolve_mesh(s, d.target, d.session, d.diag, d.asset.name);
+    if (r.ok()) detail::trace_changes(s, *r, d.trace, "resolve", {});
+    return r;
 }
 
 NameHints hints_from_name(StrView path, Span<NameRule const> rules) {

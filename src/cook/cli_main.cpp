@@ -5,6 +5,7 @@
 
 #include "cli.h"
 #include "manifest_store.h"
+#include "settings_keys.h"
 #include "trace_writer.h"
 #include "unit.h"
 
@@ -81,6 +82,7 @@ struct Options {
     u32 zstd                    = kNotGiven; ///< 0: texture levels stay plain
     bool projectRoots           = false;     ///< the roots came from kiln.toml
     char const* projectFile     = nullptr;   ///< the project file in use, if any
+    char const* explain         = nullptr;   ///< --explain <asset>
     char projectOverrides[1024] = {};        ///< the flags as layer 3d (load_cli_project)
     MeshCookSettings mesh;
     TextureCookSettings tex;
@@ -312,6 +314,143 @@ void failed_paths(char const* path, CookUnit const& unit, Vec<char>& out) {
     add(StrView(side, format(side, sizeof side, "%s%.*s", path, KILN_SV(kSidecarExt))));
     for (UnitInput const& in : unit.inputs)
         if (in.role == InputRole::Buffer) add(unit.str(in.pathOff, in.pathLen));
+}
+
+/// --explain: the layer that last set each key.
+struct ExplainTrace {
+    struct Row {
+        char key[32];
+        char layer[96];
+        char where[256];
+    };
+    Row rows[32] = {};
+    u32 count    = 0;
+
+    static void fn(void* user, StrView key, StrView layer, StrView where) {
+        auto* self = static_cast<ExplainTrace*>(user);
+        Row* row   = nullptr;
+        for (u32 i = 0; i < self->count && !row; ++i)
+            if (StrView(self->rows[i].key) == key) row = &self->rows[i];
+        if (!row) {
+            if (self->count == countof(self->rows)) return;
+            row = &self->rows[self->count++];
+            format(row->key, sizeof row->key, "%.*s", KILN_SV(key));
+        }
+        format(row->layer, sizeof row->layer, "%.*s", KILN_SV(layer));
+        format(row->where, sizeof row->where, "%.*s", KILN_SV(where));
+    }
+    Row const* find(StrView key) const {
+        for (u32 i = 0; i < count; ++i)
+            if (StrView(rows[i].key) == key) return &rows[i];
+        return nullptr;
+    }
+};
+
+template <class Settings> void print_explained(Settings const& s, AssetKind kind, ExplainTrace const& trace) {
+    for (StrView const key : cook::detail::setting_keys(kind)) {
+        char value[64];
+        usize const n               = cook::detail::field_text(s, key, value, sizeof value);
+        ExplainTrace::Row const* by = trace.find(key);
+        if (!by)
+            std::printf("  %-18.*s %-14.*s default\n", KILN_SV(key), int(n), value);
+        else if (by->where[0])
+            std::printf("  %-18.*s %-14.*s %s, %s\n", KILN_SV(key), int(n), value, by->layer, by->where);
+        else
+            std::printf("  %-18.*s %-14.*s %s\n", KILN_SV(key), int(n), value, by->layer);
+    }
+}
+
+/// --explain <asset>: resolves the asset as a cook would, without cooking or a store. An embedded
+/// image's glTF slot comes from cooking its model in memory.
+int explain_asset(Options const& o, Project const* project, CookPolicy const& policy, DiagSink const* sink) {
+    StrView const name(o.explain);
+    if (char const* why = check_asset_name(name)) {
+        std::fprintf(stderr, "kiln-cook: --explain '%s': %s\n", o.explain, why);
+        return 1;
+    }
+    AssetNameParts const parts = split_asset_name(name);
+    char const* rootDir        = parts.root.empty() ? o.defaultRoot : nullptr;
+    for (NamedRoot const& r : o.roots)
+        if (parts.root == StrView(r.name)) rootDir = r.dir;
+    if (!rootDir) {
+        std::fprintf(stderr,
+                     "kiln-cook: --explain needs the root of '%s' (--root, or [roots] in kiln.toml)\n",
+                     o.explain);
+        return 1;
+    }
+    char source[1100];
+    format(source, sizeof source, "%s/%.*s", rootDir, KILN_SV(parts.path));
+    if (!file_exists(source)) {
+        std::fprintf(stderr, "kiln-cook: --explain: no source %s\n", source);
+        return 2;
+    }
+    StrView const ext     = extension(StrView(source));
+    bool const model      = iequals(ext, "glb") || iequals(ext, "gltf");
+    AssetKind const kind  = model && parts.sub.empty() ? AssetKind::Mesh : AssetKind::Texture;
+    SlotHint slot         = SlotHint::None;
+    CookSession const run = {.storeMode = StoreMode::None};
+    if (!parts.sub.empty()) {
+        UnitDesc const owner{
+            .kind            = AssetKind::Mesh,
+            .name            = name.substr(0, name.size - parts.sub.size - 1),
+            .sourcePath      = StrView(source),
+            .meshDefaults    = &o.mesh,
+            .textureDefaults = &o.tex,
+            .nameRules       = kDefaultNameRules,
+            .project         = project,
+            .policy          = policy,
+            .target          = &o.target,
+            .session         = {.storeMode = StoreMode::None, .fastPreview = true},
+            .env             = {.diag = sink}
+        };
+        CookUnit unit(default_allocator());
+        UnitOutput const* out = nullptr;
+        if (cook_unit(owner, &unit).ok()) out = unit.find(AssetKind::Texture, name);
+        if (!out) {
+            std::fprintf(stderr, "kiln-cook: --explain: %s has no embedded image named '%.*s'\n", source,
+                         KILN_SV(parts.sub));
+            return 3;
+        }
+        slot = out->slot;
+    }
+    Vec<u8> sidecar(default_allocator(), Tag::General);
+    char sidecarPath[1200] = {};
+    if (parts.sub.empty()) {
+        format(sidecarPath, sizeof sidecarPath, "%s%.*s", source, KILN_SV(kSidecarExt));
+        if (file_exists(sidecarPath) &&
+            io_read_file(compat_io_backend(), StrView(sidecarPath), nullptr, &sidecar).failed())
+            return 2;
+    }
+    ExplainTrace trace;
+    SettingsTrace const hook{&ExplainTrace::fn, &trace};
+    ResolveDesc const d{
+        .asset       = {name, StrView(source), slot},
+        .project     = project,
+        .sidecar     = StrView(reinterpret_cast<char const*>(sidecar.data()), sidecar.size()),
+        .sidecarPath = StrView(sidecarPath),
+        .nameRules   = kDefaultNameRules,
+        .policy      = policy,
+        .target      = o.target,
+        .session     = run,
+        .diag        = sink,
+        .trace       = &hook,
+    };
+    std::printf("%s  (%s, profile %.*s%s%s)\n", o.explain, kind == AssetKind::Mesh ? "mesh" : "texture",
+                KILN_SV(o.target.name), slot != SlotHint::None ? ", glTF slot " : "",
+                slot != SlotHint::None ? slot_hint_name(slot) : "");
+    if (kind == AssetKind::Mesh) {
+        Result<MeshCookSettings> const r = resolve_mesh_layers(o.mesh, d);
+        if (r.failed()) return 3;
+        print_explained(*r, kind, trace);
+    } else {
+        Result<TextureCookSettings> const r = resolve_texture_layers(o.tex, d);
+        if (r.failed()) return 3;
+        print_explained(*r, kind, trace);
+        if (r->encoding == TextureEncoding::Auto)
+            std::printf(
+                "  (encoding auto: the profile's format for the usage, docs/design/target-profiles.md)\n");
+    }
+    return 0;
 }
 
 /// Owns the loaded project for the rest of cook_cli_main.
@@ -772,6 +911,10 @@ int kiln::cook::cook_cli_main(int argc, char** argv, CookPolicy const& policy, u
         {.name = "--verify",
          .help = "check sources by their content, not by size and time (CI, shipping)",
          .flag = &o.verify},
+        {.name = "--explain",
+         .arg  = "<asset>",
+         .help = "instead of cooking: print the asset's resolved settings and the layer that set each",
+         .str  = &o.explain},
         {.name = "--map",
          .arg  = "<file>",
          .help = "append \"<assetPath>\\t<file>\\t<build key>\" per written output",
@@ -886,6 +1029,7 @@ int kiln::cook::cook_cli_main(int argc, char** argv, CookPolicy const& policy, u
         return 0;
     }
     o.target = *target_profile(StrView(o.targetName ? o.targetName : "compat")); // checked above
+    if (o.explain) return explain_asset(o, project.p, policy, &sink);
 
     Ctx c{
         o, ds, DiagSink{&diag_fn,                                    &ds  },

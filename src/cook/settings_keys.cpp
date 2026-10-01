@@ -147,4 +147,87 @@ Status set_field(TomlEntry const& e, MeshCookSettings& s, KeyError const& err) {
     return err(e, "unknown key for a mesh");
 }
 
+namespace {
+
+template <class E, usize N> StrView enum_name(EnumName<E> const (&names)[N], E v) {
+    for (EnumName<E> const& n : names)
+        if (n.value == v) return n.name;
+    return "?";
+}
+
+} // namespace
+
+constexpr StrView kTextureKeys[] = {
+    "usage",  "colorSpace", "genMips", "normalRenormalize", "maxSize",   "flipGreen",  "shape",
+    "slices", "encoding",   "quality", "supercompression",  "zstdLevel", "alphaCutoff"};
+constexpr StrView kMeshKeys[] = {"profile",  "genTangents", "optimize",    "useAuthoredLods",
+                                 "posTolMm", "weldTol",     "compression", "zstdLevel"};
+
+Span<StrView const> setting_keys(AssetKind kind) {
+    return kind == AssetKind::Mesh ? Span<StrView const>(kMeshKeys) : Span<StrView const>(kTextureKeys);
+}
+
+usize field_text(TextureCookSettings const& s, StrView key, char* out, usize cap) {
+    auto const text = [&](StrView v) { return format(out, cap, "%.*s", KILN_SV(v)); };
+    auto const flag = [&](bool v) { return text(v ? "true" : "false"); };
+    if (key == "usage") return text(enum_name(kUsages, s.usage));
+    if (key == "colorSpace") return text(enum_name(kColorSpaces, s.colorSpace));
+    if (key == "genMips") return flag(s.genMips);
+    if (key == "normalRenormalize") return flag(s.normalRenormalize);
+    if (key == "maxSize") return format(out, cap, "%u", s.maxSize);
+    if (key == "flipGreen") return flag(s.flipGreen);
+    if (key == "shape") return text(enum_name(kShapes, s.shape));
+    if (key == "slices") return format(out, cap, "%u", s.slices);
+    if (key == "encoding") return text(enum_name(kEncodings, s.encoding));
+    if (key == "quality") return text(enum_name(kQualities, s.quality));
+    if (key == "supercompression") return text(enum_name(kSupercompressions, s.supercompression));
+    if (key == "zstdLevel") return format(out, cap, "%u", unsigned(s.zstdLevel));
+    if (key == "alphaCutoff")
+        return s.alphaCutoff < 0.0f ? text("auto") : format(out, cap, "%g", double(s.alphaCutoff));
+    return text("?");
+}
+
+usize field_text(MeshCookSettings const& s, StrView key, char* out, usize cap) {
+    auto const text = [&](StrView v) { return format(out, cap, "%.*s", KILN_SV(v)); };
+    auto const flag = [&](bool v) { return text(v ? "true" : "false"); };
+    if (key == "profile") return text(enum_name(kProfiles, s.profile));
+    if (key == "genTangents") return flag(s.genTangents);
+    if (key == "optimize") return flag(s.optimize);
+    if (key == "useAuthoredLods") return flag(s.useAuthoredLods);
+    if (key == "posTolMm") return format(out, cap, "%g", double(s.posTolMm));
+    if (key == "weldTol") return format(out, cap, "%g", double(s.weldTol));
+    if (key == "compression") return text(enum_name(kCompressions, s.compression));
+    if (key == "zstdLevel") return format(out, cap, "%u", unsigned(s.zstdLevel));
+    return text("?");
+}
+
+void trace_changes(TextureCookSettings const& before, TextureCookSettings const& after,
+                   SettingsTrace const* trace, StrView layer, StrView where) {
+    if (!trace || !trace->fn) return;
+    for (StrView const key : kTextureKeys) {
+        char a[64], b[64];
+        if (StrView(a, field_text(before, key, a, sizeof a)) !=
+            StrView(b, field_text(after, key, b, sizeof b)))
+            trace->fn(trace->user, key, layer, where);
+    }
+}
+
+void trace_changes(MeshCookSettings const& before, MeshCookSettings const& after, SettingsTrace const* trace,
+                   StrView layer, StrView where) {
+    if (!trace || !trace->fn) return;
+    for (StrView const key : kMeshKeys) {
+        char a[64], b[64];
+        if (StrView(a, field_text(before, key, a, sizeof a)) !=
+            StrView(b, field_text(after, key, b, sizeof b)))
+            trace->fn(trace->user, key, layer, where);
+    }
+}
+
+void trace_entry(SettingsTrace const* trace, TomlEntry const& e, StrView layer, StrView file) {
+    if (!trace || !trace->fn) return;
+    char where[1100];
+    usize const n = format(where, sizeof where, "%.*s:%u", KILN_SV(file), e.line);
+    trace->fn(trace->user, e.key, layer, StrView(where, n < sizeof where ? n : sizeof where - 1));
+}
+
 } // namespace kiln::cook::detail

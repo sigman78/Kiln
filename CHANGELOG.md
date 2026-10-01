@@ -16,6 +16,9 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
   exists. API: `kiln/cook/project.h` (`load_project`, `glob_match`), `ResolveDesc::project`. New
   diagnostics K3011 (invalid glob) and K3012 (unreadable project file). The TOML subset gains arrays
   and arrays of tables for it; sidecars keep their subset.
+- **`kiln-cook --explain <asset>`**: prints the asset's resolved settings and the layer that set
+  each (project defaults, a rule or its preset with file and line, the flags, the sidecar, inference,
+  the policy, resolve). API: `SettingsTrace` in `ResolveDesc::trace`.
 - **Alpha-coverage-preserving mips:** texture setting `alphaCutoff` (sidecar key too). Each mip level
   keeps the share of texels whose alpha passes the cutoff, so alpha-tested foliage and fences do not
   thin out with distance. Auto takes the cutoff of the glTF material whose `MASK` base color the image

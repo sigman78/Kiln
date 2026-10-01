@@ -243,6 +243,15 @@ struct CookPolicy {
 
 struct Project; // kiln/cook/project.h
 
+/// Reports which layer set each settings key (kiln-cook --explain). `layer` names it ("project
+/// [texture]", "rule #2", "preset ui", "kiln-cook flags", "sidecar", "inferred", "policy",
+/// "resolve"); `where` is "<file>:<line>" for a file, else a detail or empty. A later call for a
+/// key replaces an earlier one.
+struct SettingsTrace {
+    void (*fn)(void* user, StrView key, StrView layer, StrView where) = nullptr;
+    void* user                                                        = nullptr;
+};
+
 struct ResolveDesc {
     CookAssetInfo asset;
     Project const* project         = nullptr; ///< layers 3a to 3d; null: none
@@ -253,6 +262,7 @@ struct ResolveDesc {
     TargetProfile target           = {};
     CookSession session            = {};
     DiagSink const* diag           = nullptr;
+    SettingsTrace const* trace     = nullptr; ///< null: no report
 };
 
 /// Runs layers 3 to 6 over `base` (layers 1 and 2: the host's settings), then resolve_texture:

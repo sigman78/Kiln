@@ -361,35 +361,54 @@ bool rule_matches(Project const& p, Rule const& r, StrView name, StrView target)
     return false;
 }
 
-template <class Settings> Status apply_range(Project const& p, Range r, Settings* s, DiagSink const* diag) {
-    for (u32 i = 0; i < r.count; ++i)
-        KILN_TRY(set_field(*p.keys[r.begin + i], *s, KeyError{diag, p.file}));
+template <class Settings>
+Status apply_range(Project const& p, Range r, Settings* s, DiagSink const* diag, SettingsTrace const* trace,
+                   StrView layer, StrView file) {
+    for (u32 i = 0; i < r.count; ++i) {
+        TomlEntry const& e = *p.keys[r.begin + i];
+        KILN_TRY(set_field(e, *s, KeyError{diag, file}));
+        if (file == kOverridesName) {
+            if (trace && trace->fn) trace->fn(trace->user, e.key, layer, {});
+        } else {
+            trace_entry(trace, e, layer, file);
+        }
+    }
     return kOk;
 }
 
 template <class Settings>
-Status apply_kind(Project const& p, Kind const& k, CookAssetInfo const& asset, TargetProfile const& target,
-                  Settings* s, DiagSink const* diag) {
-    KILN_TRY(apply_range(p, k.defaults, s, diag));
-    for (Rule const& r : k.rules) {
+Status apply_kind(Project const& p, Kind const& k, StrView kindName, CookAssetInfo const& asset,
+                  TargetProfile const& target, Settings* s, DiagSink const* diag,
+                  SettingsTrace const* trace) {
+    char label[128];
+    format(label, sizeof label, "project [%.*s]", KILN_SV(kindName));
+    KILN_TRY(apply_range(p, k.defaults, s, diag, trace, StrView(label), p.file));
+    for (usize i = 0; i < k.rules.size(); ++i) {
+        Rule const& r = k.rules[i];
         if (!rule_matches(p, r, asset.name, target.name)) continue;
-        if (r.preset >= 0) KILN_TRY(apply_range(p, k.presets[usize(r.preset)].keys, s, diag));
-        KILN_TRY(apply_range(p, r.keys, s, diag));
+        if (r.preset >= 0) {
+            Preset const& pr = k.presets[usize(r.preset)];
+            usize const n =
+                format(label, sizeof label, "preset %.*s (rule #%u)", KILN_SV(pr.name), unsigned(i + 1));
+            KILN_TRY(apply_range(p, pr.keys, s, diag, trace, StrView(label, n), p.file));
+        }
+        usize const n = format(label, sizeof label, "rule #%u", unsigned(i + 1));
+        KILN_TRY(apply_range(p, r.keys, s, diag, trace, StrView(label, n), p.file));
         break;
     }
-    return apply_range(p, k.overrides, s, diag);
+    return apply_range(p, k.overrides, s, diag, trace, kOverridesName, kOverridesName);
 }
 
 } // namespace
 
 Status apply_project(Project const& p, CookAssetInfo const& asset, TargetProfile const& target,
-                     TextureCookSettings* s, DiagSink const* diag) {
-    return apply_kind(p, p.tex, asset, target, s, diag);
+                     TextureCookSettings* s, DiagSink const* diag, SettingsTrace const* trace) {
+    return apply_kind(p, p.tex, "texture", asset, target, s, diag, trace);
 }
 
 Status apply_project(Project const& p, CookAssetInfo const& asset, TargetProfile const& target,
-                     MeshCookSettings* s, DiagSink const* diag) {
-    return apply_kind(p, p.mesh, asset, target, s, diag);
+                     MeshCookSettings* s, DiagSink const* diag, SettingsTrace const* trace) {
+    return apply_kind(p, p.mesh, "mesh", asset, target, s, diag, trace);
 }
 
 } // namespace detail

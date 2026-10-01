@@ -282,6 +282,64 @@ KILN_TEST(Project, ErrorsNameFileAndLine) {
     KILN_CHECK_EQ(d.code, u32(kDiagProjectRead));
 }
 
+namespace {
+
+/// The layer and place that last set each key.
+struct TraceLog {
+    struct Row {
+        char key[32], layer[64], where[512];
+    };
+    Row rows[32] = {};
+    u32 count    = 0;
+
+    static void fn(void* user, StrView key, StrView layer, StrView where) {
+        auto* self = static_cast<TraceLog*>(user);
+        Row* row   = nullptr;
+        for (u32 i = 0; i < self->count && !row; ++i)
+            if (StrView(self->rows[i].key) == key) row = &self->rows[i];
+        if (!row) row = &self->rows[self->count++];
+        format(row->key, sizeof row->key, "%.*s", KILN_SV(key));
+        format(row->layer, sizeof row->layer, "%.*s", KILN_SV(layer));
+        format(row->where, sizeof row->where, "%.*s", KILN_SV(where));
+    }
+    Row const* find(StrView key) const {
+        for (u32 i = 0; i < count; ++i)
+            if (StrView(rows[i].key) == key) return &rows[i];
+        return nullptr;
+    }
+};
+
+} // namespace
+
+// SettingsTrace reports the layer that set each key last: --explain's source.
+KILN_TEST(Project, TraceNamesTheLayers) {
+    Loaded l;
+    KILN_REQUIRE(l.load("project_trace", kProjectText, "[texture]\nquality = \"fast\"\n").ok());
+    TraceLog log;
+    SettingsTrace const trace{&TraceLog::fn, &log};
+    Result<TextureCookSettings> r = resolve_texture_layers(
+        {
+    },
+        ResolveDesc{.asset       = {"env/trees/oak.png", "oak.png"},
+                    .project     = l.p,
+                    .sidecar     = "zstdLevel = 9\n",
+                    .sidecarPath = "oak.png.kiln",
+                    .trace       = &trace});
+    KILN_REQUIRE(r.ok());
+    auto layer = [&](StrView key) {
+        return log.find(key) ? StrView(log.find(key)->layer) : StrView("default");
+    };
+    KILN_CHECK(layer("alphaCutoff") == "preset foliage (rule #2)");
+    KILN_CHECK(layer("maxSize") == "rule #2");
+    KILN_CHECK(StrView(log.find("maxSize")->where).ends_with("kiln.toml:31"));
+    KILN_CHECK(layer("quality") == "kiln-cook flags");
+    KILN_CHECK(layer("zstdLevel") == "sidecar");
+    KILN_CHECK(StrView(log.find("zstdLevel")->where) == "oak.png.kiln:1");
+    KILN_CHECK(layer("usage") == "inferred");
+    KILN_CHECK(layer("colorSpace") == "resolve");
+    KILN_CHECK(layer("genMips") == "default");
+}
+
 KILN_TEST(Project, DefaultIsAReservedRootName) {
     KILN_CHECK(check_root_name("default") != nullptr);
     KILN_CHECK(check_root_name("defaults") == nullptr);

@@ -1,0 +1,10 @@
+# tests/project/kiln.toml — the project of the kiln_cook_explain test (tests/CMakeLists.txt).
+[roots]
+default = "../corpus/gltf/generated"
+
+[texture]
+quality = "high"
+
+[[texture.rule]]
+match   = ["external_uri_*.png"]
+maxSize = 64

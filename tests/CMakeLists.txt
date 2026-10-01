@@ -132,6 +132,15 @@ endif()
 
 # The goldens as a manifest store (hand_store.h) in <build>/tests/samples/golden-store, for tools
 # and examples that read a store (examples/CMakeLists.txt, example_headless).
+# kiln-cook --explain names the layer of each setting (docs/design/project-config.md §7).
+if(TARGET kiln-cook)
+    add_test(NAME kiln_cook_explain
+             COMMAND $<TARGET_FILE:kiln-cook> --project ${CMAKE_CURRENT_SOURCE_DIR}/project/kiln.toml
+                     --explain external_uri_albedo.png --quality fast)
+    set_tests_properties(kiln_cook_explain PROPERTIES PASS_REGULAR_EXPRESSION
+        "maxSize +64 +rule #1, .*kiln.toml:10.*quality +fast +kiln-cook flags")
+endif()
+
 add_test(NAME golden_store COMMAND kiln_tests GoldenStore.Build ${KILN_TEST_ARGS})
 set_tests_properties(golden_store PROPERTIES FIXTURES_SETUP golden_store)
 
