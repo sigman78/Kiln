@@ -49,7 +49,7 @@ private:
 struct Stopwatch {
     std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
 
-    [[nodiscard]] u64 elapsed_us() const noexcept {
+    u64 elapsed_us() const noexcept {
         auto const dt = std::chrono::steady_clock::now() - begin;
         return u64(std::chrono::duration_cast<std::chrono::microseconds>(dt).count());
     }
@@ -151,12 +151,12 @@ Status import_gltf(MeshSource const& src, MeshCookSettings const& settings, Aren
                    Allocator const* alloc, DiagSink const* diag, ImportScene& out) noexcept;
 
 /// The asset name used in diagnostics (sourcePath if set, else assetPath).
-[[nodiscard]] inline StrView diag_asset(MeshSource const& src) noexcept {
+inline StrView diag_asset(MeshSource const& src) noexcept {
     return src.sourcePath.empty() ? src.assetPath : src.sourcePath;
 }
 
 /// The block format of an explicit encoding (Undefined for Auto and Uncompressed).
-[[nodiscard]] Format encoding_format(TextureEncoding e, bool srgb) noexcept;
+Format encoding_format(TextureEncoding e, bool srgb) noexcept;
 /// True when the block formats of this texture are the sRGB variants: sRGB Color and UI only.
 [[nodiscard]] bool srgb_blocks(ColorSpace cs, TextureUsage usage) noexcept;
 

@@ -15,7 +15,7 @@ namespace {
 }
 
 /// Checks the part after the root prefix, `#sub` included.
-[[nodiscard]] char const* check_path(StrView path) noexcept {
+char const* check_path(StrView path) noexcept {
     usize const hash  = path.find('#');
     usize const slash = path.rfind('/');
     if (hash != StrView::kNpos) {

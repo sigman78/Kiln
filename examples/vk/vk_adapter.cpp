@@ -156,7 +156,7 @@ template <class T> struct Fifo {
         items.resize(cap);
     }
     [[nodiscard]] bool empty() const noexcept { return count == 0; }
-    [[nodiscard]] T& front() noexcept { return items[head]; }
+    T& front() noexcept { return items[head]; }
     void push(T const& v) noexcept {
         KILN_VERIFY(count < items.size());
         items[(head + count) % items.size()] = v;
@@ -219,9 +219,9 @@ struct VkAdapter {
 
 namespace {
 
-[[nodiscard]] VkAdapter* self(void* user) noexcept { return static_cast<VkAdapter*>(user); }
+VkAdapter* self(void* user) noexcept { return static_cast<VkAdapter*>(user); }
 
-[[nodiscard]] u64 timeline_value(VkAdapter* a) noexcept {
+u64 timeline_value(VkAdapter* a) noexcept {
     u64 v = 0;
     VKX_CHECK(vkGetSemaphoreCounterValue(a->device, a->timeline, &v));
     return v;
@@ -229,10 +229,8 @@ namespace {
 
 /// An upload token: the object's generation and its 1-based index. Stable from begin_upload on,
 /// unlike its timeline value, which commit_upload gives.
-[[nodiscard]] u64 token_of(u32 index, Object const& o) noexcept {
-    return (u64(o.generation) << 32) | (u64(index) + 1);
-}
-[[nodiscard]] Object* object_of_token(VkAdapter* a, u64 token) noexcept {
+u64 token_of(u32 index, Object const& o) noexcept { return (u64(o.generation) << 32) | (u64(index) + 1); }
+Object* object_of_token(VkAdapter* a, u64 token) noexcept {
     u64 const index = (token & 0xFFFFFFFFu);
     if (index == 0 || index > a->objects.size()) return nullptr;
     Object& o = a->objects[usize(index - 1)];
@@ -240,7 +238,7 @@ namespace {
     return &o;
 }
 
-[[nodiscard]] Object* object_of(VkAdapter* a, GpuObject obj) noexcept {
+Object* object_of(VkAdapter* a, GpuObject obj) noexcept {
     if (obj.native == 0 || obj.native > a->objects.size()) return nullptr;
     Object& o = a->objects[usize(obj.native - 1)];
     return o.state == ObjectState::Free ? nullptr : &o;
@@ -278,7 +276,7 @@ bool ring_find(VkAdapter const* a, u64 n, u64 align, u64* start) noexcept {
     return true;
 }
 
-[[nodiscard]] u64 ring_used(VkAdapter const* a) noexcept {
+u64 ring_used(VkAdapter const* a) noexcept {
     if (a->ring.empty()) return 0;
     return a->ringHead > a->ringTail ? a->ringHead - a->ringTail : a->ringSize - a->ringTail + a->ringHead;
 }

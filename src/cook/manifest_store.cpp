@@ -111,7 +111,7 @@ struct NameIndex {
 
     NameIndex(Allocator const* a) noexcept : heads(a, Tag::Cook), next(a, Tag::Cook) {}
 
-    template <class Match> [[nodiscard]] u32 find(u64 h, Match&& match) const noexcept {
+    template <class Match> u32 find(u64 h, Match&& match) const noexcept {
         u32 const* head = heads.find(h);
         for (u32 i = head ? *head : kInvalid; i != kInvalid; i = next[i])
             if (match(i)) return i;
@@ -168,8 +168,8 @@ struct Record {
 
     explicit Record(Allocator const* a) noexcept
         : strings(a, Tag::Cook), inputs(a, Tag::Cook), outputs(a, Tag::Cook) {}
-    [[nodiscard]] StrView str(u32 off, u32 len) const noexcept { return {strings.data() + off, len}; }
-    [[nodiscard]] StrView name() const noexcept { return str(nameOff, nameLen); }
+    StrView str(u32 off, u32 len) const noexcept { return {strings.data() + off, len}; }
+    StrView name() const noexcept { return str(nameOff, nameLen); }
     u32 add(StrView s) noexcept {
         u32 const off = u32(strings.size());
         strings.append(Span<char const>(s.data, s.size));
@@ -197,7 +197,7 @@ struct OtherProfile {
 
     explicit OtherProfile(Allocator const* a) noexcept
         : strings(a, Tag::Cook), entries(a, Tag::Cook), records(a, Tag::Cook), recordEnds(a, Tag::Cook) {}
-    [[nodiscard]] StrView name() const noexcept { return {strings.data() + nameOff, nameLen}; }
+    StrView name() const noexcept { return {strings.data() + nameOff, nameLen}; }
 };
 
 /// A root of the table: its name (empty: the default root) and directory, as stored.
@@ -236,13 +236,11 @@ struct ManifestStore {
           entries(a, Tag::Cook), entryIndex(a), records(a, Tag::Cook), recordIndex(a), others(a, Tag::Cook),
           rootStrings(a, Tag::Cook), roots(a, Tag::Cook) {}
 
-    [[nodiscard]] StrView dir() const noexcept { return {storeDir.data(), storeDir.size() - 1}; }
-    [[nodiscard]] StrView profile() const noexcept { return {profileName.data(), profileName.size()}; }
-    [[nodiscard]] StrView name_of(Entry const& e) const noexcept {
-        return {names.data() + e.nameOff, e.nameLen};
-    }
+    StrView dir() const noexcept { return {storeDir.data(), storeDir.size() - 1}; }
+    StrView profile() const noexcept { return {profileName.data(), profileName.size()}; }
+    StrView name_of(Entry const& e) const noexcept { return {names.data() + e.nameOff, e.nameLen}; }
 
-    [[nodiscard]] u32 find_entry(AssetKind kind, StrView name) const noexcept {
+    u32 find_entry(AssetKind kind, StrView name) const noexcept {
         return entryIndex.find(entry_hash(kind, name),
                                [&](u32 i) { return entries[i].kind == kind && name_of(entries[i]) == name; });
     }
@@ -271,7 +269,7 @@ struct ManifestStore {
         if (i != kInvalid) entries[i].live = false;
     }
 
-    [[nodiscard]] u32 find_record(StrView name) const noexcept {
+    u32 find_record(StrView name) const noexcept {
         return recordIndex.find(hash_name(name), [&](u32 i) { return records[i].name() == name; });
     }
     /// The record slot of `name`, made if missing (its old contents stay until replaced).
@@ -284,14 +282,12 @@ struct ManifestStore {
         }
         return records[i];
     }
-    [[nodiscard]] Record* live_record(StrView name) noexcept {
+    Record* live_record(StrView name) noexcept {
         u32 const i = find_record(name);
         return i == kInvalid || !records[i].live ? nullptr : &records[i];
     }
 
-    [[nodiscard]] StrView root_str(u32 off, u32 len) const noexcept {
-        return {rootStrings.data() + off, len};
-    }
+    StrView root_str(u32 off, u32 len) const noexcept { return {rootStrings.data() + off, len}; }
     u32 add_root_str(StrView v) noexcept {
         u32 const off = u32(rootStrings.size());
         rootStrings.append(Span<char const>(v.data, v.size));

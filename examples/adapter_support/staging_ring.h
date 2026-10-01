@@ -31,9 +31,9 @@ public:
     /// The range's data is no longer needed (its copy finished). Exactly once per reservation.
     void release(u32 id) noexcept;
 
-    [[nodiscard]] u64 size() const noexcept { return size_; }
-    [[nodiscard]] u32 held() const noexcept { return count_; } ///< ranges reserved and not reclaimed
-    [[nodiscard]] u64 used() const noexcept;                   ///< bytes not free, alignment gaps included
+    u64 size() const noexcept { return size_; }
+    u32 held() const noexcept { return count_; } ///< ranges reserved and not reclaimed
+    u64 used() const noexcept;                   ///< bytes not free, alignment gaps included
 
 private:
     struct Range {

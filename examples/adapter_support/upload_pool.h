@@ -31,7 +31,7 @@ enum class UploadState : u8 {
 }
 
 /// What upload_status reports for a record in `s`.
-[[nodiscard]] constexpr UploadStatus status_of(UploadState s) noexcept {
+constexpr UploadStatus status_of(UploadState s) noexcept {
     return s == UploadState::Complete ? UploadStatus::Complete
            : s == UploadState::Failed ? UploadStatus::Failed
                                       : UploadStatus::Pending;
@@ -74,27 +74,25 @@ public:
         free_record(index);
     }
 
-    [[nodiscard]] u64 token(u32 index) const noexcept {
-        return (u64(records_[index].gen) << 32) | (index + 1);
-    }
+    u64 token(u32 index) const noexcept { return (u64(records_[index].gen) << 32) | (index + 1); }
     /// The record `token` names, or kInvalid if it is stale, free or not a token of this pool.
-    [[nodiscard]] u32 index_of(u64 token) const noexcept {
+    u32 index_of(u64 token) const noexcept {
         u32 const i = u32(token & 0xFFFFFFFFu) - 1; // token 0 wraps to kInvalid
         if (i >= records_.size()) return kInvalid;
         Record const& r = records_[i];
         return r.state != UploadState::Free && r.gen == u32(token >> 32) ? i : kInvalid;
     }
 
-    [[nodiscard]] UploadState state(u32 index) const noexcept { return records_[index].state; }
+    UploadState state(u32 index) const noexcept { return records_[index].state; }
     void advance(u32 index, UploadState to) noexcept {
         KILN_ASSERT(can_advance(records_[index].state, to) && "UploadPool: illegal transition");
         records_[index].state = to;
     }
 
-    [[nodiscard]] T& operator[](u32 index) noexcept { return records_[index].data; }
-    [[nodiscard]] T const& operator[](u32 index) const noexcept { return records_[index].data; }
-    [[nodiscard]] u32 capacity() const noexcept { return u32(records_.size()); }
-    [[nodiscard]] u32 in_use() const noexcept { return capacity() - u32(free_.size()); }
+    T& operator[](u32 index) noexcept { return records_[index].data; }
+    T const& operator[](u32 index) const noexcept { return records_[index].data; }
+    u32 capacity() const noexcept { return u32(records_.size()); }
+    u32 in_use() const noexcept { return capacity() - u32(free_.size()); }
     [[nodiscard]] bool full() const noexcept { return free_.empty(); } ///< acquire() would fail
 
 private:

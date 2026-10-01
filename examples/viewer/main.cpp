@@ -33,7 +33,7 @@ using vkx::Vec3;
 namespace {
 
 /// For printf's %llu, whatever u64 is on this platform.
-constexpr unsigned long long ull(u64 v) noexcept { return v; }
+unsigned long long ull(u64 v) noexcept { return v; }
 
 constexpr u32 kMaxMeshes       = 64;
 constexpr u32 kWarmupFrames    = 10; ///< frames excluded from the running average and the spike check

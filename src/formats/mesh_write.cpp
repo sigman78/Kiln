@@ -18,7 +18,7 @@ namespace {
 
 constexpr u64 kLimit32 = u64(1) << 32;
 
-[[nodiscard]] u64 align16(u64 v) noexcept { return align_up(v, u64(kBlobAlign)); }
+u64 align16(u64 v) noexcept { return align_up(v, u64(kBlobAlign)); }
 
 #define KILN_WRITE_FAIL(diagCode, ...)                                                                       \
     return diagf(diag, make_status(Code::InvalidArgument), diagCode, Severity::Error, d.name, StrView{},     \
@@ -151,7 +151,7 @@ public:
     explicit StringTable(Allocator const* a) noexcept : bytes_(a, Tag::Cook), map_(a, Tag::Cook) {
         (void)intern(StrView{}); // offset 0 is the empty string
     }
-    [[nodiscard]] u32 intern(StrView s) {
+    u32 intern(StrView s) {
         auto r = map_.try_emplace(s, u32(bytes_.size()));
         if (r.inserted) {
             bytes_.append(Span<u8 const>(reinterpret_cast<u8 const*>(s.data), s.size));
@@ -164,7 +164,7 @@ public:
         while (bytes_.size() % kBlobAlign)
             bytes_.push_back(0);
     }
-    [[nodiscard]] Vec<u8> const& bytes() const noexcept { return bytes_; }
+    Vec<u8> const& bytes() const noexcept { return bytes_; }
 
 private:
     Vec<u8> bytes_;

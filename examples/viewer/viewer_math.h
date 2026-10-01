@@ -13,15 +13,15 @@ struct Vec3 {
     f32 x = 0, y = 0, z = 0;
 };
 
-[[nodiscard]] inline Vec3 operator+(Vec3 a, Vec3 b) noexcept { return {a.x + b.x, a.y + b.y, a.z + b.z}; }
-[[nodiscard]] inline Vec3 operator-(Vec3 a, Vec3 b) noexcept { return {a.x - b.x, a.y - b.y, a.z - b.z}; }
-[[nodiscard]] inline Vec3 operator*(Vec3 a, f32 s) noexcept { return {a.x * s, a.y * s, a.z * s}; }
-[[nodiscard]] inline f32 dot(Vec3 a, Vec3 b) noexcept { return a.x * b.x + a.y * b.y + a.z * b.z; }
-[[nodiscard]] inline Vec3 cross(Vec3 a, Vec3 b) noexcept {
+inline Vec3 operator+(Vec3 a, Vec3 b) noexcept { return {a.x + b.x, a.y + b.y, a.z + b.z}; }
+inline Vec3 operator-(Vec3 a, Vec3 b) noexcept { return {a.x - b.x, a.y - b.y, a.z - b.z}; }
+inline Vec3 operator*(Vec3 a, f32 s) noexcept { return {a.x * s, a.y * s, a.z * s}; }
+inline f32 dot(Vec3 a, Vec3 b) noexcept { return a.x * b.x + a.y * b.y + a.z * b.z; }
+inline Vec3 cross(Vec3 a, Vec3 b) noexcept {
     return {a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x};
 }
-[[nodiscard]] inline f32 length(Vec3 a) noexcept { return std::sqrt(dot(a, a)); }
-[[nodiscard]] inline Vec3 normalize(Vec3 a) noexcept {
+inline f32 length(Vec3 a) noexcept { return std::sqrt(dot(a, a)); }
+inline Vec3 normalize(Vec3 a) noexcept {
     f32 const l = length(a);
     return l > 0 ? a * (1.0f / l) : a;
 }
@@ -30,7 +30,7 @@ struct Mat4 {
     f32 m[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
 };
 
-[[nodiscard]] inline Mat4 operator*(Mat4 const& a, Mat4 const& b) noexcept {
+inline Mat4 operator*(Mat4 const& a, Mat4 const& b) noexcept {
     Mat4 r;
     for (int c = 0; c < 4; ++c)
         for (int i = 0; i < 4; ++i) {
@@ -42,7 +42,7 @@ struct Mat4 {
     return r;
 }
 
-[[nodiscard]] inline Mat4 translation(Vec3 t) noexcept {
+inline Mat4 translation(Vec3 t) noexcept {
     Mat4 r;
     r.m[12] = t.x;
     r.m[13] = t.y;
@@ -50,14 +50,14 @@ struct Mat4 {
     return r;
 }
 
-[[nodiscard]] inline Mat4 scaling(f32 s) noexcept {
+inline Mat4 scaling(f32 s) noexcept {
     Mat4 r;
     r.m[0] = r.m[5] = r.m[10] = s;
     return r;
 }
 
 /// Rotation by the unit quaternion (x, y, z, w), then translation by t.
-[[nodiscard]] inline Mat4 from_rt(f32 const t[3], f32 const q[4]) noexcept {
+inline Mat4 from_rt(f32 const t[3], f32 const q[4]) noexcept {
     f32 const x = q[0], y = q[1], z = q[2], w = q[3];
     Mat4 r;
     r.m[0]  = 1 - 2 * (y * y + z * z);
@@ -75,7 +75,7 @@ struct Mat4 {
     return r;
 }
 
-[[nodiscard]] inline Mat4 look_at(Vec3 eye, Vec3 target, Vec3 up) noexcept {
+inline Mat4 look_at(Vec3 eye, Vec3 target, Vec3 up) noexcept {
     Vec3 const f = normalize(target - eye);
     Vec3 const s = normalize(cross(f, up));
     Vec3 const u = cross(s, f);
@@ -96,7 +96,7 @@ struct Mat4 {
 }
 
 /// Right-handed perspective into Vulkan clip space: depth 0 at `nearZ`, 1 at `farZ`, +Y down.
-[[nodiscard]] inline Mat4 perspective(f32 fovyRadians, f32 aspect, f32 nearZ, f32 farZ) noexcept {
+inline Mat4 perspective(f32 fovyRadians, f32 aspect, f32 nearZ, f32 farZ) noexcept {
     f32 const f = 1.0f / std::tan(fovyRadians * 0.5f);
     Mat4 r;
     r.m[0]  = f / aspect;

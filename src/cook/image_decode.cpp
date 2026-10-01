@@ -123,7 +123,7 @@ struct Scratch {
     ~Scratch() noexcept { kiln::free(allocator, ptr, size, align, Tag::Cook); }
     Scratch(Scratch const&)            = delete;
     Scratch& operator=(Scratch const&) = delete;
-    [[nodiscard]] u8* bytes() const noexcept { return static_cast<u8*>(ptr); }
+    u8* bytes() const noexcept { return static_cast<u8*>(ptr); }
 };
 
 /// What the caller already knows about the image. `channels == 0` takes the channel

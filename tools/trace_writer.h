@@ -21,7 +21,7 @@ public:
     TraceWriter& operator=(TraceWriter const&) = delete;
 
     /// Valid while this writer lives.
-    [[nodiscard]] ProfileHooks hooks() noexcept {
+    ProfileHooks hooks() noexcept {
         return ProfileHooks{
             .zone_begin = &zone_begin, .zone_end = &zone_end, .interval = &interval, .user = this};
     }

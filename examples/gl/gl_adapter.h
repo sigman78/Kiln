@@ -29,18 +29,18 @@ struct GlAdapterDesc {
 
 /// Creates the adapter and fills `out`. Call on the thread that owns the GL context; call create()
 /// and pump() on that thread too, since kiln runs Adapter::flush there.
-[[nodiscard]] Result<GlAdapter*> gl_adapter_create(GlAdapterDesc const& desc, Adapter* out) noexcept;
+Result<GlAdapter*> gl_adapter_create(GlAdapterDesc const& desc, Adapter* out) noexcept;
 /// After destroy(ctx), on the GL thread.
 void gl_adapter_destroy(GlAdapter* a) noexcept;
 /// The counters shared by every example adapter; any thread.
-[[nodiscard]] ex::AdapterStats gl_adapter_stats(GlAdapter* a) noexcept;
+ex::AdapterStats gl_adapter_stats(GlAdapter* a) noexcept;
 
 struct GlTexture {
     unsigned name   = 0; ///< 0 = not created yet
     unsigned target = 0; ///< GL_TEXTURE_2D, GL_TEXTURE_CUBE_MAP or GL_TEXTURE_2D_ARRAY
 };
 /// The GL texture behind a GpuObject that gpu_object() returned.
-[[nodiscard]] GlTexture gl_texture(GlAdapter const* a, GpuObject obj) noexcept;
+GlTexture gl_texture(GlAdapter const* a, GpuObject obj) noexcept;
 /// An ex::ReadTextureFn (`user` is the GlAdapter), for --verify; on the GL thread.
 [[nodiscard]] bool gl_read_texture(void* user, GpuObject obj, TextureDesc const& desc, Vec<u8>* out) noexcept;
 struct GlBufferRange {
@@ -51,15 +51,15 @@ struct GlBufferRange {
 /// storage buffer. Copies what every slot shows now into copy `frame % tableFrames`, so bind() never
 /// changes a table a frame in flight reads: call it once per frame, before the draws, with fewer
 /// than tableFrames frames in flight.
-[[nodiscard]] GlBufferRange gl_handle_table(GlAdapter* a, u64 frame) noexcept;
+GlBufferRange gl_handle_table(GlAdapter* a, u64 frame) noexcept;
 /// The GL buffer behind a mesh's GpuObject; the payload starts at offset 0.
-[[nodiscard]] unsigned gl_buffer(GlAdapter const* a, GpuObject obj) noexcept;
+unsigned gl_buffer(GlAdapter const* a, GpuObject obj) noexcept;
 
 struct GlVertexFormat {
     int size        = 0; ///< components; 0 = not a vertex format this example reads
     unsigned type   = 0;
     bool normalized = false;
 };
-[[nodiscard]] GlVertexFormat gl_vertex_format(Format f) noexcept;
+GlVertexFormat gl_vertex_format(Format f) noexcept;
 
 } // namespace kiln::glx

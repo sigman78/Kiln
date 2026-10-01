@@ -26,7 +26,7 @@ namespace {
 constexpr double kMiB = 1024.0 * 1024.0;
 
 /// For printf's %llu, whatever u64 is on this platform.
-constexpr unsigned long long ull(u64 v) noexcept { return v; }
+unsigned long long ull(u64 v) noexcept { return v; }
 
 using Clock = std::chrono::steady_clock;
 Clock::time_point g_start;

@@ -19,7 +19,7 @@ using namespace kiln;
 namespace {
 
 /// For printf's %llu, whatever u64 is on this platform.
-constexpr unsigned long long ull(u64 v) noexcept { return v; }
+unsigned long long ull(u64 v) noexcept { return v; }
 
 void log_to_stdout(void*, LogLevel level, StrView category, StrView message) {
     std::printf("%-5s %-10.*s %.*s\n", log_level_name(level), KILN_SV(category), KILN_SV(message));

@@ -29,10 +29,10 @@ enum class Code : u16 {
     Count
 };
 
-[[nodiscard]] KILN_API char const* code_name(Code c) noexcept;
+KILN_API char const* code_name(Code c) noexcept;
 
 /// A compact status: error code plus a 16-bit code-specific detail (e.g. errno).
-struct [[nodiscard]] Status {
+struct Status {
     Code code  = Code::Ok;
     u16 detail = 0;
 
@@ -47,11 +47,11 @@ struct [[nodiscard]] Status {
 
 inline constexpr Status kOk{};
 
-[[nodiscard]] constexpr Status make_status(Code c, u16 detail = 0) noexcept { return {c, detail}; }
+constexpr Status make_status(Code c, u16 detail = 0) noexcept { return {c, detail}; }
 
 /// Value-or-Status. Construct from a T (success) or a Status/Code (failure).
 /// Accessing the value of a failed Result is a programming error (asserts).
-template <class T> class [[nodiscard]] Result {
+template <class T> class Result {
 public:
     static_assert(!std::is_reference_v<T>, "Result<T&> is not supported; use Result<T*>");
     static_assert(NothrowStorable<T>, "Result<T> needs T whose copy, move and destruction never throw");
@@ -104,59 +104,56 @@ public:
 
     [[nodiscard]] constexpr bool ok() const noexcept { return status_.ok(); }
     [[nodiscard]] constexpr bool failed() const noexcept { return status_.failed(); }
-    [[nodiscard]] constexpr Status status() const noexcept { return status_; }
-    [[nodiscard]] constexpr Code code() const noexcept { return status_.code; }
+    constexpr Status status() const noexcept { return status_; }
+    constexpr Code code() const noexcept { return status_.code; }
 
-    [[nodiscard]] T& value() & noexcept {
+    T& value() & noexcept {
         KILN_ASSERT(ok());
         return ref();
     }
-    [[nodiscard]] T const& value() const& noexcept {
+    T const& value() const& noexcept {
         KILN_ASSERT(ok());
         return ref();
     }
-    [[nodiscard]] T&& value() && noexcept {
+    T&& value() && noexcept {
         KILN_ASSERT(ok());
         return std::move(ref());
     }
-    [[nodiscard]] T& operator*() & noexcept { return value(); }
-    [[nodiscard]] T const& operator*() const& noexcept { return value(); }
-    [[nodiscard]] T&& operator*() && noexcept { return std::move(*this).value(); }
-    [[nodiscard]] T* operator->() noexcept { return &value(); }
-    [[nodiscard]] T const* operator->() const noexcept { return &value(); }
+    T& operator*() & noexcept { return value(); }
+    T const& operator*() const& noexcept { return value(); }
+    T&& operator*() && noexcept { return std::move(*this).value(); }
+    T* operator->() noexcept { return &value(); }
+    T const* operator->() const noexcept { return &value(); }
 
-    [[nodiscard]] T value_or(T fallback) const& noexcept(std::is_nothrow_copy_constructible_v<T>) {
+    T value_or(T fallback) const& noexcept(std::is_nothrow_copy_constructible_v<T>) {
         return ok() ? ref() : std::move(fallback);
     }
-    [[nodiscard]] T value_or(T fallback) && noexcept(std::is_nothrow_move_constructible_v<T>) {
+    T value_or(T fallback) && noexcept(std::is_nothrow_move_constructible_v<T>) {
         return ok() ? std::move(ref()) : std::move(fallback);
     }
 
     // Monadic composition, as in std::expected. No heap.
 
     /// f(T) -> Result<U>. On failure the Status is forwarded unchanged.
-    template <class F> [[nodiscard]] auto and_then(F&& f) && -> std::invoke_result_t<F, T&&> {
+    template <class F> auto and_then(F&& f) && -> std::invoke_result_t<F, T&&> {
         using R = std::invoke_result_t<F, T&&>;
         return ok() ? f(std::move(ref())) : R(status_);
     }
-    template <class F> [[nodiscard]] auto and_then(F&& f) const& -> std::invoke_result_t<F, T const&> {
+    template <class F> auto and_then(F&& f) const& -> std::invoke_result_t<F, T const&> {
         using R = std::invoke_result_t<F, T const&>;
         return ok() ? f(ref()) : R(status_);
     }
     /// f(T) -> U, wrapped into Result<U>. On failure the Status is forwarded unchanged.
-    template <class F> [[nodiscard]] auto transform(F&& f) && -> Result<std::invoke_result_t<F, T&&>> {
+    template <class F> auto transform(F&& f) && -> Result<std::invoke_result_t<F, T&&>> {
         using R = Result<std::invoke_result_t<F, T&&>>;
         return ok() ? R(f(std::move(ref()))) : R(status_);
     }
-    template <class F>
-    [[nodiscard]] auto transform(F&& f) const& -> Result<std::invoke_result_t<F, T const&>> {
+    template <class F> auto transform(F&& f) const& -> Result<std::invoke_result_t<F, T const&>> {
         using R = Result<std::invoke_result_t<F, T const&>>;
         return ok() ? R(f(ref())) : R(status_);
     }
     /// f(Status) -> Result<T>, called only on failure (recovery / substitution).
-    template <class F> [[nodiscard]] Result or_else(F&& f) && {
-        return ok() ? std::move(*this) : Result(f(status_));
-    }
+    template <class F> Result or_else(F&& f) && { return ok() ? std::move(*this) : Result(f(status_)); }
 
 private:
     T& ref() noexcept { return *std::launder(reinterpret_cast<T*>(storage_)); }
@@ -180,16 +177,16 @@ public:
 
     [[nodiscard]] constexpr bool ok() const noexcept { return status_.ok(); }
     [[nodiscard]] constexpr bool failed() const noexcept { return status_.failed(); }
-    [[nodiscard]] constexpr Status status() const noexcept { return status_; }
-    [[nodiscard]] constexpr Code code() const noexcept { return status_.code; }
+    constexpr Status status() const noexcept { return status_; }
+    constexpr Code code() const noexcept { return status_.code; }
 
     /// f() -> Result<U>; the Status is forwarded on failure.
-    template <class F> [[nodiscard]] auto and_then(F&& f) const -> std::invoke_result_t<F> {
+    template <class F> auto and_then(F&& f) const -> std::invoke_result_t<F> {
         using R = std::invoke_result_t<F>;
         return ok() ? f() : R(status_);
     }
     /// f() -> U, wrapped into Result<U>.
-    template <class F> [[nodiscard]] auto transform(F&& f) const -> Result<std::invoke_result_t<F>> {
+    template <class F> auto transform(F&& f) const -> Result<std::invoke_result_t<F>> {
         using R = Result<std::invoke_result_t<F>>;
         return ok() ? R(f()) : R(status_);
     }
@@ -227,7 +224,7 @@ template <class T> constexpr Status to_status(Result<T> const& r) noexcept { ret
 
 enum class Severity : u8 { Info = 0, Warning, Error };
 
-[[nodiscard]] KILN_API char const* severity_name(Severity s) noexcept;
+KILN_API char const* severity_name(Severity s) noexcept;
 
 /// A structured diagnostic. `code` is a stable, documentable identifier defined by
 /// the emitting module (e.g. cook diagnostics use a "Kxxxx" table); 0 = none.
@@ -257,6 +254,6 @@ KILN_API Status diagf(DiagSink const* sink, Status status, u32 code, Severity se
                       StrView where, char const* fmt, ...) noexcept KILN_PRINTF(7, 8);
 
 /// A DiagSink that forwards to the log (category "diag").
-[[nodiscard]] KILN_API DiagSink log_diag_sink() noexcept;
+KILN_API DiagSink log_diag_sink() noexcept;
 
 } // namespace kiln

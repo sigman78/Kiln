@@ -42,7 +42,7 @@ constexpr usize kMaxPath = 1024;
     return true;
 }
 
-[[nodiscard]] HANDLE native_handle(IoFile f) noexcept {
+HANDLE native_handle(IoFile f) noexcept {
     return reinterpret_cast<HANDLE>(static_cast<std::uintptr_t>(f.bits - 1));
 }
 
@@ -130,7 +130,7 @@ bool stat_is_regular_file(StrView path) noexcept {
 
 #else // POSIX
 
-[[nodiscard]] int native_fd(IoFile f) noexcept { return int(f.bits - 1); }
+int native_fd(IoFile f) noexcept { return int(f.bits - 1); }
 
 Status compat_open(void*, StrView path, IoFile* out) {
     if (path.size >= kMaxPath) return make_status(Code::InvalidArgument);

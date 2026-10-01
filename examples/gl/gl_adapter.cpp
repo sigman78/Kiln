@@ -24,7 +24,7 @@ constexpr u64 kUploadAlign = 256; ///< start of every upload in the ring
 constexpr u32 kMaxLevels   = 16;
 
 /// For printf's %llu, whatever u64 is on this platform.
-constexpr unsigned long long ull(u64 v) noexcept { return v; }
+unsigned long long ull(u64 v) noexcept { return v; }
 
 enum class ObjectKind : u32 { Texture = 1, Buffer = 2 };
 

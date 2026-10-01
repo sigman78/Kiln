@@ -20,7 +20,7 @@ struct ManifestStoreDesc {
 /// and loads the manifest. A malformed manifest is its K42xx. The profile's entries and records are
 /// dropped when they were cooked for another definition of it (another hash_target); malformed
 /// records are dropped (they only save time).
-[[nodiscard]] Status open_manifest_store(ManifestStoreDesc const& d, ManifestStore** out) noexcept;
+Status open_manifest_store(ManifestStoreDesc const& d, ManifestStore** out) noexcept;
 /// Releases the lock and frees the store. Does not commit.
 void close_manifest_store(ManifestStore* s) noexcept;
 
@@ -28,11 +28,10 @@ void close_manifest_store(ManifestStore* s) noexcept;
 /// artifact of the same key has other bytes), then replaces the unit's entries and input record in
 /// memory, and marks the unit fresh. An output whose artifact fails gets that Status and leaves the
 /// manifest; when the first output fails, nothing changes and its Status is returned.
-[[nodiscard]] Status publish_unit(ManifestStore* s, CookUnit& unit, u64 hostDigest,
-                                  DiagSink const* diag) noexcept;
+Status publish_unit(ManifestStore* s, CookUnit& unit, u64 hostDigest, DiagSink const* diag) noexcept;
 /// Rewrites the manifest (temporary file, then rename) if anything changed and the last commit is
 /// at least `minIntervalMs` old. A failed write is tried again next time.
-[[nodiscard]] Status commit_manifest(ManifestStore* s, DiagSink const* diag, u32 minIntervalMs = 0) noexcept;
+Status commit_manifest(ManifestStore* s, DiagSink const* diag, u32 minIntervalMs = 0) noexcept;
 
 /// The entry of `name` and `kind` in memory, or false.
 [[nodiscard]] bool manifest_find(ManifestStore* s, AssetKind kind, StrView name, Hash128* key) noexcept;
@@ -41,7 +40,7 @@ void close_manifest_store(ManifestStore* s) noexcept;
 [[nodiscard]] bool copy_input_record(ManifestStore* s, StrView name, CookUnit* out, u64* hostDigest) noexcept;
 /// The kCookerVersion that wrote the unit `name`'s record; 0 when unknown (an older store) or
 /// when there is no record.
-[[nodiscard]] u32 record_cooker_version(ManifestStore* s, StrView name) noexcept;
+u32 record_cooker_version(ManifestStore* s, StrView name) noexcept;
 /// For tests: makes the record look as if another cooker version wrote it.
 void set_record_cooker_version(ManifestStore* s, StrView name, u32 version) noexcept;
 /// Sets the host-settings digest of the unit `name`'s record (its keys were checked again).
@@ -93,8 +92,8 @@ using GcReportFn = void (*)(void* user, StrView file, u64 bytes);
 /// profile of manifest.dir references and whose name is exactly 26 base32 characters, and the
 /// temporary files store writes leave (`<name>.tmp.<16 hex digits>`). Nothing else is touched. A
 /// store without a manifest has no referenced artifact. With `dryRun`, nothing is deleted.
-[[nodiscard]] Status collect_store_garbage(StrView storeDir, bool dryRun, GcReportFn report, void* user,
-                                           GcResult* out, DiagSink const* diag) noexcept;
+Status collect_store_garbage(StrView storeDir, bool dryRun, GcReportFn report, void* user, GcResult* out,
+                             DiagSink const* diag) noexcept;
 
 struct ExportResult {
     u32 profiles  = 0;
@@ -106,8 +105,8 @@ struct ExportResult {
 /// `profile` of the store's manifest.dir (every profile when empty) and the artifacts it
 /// references, each checked against its checksum while it is copied. No input records, no lock.
 /// The source store is only read.
-[[nodiscard]] Status export_store(StrView storeDir, StrView outDir, StrView profile, ExportResult* out,
-                                  DiagSink const* diag) noexcept;
+Status export_store(StrView storeDir, StrView outDir, StrView profile, ExportResult* out,
+                    DiagSink const* diag) noexcept;
 
 /// `path` made absolute, with `/` separators and no `.` or `..` segments (the last segment need not
 /// exist); its length, or 0 when it cannot be made.

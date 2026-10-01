@@ -153,8 +153,8 @@ struct FileList {
         Span<char> dst = pool.append_uninit(n + 1);
         std::memcpy(dst.data, path, n + 1);
     }
-    [[nodiscard]] char const* at(usize i) const { return pool.data() + offsets[i]; }
-    [[nodiscard]] usize size() const { return offsets.size(); }
+    char const* at(usize i) const { return pool.data() + offsets[i]; }
+    usize size() const { return offsets.size(); }
 };
 
 void sort_names(Vec<char>& names, Vec<usize>& offs) {

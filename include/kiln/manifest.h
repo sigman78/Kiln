@@ -7,7 +7,7 @@
 namespace kiln {
 
 /// XXH3-128 of `bytes`, seed 0. A checksum, not a signature.
-[[nodiscard]] KILN_API Hash128 xxh3_128(Span<u8 const> bytes) noexcept;
+KILN_API Hash128 xxh3_128(Span<u8 const> bytes) noexcept;
 
 /// 32 lowercase hex digits and a NUL into `out`.
 KILN_API void hash128_hex(Hash128 const& h, char (&out)[33]) noexcept;
@@ -29,7 +29,7 @@ inline constexpr char kManifestFile[] = "manifest.dir";
 [[nodiscard]] KILN_API usize artifact_file_path(StrView storeDir, Hash128 const& key, char* out,
                                                 usize cap) noexcept;
 /// Null if `name` is a valid profile name (`[a-z0-9_-]`, 1 to 63 characters), else a reason.
-[[nodiscard]] KILN_API char const* check_profile_name(StrView name) noexcept;
+KILN_API char const* check_profile_name(StrView name) noexcept;
 
 // ---------------------------------------------------------------------------
 // Manifest format 0.1 (little-endian; sections at 8-byte boundaries)
@@ -72,11 +72,11 @@ class KILN_API ManifestProfile {
 public:
     ManifestProfile() noexcept = default;
 
-    [[nodiscard]] StrView name() const noexcept { return name_; }
-    [[nodiscard]] u64 hash() const noexcept { return hash_; }                  ///< hash_target
-    [[nodiscard]] u64 block_formats() const noexcept { return blockFormats_; } ///< block_format_bit() set
-    [[nodiscard]] u64 size() const noexcept { return count_; }
-    [[nodiscard]] ManifestEntry entry(u64 i) const noexcept;
+    StrView name() const noexcept { return name_; }
+    u64 hash() const noexcept { return hash_; }                  ///< hash_target
+    u64 block_formats() const noexcept { return blockFormats_; } ///< block_format_bit() set
+    u64 size() const noexcept { return count_; }
+    ManifestEntry entry(u64 i) const noexcept;
     /// The entry of `name` and `kind`, or false.
     [[nodiscard]] bool find(AssetKind kind, StrView name, ManifestEntry* out) const noexcept;
 
@@ -97,14 +97,14 @@ public:
 
     /// Checks everything: header, sizes, names, order, index and checksum. On failure, emits one
     /// K42xx diagnostic and returns Corrupt (VersionMismatch for K4202).
-    [[nodiscard]] static Result<ManifestView> open(Span<u8 const> bytes, DiagSink const* diag = nullptr,
-                                                   StrView where = {}) noexcept;
+    static Result<ManifestView> open(Span<u8 const> bytes, DiagSink const* diag = nullptr,
+                                     StrView where = {}) noexcept;
 
-    [[nodiscard]] u32 profile_count() const noexcept { return profiles_; }
-    [[nodiscard]] ManifestProfile profile(u32 i) const noexcept;
+    u32 profile_count() const noexcept { return profiles_; }
+    ManifestProfile profile(u32 i) const noexcept;
     /// The profile called `name`, or false.
     [[nodiscard]] bool find_profile(StrView name, ManifestProfile* out) const noexcept;
-    [[nodiscard]] Hash128 checksum() const noexcept;
+    Hash128 checksum() const noexcept;
 
 private:
     Span<u8 const> bytes_;

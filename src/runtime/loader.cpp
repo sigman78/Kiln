@@ -79,7 +79,7 @@ struct Source {
     Source& operator=(Source const&) = delete;
     ~Source() noexcept { close(); }
 
-    [[nodiscard]] Status read(u64 off, u64 n, void* dst) const noexcept {
+    Status read(u64 off, u64 n, void* dst) const noexcept {
         if (off > size || n > size - off) return make_status(Code::IoEof);
         if (n == 0) return kOk;
         if (memory) {
