@@ -50,7 +50,8 @@ Not goals for v1:
   Basic, Meshopt and MeshoptZstd in the writer and the runtime; `Meshopt` by default (owner). Blob
   splitting (B16) waits for streaming.
 - **Textures:** alpha-coverage-preserving mips (done 2026-10-01: texture setting `alphaCutoff`, Auto
-  from a glTF Mask material); channel packing (for example ORM from separate images).
+  from a glTF Mask material); channel packing (for example ORM from separate images;
+  [`design/channel-packing.md`](design/channel-packing.md), Proposed).
 - **Project settings:** config files, presets, path rules, target encodings and
   `kiln-cook --explain` ([`cook-settings.md`](cook-settings.md); file format: open question 7).
 - **Dependency tracking for hot reload** (done 2026-10-01). A changed layer reloads the arrays that
