@@ -14,8 +14,8 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
   of a dialog box, so automated runs never hang. The library itself changes no process-wide setting.
 - **`.mesh` payload compression** (docs/design/mesh-compression.md): mesh settings `compression`
   (`Basic`, `Meshopt`, `MeshoptZstd`) and `zstdLevel`, the same sidecar keys, `kiln-cook
-  --mesh-compression` and `--mesh-zstd`. The runtime decodes every scheme (meshoptimizer's codecs
-  vendored as `kiln_meshopt_dec`). New diagnostic K4024. `kiln-info --bench`. The default stays `None`.
+  --mesh-compression` and `--mesh-zstd`. The runtime decodes every scheme: `kiln_runtime` now links
+  meshoptimizer (v1.3, fetched also by a shipping configure unless the host provides the target). New diagnostic K4024. `kiln-info --bench`. The default stays `None`.
 - **Runtime texture arrays** (docs/design/runtime-texture-arrays.md, first version):
   `request_texture_array(ctx, TextureArrayDesc{name, layers, ...})` assembles separately cooked 2D
   textures into one `TextureShape::Array` texture at load time, with the usual states, events,

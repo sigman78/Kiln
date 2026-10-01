@@ -5,7 +5,6 @@
 
 #include "formats_internal.h"
 
-#include "kiln_meshopt_prefix.h" // before meshoptimizer.h: the vendored codec's names
 #include "meshoptimizer.h"
 
 #define ZSTD_STATIC_LINKING_ONLY // the custom-allocator API (the vendored zstd is pinned)

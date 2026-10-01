@@ -11,9 +11,11 @@ owner. Measured below.
   blobs, Zstd for indices), `Meshopt` (MeshoptVertex, MeshoptIndex) and `MeshoptZstd` (the same
   with outer Zstd). Mesh settings `compression` and `zstdLevel`, sidecar keys of the same names,
   `kiln-cook --mesh-compression` and `--mesh-zstd`. A blob that does not shrink stays `None`.
-- The runtime decodes with meshoptimizer's codec files, vendored from the commit the cooker uses
-  and renamed `kiln_meshopt_*` (`third_party/meshopt_decode`); Zstd was already there. The loader
-  decodes into its own memory and copies to staging (Zstd reads its output back).
+- `kiln_runtime` links meshoptimizer (the cooker's pinned v1.3) for its codecs; a static link takes
+  only those objects. A host with its own `meshoptimizer` target keeps it (v1.3 or newer). A
+  shipping configure therefore fetches meshoptimizer, the one exception to "no network". The codecs
+  allocate nothing. The loader decodes into its own memory and copies to staging (Zstd reads its
+  output back).
 - `MeshoptIndex` may rotate a triangle's indices; the writer stores what decodes (spec §5.9).
 - `kiln-info --bench` decodes a `.mesh` repeatedly and prints the ratio and decoded MB/s.
 

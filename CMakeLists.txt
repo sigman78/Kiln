@@ -94,7 +94,8 @@ target_compile_features(kiln_core PUBLIC cxx_std_23)
 
 # zstd: the runtime decodes Zstd-supercompressed KTX2 levels; the cook also encodes them.
 add_subdirectory(third_party/zstd)
-add_subdirectory(third_party/meshopt_decode)
+# meshoptimizer: the runtime decodes meshopt-compressed .mesh payloads; the cook optimizes and encodes.
+include(third_party/meshoptimizer.cmake)
 
 # ---------------------------------------------------------------------------
 # kiln_runtime — loading, .mesh/KTX2 readers, IO. Ships in release builds.
@@ -133,7 +134,7 @@ add_library(kiln::runtime ALIAS kiln_runtime)
 set_target_properties(kiln_runtime PROPERTIES EXPORT_NAME runtime)
 kiln_apply_defaults(kiln_runtime)
 target_link_libraries(kiln_runtime PUBLIC kiln_core Threads::Threads)
-target_link_libraries(kiln_runtime PRIVATE kiln_zstd kiln_meshopt_dec)
+target_link_libraries(kiln_runtime PRIVATE kiln_zstd meshoptimizer)
 if(KILN_HOT_RELOAD)
     target_compile_definitions(kiln_runtime PUBLIC KILN_HOT_RELOAD=1)
 endif()
@@ -187,7 +188,7 @@ if(KILN_BUILD_COOK)
 set_target_properties(kiln_cook PROPERTIES EXPORT_NAME cook)
     kiln_apply_defaults(kiln_cook)
     target_link_libraries(kiln_cook PUBLIC kiln_runtime)
-    target_link_libraries(kiln_cook PRIVATE kiln_third_party_cook kiln_zstd_enc kiln_meshopt_dec)
+    target_link_libraries(kiln_cook PRIVATE kiln_third_party_cook kiln_zstd_enc)
     # tools/cli.h: the option parser of cook_cli_main; header-only and never installed.
     target_link_libraries(kiln_cook PRIVATE $<BUILD_INTERFACE:kiln_cli>)
     if(KILN_WEBP)
@@ -237,7 +238,11 @@ if(KILN_INSTALL)
     # Two export sets so a shipping install carries only the read-only side:
     #   kilnRuntimeTargets: kiln::core, kiln::runtime          (always)
     #   kilnCookTargets:    kiln::cook                         (component "cook")
-    install(TARGETS kiln_core kiln_runtime
+    set(_kiln_runtime_targets kiln_core kiln_runtime)
+    if(KILN_OWNS_MESHOPTIMIZER) # a static kiln_runtime needs its PRIVATE link dependencies exported
+        list(APPEND _kiln_runtime_targets meshoptimizer)
+    endif()
+    install(TARGETS ${_kiln_runtime_targets}
         EXPORT kilnRuntimeTargets
         ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
         LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
