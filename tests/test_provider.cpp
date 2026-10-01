@@ -999,6 +999,46 @@ KILN_TEST(Provider, HdrSourceCooksToBc6h) {
     KILN_CHECK(ti.desc.isCube && ti.desc.format == Format::BC6H_UFLOAT);
 }
 
+// The provider's quality cap applies to its own cooks: an entry cooked without the cap (as by
+// kiln-cook) stays in use, and a changed source cooks again under the cap.
+KILN_TEST(Provider, QualityCapKeepsBetterEntries) {
+    char root[1024], storeDir[1024], refDir[1024];
+    scratch_dir("provider_cap_src", root, sizeof root);
+    scratch_dir("provider_cap_store", storeDir, sizeof storeDir);
+    scratch_dir("provider_cap_ref", refDir, sizeof refDir);
+    make_dir(root);
+    char path[1100];
+    format(path, sizeof path, "%s/tile.png", root);
+    u8 rgba[4 * 4 * 4];
+    test_pixels(rgba, 3);
+    replace_file(path, test_png(rgba).span());
+    Root const roots[] = {
+        {{}, StrView(root)}
+    };
+    auto cook_once = [&](char const* store, cook::EncodeQuality cap, Hash128* key) {
+        TestContext tc;
+        if (!tc.init(StrView(store), Span<Root const>(roots, 1))) return false;
+        cook::ProviderDesc const pd{.storeMode = cook::StoreMode::Disk, .maxQuality = cap};
+        if (!KILN_CHECK(cook::install_provider(tc.ctx, pd).ok())) return false;
+        TextureHandle const t = request_texture(tc.ctx, "tile.png");
+        bool const ready      = pump_until_settled(tc.ctx, t) == State::Ready;
+        release(tc.ctx, t);
+        cook::uninstall_provider(tc.ctx);
+        return KILN_CHECK(ready) && KILN_CHECK(stored(store, AssetKind::Texture, "tile.png", nullptr, key));
+    };
+    Hash128 high, kept, capped, reference;
+    if (!cook_once(storeDir, cook::EncodeQuality::High, &high)) return;
+    if (!cook_once(storeDir, cook::EncodeQuality::Fast, &kept)) return;
+    KILN_CHECK(kept == high);
+
+    test_pixels(rgba, 91);
+    replace_file(path, test_png(rgba).span());
+    if (!cook_once(storeDir, cook::EncodeQuality::Fast, &capped)) return;
+    if (!cook_once(refDir, cook::EncodeQuality::High, &reference)) return;
+    KILN_CHECK(!(capped == high));
+    KILN_CHECK(!(capped == reference));
+}
+
 // A provider cooks for the context's profile only: another target writes nothing.
 KILN_TEST(Provider, RefusesAnotherProfile) {
     char storeDir[1024];

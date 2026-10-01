@@ -9,6 +9,8 @@
 #   - meshoptimizer (MIT) -- FetchContent, pinned to a commit hash
 #   - bc7enc_rdo (MIT or public domain) -- BC1/3/4/5 (rgbcx) and BC7 (bc7enc) encoders: vendored
 #   - ispc_bc6h (MIT)     -- BC6H encoder, a scalar C++ port of the ISPC Texture Compressor's
+#   - basis_bc7f (Apache-2.0) -- BC7 encoder for the Fast/Normal presets: Basis Universal's bc7f,
+#                            extracted into one file
 #   - bcdec (MIT or public domain) -- BC1-BC7 decoder for kiln_tests only (kiln_bcdec)
 #
 # All of it is compiled into one static library, kiln_third_party_cook, which
@@ -48,7 +50,8 @@ endif()
 # kiln_third_party_cook -- one static lib for the vendored C dependencies.
 # ---------------------------------------------------------------------------
 add_library(kiln_third_party_cook STATIC wuffs/wuffs_impl.c)
-set(_kiln_bc_sources bc7enc_rdo/rgbcx.cpp bc7enc_rdo/bc7enc.cpp ispc_bc6h/ispc_bc6h.cpp)
+set(_kiln_bc_sources bc7enc_rdo/rgbcx.cpp bc7enc_rdo/bc7enc.cpp ispc_bc6h/ispc_bc6h.cpp
+    basis_bc7f/basisu_bc7f.cpp)
 target_sources(kiln_third_party_cook PRIVATE ${_kiln_bc_sources})
 set_target_properties(kiln_third_party_cook PROPERTIES CXX_STANDARD 23 CXX_STANDARD_REQUIRED ON)
 # The smaller rgbcx table (120 KB instead of 300 KB compiled, same output quality). The macro
@@ -57,6 +60,8 @@ target_compile_definitions(kiln_third_party_cook PUBLIC RGBCX_USE_SMALLER_TABLES
 # Cooked textures are compared byte for byte on every compiler: no FMA contraction in the encoders.
 if(NOT MSVC)
     set_source_files_properties(${_kiln_bc_sources} PROPERTIES COMPILE_OPTIONS -ffp-contract=off)
+    # bc7f reads texels through a uint32_t pointer to color_rgba (upstream code).
+    set_property(SOURCE basis_bc7f/basisu_bc7f.cpp APPEND PROPERTY COMPILE_OPTIONS -fno-strict-aliasing)
 endif()
 if(KILN_MESH)
     target_sources(kiln_third_party_cook PRIVATE cgltf/cgltf.c mikktspace/mikktspace.c)
@@ -103,7 +108,8 @@ target_include_directories(kiln_third_party_cook INTERFACE
 # SYSTEM: the bc7enc_rdo headers trip kiln's gcc warning set (-Wdouble-promotion and others).
 target_include_directories(kiln_third_party_cook SYSTEM INTERFACE
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/bc7enc_rdo>
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/ispc_bc6h>)
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/ispc_bc6h>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/basis_bc7f>)
 
 # bcdec: header-only BC decoder the tests check the encoders' output with. Never linked into kiln.
 add_library(kiln_bcdec INTERFACE)

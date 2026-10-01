@@ -24,12 +24,22 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
   exit 1 on a difference. The Vulkan example adapter's images now also have `TRANSFER_SRC` usage.
 - `NullAdapterDesc::maxUploadBytes` (0 = unlimited, default): an opt-in staging cap so tests can make
   `begin_upload()` fail with `Unsupported` for an oversized upload, like the GL/Vulkan example adapters.
+- `CookSession::maxQuality` (default `High`, no cap) caps the resolved texture `quality`.
+  `ProviderDesc::maxQuality` sets it for the cook provider.
 
 ### Fixed
 - `destroy()` leaked the declaration (layer names and table) of a texture array the host had not
   released.
 
 ### Changed
+- **BC7 `Fast` and `Normal` use Basis Universal's `bc7f`** (extracted into `third_party/basis_bc7f`,
+  Apache-2.0): `Fast` the default flags, `Normal` the extended search. `High` keeps `bc7enc`. A
+  WaterBottle cook at `Fast` is 5x faster on one thread, `Normal` 1.7x. `kCookerVersion` is 6, so
+  every store entry cooks again once.
+- **The cook provider encodes at `Fast` by default** (`ProviderDesc::maxQuality = Fast`): a cook on
+  a miss and a hot reload take the fast BC encoder. An entry that `kiln-cook` wrote at a higher
+  quality stays in use until its sources change. Migration: set `maxQuality = EncodeQuality::High`
+  for the old behaviour.
 - **Examples layout:** `examples/vk/` holds the shared Vulkan code (`kiln_example_vk`: device,
   adapter, frame plumbing, now `vk_render.{h,cpp}`) and the Vulkan integration examples
   (`main_basic.cpp`, `main_array.cpp`), as `examples/gl/` does for GL; shaders live in

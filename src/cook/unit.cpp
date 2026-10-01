@@ -203,6 +203,7 @@ u64 host_digest(UnitDesc const& d, u32 policyVersion) noexcept {
     }
     h.update_value(u8(d.session.storeMode));
     h.update_value(u8(d.session.fastPreview));
+    h.update_value(u8(d.session.maxQuality));
     h.update_value(policyVersion);
     return h.digest();
 }
@@ -251,12 +252,21 @@ bool recorded_keys_match(UnitDesc const& d, CookUnit const& rec) noexcept {
             if (r.failed()) return false;
             settingsHash = hash_settings(*r);
         }
-        Hash128 const key = build_key({.kind         = o.kind,
-                                       .name         = name,
-                                       .targetHash   = targetHash,
-                                       .settingsHash = settingsHash,
-                                       .inputs       = inputs.span()});
-        if (!(key == o.key)) return false;
+        BuildKeyDesc kd{.kind         = o.kind,
+                        .name         = name,
+                        .targetHash   = targetHash,
+                        .settingsHash = settingsHash,
+                        .inputs       = inputs.span()};
+        if (build_key(kd) == o.key) continue;
+        // A quality cap lowers quality for new cooks only: an entry cooked without the cap stays.
+        if (o.kind != AssetKind::Texture || d.session.fastPreview ||
+            d.session.maxQuality == EncodeQuality::High)
+            return false;
+        rd.session.maxQuality                  = EncodeQuality::High;
+        Result<TextureCookSettings> const full = resolve_texture_layers(*d.textureDefaults, rd);
+        if (full.failed()) return false;
+        kd.settingsHash = hash_settings(*full);
+        if (!(build_key(kd) == o.key)) return false;
     }
     return true;
 }

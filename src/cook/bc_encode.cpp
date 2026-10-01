@@ -1,5 +1,5 @@
-// src/cook/bc_encode.cpp — BC1/3/4/5 with rgbcx and BC7 with bc7enc (third_party/bc7enc_rdo), BC6H
-// with the port of the ISPC Texture Compressor's encoder (third_party/ispc_bc6h).
+// src/cook/bc_encode.cpp — BC1/3/4/5 with rgbcx, BC7 with Basis bc7f (Fast, Normal) or bc7enc (High),
+// BC6H with the port of the ISPC Texture Compressor's encoder (third_party/ispc_bc6h).
 // Design: docs/design/bcn-encoding.md.
 #include "bc_encode.h"
 
@@ -23,6 +23,7 @@
 #elif defined(_MSC_VER)
 #pragma warning(push, 0)
 #endif
+#include "basisu_bc7f.h"
 #include "bc7enc.h"
 #include "ispc_bc6h.h"
 #include "rgbcx.h"
@@ -40,20 +41,18 @@ namespace {
 
 enum class Codec : u8 { BC1, BC3, BC4, BC5, BC6H, BC7 };
 
-/// The encoders' global tables, filled once. rgbcx::init must not run while another thread encodes.
+/// The encoders' global tables, filled once. No init may run while another thread encodes.
 struct Encoders {
-    bc7enc_compress_block_params bc7[3]; ///< by EncodeQuality
+    bc7enc_compress_block_params bc7High;
 
     Encoders() noexcept {
         rgbcx::init(rgbcx::bc1_approx_mode::cBC1Ideal);
+        kiln_bc7f::init();
         bc7enc_compress_block_init();
-        u32 const uber[3] = {0, 2, 4};
-        for (u32 q = 0; q < 3; ++q) {
-            bc7enc_compress_block_params_init(&bc7[q]);
-            bc7enc_compress_block_params_init_linear_weights(&bc7[q]);
-            bc7[q].m_uber_level     = uber[q];
-            bc7[q].m_max_partitions = BC7ENC_MAX_PARTITIONS;
-        }
+        bc7enc_compress_block_params_init(&bc7High);
+        bc7enc_compress_block_params_init_linear_weights(&bc7High);
+        bc7High.m_uber_level     = 4;
+        bc7High.m_max_partitions = BC7ENC_MAX_PARTITIONS;
     }
 };
 
@@ -77,6 +76,8 @@ Codec codec_of(Format f) noexcept {
     }
 }
 
+/// bc7f flags for Fast and Normal: the benchmark's "default" and "extended search" points.
+constexpr u32 kBc7fFlags[2] = {kiln_bc7f::cPackBC7FlagDefault, kiln_bc7f::cPackBC7FlagDefaultNonAnalytical};
 /// rgbcx's BC1 and BC3 levels (0-18) per quality; the spike's measured points.
 constexpr u32 kRgbcxLevel[3] = {0, 10, 18};
 /// The original's profiles veryfast, fast and basic; slow and veryslow gain under 1 %.
@@ -165,7 +166,12 @@ void encode_rows(void* user, u32 begin, u32 end) noexcept {
                 else
                     rgbcx::encode_bc5(dst, px, 0, 1, 4);
                 break;
-            case Codec::BC7: bc7enc_compress_block(dst, px, &j.enc->bc7[j.quality]); break;
+            case Codec::BC7:
+                if (j.quality == u32(EncodeQuality::High))
+                    bc7enc_compress_block(dst, px, &j.enc->bc7High);
+                else
+                    (void)kiln_bc7f::fast_pack_bc7_auto_rgba(dst, px, kBc7fFlags[j.quality]);
+                break;
             case Codec::BC6H: break;
             }
         }

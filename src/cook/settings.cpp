@@ -130,6 +130,8 @@ Result<TextureCookSettings> resolve_texture(TextureCookSettings const& overrides
         s.quality = EncodeQuality::Normal;
     else if (session.fastPreview)
         s.quality = EncodeQuality::Fast;
+    else if (s.quality > session.maxQuality)
+        s.quality = session.maxQuality;
 
     if (s.zstdLevel > kMaxZstdLevel)
         return diagf(diag, make_status(Code::InvalidArgument), kDiagSettingsInvalidCombo, Severity::Error,

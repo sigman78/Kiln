@@ -18,9 +18,9 @@ The cooker learns to write **BC1, BC3, BC4, BC5, BC6H and BC7** into KTX2. Each 
 default format for the desktop target (color and ORM → BC7, normal → BC5, one-channel mask → BC4,
 HDR → BC6H). The encoders are picked on the Pareto front of **dependency size** against **encode
 speed and quality**, measured on the demo models' textures (section 2): bc7enc_rdo's `rgbcx` for
-BC1–5, `bc7enc` for BC7, and a C++ port of the ISPC Texture Compressor's BC6H. A target names its
-**format family** (None, BC, later ASTC and ETC2), so mobile targets slot in without a settings
-change (section 7).
+BC1–5, Basis `bc7f` (Fast, Normal) and `bc7enc` (High) for BC7 (step 8), and a C++ port of the
+ISPC Texture Compressor's BC6H. A target names its **format family** (None, BC, later ASTC and
+ETC2), so mobile targets slot in without a settings change (section 7).
 
 The runtime needs no new code for block formats: the reader, the upload layout and `texture_info`
 already work in blocks. The example adapters and their shaders need small changes (compressed
@@ -248,7 +248,15 @@ target profiles), and this work leaves room for it:
    shipping build, not fast iteration.
 7. **Later, with the mobile targets (v0.9):** astcenc, ASTC block sizes per usage, the `ASTC`
    family in `TargetProfile`; ETC2 only if a target needs it.
-8. **Next (v0.7): faster BC encoding** (owner, 2026-09-30). Encoding is about 90% of a cook on
+8. **Faster BC encoding** (v0.7, done 2026-09-30; owner decisions recorded in open-questions R14):
+   BC7 `Fast` = Basis `bc7f` default, `Normal` = `bc7f` extended search (`DefaultNonAnalytical`),
+   `High` = `bc7enc` uber 4 as before; BC1–5 and BC6H unchanged. `bc7f` is extracted into
+   `third_party/basis_bc7f` (output checked byte-identical to upstream). The cook provider caps
+   quality at `Fast` (`ProviderDesc::maxQuality`). WaterBottle, `kiln-cook --target desktop`, release,
+   i7-9700K: Fast 3.06 → 0.59 s on one thread (0.68 → 0.34 s on all cores), Normal 6.60 → 3.92 s
+   (1.20 → 0.82 s). At Fast on all cores the BC7 encoder no longer dominates the cook. Note: `bc7f`
+   extended search beats `bc7enc` High on ORM and alpha textures, so High gains only on opaque color.
+   The request, as first written: Encoding is about 90% of a cook on
    miss: WaterBottle's four 2048x2048 textures take 0.25-0.35 s each to encode in a release build
    and about 1 s each in a debug build. The benchmark below measured the candidates: Basis `bc7f` /
    `bc6hf` for fast presets, scalar `bc7e` for an offline quality mode; SIMD paths in `rgbcx` and

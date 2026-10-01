@@ -17,6 +17,7 @@ links it.
 | Tangents | **MikkTSpace** (reference `mikktspace.c/.h`) | zlib | cook only, `KILN_MESH=ON` | vendored in `third_party/mikktspace/` |
 | Zstd | **zstd** 1.5.7 | BSD | runtime decoder-only build (`kiln_zstd`), cook encoder (`kiln_zstd_enc`) | vendored `lib/` in `third_party/zstd/` |
 | BC1/3/4/5/7 encoders | **bc7enc_rdo**: `rgbcx`, `bc7enc` | MIT or public domain | cook only | vendored in `third_party/bc7enc_rdo/` |
+| BC7 encoder, Fast and Normal presets | **basis_bc7f**: Basis Universal's `bc7f` encoder, extracted into one file | Apache-2.0 | cook only | extracted from a pinned commit into `third_party/basis_bc7f/` |
 | BC6H encoder | **ispc_bc6h**: kiln's scalar C++ port of the ISPC Texture Compressor's BC6H | MIT | cook only | ported from a pinned commit into `third_party/ispc_bc6h/` |
 | BC decoder for tests | **bcdec** | MIT or public domain | `kiln_tests` only | vendored header in `third_party/bcdec/` |
 | ASTC encoder | deferred (v0.9) | to be chosen | cook only | to be chosen |
@@ -82,6 +83,15 @@ example-only. The `.mesh` blob decode loop ships with codec `None` only, which n
   original (sse4 target) at about a third of its speed, and beat CMP_Core's BC6H (the other plain
   C++ candidate) on speed by 5–100× and on quality. kiln maintains the port; the upstream
   repository is archived.
+- BC7 Fast and Normal presets: the real-time `bc7f` encoder of Basis Universal v2.50 (commit
+  `9bebe16726b3a61c8c213eeee3b7cffb462ef34e`), extracted into `third_party/basis_bc7f/` (one
+  `.cpp`, a small header, `LICENSE`, `NOTICE`). kiln keeps the extract; `NOTICE` lists the changes
+  (Apache-2.0 §4(b)): only the encoder, the BC7 decoder it calls and their tables remain, all
+  inside `namespace kiln_bc7f` so a host that also links Basis Universal gets no duplicate symbols,
+  and `std::popcount` replaces the compiler intrinsics. `init()` fills the tables once; encoding
+  is then thread-safe. The output was checked byte-identical to the upstream transcoder for the
+  four upstream flag sets (Fast, Default, PartiallyAnalytical, NonAnalytical), on MSVC and clang.
+  Compiled with `-ffp-contract=off`.
 - `bcdec` decodes every BC format in `kiln_tests`, independent of the encoders it checks.
 
 ### Zstd (in use since 2026-09-29)

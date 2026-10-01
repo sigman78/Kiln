@@ -1,0 +1,42 @@
+NOTICE
+
+Basis Universal™ Supercompressed GPU Texture Compression Library
+
+Copyright © 2016–2026 Binomial LLC. 
+All rights reserved except as granted under the [Apache 2.0 license](https://github.com/BinomialLLC/basis_universal/blob/master/LICENSE).
+"Basis Universal" is a trademark of Binomial LLC.
+
+The documents in the Basis Universal wiki, and the Basis Universal library, example, and tool source code, fall under the Apache 2.0 license, unless otherwise explicitly indicated. 
+
+Redistributions or derivative works must include a readable copy of the attribution notices from this NOTICE file (see Apache License 2.0 §4(d)).
+
+If you modify the Basis Universal source code, specifications, or wiki documents and redistribute the files, you must cause any modified files to carry prominent notices stating that you changed the files (see Apache 2.0 §4(b)).
+
+**This software, documentation and specifications are provided "as is", without warranty of any kind (see Apache 2.0 §§7–8).**
+
+----------------------------------------------------------------------------------------------------
+Changes made by the kiln project (Apache 2.0 §4(b))
+
+Source: https://github.com/BinomialLLC/basis_universal, commit 9bebe16726b3a61c8c213eeee3b7cffb462ef34e
+(v2.50). The text above is that commit's NOTICE file, unchanged.
+
+basisu_bc7f.cpp and basisu_bc7f.h are modified extracts of transcoder/basisu_transcoder.cpp,
+basisu_transcoder_internal.h, basisu_transcoder_uastc.h, basisu_containers.h and basisu.h.
+The changes:
+
+- Only the BC7 encoder (namespace bc7f), the BC7 decoder it calls (the first namespace bc7u) and
+  the helpers and tables they use are kept. The ASTC packers of bc7f, fast_pack_bc7_auto_rgb(),
+  the perf-stat functions, fast_floorf_int() and bc7u's determine_bc7_mode*() functions are removed.
+- The code is inside namespace kiln_bc7f (so basist becomes kiln_bc7f::basist, basisu becomes
+  kiln_bc7f::basisu), which keeps it apart from a full Basis Universal in the same program.
+- The #if BASISU_BC7F_PERF_STATS and #if BASISU_BC7F_USE_SSE41 blocks are removed (both are 0
+  upstream). popcount32() and pop16() use std::popcount instead of compiler intrinsics.
+- color_rgba loses its color32 conversions and its eNoClamp constructor.
+- g_bc7_mode_5_optimal_endpoints is static here; bc7f::init() fills it with the BC7 777 loop of
+  transcoder_init_bc7_mode5(), which basisu_transcoder_init() runs upstream.
+- basisu_bc7f.h is new: the bc7f flag constants (same values), init(), and
+  fast_pack_bc7_auto_rgba() taking 64 RGBA8 bytes.
+
+The encoder's arithmetic is unchanged. Its output was checked byte-identical to the upstream
+transcoder's bc7f::fast_pack_bc7_auto_rgba() for the Fast, Default, PartiallyAnalytical and
+NonAnalytical flag sets.

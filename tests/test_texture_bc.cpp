@@ -221,6 +221,15 @@ KILN_TEST(TextureBc, ResolveEncoding) {
                         CookSession{.fastPreview = true});
     KILN_REQUIRE(r.ok());
     KILN_CHECK(r->quality == EncodeQuality::Fast);
+    // maxQuality caps, never raises.
+    r = resolve_texture({.usage = TextureUsage::Color, .quality = EncodeQuality::High}, SlotHint::None, kBc,
+                        CookSession{.maxQuality = EncodeQuality::Normal});
+    KILN_REQUIRE(r.ok());
+    KILN_CHECK(r->quality == EncodeQuality::Normal);
+    r = resolve_texture({.usage = TextureUsage::Color, .quality = EncodeQuality::Fast}, SlotHint::None, kBc,
+                        CookSession{.maxQuality = EncodeQuality::Normal});
+    KILN_REQUIRE(r.ok());
+    KILN_CHECK(r->quality == EncodeQuality::Fast);
 
     struct Bad {
         TextureCookSettings s;

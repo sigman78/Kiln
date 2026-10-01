@@ -169,6 +169,8 @@ enum class StoreMode : u8 { Disk = 0, Memory, None }; ///< store / cache-less / 
 struct CookSession {
     StoreMode storeMode = StoreMode::Disk;
     bool fastPreview    = false; ///< cheaper settings for cache-less previews (no optimize, no tangents)
+    /// Caps every texture's resolved `quality`; fastPreview caps it at Fast.
+    EncodeQuality maxQuality = EncodeQuality::High;
 };
 
 // ---------------------------------------------------------------------------
@@ -197,8 +199,9 @@ enum SettingsDiagCode : u32 {
 /// Normal-only flags cleared for other usages, target caps. Every Auto field except `shape` and
 /// `encoding` is concrete on return. An enum value out of range returns
 /// InvalidArgument (K3004); an encoding the usage cannot take, or a block format the target's
-/// profile does not have, InvalidArgument (K3002). `session.fastPreview` sets `quality` to Fast and a Zstd
-/// level to kPreviewZstdLevel. A zstdLevel above kMaxZstdLevel returns InvalidArgument (K3002).
+/// profile does not have, InvalidArgument (K3002). `session.maxQuality` caps `quality`, `session.fastPreview`
+/// sets it to Fast and a Zstd level to kPreviewZstdLevel. A zstdLevel above kMaxZstdLevel returns
+/// InvalidArgument (K3002).
 KILN_API Result<TextureCookSettings> resolve_texture(TextureCookSettings const& overrides, SlotHint hint,
                                                      TargetProfile const& target, CookSession const& session,
                                                      DiagSink const* diag = nullptr,

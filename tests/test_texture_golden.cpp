@@ -197,6 +197,36 @@ KILN_TEST(TextureGolden, Bc6hHdr8x8) {
     check_golden_ktx2("bc6h_hdr", r->file.span());
 }
 
+// BC7 at every quality (bc7f for Fast and Normal, bc7enc for High), on opaque and translucent blocks.
+KILN_TEST(TextureGolden, Bc7Qualities16x16) {
+    u8 rgba[16 * 16 * 4];
+    for (u32 i = 0; i < 16 * 16; ++i) {
+        u32 const x = i % 16, y = i / 16;
+        rgba[i * 4 + 0] = u8(x * 16 + ((i * 37u) & 15u));
+        rgba[i * 4 + 1] = u8(y * 16 + ((i * 91u) & 31u));
+        rgba[i * 4 + 2] = u8((x ^ y) * 17u);
+        rgba[i * 4 + 3] = x < 8 ? u8(255) : u8(y * 16 + x);
+    }
+    Vec<u8> f = png::encode({.width = 16, .height = 16, .colorType = 6, .depth = 8, .pixels = rgba});
+    struct Case {
+        EncodeQuality quality;
+        char const* golden;
+    };
+    Case const cases[] = {
+        {EncodeQuality::Fast,   "bc7_alpha_fast"  },
+        {EncodeQuality::Normal, "bc7_alpha_normal"},
+        {EncodeQuality::High,   "bc7_alpha_high"  },
+    };
+    for (Case const& c : cases) {
+        Result<CookedTexture> r = run_cook(
+            f.span(), {.colorSpace = ColorSpace::Srgb, .usage = TextureUsage::Color, .quality = c.quality},
+            {.blockFormats = kDesktopBlockFormats});
+        if (!KILN_CHECK_MSG(r.ok(), "%s: cook failed", c.golden)) return;
+        KILN_CHECK(r->desc.format == Format::BC7_SRGB);
+        check_golden_ktx2(c.golden, r->file.span());
+    }
+}
+
 // BC1 and BC4 at High quality, the rgbcx paths the defaults do not take.
 KILN_TEST(TextureGolden, Bc1Bc4High8x8) {
     u8 rgba[8 * 8 * 4];

@@ -20,6 +20,9 @@ struct ProviderDesc {
     /// Copied at install; empty means such textures are cooked as Color.
     Span<NameRule const> nameRules = kDefaultNameRules;
     bool fastPreview               = false;
+    /// Caps the encoder effort of the textures this provider cooks, for fast iteration. An entry
+    /// cooked at a higher quality (by kiln-cook) stays in use until its sources change.
+    EncodeQuality maxQuality = EncodeQuality::Fast;
     /// Manifest layout: the version of the host's `policy`. A policy is code, so the provider cannot
     /// see it change: bump this when it does, and every entry's key is checked again.
     u32 policyVersion = 0;

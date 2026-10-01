@@ -423,7 +423,7 @@ Status install_provider(Context* ctx, ProviderDesc const& desc) noexcept {
     p->ctx      = ctx;
     p->desc     = effective;
     p->jobs     = jobs(ctx);
-    p->session  = CookSession{effective.storeMode, effective.fastPreview};
+    p->session  = CookSession{effective.storeMode, effective.fastPreview, effective.maxQuality};
 
     StrView const dir = store_dir(ctx);
     p->storeDirBuf.resize(dir.size + 1);

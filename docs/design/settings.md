@@ -27,7 +27,7 @@ BC4, BC5, BC6H, BC7 }`, `EncodeQuality { Fast, Normal, High }`.
 | `shape` | `Auto` | `Cube` and `Array` cut the source into a vertical strip of slices (`texture-shapes.md`). `Auto` stays `Auto` after resolution and means "from the source": a KTX2 source's own shape, else `Tex2D` |
 | `slices` | 0 | `Array` only: layers in the strip; 0 = square slices. Cleared with a K3002 warning for other shapes |
 | `encoding` | `Auto` | The stored format (`bcn-encoding.md`). `Auto` stays `Auto` after resolution: the usage table for the target's `blockFamily`, uncompressed without one. `BC1` drops alpha; `BC6H` is unsigned (`UFLOAT`) and for `Hdr` only |
-| `quality` | `Normal` | Encoder effort: `Fast`, `Normal`, `High`. Resolved to `Normal` when nothing is encoded; `fastPreview` sets `Fast` |
+| `quality` | `Normal` | Encoder effort: `Fast`, `Normal`, `High`. Resolved to `Normal` when nothing is encoded; `fastPreview` sets `Fast`; `CookSession::maxQuality` caps it |
 | `supercompression` | `Zstd` | `Zstd`: each stored level is one Zstd frame (KTX2 scheme 2; `bcn-encoding.md` step 6). Smaller files and reads, same GPU memory. `None`: levels as they are |
 | `zstdLevel` | 0 | 1..19; 0 = 3. `fastPreview` sets 1. Resolved to 0 with `None`; above 19 is a K3002 error. The cook still stores a file plain when Zstd saves under 10% of it in 4 KiB blocks (`kZstdMinSaving`) |
 
@@ -74,7 +74,10 @@ Reserved: indexWidthPolicy, unit/axis override, name prefixes to strip.
   `target_profile()` and selected with `kiln-cook --target`. A store's manifest has the entries of
   each profile cooked into it.
 - `StoreMode { Disk, Memory, None }`: store, cache-less, validate only.
-- `CookSession { storeMode = Disk; fastPreview = false; }`. `fastPreview` turns off `optimize` and
+- `CookSession { storeMode = Disk; fastPreview = false; maxQuality = High; }`. `maxQuality` caps
+  texture `quality`: the cook provider sets it from `ProviderDesc::maxQuality` (default `Fast`), so
+  cooks on a miss and hot reloads encode fast, while `kiln-cook` keeps the asset's quality. The
+  provider keeps using an entry cooked without the cap until its sources change (open-questions R14). `fastPreview` turns off `optimize` and
   `genTangents` for meshes and sets texture `quality` to `Fast` when something is encoded. It changes resolved values, so it
   changes the hash; it is not a hidden side channel.
 

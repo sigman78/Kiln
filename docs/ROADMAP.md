@@ -38,7 +38,8 @@ Not goals for v1:
   members, whole-array reload. Range uploads wait for v0.8. Still to do: an array mode in the
   sokol and NGA examples (a `--dump` frame; byte-exact `--verify` where the API can read a texture
   back; sokol cannot). Moves to v0.8 if it needs adapter changes.
-- **Faster BC encoding.** Decide from the direct-encoder benchmark in
+- **Faster BC encoding** (done 2026-09-30: Basis `bc7f` for BC7 Fast and Normal, the provider at
+  Fast; open-questions R14). Was: decide from the direct-encoder benchmark in
   [`design/bcn-encoding.md`](design/bcn-encoding.md) (Basis `bc7f` / `bc6hf` as fast presets,
   scalar `bc7e` as an offline quality mode, or SIMD in the current encoders). The output stays
   deterministic across threads and compilers.

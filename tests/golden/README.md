@@ -25,8 +25,10 @@ the same input with the same settings ever produce different bytes, a golden tes
 - `ktx2/bc*.ktx2` — the BC encoders on the `desktop` target profile (all of BC): `bc7_color_srgb`,
   `bc5_normal`, `bc6h_hdr` (the default table), `bc1_high` and `bc4_mask_high` (explicit BC1,
   and `High` quality). They pin the vendored encoders' bytes on every compiler and OS in CI.
+- `ktx2/bc7_alpha_{fast,normal,high}.ktx2` — BC7 at each quality (`bc7f` for Fast and Normal,
+  `bc7enc` for High) on a 16x16 image with opaque and translucent blocks.
 
-Total size: 26 files, ~53 KB (the corpus itself is tiny by design — see
+Total size: 29 files, ~55 KB (the corpus itself is tiny by design — see
 `tests/corpus/gltf/generated/README.md`).
 
 ## Regenerating
