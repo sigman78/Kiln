@@ -5,6 +5,7 @@
 
 #include "hand_store.h"
 #include "ktx2_corpus.h" // corpus::read_file
+#include "profile_log.h"
 
 #include "kiln/assets.h"
 #include "kiln/manifest.h"
@@ -1591,6 +1592,37 @@ KILN_TEST(Runtime, ShapePlaceholders) {
     KILN_CHECK(ti.desc.isArray && !ti.desc.isCube);
     release(rt.ctx, cube);
     release(rt.ctx, arr);
+}
+
+// ContextDesc::profiler: zones for the pump and each job, intervals for the waits, the GPU copy and
+// the whole load, each with the asset's name; every zone closes on its own thread.
+KILN_TEST(Runtime, ProfilerHooks) {
+    test::ProfileLog log;
+    {
+        Rt rt;
+        ContextDesc cd;
+        cd.profiler = log.hooks();
+        if (!rt.init({}, cd)) return;
+        KILN_CHECK(profile_hooks(rt.ctx) != nullptr);
+        TextureHandle const t = request_texture(rt.ctx, "ktx2/height16");
+        MeshHandle const m    = request_mesh(rt.ctx, "mesh/Box");
+        KILN_REQUIRE(rt.pump_until([&] { return is_ready(rt.ctx, t) && is_ready(rt.ctx, m); }));
+        release(rt.ctx, t);
+        release(rt.ctx, m);
+    }
+    KILN_CHECK(log.well_formed());
+    KILN_CHECK(log.count('B', "kiln.pump") > 0);
+    for (char const* asset : {"ktx2/height16", "mesh/Box"}) {
+        KILN_CHECK_MSG(log.count('B', "kiln.meta", asset) == 1, "%s", asset);
+        KILN_CHECK_MSG(log.count('B', "kiln.upload", asset) == 1, "%s", asset);
+        for (char const* interval : {"kiln.wait.meta", "kiln.wait.upload", "kiln.gpu", "kiln.load"})
+            KILN_CHECK_MSG(log.count('I', interval, asset) == 1, "%s %s", asset, interval);
+        KILN_CHECK_MSG(log.count('I', "kiln.wait.pool", asset) == 2, "%s", asset);
+    }
+
+    Rt off; // no hooks: nothing to report to
+    if (!off.init()) return;
+    KILN_CHECK(profile_hooks(off.ctx) == nullptr);
 }
 
 KILN_TEST(Runtime, CubeAndArrayLoad) {

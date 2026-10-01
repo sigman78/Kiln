@@ -1149,16 +1149,20 @@ struct TaskRun {
     LodTask* tasks                   = nullptr;
     MeshCookSettings const* settings = nullptr;
     Allocator const* alloc           = nullptr;
+    ProfileHooks const* profile      = nullptr;
+    StrView asset;
 };
 
 void build_tasks(void* user, u32 begin, u32 end) noexcept {
     TaskRun const& r = *static_cast<TaskRun const*>(user);
+    ProfileZone const zone(r.profile, "cook.build", r.asset);
     for (u32 i = begin; i < end; ++i)
         build_lod(r.tasks[i], *r.settings, r.alloc);
 }
 
 void quantize_tasks(void* user, u32 begin, u32 end) noexcept {
     TaskRun const& r = *static_cast<TaskRun const*>(user);
+    ProfileZone const zone(r.profile, "cook.pack", r.asset);
     for (u32 i = begin; i < end; ++i)
         if (r.tasks[i].fate == Fate::Kept) quantize_lod(r.tasks[i]);
 }
@@ -1174,7 +1178,7 @@ Result<CookedMesh> cook_mesh(MeshSource const& src, MeshCookSettings const& sett
                              TargetProfile const& target, CookEnv const& env) noexcept {
     Allocator const* const alloc = env.alloc ? env.alloc : default_allocator();
     DiagSink const* const diag   = env.diag;
-    Stopwatch const swTotal;
+    Stage swTotal(env.profile, "cook.mesh", src.assetPath);
     Arena arena(Arena::Desc{alloc, usize(1) << 20, Tag::Cook});
 
     if (char const* why = check_asset_name(src.assetPath))
@@ -1182,9 +1186,9 @@ Result<CookedMesh> cook_mesh(MeshSource const& src, MeshCookSettings const& sett
                      "MeshSource::assetPath is not a valid asset name: %s", why);
 
     ImportScene scene;
-    Stopwatch const swImport;
+    Stage swImport(env.profile, "cook.import", src.assetPath);
     KILN_TRY(import_gltf(src, settings, arena, alloc, diag, scene));
-    u64 const importUs = swImport.elapsed_us();
+    u64 const importUs = swImport.stop();
 
     Cook k(src, settings, alloc, diag, arena, scene);
     k.matMap.resize(scene.materials.size, kInvalid);
@@ -1222,7 +1226,7 @@ Result<CookedMesh> cook_mesh(MeshSource const& src, MeshCookSettings const& sett
         }
 
     // Thread safety: meshoptimizer is pure and reentrant, MikkTSpace is reentrant per context, cgltf is done.
-    TaskRun run{k.tasks.data(), &settings, alloc};
+    TaskRun run{k.tasks.data(), &settings, alloc, env.profile, src.assetPath};
     parallel_for(env.jobs, alloc, taskCount, 1, &build_tasks, &run, env.maxThreads);
     u32 planned = 0;
     while (planned < u32(scene.parts.size)) {
@@ -1279,10 +1283,10 @@ Result<CookedMesh> cook_mesh(MeshSource const& src, MeshCookSettings const& sett
     wd.materials  = k.materials.span();
     wd.textures   = k.bindings.span();
     wd.mounts     = k.mounts.span();
-    Stopwatch const swWrite;
+    Stage swWrite(env.profile, "cook.write", src.assetPath);
     Result<Vec<u8>> file = mesh::write(wd, mesh::WriteOptions{}, alloc, diag);
     if (file.failed()) return file.status();
-    u64 const writeUs = swWrite.elapsed_us();
+    u64 const writeUs = swWrite.stop();
 
     CookedMesh out;
     out.file = std::move(file).value();
@@ -1349,7 +1353,7 @@ Result<CookedMesh> cook_mesh(MeshSource const& src, MeshCookSettings const& sett
     out.stats.optimizeUs = k.optimizeUs;
     out.stats.packUs     = k.packUs;
     out.stats.writeUs    = writeUs;
-    out.stats.totalUs    = swTotal.elapsed_us();
+    out.stats.totalUs    = swTotal.stop();
     return out;
 }
 

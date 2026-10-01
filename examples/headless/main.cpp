@@ -10,6 +10,7 @@
 #endif
 
 #include "cli.h"
+#include "trace_writer.h"
 
 #include <chrono>
 #include <cstdio>
@@ -346,6 +347,8 @@ int main(int argc, char** argv) {
 
     // 3. The context. Everything below runs on this thread, the pump thread.
     SlowIo slowIo;
+    cli::TraceWriter trace; // KILN_TRACE=<file>: a Chrome trace of the run
+    char const* const tracePath = std::getenv("KILN_TRACE");
     ContextDesc desc{
         .diag      = DiagSink{&diag_to_stdout, nullptr},
         .io        = slowIo.init(compat_io_backend(), o.slowMs, o.latencyMs),
@@ -353,6 +356,7 @@ int main(int argc, char** argv) {
         .storeDir  = StrView(o.store),
         .roots     = Span<Root const>(o.roots, o.rootCount),
         .hotReload = {.watchStore = o.watch},
+        .profiler  = tracePath ? trace.hooks() : ProfileHooks{},
     };
     Result<Context*> c = create(desc);
     if (c.failed()) {
@@ -460,5 +464,9 @@ int main(int argc, char** argv) {
 #endif
     destroy(ctx);
     null_adapter_destroy(na.value());
+    if (tracePath) {
+        trace.log_summary();
+        if (!trace.write(tracePath)) KILN_ERROR("app", "cannot write %s", tracePath);
+    }
     return (gs.failed != 0 || timedOut) ? 1 : 0;
 }

@@ -313,6 +313,7 @@ InputsCheck check_recorded_inputs(CookUnit& rec, StrView sourcePath, bool rehash
 Status cook_unit(UnitDesc const& d, CookUnit* out) noexcept {
     KILN_VERIFY(d.target && d.meshDefaults && d.textureDefaults);
     Allocator const* alloc = d.env.alloc ? d.env.alloc : default_allocator();
+    ProfileZone const zone(d.env.profile, "cook.unit", d.name);
     Vec<u8> bytes(alloc, Tag::Cook);
     KILN_TRY(read_input(d, *out, InputRole::Source, d.name, d.sourcePath, alloc, &bytes));
     if (d.kind == AssetKind::Mesh) return cook_mesh_unit(d, *out, bytes.span(), alloc);

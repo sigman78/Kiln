@@ -193,10 +193,10 @@ Result<CookedTexture> cook_decoded(TextureSource const& src, TextureCookSettings
                                    TargetProfile const& target, u32 cap, Allocator const* alloc,
                                    DiagSink const* diag, JobBudget const& budget, StrView asset,
                                    u64 sourceHash) noexcept {
-    detail::Stopwatch const swTotal;
-    detail::Stopwatch const swDecode;
+    detail::Stage swTotal(budget.profile, "cook.texture", asset);
+    detail::Stage swDecode(budget.profile, "cook.decode", asset);
     KILN_TRY_ASSIGN(Image decoded, decode_image(src.bytes, alloc, diag, asset));
-    u64 const decodeUs = swDecode.elapsed_us();
+    u64 const decodeUs = swDecode.stop();
 
     TextureUsage const usage = settings.usage == TextureUsage::Auto ? TextureUsage::Color : settings.usage;
     ColorSpace const cs =
@@ -238,7 +238,7 @@ Result<CookedTexture> cook_decoded(TextureSource const& src, TextureCookSettings
             "%s texture comes from a lossy source (JPEG or lossy WebP); artifacts show as shading noise",
             usage == TextureUsage::Normal ? "Normal" : "Height");
 
-    detail::Stopwatch const swPrepare;
+    detail::Stage swPrepare(budget.profile, "cook.prepare", asset);
     Result<Image> converted =
         prepare_image(decoded, plan.channels, plan.bits,
                       PrepareOptions{.grayAlpha   = (plan.rgba8 || hdr) && decoded.channels == 2,
@@ -253,7 +253,7 @@ Result<CookedTexture> cook_decoded(TextureSource const& src, TextureCookSettings
     if (plan.normal) {
         if (settings.normalRenormalize) plan.mips.renormalize = true;
     }
-    u64 const prepareUs = swPrepare.elapsed_us();
+    u64 const prepareUs = swPrepare.stop();
 
     // A Cube or Array source is a vertical strip, slice 0 at the top (texture-shapes.md). Each
     // slice is one contiguous block of the row-major image.
@@ -292,7 +292,7 @@ Result<CookedTexture> cook_decoded(TextureSource const& src, TextureCookSettings
 
     u32 const fullLevels = u32(std::bit_width(max(srcW, srcH)));
     u32 const buildCount = settings.genMips ? fullLevels : drop + 1;
-    detail::Stopwatch const swMips;
+    detail::Stage swMips(budget.profile, "cook.mips", asset);
     Vec<Vec<Image>> chains(alloc, Tag::Cook);
     chains.reserve(slices);
     if (slices == 1) {
@@ -314,7 +314,7 @@ Result<CookedTexture> cook_decoded(TextureSource const& src, TextureCookSettings
         }
         img.pixels.release();
     }
-    u64 const mipsUs     = swMips.elapsed_us();
+    u64 const mipsUs     = swMips.stop();
     u32 const levelCount = u32(chains[0].size()) - drop;
     KILN_VERIFY(levelCount >= 1 && levelCount <= ktx2::kMaxLevels);
     KILN_VERIFY(chains[0][drop].width == topW && chains[0][drop].height == topH);
@@ -327,7 +327,7 @@ Result<CookedTexture> cook_decoded(TextureSource const& src, TextureCookSettings
     bool const blocks = bc != Format::Undefined;
     Span<u8 const> levels[ktx2::kMaxLevels];
     Vec<u8> levelBytes[ktx2::kMaxLevels];
-    detail::Stopwatch const swEncode;
+    detail::Stage swEncode(budget.profile, "cook.encode", asset);
     for (u32 i = 0; i < levelCount; ++i) {
         if (slices == 1 && !hdr && !blocks) {
             levels[i] = chains[0][drop + i].pixels.span();
@@ -358,7 +358,8 @@ Result<CookedTexture> cook_decoded(TextureSource const& src, TextureCookSettings
         }
         levels[i] = levelBytes[i].span();
     }
-    u64 const encodeUs = blocks ? swEncode.elapsed_us() : 0;
+    u64 const encodeTime = swEncode.stop();
+    u64 const encodeUs   = blocks ? encodeTime : 0;
 
     // Content identity for invalidation (named store layout, open-questions R4).
     char sourceHex[17], cookHex[17];
@@ -386,9 +387,9 @@ Result<CookedTexture> cook_decoded(TextureSource const& src, TextureCookSettings
                                                                                   : u32(kDefaultZstdLevel),
         .zstdMinSaving      = kZstdMinSaving,
     };
-    detail::Stopwatch const swWrite;
+    detail::Stage swWrite(budget.profile, "cook.write", asset);
     KILN_TRY_ASSIGN(Vec<u8> file, ktx2::write(wd, alloc, diag));
-    u64 const writeUs = swWrite.elapsed_us();
+    u64 const writeUs = swWrite.stop();
 
     CookedTexture out;
     out.file            = std::move(file);
@@ -407,7 +408,7 @@ Result<CookedTexture> cook_decoded(TextureSource const& src, TextureCookSettings
     out.stats.mipsUs    = mipsUs;
     out.stats.encodeUs  = encodeUs;
     out.stats.writeUs   = writeUs;
-    out.stats.totalUs   = swTotal.elapsed_us();
+    out.stats.totalUs   = swTotal.stop();
     return out;
 }
 
@@ -426,8 +427,8 @@ Result<CookedTexture> cook_texture(TextureSource const& src, TextureCookSettings
     if (is_ktx2(src.bytes))
         return pass_through(src, settings.shape, cap, target.maxArrayLayers, alloc, diag, asset, sourceHash);
     if (is_png(src.bytes) || is_jpeg(src.bytes) || is_webp(src.bytes) || is_hdr(src.bytes))
-        return cook_decoded(src, settings, target, cap, alloc, diag, JobBudget{env.jobs, env.maxThreads},
-                            asset, sourceHash);
+        return cook_decoded(src, settings, target, cap, alloc, diag,
+                            JobBudget{env.jobs, env.maxThreads, env.profile}, asset, sourceHash);
     return fail(diag, asset, make_status(Code::Unsupported), kDiagImageUnknownFormat,
                 "source is not PNG, JPEG, WebP or KTX2 (%llu bytes)", src.bytes.size);
 }

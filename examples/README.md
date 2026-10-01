@@ -108,6 +108,9 @@ quits. Hot reload is on: re-export or edit a file under `examples/assets` and th
 `--dump <file.png>` waits until everything has loaded, writes the frame and exits (the window is
 hidden where the API allows; sokol_app always shows one). Meshes cook as plain floats
 (`VertexProfile::Float`), so the shaders need no vertex decoding.
+`KILN_TRACE=<file.json>` in the environment (here and in `kiln-headless`) records kiln's zones and
+waits, logs a summary at exit and writes a Chrome trace (open it in ui.perfetto.dev;
+`docs/design/cook-tracing.md`). Delete the example store first to trace a cold start.
 
 ## Headless recipes
 

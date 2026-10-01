@@ -76,11 +76,13 @@ add_library(kiln_core STATIC
     include/kiln/hash.h
     include/kiln/log.h
     include/kiln/containers.h
+    include/kiln/profile.h
     src/core/panic.cpp
     src/core/alloc.cpp
     src/core/log.cpp
     src/core/result.cpp
     src/core/hash.cpp
+    src/core/profile.cpp
 )
 add_library(kiln::core ALIAS kiln_core)
 set_target_properties(kiln_core PROPERTIES EXPORT_NAME core)

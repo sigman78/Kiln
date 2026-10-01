@@ -128,6 +128,7 @@ Status prepare_source(Context* ctx, Slot& s, Input const& in, Source& src) noexc
     Hash128 key;
     DiagSink sink{&capture_fn, &s.capture};
     // May take seconds when it cooks; we are on a worker.
+    ProfileZone const zone(ctx->prof, "kiln.prepare", in.name);
     PrepareMode const mode = s.jobRecheck ? PrepareMode::Recheck : PrepareMode::Normal;
     Status const st =
         s.provider.prepare(s.provider.user, in.kind, in.name, mode, ctx->alloc, &out, &key, &sink);
@@ -738,7 +739,14 @@ void run_job(void* arg) noexcept {
     s.jobStatus  = kOk;
     s.jobDiag    = 0;
     s.capture.reset();
-    CompletionKind const k = s.jobStage == Stage::Meta ? run_meta(ctx, s) : run_upload(ctx, s);
+    bool const meta = s.jobStage == Stage::Meta;
+    CompletionKind k;
+    {
+        if (ctx->prof)
+            profile_interval(ctx->prof, "kiln.wait.pool", path_of(s), s.submitNs, profile_now_ns());
+        ProfileZone const zone(ctx->prof, meta ? "kiln.meta" : "kiln.upload", path_of(s));
+        k = meta ? run_meta(ctx, s) : run_upload(ctx, s);
+    }
     Completion const c{s.index, s.jobGen, k};
     post(ctx, c); // from here on the pump thread may reuse `s`
     ctx->jobsInFlight.fetch_sub(1, std::memory_order_acq_rel);

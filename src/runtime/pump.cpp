@@ -173,6 +173,11 @@ void submit_stage(Context* ctx, Slot& s, Stage stage) noexcept {
         }
         s.jobManifestPresent = ctx->manifestPresent;
     }
+    if (ctx->prof) {
+        s.submitNs = profile_now_ns();
+        profile_interval(ctx->prof, stage == Stage::Meta ? "kiln.wait.meta" : "kiln.wait.upload", path_of(s),
+                         s.queuedNs, s.submitNs);
+    }
     ++ctx->jobsOutstanding;
     ctx->jobsInFlight.fetch_add(1, std::memory_order_acq_rel);
     ctx->jobs.submit(ctx->jobs.user, &run_job, &s);
@@ -255,6 +260,7 @@ void on_meta_ready(Context* ctx, Slot& s) noexcept {
 /// A reload bumps the content version and emits Changed (from Ready) or Ready (from
 /// Failed); a first load and a Failed -> Ready reload count in the group.
 void make_ready(Context* ctx, Slot& s) noexcept {
+    if (ctx->prof) profile_interval(ctx->prof, "kiln.load", path_of(s), s.loadNs, profile_now_ns());
     bool const reload   = s.reloading;
     State const from    = s.state;
     GpuObject const old = s.realObj;
@@ -363,6 +369,7 @@ void poll_awaiting(Context* ctx) noexcept {
         UploadStatus const st = a.upload_status(a.user, s.target.token, &why);
         if (st != UploadStatus::Pending) {
             queue_remove(ctx, s);
+            if (ctx->prof) profile_interval(ctx->prof, "kiln.gpu", path_of(s), s.queuedNs, profile_now_ns());
             if (st == UploadStatus::Complete)
                 make_ready(ctx, s);
             else
@@ -433,6 +440,7 @@ void bind_pump_thread(Context* ctx) noexcept {
 } // namespace
 
 PumpStats pump_impl(Context* ctx, PumpOptions const& opt, bool keepEvents) noexcept {
+    ProfileZone const zone(ctx->prof, "kiln.pump");
     ++ctx->pumpIndex;
     if (opt.frame) ctx->frame = opt.frame;
     if (opt.completedFrame) ctx->completedFrame = opt.completedFrame;

@@ -7,6 +7,7 @@
 #include "kiln/containers.h"
 #include "kiln/cook/settings.h"
 #include "kiln/ktx2.h"
+#include "kiln/profile.h"
 #include "kiln/result.h"
 
 namespace kiln {
@@ -100,6 +101,8 @@ struct CookEnv {
     /// than the hardware threads. The default leaves the rest of the pool to the host (see
     /// docs/design/cook-kernels.md).
     u32 maxThreads = 6;
+    /// Optional: zones for the cook's stages (kiln/profile.h). Must outlive the call.
+    ProfileHooks const* profile = nullptr;
 };
 
 // ---------------------------------------------------------------------------

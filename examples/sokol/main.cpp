@@ -353,6 +353,7 @@ void init(void* user) {
     app.sa = *sa;
     ContextDesc cd{};
     cd.diag                  = ex::stdout_diag();
+    cd.profiler              = ex::trace_hooks(); // KILN_TRACE=<file>
     cd.adapter               = &app.adapter;
     cd.storeDir              = StrView(app.o.store);
     cd.roots                 = Span<Root const>(app.o.roots, app.o.rootCount);
@@ -445,6 +446,7 @@ void cleanup(void* user) {
     if (app.provider) cook::uninstall_provider(app.ctx);
 #endif
     if (app.ctx) destroy(app.ctx);
+    ex::finish_trace();
     sokol_adapter_destroy(app.sa);
     sg_shutdown();
 }

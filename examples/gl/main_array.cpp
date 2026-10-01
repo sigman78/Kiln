@@ -118,6 +118,7 @@ int main(int argc, char** argv) {
     // 3. The context, watching its store, and in dev builds the cook provider for the tiles.
     ContextDesc cd{};
     cd.diag                  = ex::stdout_diag();
+    cd.profiler              = ex::trace_hooks(); // KILN_TRACE=<file>
     cd.adapter               = &adapter;
     cd.storeDir              = StrView(o.store);
     cd.roots                 = Span<Root const>(o.roots, o.rootCount);
@@ -205,6 +206,7 @@ int main(int argc, char** argv) {
     if (provider) cook::uninstall_provider(ctx);
 #endif
     destroy(ctx);
+    ex::finish_trace();
     glDeleteVertexArrays(1, &emptyVao);
     glDeleteSamplers(1, &sampler);
     glDeleteProgram(program);

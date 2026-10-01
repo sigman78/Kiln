@@ -148,7 +148,12 @@ struct Slot {
     QueueId queue  = QueueId::None;
     u32 qPrev      = kInvalid;
     u32 qNext      = kInvalid;
-    u64 retryAfter = 0;          ///< Busy retry: not before this pump index
+    u64 retryAfter = 0; ///< Busy retry: not before this pump index
+    // Profiling only (profile_now_ns): the load attempt began, the slot entered its queue, its job
+    // was submitted.
+    u64 loadNs   = 0;
+    u64 queuedNs = 0;
+    u64 submitNs = 0;
     GpuObject realObj;           ///< the payload object (Ready)
     Status preFail   = kOk;      ///< a request-time failure (caps, bindless slots), reported on the next pump
     u32 bindSlot     = kInvalid; ///< bindless slot number (textures with Adapter::bind)
@@ -237,6 +242,8 @@ struct Context {
     Allocator const* alloc = nullptr;
     LogSink log;
     DiagSink diag;
+    ProfileHooks profileHooks;
+    ProfileHooks const* prof = nullptr; ///< &profileHooks when the host set any hook
     JobSystem jobs;
     bool ownsJobs       = false;
     IoBackend const* io = nullptr;

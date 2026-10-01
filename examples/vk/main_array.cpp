@@ -220,6 +220,7 @@ int main(int argc, char** argv) {
     // 4. The context, watching its store, and in dev builds the cook provider for the tiles.
     ContextDesc cd{};
     cd.diag                  = diag;
+    cd.profiler              = ex::trace_hooks(); // KILN_TRACE=<file>
     cd.adapter               = &adapter;
     cd.storeDir              = StrView(o.store);
     cd.roots                 = Span<Root const>(o.roots, o.rootCount);
@@ -334,6 +335,7 @@ int main(int argc, char** argv) {
     if (provider) cook::uninstall_provider(ctx);
 #endif
     destroy(ctx);
+    ex::finish_trace();
     vkx::renderer_destroy(ren);
     vkx::adapter_destroy(*va);
     if (!opt.bindless) destroy_sets(device.device, sets);

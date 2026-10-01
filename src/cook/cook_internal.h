@@ -11,6 +11,39 @@
 
 namespace kiln::cook::detail {
 
+/// A CookStats timer that is also a profile zone: stop() ends both, and so does scope exit (an
+/// early return). Stop stages in reverse order of creation, so zones nest.
+class Stage {
+public:
+    Stage(ProfileHooks const* hooks, char const* name, StrView asset) noexcept
+        : begin_(std::chrono::steady_clock::now()), hooks_(hooks && hooks->zone_begin ? hooks : nullptr),
+          name_(name), asset_(asset) {
+        if (hooks_) hooks_->zone_begin(hooks_->user, name_, asset_);
+    }
+    ~Stage() { (void)stop(); }
+    Stage(Stage const&)            = delete;
+    Stage& operator=(Stage const&) = delete;
+
+    /// Microseconds since construction; the first call ends the zone, later calls return the same.
+    u64 stop() noexcept {
+        if (!stopped_) {
+            auto const dt = std::chrono::steady_clock::now() - begin_;
+            us_           = u64(std::chrono::duration_cast<std::chrono::microseconds>(dt).count());
+            stopped_      = true;
+            if (hooks_ && hooks_->zone_end) hooks_->zone_end(hooks_->user, name_, asset_);
+        }
+        return us_;
+    }
+
+private:
+    std::chrono::steady_clock::time_point begin_;
+    ProfileHooks const* hooks_;
+    char const* name_;
+    StrView asset_;
+    u64 us_       = 0;
+    bool stopped_ = false;
+};
+
 /// Wall-clock timer for CookStats (rollout step 1, docs/design/cook-kernels.md).
 /// std::chrono is fine here (a .cpp-only internal header); never in include/.
 struct Stopwatch {

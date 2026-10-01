@@ -5,6 +5,7 @@
 
 #include "kiln/alloc.h"
 #include "kiln/containers.h"
+#include "kiln/profile.h"
 #include "kiln/result.h"
 
 namespace kiln {
@@ -114,8 +115,9 @@ KILN_API Result<Image> decode_image(Span<u8 const> bytes, Allocator const* alloc
 /// from crowding out the host's threads.
 inline constexpr u32 kDefaultCookThreads = 6;
 struct JobBudget {
-    JobSystem const* jobs = nullptr;
-    u32 maxThreads        = kDefaultCookThreads;
+    JobSystem const* jobs       = nullptr;
+    u32 maxThreads              = kDefaultCookThreads;
+    ProfileHooks const* profile = nullptr; ///< optional zones for the passes
 };
 
 /// Convert to another channel count / bit depth. Dropping channels keeps the first N.

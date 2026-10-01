@@ -3,6 +3,7 @@
 
 #include "cli.h"
 #include "png_writer.h"
+#include "trace_writer.h"
 
 #include <GLFW/glfw3.h>
 
@@ -80,6 +81,28 @@ double ms_since_start() noexcept {
 void install_stdout_log() noexcept { set_log_sink(LogSink{&log_fn, nullptr}); }
 
 DiagSink stdout_diag() noexcept { return DiagSink{&diag_fn, nullptr}; }
+
+namespace {
+cli::TraceWriter* g_trace = nullptr;
+} // namespace
+
+ProfileHooks trace_hooks() noexcept {
+    if (!std::getenv("KILN_TRACE")) return {};
+    if (!g_trace) g_trace = new_object<cli::TraceWriter>(default_allocator(), Tag::Io);
+    return g_trace->hooks();
+}
+
+void finish_trace() noexcept {
+    if (!g_trace) return;
+    char const* path = std::getenv("KILN_TRACE");
+    g_trace->log_summary();
+    if (g_trace->write(path))
+        KILN_INFO("trace", "wrote %s", path);
+    else
+        KILN_ERROR("trace", "cannot write %s", path);
+    delete_object(default_allocator(), g_trace, Tag::Io);
+    g_trace = nullptr;
+}
 
 int parse_options(char const* program, int argc, char** argv, Options* o) noexcept {
     cli::Option const opts[] = {

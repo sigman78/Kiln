@@ -9,6 +9,7 @@
 #include "kiln/ktx2.h"
 #include "kiln/log.h"
 #include "kiln/mesh.h"
+#include "kiln/profile.h"
 
 namespace kiln {
 
@@ -100,6 +101,9 @@ struct ContextDesc {
     Span<PlaceholderDesc const> placeholders = {}; ///< overrides per kind; missing kinds use built-ins
 
     HotReloadDesc hotReload = {};
+    /// The host's profiler (kiln/profile.h): zones for kiln's jobs and the cook provider's stages,
+    /// intervals for queue waits, GPU copies and whole loads. Empty = off.
+    ProfileHooks profiler = {};
 
     u32 maxAssets     = 4096; ///< registry capacity (allocated once at create)
     u32 maxGroups     = 64;
@@ -383,6 +387,8 @@ struct ContextStats {
 /// from ContextDesc, or the built-in pool. Valid until destroy(ctx).
 [[nodiscard]] KILN_API JobSystem const* jobs(Context* ctx) noexcept;
 [[nodiscard]] KILN_API Adapter const* adapter(Context* ctx) noexcept;
+/// The profile hooks from ContextDesc, or nullptr when it set none.
+[[nodiscard]] KILN_API ProfileHooks const* profile_hooks(Context* ctx) noexcept;
 
 // ---------------------------------------------------------------------------
 // Diagnostics (K5000-K5999: runtime and store). See docs/diagnostics.md.

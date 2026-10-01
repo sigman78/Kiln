@@ -5,6 +5,7 @@
 
 #include "cli.h"
 #include "manifest_store.h"
+#include "trace_writer.h"
 #include "unit.h"
 
 #include "kiln/assets.h"
@@ -56,6 +57,7 @@ struct Options {
     char const* store       = "cooked";
     char const* defaultRoot = nullptr; ///< --root without a name; null: the input directory
     char const* map         = nullptr;
+    char const* trace       = nullptr; ///< --trace: Chrome trace file
     bool check              = false;
     bool verify             = false;   ///< compare input content, not size and time
     bool watch              = false;   ///< keep cooking what changes until --timeout
@@ -307,13 +309,14 @@ struct Ctx {
     DiagState& ds;
     DiagSink sink;
     CookSession session;
-    std::FILE* map             = nullptr;
-    JobSystem const* jobs      = nullptr; ///< null: single-threaded
-    u32 maxThreads             = 0;       ///< CookEnv::maxThreads; 0 = no cap
-    CookPolicy policy          = {};
-    ManifestStore* store       = nullptr; ///< the store writer; null with --check
-    u64 hostDigest             = 0;
-    char const* defaultRootDir = nullptr;                 ///< the default root of this run, if one is known
+    std::FILE* map              = nullptr;
+    JobSystem const* jobs       = nullptr; ///< null: single-threaded
+    u32 maxThreads              = 0;       ///< CookEnv::maxThreads; 0 = no cap
+    ProfileHooks const* profile = nullptr; ///< --trace
+    CookPolicy policy           = {};
+    ManifestStore* store        = nullptr; ///< the store writer; null with --check
+    u64 hostDigest              = 0;
+    char const* defaultRootDir  = nullptr;                ///< the default root of this run, if one is known
     Vec<char> scanned{default_allocator(), Tag::General}; ///< inputs scanned this round, NUL-separated
     u32 dropped     = 0;                                  ///< units whose source is gone
     bool scanFailed = false; ///< a root or input could not be scanned in full this round
@@ -406,8 +409,8 @@ void cook_file(Ctx& c, char const* path, char const* root) {
         .policy          = c.policy,
         .target          = &c.opt.target,
         .session         = c.session,
-        .env             = {.diag = &c.sink, .jobs = c.jobs, .maxThreads = c.maxThreads},
-        .statInputs      = c.store != nullptr,
+        .env        = {.diag = &c.sink, .jobs = c.jobs, .maxThreads = c.maxThreads, .profile = c.profile},
+        .statInputs = c.store != nullptr,
     };
     if (c.store && record_is_current(c.store, d, c.hostDigest, c.opt.verify)) {
         if (c.opt.verbose && !c.rescan) std::printf("  %-48s up to date\n", assetPath);
@@ -654,6 +657,10 @@ int kiln::cook::cook_cli_main(int argc, char** argv, CookPolicy const& policy, u
          .arg  = "<file>",
          .help = "append \"<assetPath>\\t<file>\\t<build key>\" per written output",
          .str  = &o.map},
+        {.name = "--trace",
+         .arg  = "<file>",
+         .help = "write a Chrome trace of the cook stages (chrome://tracing, ui.perfetto.dev) and a summary",
+         .str  = &o.trace},
         {.name = "--target",
          .arg  = "<name>",
          .help = "target profile: compat, desktop or uncompressed to cook (default compat); with "
@@ -853,6 +860,10 @@ int kiln::cook::cook_cli_main(int argc, char** argv, CookPolicy const& policy, u
         c.hostDigest = host_digest(host, policyVersion);
     }
 
+    cli::TraceWriter trace;
+    ProfileHooks const traceHooks = trace.hooks();
+    if (o.trace) c.profile = &traceHooks;
+
     // The main thread cooks too, so the pool gets one worker fewer than --threads.
     JobSystem pool;
     c.maxThreads = o.threads;
@@ -878,6 +889,10 @@ int kiln::cook::cook_cli_main(int argc, char** argv, CookPolicy const& policy, u
     }
     if (c.map) std::fclose(c.map);
     if (c.jobs) destroy_thread_pool(pool);
+    if (o.trace) {
+        if (!o.quiet) trace.log_summary();
+        if (!trace.write(o.trace)) std::fprintf(stderr, "kiln-cook: cannot write the trace %s\n", o.trace);
+    }
     if (c.store) {
         Status const committed = commit_manifest(c.store, &c.sink);
         close_manifest_store(c.store);

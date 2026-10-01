@@ -234,6 +234,7 @@ int main(int argc, char** argv) {
     //    the request on.
     ContextDesc cd{};
     cd.diag                  = ex::stdout_diag();
+    cd.profiler              = ex::trace_hooks(); // KILN_TRACE=<file>
     cd.adapter               = &adapter;
     cd.storeDir              = StrView(o.store);
     cd.roots                 = Span<Root const>(o.roots, o.rootCount);
@@ -323,6 +324,7 @@ int main(int argc, char** argv) {
     if (provider) cook::uninstall_provider(ctx);
 #endif
     destroy(ctx);
+    ex::finish_trace();
     release_geometry(s.geometry);
     glDeleteVertexArrays(1, &emptyVao);
     glDeleteProgram(meshProgram);

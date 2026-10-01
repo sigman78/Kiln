@@ -18,6 +18,11 @@ namespace kiln::ex {
 void install_stdout_log() noexcept;
 /// A diagnostic sink that prints to stdout in the same format.
 [[nodiscard]] DiagSink stdout_diag() noexcept;
+/// With KILN_TRACE=<file> in the environment: hooks for ContextDesc::profiler that record kiln's
+/// zones and waits. Empty hooks otherwise.
+[[nodiscard]] ProfileHooks trace_hooks() noexcept;
+/// After destroy(ctx): logs the summary and writes the KILN_TRACE file (Chrome trace JSON).
+void finish_trace() noexcept;
 
 /// What every integration example shows: the reference scene (WaterBottle under the HDR test sky),
 /// cooked on first use into a store in the build tree, with hot reload on. Nothing to pass.

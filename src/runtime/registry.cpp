@@ -55,6 +55,10 @@ void queue_push(Context* ctx, QueueId q, Slot& s) noexcept {
         l.head = s.index;
     l.tail = s.index;
     ++l.count;
+    if (ctx->prof) {
+        s.queuedNs = profile_now_ns();
+        if (q == QueueId::MetaHigh || q == QueueId::MetaNormal) s.loadNs = s.queuedNs;
+    }
 }
 
 void queue_remove(Context* ctx, Slot& s) noexcept {
@@ -74,7 +78,9 @@ void queue_remove(Context* ctx, Slot& s) noexcept {
 }
 
 void boost(Context* ctx, Slot& s) noexcept {
-    s.priority = Priority::High;
+    s.priority         = Priority::High;
+    u64 const loadNs   = s.loadNs;
+    u64 const queuedNs = s.queuedNs;
     if (s.queue == QueueId::MetaNormal) {
         queue_remove(ctx, s);
         queue_push(ctx, QueueId::MetaHigh, s);
@@ -82,6 +88,8 @@ void boost(Context* ctx, Slot& s) noexcept {
         queue_remove(ctx, s);
         queue_push(ctx, QueueId::UploadHigh, s);
     }
+    s.loadNs   = loadNs; // a boost moves the slot; its waits go on
+    s.queuedNs = queuedNs;
 }
 
 // ---------------------------------------------------------------------------

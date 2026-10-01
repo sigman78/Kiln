@@ -24,6 +24,11 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
   exit 1 on a difference. The Vulkan example adapter's images now also have `TRANSFER_SRC` usage.
 - `NullAdapterDesc::maxUploadBytes` (0 = unlimited, default): an opt-in staging cap so tests can make
   `begin_upload()` fail with `Unsupported` for an oversized upload, like the GL/Vulkan example adapters.
+- **Profiling hooks** (`kiln/profile.h`, docs/design/cook-tracing.md): `ProfileHooks` with zones and
+  intervals, set on `ContextDesc::profiler` (the runtime and the cook provider) or `CookEnv::profile`
+  (a direct cook); `profile_hooks(ctx)`, `profile_now_ns()`, `ProfileZone`. Off by default.
+  `JobBudget::profile` passes them to the image passes. `kiln-cook --trace <file>` and the examples'
+  `KILN_TRACE=<file>` write a Chrome trace and a summary (`tools/trace_writer.h`).
 - `CookSession::maxQuality` (default `High`, no cap) caps the resolved texture `quality`.
   `ProviderDesc::maxQuality` sets it for the cook provider.
 

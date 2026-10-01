@@ -399,6 +399,7 @@ int main(int argc, char** argv) {
     //    in dev builds, the cook provider, which cooks meshes as plain floats.
     ContextDesc cd{};
     cd.diag                  = diag;
+    cd.profiler              = ex::trace_hooks(); // KILN_TRACE=<file>
     cd.adapter               = &adapter;
     cd.storeDir              = StrView(o.store);
     cd.roots                 = Span<Root const>(o.roots, o.rootCount);
@@ -522,6 +523,7 @@ int main(int argc, char** argv) {
     if (provider) cook::uninstall_provider(s.ctx);
 #endif
     destroy(s.ctx);
+    ex::finish_trace();
     vkx::renderer_destroy(s.ren);
     vkx::adapter_destroy(s.va);
     vkDestroyDescriptorPool(s.device, s.pool, nullptr);

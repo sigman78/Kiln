@@ -340,6 +340,8 @@ Result<Context*> create(ContextDesc const& desc) noexcept {
     ctx->alloc           = a;
     ctx->log             = desc.log;
     ctx->diag            = desc.diag;
+    ctx->profileHooks    = desc.profiler;
+    ctx->prof            = desc.profiler.zone_begin || desc.profiler.interval ? &ctx->profileHooks : nullptr;
     ctx->adapter         = *desc.adapter;
     ctx->devPlaceholders = desc.devPlaceholders;
     ctx->adapter.copy_constraints(ctx->adapter.user, &ctx->cc);
@@ -499,6 +501,7 @@ Allocator const* allocator(Context* ctx) noexcept { return ctx ? ctx->alloc : nu
 DiagSink const* diag_sink(Context* ctx) noexcept { return ctx ? &ctx->diag : nullptr; }
 JobSystem const* jobs(Context* ctx) noexcept { return ctx ? &ctx->jobs : nullptr; }
 Adapter const* adapter(Context* ctx) noexcept { return ctx ? &ctx->adapter : nullptr; }
+ProfileHooks const* profile_hooks(Context* ctx) noexcept { return ctx ? ctx->prof : nullptr; }
 
 } // namespace kiln
 

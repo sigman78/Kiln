@@ -50,9 +50,10 @@ struct Provider {
     Vec<Root> roots;         ///< views into rootsBuf
     Vec<char> ruleStrings;   ///< owned copies of the name rule suffixes
     Vec<NameRule> nameRules; ///< suffixes point into ruleStrings
-    Allocator const* alloc = nullptr;
-    JobSystem const* jobs  = nullptr; ///< the context's pool; provider_prepare runs on its workers
-    Context* ctx           = nullptr; ///< the registry key
+    Allocator const* alloc      = nullptr;
+    JobSystem const* jobs       = nullptr; ///< the context's pool; provider_prepare runs on its workers
+    ProfileHooks const* profile = nullptr; ///< the context's hooks
+    Context* ctx                = nullptr; ///< the registry key
 
     // Disk mode: the store writer for the profile (it holds the store lock). Null in Memory mode.
     ManifestStore* store = nullptr;
@@ -144,7 +145,7 @@ UnitDesc unit_desc(Provider const& p, AssetKind kind, StrView name, StrView sour
         .policy          = p.desc.policy,
         .target          = &p.desc.target,
         .session         = p.session,
-        .env             = {.alloc = alloc, .diag = diag, .jobs = p.jobs},
+        .env             = {.alloc = alloc, .diag = diag, .jobs = p.jobs, .profile = p.profile},
     };
 }
 
@@ -423,6 +424,7 @@ Status install_provider(Context* ctx, ProviderDesc const& desc) noexcept {
     p->ctx      = ctx;
     p->desc     = effective;
     p->jobs     = jobs(ctx);
+    p->profile  = profile_hooks(ctx);
     p->session  = CookSession{effective.storeMode, effective.fastPreview, effective.maxQuality};
 
     StrView const dir = store_dir(ctx);

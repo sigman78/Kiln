@@ -6,6 +6,7 @@
 #include "kiln_test.h"
 #include "ktx2_corpus.h"
 #include "png_writer.h"
+#include "profile_log.h"
 
 #include "kiln/containers.h"
 #include "kiln/cook/cook.h"
@@ -645,4 +646,22 @@ KILN_TEST(texture_cook, ktx2_shape_must_match) {
     DiagLog log;
     KILN_CHECK_EQ(run_cook(bytes.span(), s, &log).code(), Code::InvalidArgument);
     KILN_CHECK(log.has(kDiagImagePassthroughBad, Severity::Error));
+}
+
+// CookEnv::profile: one zone per stage, nested in cook.texture, each with the asset's name.
+KILN_TEST(TextureCook, ProfileZones) {
+    u8 rgba[8 * 8 * 4];
+    for (usize i = 0; i < sizeof rgba; ++i)
+        rgba[i] = u8(i * 7);
+    Vec<u8> f = png::encode({.width = 8, .height = 8, .colorType = 6, .depth = 8, .pixels = rgba});
+    test::ProfileLog log;
+    ProfileHooks const hooks = log.hooks();
+    Result<CookedTexture> r =
+        cook_texture({.bytes = f.span(), .assetPath = "test/tex", .sourcePath = "tex.png"},
+                     {.usage = TextureUsage::Color}, TargetProfile{}, CookEnv{.profile = &hooks});
+    KILN_REQUIRE(r.ok());
+    KILN_CHECK(log.well_formed());
+    for (char const* stage :
+         {"cook.texture", "cook.decode", "cook.prepare", "cook.mips", "cook.encode", "cook.write"})
+        KILN_CHECK_MSG(log.count('B', stage, "test/tex") == 1, "%s", stage);
 }

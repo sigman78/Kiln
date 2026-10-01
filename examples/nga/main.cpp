@@ -384,6 +384,7 @@ int main(int argc, char** argv) {
     // 3. The context: create() runs the adapter's flush until the placeholders are uploaded.
     ContextDesc cd{};
     cd.diag                  = ex::stdout_diag();
+    cd.profiler              = ex::trace_hooks(); // KILN_TRACE=<file>
     cd.adapter               = &adapter;
     cd.storeDir              = StrView(o.store);
     cd.roots                 = Span<Root const>(o.roots, o.rootCount);
@@ -580,6 +581,7 @@ int main(int argc, char** argv) {
     if (provider) cook::uninstall_provider(ctx);
 #endif
     destroy(ctx);
+    ex::finish_trace();
     nga_adapter_destroy(s.na);
     targets.release();
     gpu::destroy_texture_heap(targets.heap);
