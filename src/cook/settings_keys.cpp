@@ -163,6 +163,22 @@ constexpr StrView kTextureKeys[] = {
 constexpr StrView kMeshKeys[] = {"profile",  "genTangents", "optimize",    "useAuthoredLods",
                                  "posTolMm", "weldTol",     "compression", "zstdLevel"};
 
+bool usage_from_text(StrView text, TextureUsage* out) {
+    for (EnumName<TextureUsage> const& n : kUsages)
+        if (n.name == text) {
+            *out = n.value;
+            return true;
+        }
+    return false;
+}
+
+u32 key_bit(AssetKind kind, StrView key) {
+    Span<StrView const> const keys = setting_keys(kind);
+    for (usize i = 0; i < keys.size; ++i)
+        if (keys[i] == key) return 1u << i;
+    return 0;
+}
+
 Span<StrView const> setting_keys(AssetKind kind) {
     return kind == AssetKind::Mesh ? Span<StrView const>(kMeshKeys) : Span<StrView const>(kTextureKeys);
 }

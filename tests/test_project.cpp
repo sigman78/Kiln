@@ -68,7 +68,11 @@ Result<TextureCookSettings> resolve_tex(Project const* p, StrView name, StrView 
     return resolve_texture_layers(
         {
     },
-        ResolveDesc{.asset = {name, name, slot}, .project = p, .sidecar = sidecar, .target = target});
+        ResolveDesc{.asset     = {name, name, slot},
+                    .project   = p,
+                    .sidecar   = sidecar,
+                    .nameRules = kDefaultNameRules,
+                    .target    = target});
 }
 
 constexpr char kProjectText[] = R"(# kiln.toml
@@ -214,6 +218,47 @@ KILN_TEST(Project, OverridesBeatTheFileAndSidecarsBeatOverrides) {
     Result<TextureCookSettings> side = resolve_tex(l.p, "ui/button.png", "maxSize = 128\n");
     KILN_REQUIRE(side.ok());
     KILN_CHECK_EQ(side->maxSize, 128u);
+}
+
+// Usage sections apply after inference, beat the project defaults, and fill only what rules,
+// flags, sidecars and inference left.
+KILN_TEST(Project, UsageSections) {
+    Loaded l;
+    KILN_REQUIRE(l.load("project_usage",
+                        "[texture]\nmaxSize = 4096\n"
+                        "[texture.usage.normal]\nmaxSize = 2048\nquality = \"fast\"\nshape = \"2d\"\n"
+                        "[[texture.rule]]\nmatch = [\"hero/**\"]\nmaxSize = 512\n")
+                     .ok());
+    Result<TextureCookSettings> slot =
+        resolve_tex(l.p, "props/a.glb#nrm", {}, kCompatTarget, SlotHint::Normal); // usage from the glTF slot
+    KILN_REQUIRE(slot.ok());
+    KILN_CHECK_EQ(slot->maxSize, 2048u);
+    KILN_CHECK(slot->quality == EncodeQuality::Fast);
+    Result<TextureCookSettings> named = resolve_tex(l.p, "rock_n.png"); // usage from a name rule
+    KILN_REQUIRE(named.ok());
+    KILN_CHECK_EQ(named->maxSize, 2048u);
+    Result<TextureCookSettings> hero = resolve_tex(l.p, "hero/face_n.png"); // the rule's key stays
+    KILN_REQUIRE(hero.ok());
+    KILN_CHECK_EQ(hero->maxSize, 512u);
+    KILN_CHECK(hero->quality == EncodeQuality::Fast);
+    Result<TextureCookSettings> side = resolve_tex(l.p, "rock_n.png", "maxSize = 256\n");
+    KILN_REQUIRE(side.ok());
+    KILN_CHECK_EQ(side->maxSize, 256u);
+    Result<TextureCookSettings> color = resolve_tex(l.p, "rock.png");
+    KILN_REQUIRE(color.ok());
+    KILN_CHECK_EQ(color->maxSize, 4096u);
+    KILN_CHECK(color->quality == EncodeQuality::Normal);
+    // A shape the name implies is inference (layer 5): the usage section does not replace it.
+    Result<TextureCookSettings> array = resolve_tex(l.p, "rock_array_n.png");
+    KILN_REQUIRE(array.ok());
+    KILN_CHECK(array->shape == CookShape::Array);
+    KILN_CHECK(named->shape == CookShape::Tex2D);
+
+    Loaded bad1, bad2, bad3;
+    KILN_CHECK(bad1.load("project_usage_bad1", "[texture.usage.bump]\nmaxSize = 1\n").failed());
+    KILN_CHECK(bad2.load("project_usage_bad2", "[texture.usage.normal]\nusage = \"color\"\n").failed());
+    KILN_CHECK(bad3.load("project_usage_bad3", "[texture.usage.auto]\n").failed());
+    KILN_CHECK_EQ(bad3.diag.code, u32(kDiagSidecarKey));
 }
 
 KILN_TEST(Project, OverridesWithoutAFile) {

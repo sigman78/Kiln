@@ -16,6 +16,9 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
   exists. API: `kiln/cook/project.h` (`load_project`, `glob_match`), `ResolveDesc::project`. New
   diagnostics K3011 (invalid glob) and K3012 (unreadable project file). The TOML subset gains arrays
   and arrays of tables for it; sidecars keep their subset.
+- **Usage sections** in `kiln.toml`: `[texture.usage.<usage>]` sets defaults per texture kind (for
+  example every normal map at most 2048). They apply after usage inference and fill only the keys
+  that no rule, preset, flag, sidecar or inference set; they beat the project defaults.
 - **`kiln-cook --explain <asset>`**: prints the asset's resolved settings and the layer that set
   each (project defaults, a rule or its preset with file and line, the flags, the sidecar, inference,
   the policy, resolve). API: `SettingsTrace` in `ResolveDesc::trace`.

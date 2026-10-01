@@ -37,6 +37,7 @@ struct Rule {
 struct Kind {
     Range defaults;
     Range overrides;
+    Range usage[u32(TextureUsage::Height) + 1]; ///< textures: [texture.usage.<name>]
     Vec<Preset> presets;
     Vec<Rule> rules;
 
@@ -277,7 +278,15 @@ Status parse_file(Project& p, DiagSink const* diag) {
             KILN_TRY(parse_rule<TextureCookSettings>(p, p.tex, t, diag));
         } else if (name == "mesh.rule" && table.array) {
             KILN_TRY(parse_rule<MeshCookSettings>(p, p.mesh, t, diag));
-        } else if (name == "texture.preset" || name == "mesh.preset") {
+        } else if (StrView const u = child_of(name, "texture.usage"); !u.empty()) {
+            TextureUsage usage = TextureUsage::Auto;
+            if (!usage_from_text(u, &usage) || usage == TextureUsage::Auto)
+                return table_error(p, table, "not a usage (color, normal, orm, mask, hdr, ui, lut, height)",
+                                   diag);
+            for (TomlEntry const& e : p.doc.entries)
+                if (e.table == t && e.key == "usage") return err(e, "a usage section cannot set the usage");
+            KILN_TRY(collect_keys<TextureCookSettings>(p, p.doc, t, &p.tex.usage[u32(usage)], diag, p.file));
+        } else if (name == "texture.preset" || name == "mesh.preset" || name == "texture.usage") {
             for (TomlEntry const& e : p.doc.entries)
                 if (e.table == t) return err(e, "a preset is a table: [texture.preset.<name>]");
         } else if (name == "target" || !child_of(name, "target").empty()) {
@@ -334,6 +343,8 @@ void hash_strs(Xxh64State& h, Project const& p, Range r) {
 void hash_kind(Xxh64State& h, Project const& p, Kind const& k) {
     hash_range(h, p, k.defaults);
     hash_range(h, p, k.overrides);
+    for (Range const& r : k.usage)
+        hash_range(h, p, r);
     h.update_value(u32(k.presets.size()));
     for (Preset const& pr : k.presets) {
         h.update_value(u32(pr.name.size));
@@ -377,12 +388,17 @@ Status apply_range(Project const& p, Range r, Settings* s, DiagSink const* diag,
 }
 
 template <class Settings>
-Status apply_kind(Project const& p, Kind const& k, StrView kindName, CookAssetInfo const& asset,
-                  TargetProfile const& target, Settings* s, DiagSink const* diag,
-                  SettingsTrace const* trace) {
+Status apply_defaults(Project const& p, Kind const& k, StrView kindName, Settings* s, DiagSink const* diag,
+                      SettingsTrace const* trace) {
     char label[128];
-    format(label, sizeof label, "project [%.*s]", KILN_SV(kindName));
-    KILN_TRY(apply_range(p, k.defaults, s, diag, trace, StrView(label), p.file));
+    usize const n = format(label, sizeof label, "project [%.*s]", KILN_SV(kindName));
+    return apply_range(p, k.defaults, s, diag, trace, StrView(label, n), p.file);
+}
+
+template <class Settings>
+Status apply_rules(Project const& p, Kind const& k, CookAssetInfo const& asset, TargetProfile const& target,
+                   Settings* s, DiagSink const* diag, SettingsTrace const* trace) {
+    char label[128];
     for (usize i = 0; i < k.rules.size(); ++i) {
         Rule const& r = k.rules[i];
         if (!rule_matches(p, r, asset.name, target.name)) continue;
@@ -401,14 +417,40 @@ Status apply_kind(Project const& p, Kind const& k, StrView kindName, CookAssetIn
 
 } // namespace
 
-Status apply_project(Project const& p, CookAssetInfo const& asset, TargetProfile const& target,
-                     TextureCookSettings* s, DiagSink const* diag, SettingsTrace const* trace) {
-    return apply_kind(p, p.tex, "texture", asset, target, s, diag, trace);
+Status apply_project_defaults(Project const& p, TextureCookSettings* s, DiagSink const* diag,
+                              SettingsTrace const* trace) {
+    return apply_defaults(p, p.tex, "texture", s, diag, trace);
 }
 
-Status apply_project(Project const& p, CookAssetInfo const& asset, TargetProfile const& target,
-                     MeshCookSettings* s, DiagSink const* diag, SettingsTrace const* trace) {
-    return apply_kind(p, p.mesh, "mesh", asset, target, s, diag, trace);
+Status apply_project_defaults(Project const& p, MeshCookSettings* s, DiagSink const* diag,
+                              SettingsTrace const* trace) {
+    return apply_defaults(p, p.mesh, "mesh", s, diag, trace);
+}
+
+Status apply_project_rules(Project const& p, CookAssetInfo const& asset, TargetProfile const& target,
+                           TextureCookSettings* s, DiagSink const* diag, SettingsTrace const* trace) {
+    return apply_rules(p, p.tex, asset, target, s, diag, trace);
+}
+
+Status apply_project_rules(Project const& p, CookAssetInfo const& asset, TargetProfile const& target,
+                           MeshCookSettings* s, DiagSink const* diag, SettingsTrace const* trace) {
+    return apply_rules(p, p.mesh, asset, target, s, diag, trace);
+}
+
+Status apply_project_usage(Project const& p, TextureCookSettings* s, u32 taken, DiagSink const* diag,
+                           SettingsTrace const* trace) {
+    u32 const u = u32(s->usage);
+    if (u >= countof(p.tex.usage)) return kOk;
+    Range const r = p.tex.usage[u];
+    char label[64];
+    usize const n = format(label, sizeof label, "project [texture.usage.%s]", texture_usage_name(s->usage));
+    for (u32 i = 0; i < r.count; ++i) {
+        TomlEntry const& e = *p.keys[r.begin + i];
+        if (taken & key_bit(AssetKind::Texture, e.key)) continue;
+        KILN_TRY(set_field(e, *s, KeyError{diag, p.file}));
+        trace_entry(trace, e, StrView(label, n), p.file);
+    }
+    return kOk;
 }
 
 } // namespace detail

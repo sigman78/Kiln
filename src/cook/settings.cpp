@@ -170,6 +170,19 @@ bool has_hdr_extension(StrView name) {
     return ext[0] == '.' && lower(ext[1]) == 'h' && lower(ext[2]) == 'd' && lower(ext[3]) == 'r';
 }
 
+/// Records the keys a layer sets, and passes each report on to the host's trace.
+struct TakenKeys {
+    AssetKind kind;
+    SettingsTrace const* next;
+    u32 mask = 0;
+
+    static void fn(void* user, StrView key, StrView layer, StrView where) {
+        auto* self = static_cast<TakenKeys*>(user);
+        self->mask |= detail::key_bit(self->kind, key);
+        if (self->next && self->next->fn) self->next->fn(self->next->user, key, layer, where);
+    }
+};
+
 Status refused(ResolveDesc const& d, Status st) {
     return diagf(d.diag, st, kDiagPolicyRefused, Severity::Error, d.asset.name, "policy",
                  "the cook policy refused the asset (%s)", code_name(st.code));
@@ -179,9 +192,15 @@ Status refused(ResolveDesc const& d, Status st) {
 
 Result<TextureCookSettings> resolve_texture_layers(TextureCookSettings const& base, ResolveDesc const& d) {
     TextureCookSettings s = base;
-    if (d.project) KILN_TRY(detail::apply_project(*d.project, d.asset, d.target, &s, d.diag, d.trace));
+    // Usage sections (layer 3b) come after inference and fill only the keys layers 3c to 5 left.
+    TakenKeys taken{AssetKind::Texture, d.trace};
+    SettingsTrace const record{&TakenKeys::fn, &taken};
+    if (d.project) {
+        KILN_TRY(detail::apply_project_defaults(*d.project, &s, d.diag, d.trace));
+        KILN_TRY(detail::apply_project_rules(*d.project, d.asset, d.target, &s, d.diag, &record));
+    }
     if (!d.sidecar.empty())
-        KILN_TRY(detail::apply_sidecar_traced(d.sidecar, &s, d.diag, d.sidecarPath, d.trace));
+        KILN_TRY(detail::apply_sidecar_traced(d.sidecar, &s, d.diag, d.sidecarPath, &record));
     NameHints hints =
         d.asset.slot == SlotHint::None ? hints_from_name(d.asset.name, d.nameRules) : NameHints{};
     if (d.asset.slot == SlotHint::None && has_hdr_extension(d.asset.name)) hints.usage = TextureUsage::Hdr;
@@ -191,9 +210,15 @@ Result<TextureCookSettings> resolve_texture_layers(TextureCookSettings const& ba
         if (s.usage == TextureUsage::Auto) s.usage = TextureUsage::Color;
     }
     if (s.shape == CookShape::Auto) s.shape = hints.shape;
-    if (s.alphaCutoff < 0.0f) s.alphaCutoff = d.asset.alphaCutoff; // the Mask material's cutoff, or 0
-    detail::trace_changes(layered, s, d.trace, "inferred",
+    if (s.alphaCutoff < 0.0f && d.asset.alphaCutoff > 0.0f)
+        s.alphaCutoff = d.asset.alphaCutoff; // a Mask material
+    detail::trace_changes(layered, s, &record, "inferred",
                           d.asset.slot != SlotHint::None ? StrView("glTF slot") : StrView("name or default"));
+    if (d.project) KILN_TRY(detail::apply_project_usage(*d.project, &s, taken.mask, d.diag, d.trace));
+    if (s.alphaCutoff < 0.0f) {
+        s.alphaCutoff = 0.0f; // Auto without a Mask material: off
+        if (d.trace && d.trace->fn) d.trace->fn(d.trace->user, "alphaCutoff", "inferred", "no Mask material");
+    }
     if (d.policy.texture) {
         TextureCookSettings const before = s;
         Status const st                  = d.policy.texture(d.policy.user, d.asset, d.target, &s, d.diag);
@@ -208,7 +233,10 @@ Result<TextureCookSettings> resolve_texture_layers(TextureCookSettings const& ba
 
 Result<MeshCookSettings> resolve_mesh_layers(MeshCookSettings const& base, ResolveDesc const& d) {
     MeshCookSettings s = base;
-    if (d.project) KILN_TRY(detail::apply_project(*d.project, d.asset, d.target, &s, d.diag, d.trace));
+    if (d.project) {
+        KILN_TRY(detail::apply_project_defaults(*d.project, &s, d.diag, d.trace));
+        KILN_TRY(detail::apply_project_rules(*d.project, d.asset, d.target, &s, d.diag, d.trace));
+    }
     if (!d.sidecar.empty())
         KILN_TRY(detail::apply_sidecar_traced(d.sidecar, &s, d.diag, d.sidecarPath, d.trace));
     if (d.policy.mesh) {

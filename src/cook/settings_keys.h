@@ -22,6 +22,10 @@ Status set_field(TomlEntry const& e, MeshCookSettings& s, KeyError const& err);
 
 /// The keys of one kind, in the order kiln-cook --explain prints them.
 Span<StrView const> setting_keys(AssetKind kind);
+/// The bit of `key` in a mask over setting_keys(kind); 0 for an unknown key.
+u32 key_bit(AssetKind kind, StrView key);
+/// A usage by its sidecar name ("normal", ...).
+[[nodiscard]] bool usage_from_text(StrView text, TextureUsage* out);
 /// The value of `key` as a sidecar would write it (enum names unquoted).
 usize field_text(TextureCookSettings const& s, StrView key, char* out, usize cap);
 usize field_text(MeshCookSettings const& s, StrView key, char* out, usize cap);
