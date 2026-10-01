@@ -661,7 +661,8 @@ KILN_TEST(TextureCook, ProfileZones) {
                      {.usage = TextureUsage::Color}, TargetProfile{}, CookEnv{.profile = &hooks});
     KILN_REQUIRE(r.ok());
     KILN_CHECK(log.well_formed());
-    for (char const* stage :
-         {"cook.texture", "cook.decode", "cook.prepare", "cook.mips", "cook.encode", "cook.write"})
+    static char const* const kStages[] = {"cook.texture", "cook.decode", "cook.prepare",
+                                          "cook.mips",    "cook.encode", "cook.write"};
+    for (char const* stage : kStages)
         KILN_CHECK_MSG(log.count('B', stage, "test/tex") == 1, "%s", stage);
 }

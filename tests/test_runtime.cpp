@@ -1612,10 +1612,12 @@ KILN_TEST(Runtime, ProfilerHooks) {
     }
     KILN_CHECK(log.well_formed());
     KILN_CHECK(log.count('B', "kiln.pump") > 0);
-    for (char const* asset : {"ktx2/height16", "mesh/Box"}) {
+    static char const* const kAssets[]    = {"ktx2/height16", "mesh/Box"};
+    static char const* const kIntervals[] = {"kiln.wait.meta", "kiln.wait.upload", "kiln.gpu", "kiln.load"};
+    for (char const* asset : kAssets) {
         KILN_CHECK_MSG(log.count('B', "kiln.meta", asset) == 1, "%s", asset);
         KILN_CHECK_MSG(log.count('B', "kiln.upload", asset) == 1, "%s", asset);
-        for (char const* interval : {"kiln.wait.meta", "kiln.wait.upload", "kiln.gpu", "kiln.load"})
+        for (char const* interval : kIntervals)
             KILN_CHECK_MSG(log.count('I', interval, asset) == 1, "%s %s", asset, interval);
         KILN_CHECK_MSG(log.count('I', "kiln.wait.pool", asset) == 2, "%s", asset);
     }
