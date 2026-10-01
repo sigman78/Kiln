@@ -160,6 +160,9 @@ if(KILN_BUILD_COOK)
         src/cook/sidecar.cpp
         src/cook/toml_subset.h
         src/cook/toml_subset.cpp
+        src/cook/settings_keys.h
+        src/cook/settings_keys.cpp
+        src/cook/project.cpp
         include/kiln/cook/cook.h
         src/cook/store.cpp
         include/kiln/cook/image.h

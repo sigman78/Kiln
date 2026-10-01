@@ -12,6 +12,7 @@
 #include "kiln/containers.h"
 #include "kiln/cook/cook.h"
 #include "kiln/cook/image.h"
+#include "kiln/cook/project.h"
 #include "kiln/cook/provider.h"
 #include "kiln/cook/settings.h"
 #include "kiln/cook/sidecar.h"
@@ -45,6 +46,9 @@ constexpr u32 kCommitIntervalMs = 1000;
 /// --watch: the pause between two scans of the sources.
 constexpr u32 kWatchPollMs = 500;
 
+/// A number option that was not given.
+constexpr u32 kNotGiven = 0xFFFFFFFFu;
+
 /// `--root <name>=<dir>`: files under `dir` get names `name:<path in dir>`.
 struct NamedRoot {
     char name[64];
@@ -54,7 +58,8 @@ struct NamedRoot {
 struct Options {
     Vec<char const*> inputs{default_allocator(), Tag::General};
     Vec<NamedRoot> roots{default_allocator(), Tag::General};
-    char const* store           = "cooked";
+    char const* store           = nullptr; ///< null: [project] store, else "cooked"
+    char const* project         = nullptr; ///< --project; null: ./kiln.toml when it exists
     char const* defaultRoot     = nullptr; ///< --root without a name; null: the input directory
     char const* map             = nullptr;
     char const* trace           = nullptr; ///< --trace: Chrome trace file
@@ -67,13 +72,14 @@ struct Options {
     char const* exportDir       = nullptr; ///< write a runtime-only copy of the store instead of cooking
     bool quiet                  = false;
     bool verbose                = false;
-    u32 threads                 = 0; ///< cooking threads including the main one; 0 = auto, 1 = no pool
-    char const* profile         = "default";
+    u32 threads                 = 0;       ///< cooking threads including the main one; 0 = auto, 1 = no pool
+    char const* profile         = nullptr; ///< flags left null or kNotGiven do not patch (layer 3d)
     char const* meshCompression = nullptr; ///< null: MeshCookSettings's default
-    u32 meshZstd                = 0;       ///< 0: kDefaultZstdLevel when the scheme uses Zstd
-    char const* targetName      = nullptr; ///< null: compat when cooking, every profile for --export
-    char const* quality         = "normal";
-    u32 zstd                    = kDefaultZstdLevel; ///< 0: texture levels stay plain
+    u32 meshZstd                = kNotGiven; ///< 0: kDefaultZstdLevel when the scheme uses Zstd
+    char const* targetName      = nullptr;   ///< null: compat when cooking, every profile for --export
+    char const* quality         = nullptr;
+    u32 zstd                    = kNotGiven; ///< 0: texture levels stay plain
+    bool projectRoots           = false;     ///< the roots came from kiln.toml
     MeshCookSettings mesh;
     TextureCookSettings tex;
     TargetProfile target;
@@ -317,6 +323,7 @@ struct Ctx {
     ProfileHooks const* profile = nullptr; ///< --trace
     CookPolicy policy           = {};
     ManifestStore* store        = nullptr; ///< the store writer; null with --check
+    Project const* project      = nullptr; ///< kiln.toml and the flags (layers 3a to 3d)
     u64 hostDigest              = 0;
     char const* defaultRootDir  = nullptr;                ///< the default root of this run, if one is known
     Vec<char> scanned{default_allocator(), Tag::General}; ///< inputs scanned this round, NUL-separated
@@ -408,6 +415,7 @@ void cook_file(Ctx& c, char const* path, char const* root) {
         .meshDefaults    = &c.opt.mesh,
         .textureDefaults = &c.opt.tex,
         .nameRules       = kDefaultNameRules,
+        .project         = c.project,
         .policy          = c.policy,
         .target          = &c.opt.target,
         .session         = c.session,
@@ -590,6 +598,7 @@ bool add_root(void* user, char const* arg) {
     NamedRoot m{};
     bool const named =
         eq && usize(eq - arg) < sizeof m.name && !check_root_name(StrView(arg, usize(eq - arg)));
+    if (eq && StrView(arg, usize(eq - arg)) == "default") arg = eq + 1; // as in kiln.toml's [roots]
     if (!named) {
         if (o->defaultRoot) {
             std::fprintf(stderr, "kiln-cook: --root: the default root is given twice\n");
@@ -617,6 +626,66 @@ bool add_root(void* user, char const* arg) {
     return true;
 }
 
+/// Owns the loaded project for the rest of cook_cli_main.
+struct ProjectHolder {
+    Project* p                                     = nullptr;
+    ProjectHolder()                                = default;
+    ProjectHolder(ProjectHolder const&)            = delete;
+    ProjectHolder& operator=(ProjectHolder const&) = delete;
+    ~ProjectHolder() { free_project(p); }
+};
+
+/// The setting flags as layer 3d (they beat kiln.toml, sidecars beat them): only the ones given.
+void flag_overrides(Options const& o, bool noTangents, bool noOptimize, bool noMips, bool noLods, char* out,
+                    usize cap) {
+    usize n = format(out, cap, "[texture]\n");
+    if (noMips) n += format(out + n, cap - n, "genMips = false\n");
+    if (o.quality) n += format(out + n, cap - n, "quality = \"%s\"\n", o.quality);
+    if (o.zstd != kNotGiven)
+        n += format(out + n, cap - n, "supercompression = \"%s\"\nzstdLevel = %u\n", o.zstd ? "zstd" : "none",
+                    o.zstd);
+    n += format(out + n, cap - n, "[mesh]\n");
+    if (noTangents) n += format(out + n, cap - n, "genTangents = false\n");
+    if (noOptimize) n += format(out + n, cap - n, "optimize = false\n");
+    if (noLods) n += format(out + n, cap - n, "useAuthoredLods = false\n");
+    if (o.meshCompression) n += format(out + n, cap - n, "compression = \"%s\"\n", o.meshCompression);
+    if (o.meshZstd != kNotGiven) n += format(out + n, cap - n, "zstdLevel = %u\n", o.meshZstd);
+    if (o.profile) format(out + n, cap - n, "profile = \"%s\"\n", o.profile);
+}
+
+/// Loads --project (or ./kiln.toml) with the flags as overrides, then fills what the command line
+/// left open from [roots] and [project]: flags win, and any --root replaces the whole table.
+bool load_cli_project(Options& o, bool noTangents, bool noOptimize, bool noMips, bool noLods,
+                      DiagSink const* sink, ProjectHolder* out) {
+    char overrides[1024];
+    flag_overrides(o, noTangents, noOptimize, noMips, noLods, overrides, sizeof overrides);
+    char const* path = o.project ? o.project : file_exists("kiln.toml") ? "kiln.toml" : nullptr;
+    Result<Project*> const loaded =
+        load_project({.path = StrView(path ? path : ""), .overrides = StrView(overrides)}, nullptr, sink);
+    if (loaded.failed()) {
+        std::fprintf(stderr, "kiln-cook: the project %s has errors\n", path ? path : "(flags)");
+        return false;
+    }
+    out->p = *loaded;
+    if (!o.store) o.store = project_store(out->p).empty() ? "cooked" : project_store(out->p).data;
+    if (!o.targetName && !project_target(out->p).empty()) o.targetName = project_target(out->p).data;
+    if (!o.defaultRoot && o.roots.empty()) {
+        for (Root const& r : project_roots(out->p)) {
+            if (r.name.empty()) {
+                o.defaultRoot = r.dir.data;
+                continue;
+            }
+            NamedRoot m{};
+            format(m.name, sizeof m.name, "%.*s", KILN_SV(r.name));
+            format(m.dir, sizeof m.dir, "%.*s", KILN_SV(r.dir));
+            normalize_slashes(m.dir);
+            o.roots.push_back(m);
+        }
+        o.projectRoots = !project_roots(out->p).empty();
+    }
+    return true;
+}
+
 char const* const kProfiles[]         = {"default", "precise", "float", nullptr};
 char const* const kMeshCompressions[] = {"none", "meshopt", "meshopt-zstd", nullptr};
 char const* const kQualities[]        = {"fast", "normal", "high", nullptr};
@@ -630,8 +699,12 @@ int kiln::cook::cook_cli_main(int argc, char** argv, CookPolicy const& policy, u
         {.name = "--store",
          .alt  = "-o",
          .arg  = "<dir>",
-         .help = "store directory (default: cooked)",
+         .help = "store directory (default: the project's, else cooked)",
          .str  = &o.store},
+        {.name = "--project",
+         .arg  = "<file>",
+         .help = "project file (default: ./kiln.toml when it exists; docs/design/project-config.md)",
+         .str  = &o.project},
         {.name = "--root",
          .arg  = "[<name>=]<dir>",
          .help = "repeatable; <name>=<dir> names <name>:<path>, a bare <dir> is the default root",
@@ -729,6 +802,10 @@ int kiln::cook::cook_cli_main(int argc, char** argv, CookPolicy const& policy, u
         cli::usage(spec, stderr);
         return 1;
     }
+    DiagState ds{o.quiet, o.verbose};
+    DiagSink const sink{&diag_fn, &ds};
+    ProjectHolder project;
+    if (!load_cli_project(o, noTangents, noOptimize, noMips, noLods, &sink, &project)) return 1;
     if (o.targetName) {
         if (char const* why = check_profile_name(StrView(o.targetName))) {
             std::fprintf(stderr, "kiln-cook: --target '%s': %s\n", o.targetName, why);
@@ -743,8 +820,6 @@ int kiln::cook::cook_cli_main(int argc, char** argv, CookPolicy const& policy, u
             return 1;
         }
     }
-    DiagState ds{o.quiet, o.verbose};
-    DiagSink const sink{&diag_fn, &ds};
     if (o.gc) {
         GcResult gc;
         bool quietList = o.quiet;
@@ -767,31 +842,14 @@ int kiln::cook::cook_cli_main(int argc, char** argv, CookPolicy const& policy, u
                         static_cast<unsigned long long>(ex.bytes), o.exportDir);
         return 0;
     }
-    o.mesh.genTangents     = !noTangents;
-    o.mesh.optimize        = !noOptimize;
-    o.mesh.useAuthoredLods = !noLods;
-    o.tex.genMips          = !noMips;
-    o.target      = *target_profile(StrView(o.targetName ? o.targetName : "compat")); // checked above
-    o.tex.quality = std::strcmp(o.quality, "fast") == 0   ? EncodeQuality::Fast
-                    : std::strcmp(o.quality, "high") == 0 ? EncodeQuality::High
-                                                          : EncodeQuality::Normal;
-    o.tex.supercompression = o.zstd != 0 ? Supercompression::Zstd : Supercompression::None;
-    o.tex.zstdLevel        = u8(o.zstd);
-    if (o.meshCompression)
-        o.mesh.compression = std::strcmp(o.meshCompression, "meshopt") == 0 ? CompressionScheme::Meshopt
-                             : std::strcmp(o.meshCompression, "meshopt-zstd") == 0
-                                 ? CompressionScheme::MeshoptZstd
-                                 : CompressionScheme::None;
-    o.mesh.zstdLevel = u8(o.meshZstd);
-    o.mesh.profile   = std::strcmp(o.profile, "float") == 0     ? VertexProfile::Float
-                       : std::strcmp(o.profile, "precise") == 0 ? VertexProfile::Precise
-                                                                : VertexProfile::Default;
+    o.target = *target_profile(StrView(o.targetName ? o.targetName : "compat")); // checked above
 
     Ctx c{
         o, ds, DiagSink{&diag_fn,                                    &ds  },
           CookSession{o.check ? StoreMode::None : StoreMode::Disk, false}
     };
-    c.policy = policy;
+    c.policy  = policy;
+    c.project = project.p;
     if (o.map && !o.check) {
         c.map = std::fopen(o.map, "ab");
         if (!c.map) {
@@ -814,9 +872,10 @@ int kiln::cook::cook_cli_main(int argc, char** argv, CookPolicy const& policy, u
         Status const opened = open_manifest_store(
             {.storeDir = StrView(o.store), .target = &o.target, .diag = &c.sink}, &c.store);
         if (opened.failed()) return 2;
-        // No inputs: the roots the store recorded. Given --root entries win over recorded ones.
+        // No inputs: the project's roots, else the roots the store recorded. Given --root entries
+        // win over recorded ones.
         if (o.inputs.empty()) {
-            store_roots(c.store, &recorded);
+            if (!o.projectRoots) store_roots(c.store, &recorded);
             for (usize at = 0; at < recorded.size();) {
                 char const* name = recorded.data() + at;
                 at += std::strlen(name) + 1;
@@ -873,6 +932,7 @@ int kiln::cook::cook_cli_main(int argc, char** argv, CookPolicy const& policy, u
         UnitDesc const host{.meshDefaults    = &o.mesh,
                             .textureDefaults = &o.tex,
                             .nameRules       = kDefaultNameRules,
+                            .project         = project.p,
                             .policy          = policy,
                             .target          = &o.target,
                             .session         = c.session};

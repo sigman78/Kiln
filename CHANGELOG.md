@@ -8,6 +8,14 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
 ## [Unreleased]
 
 ### Added
+- **Project file `kiln.toml`** (docs/design/project-config.md): project defaults (`[texture]`,
+  `[mesh]`), named presets (`[texture.preset.<name>]`), and path rules (`[[texture.rule]]`,
+  `[[mesh.rule]]`) whose `match` globs cover asset names, embedded images included; the first
+  matching rule applies, optionally only for the profiles in `targets`. `[roots]` and `[project]`
+  (`store`, `target`) configure `kiln-cook`. `kiln-cook --project <file>`, else `./kiln.toml` when it
+  exists. API: `kiln/cook/project.h` (`load_project`, `glob_match`), `ResolveDesc::project`. New
+  diagnostics K3011 (invalid glob) and K3012 (unreadable project file). The TOML subset gains arrays
+  and arrays of tables for it; sidecars keep their subset.
 - **Alpha-coverage-preserving mips:** texture setting `alphaCutoff` (sidecar key too). Each mip level
   keeps the share of texels whose alpha passes the cutoff, so alpha-tested foliage and fences do not
   thin out with distance. Auto takes the cutoff of the glTF material whose `MASK` base color the image
@@ -66,6 +74,12 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
   version nor the failed attempt used.
 
 ### Changed
+- **`kiln-cook` setting flags moved to layer 3d** (`--quality`, `--zstd`, `--no-mips`,
+  `--mesh-compression`, `--mesh-zstd`, `--profile`, `--no-tangents`, `--no-optimize`, `--no-lods`):
+  they beat `kiln.toml` and yield to sidecars, as before. Only the flags given patch; the others
+  leave the project's values. Without a project file nothing changes.
+- **`default` is a reserved root name** (`check_root_name`). Migration: rename a root called
+  `default`. `--root default=<dir>` now means the default root, as `default = "<dir>"` in `[roots]`.
 - **Attributes:** kiln free functions and internal code are no longer `noexcept` (kiln never
   throws). It stays on copy and move constructors and assignment and `swap` (kiln containers require
   nothrow copy and move), and on members of public classes that cannot throw. It is gone from

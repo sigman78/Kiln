@@ -3,6 +3,7 @@
 
 #include "parallel.h"
 
+#include "kiln/cook/project.h"
 #include "kiln/cook/sidecar.h"
 
 #include <cerrno>
@@ -61,6 +62,7 @@ Status prepare_layers(UnitDesc const& d, CookUnit& u, StrView name, SlotHint slo
                       Allocator const* alloc, Layers* l) {
     l->desc = ResolveDesc{
         .asset     = {name, d.sourcePath, slot},
+        .project   = d.project,
         .nameRules = d.nameRules,
         .policy    = d.policy,
         .target    = *d.target,
@@ -279,6 +281,7 @@ u64 host_digest(UnitDesc const& d, u32 policyVersion) {
     h.update_value(u8(d.session.fastPreview));
     h.update_value(u8(d.session.maxQuality));
     h.update_value(policyVersion);
+    h.update_value(project_digest(d.project));
     return h.digest();
 }
 
@@ -306,6 +309,7 @@ bool recorded_keys_match(UnitDesc const& d, CookUnit const& rec) {
         bool const ownSidecar = i == 0;
         ResolveDesc rd{
             .asset     = {name, d.sourcePath, o.slot},
+            .project   = d.project,
             .nameRules = d.nameRules,
             .policy    = d.policy,
             .target    = *d.target,

@@ -26,7 +26,7 @@ format table stays code (`target-profiles.md` §1).
 # kiln.toml
 [roots]                            # kiln-cook only; --root wins
 default = "assets"                 # the default root: names without "root:"
-m       = "../mods"                # named root m: ("m:hud/icon.png")
+mods    = "../mods"                # named root mods: ("mods:hud/icon.png")
 
 [project]
 store  = "build/store"             # kiln-cook only; --store wins
@@ -47,7 +47,7 @@ usage       = "color"
 alphaCutoff = 0.5
 
 [[texture.rule]]
-match  = ["ui/**", "m:hud/**"]
+match  = ["ui/**", "mods:hud/**"]
 preset = "ui"
 
 [[texture.rule]]

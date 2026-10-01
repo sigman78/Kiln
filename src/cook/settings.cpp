@@ -5,6 +5,7 @@
 #include "kiln/cook/sidecar.h"
 
 #include "cook_internal.h"
+#include "project_internal.h"
 
 #include "kiln/log.h"
 
@@ -177,6 +178,7 @@ Status refused(ResolveDesc const& d, Status st) {
 
 Result<TextureCookSettings> resolve_texture_layers(TextureCookSettings const& base, ResolveDesc const& d) {
     TextureCookSettings s = base;
+    if (d.project) KILN_TRY(detail::apply_project(*d.project, d.asset, d.target, &s, d.diag));
     if (!d.sidecar.empty()) KILN_TRY(apply_sidecar(d.sidecar, &s, d.diag, d.sidecarPath));
     NameHints hints =
         d.asset.slot == SlotHint::None ? hints_from_name(d.asset.name, d.nameRules) : NameHints{};
@@ -196,6 +198,7 @@ Result<TextureCookSettings> resolve_texture_layers(TextureCookSettings const& ba
 
 Result<MeshCookSettings> resolve_mesh_layers(MeshCookSettings const& base, ResolveDesc const& d) {
     MeshCookSettings s = base;
+    if (d.project) KILN_TRY(detail::apply_project(*d.project, d.asset, d.target, &s, d.diag));
     if (!d.sidecar.empty()) KILN_TRY(apply_sidecar(d.sidecar, &s, d.diag, d.sidecarPath));
     if (d.policy.mesh) {
         Status const st = d.policy.mesh(d.policy.user, d.asset, d.target, &s, d.diag);

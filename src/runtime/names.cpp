@@ -70,6 +70,7 @@ AssetNameParts split_asset_name(StrView name) {
 
 char const* check_root_name(StrView root) {
     if (root.size < 2) return "root name shorter than 2 characters";
+    if (root == "default") return "'default' is reserved: it names the default root in kiln.toml";
     for (char const c : root)
         if (!is_root_char(c)) return "root name outside [a-z0-9_]";
     return nullptr;

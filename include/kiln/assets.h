@@ -178,7 +178,8 @@ inline constexpr usize kMaxAssetNameLen = 255;
 /// in the last segment, with text on both sides. Without a root prefix the path may not start
 /// with `@`, which the store uses for named roots.
 KILN_API char const* check_asset_name(StrView name);
-/// Null if `root` is a valid root name (`[a-z0-9_]`, at least 2 characters), else a reason.
+/// Null if `root` is a valid root name (`[a-z0-9_]`, at least 2 characters, not `default`), else a
+/// reason.
 KILN_API char const* check_root_name(StrView root);
 
 struct AssetNameParts {

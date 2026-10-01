@@ -52,6 +52,7 @@ struct UnitDesc {
     MeshCookSettings const* meshDefaults       = nullptr;
     TextureCookSettings const* textureDefaults = nullptr;
     Span<NameRule const> nameRules             = {};
+    Project const* project                     = nullptr; ///< layers 3a to 3d
     CookPolicy policy                          = {};
     TargetProfile const* target                = nullptr;
     CookSession session                        = {};

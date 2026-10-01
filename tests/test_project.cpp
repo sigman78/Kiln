@@ -1,0 +1,352 @@
+// tests/test_project.cpp — kiln.toml (kiln/cook/project.h): loading, globs, layers 3a to 3d, and
+// kiln-cook's --project, [roots] and [project].
+#include "kiln_test.h"
+
+#include "kiln/cook/cli.h"
+#include "kiln/cook/project.h"
+#include "kiln/cook/settings.h"
+
+#include <cstdio>
+#include <cstring>
+#include <filesystem>
+
+using namespace kiln;
+using namespace kiln::cook;
+
+namespace {
+
+struct DiagLast {
+    u32 code = 0;
+    char where[256]{};
+
+    static void fn(void* user, Diagnostic const& d) {
+        auto* self = static_cast<DiagLast*>(user);
+        self->code = d.code;
+        format(self->where, sizeof self->where, "%.*s", KILN_SV(d.where));
+    }
+    DiagSink sink() { return DiagSink{&fn, this}; }
+};
+
+void fresh_dir(char const* name, char* out, usize cap) {
+    format(out, cap, "%s/%s", test::sample_dir(), name);
+    std::error_code ec;
+    std::filesystem::remove_all(out, ec);
+    std::filesystem::create_directories(out, ec);
+}
+
+bool write_text(char const* path, char const* text) {
+    std::FILE* f = std::fopen(path, "wb");
+    if (!f) return false;
+    bool const ok = std::fwrite(text, 1, std::strlen(text), f) == std::strlen(text);
+    return std::fclose(f) == 0 && ok;
+}
+
+/// Loads `text` as <sample dir>/<name>/kiln.toml; `path` receives the file's path.
+struct Loaded {
+    Project* p = nullptr;
+    DiagLast diag;
+    char path[1024]{};
+
+    Status load(char const* name, char const* text, StrView overrides = {}) {
+        char dir[1024];
+        fresh_dir(name, dir, sizeof dir);
+        format(path, sizeof path, "%s/kiln.toml", dir);
+        if (!write_text(path, text)) return make_status(Code::IoError);
+        DiagSink const sink = diag.sink();
+        Result<Project*> const r =
+            load_project({.path = StrView(path), .overrides = overrides}, nullptr, &sink);
+        if (r.failed()) return r.status();
+        p = *r;
+        return kOk;
+    }
+    ~Loaded() { free_project(p); }
+};
+
+Result<TextureCookSettings> resolve_tex(Project const* p, StrView name, StrView sidecar = {},
+                                        TargetProfile const& target = kCompatTarget,
+                                        SlotHint slot               = SlotHint::None) {
+    return resolve_texture_layers(
+        {
+    },
+        ResolveDesc{.asset = {name, name, slot}, .project = p, .sidecar = sidecar, .target = target});
+}
+
+constexpr char kProjectText[] = R"(# kiln.toml
+[roots]
+default = "assets"
+mods = "../mods"
+
+[project]
+store = "build/store"
+target = "desktop"
+
+[texture]
+quality = "high"
+maxSize = 4096
+
+[mesh]
+compression = "meshopt-zstd"
+
+[texture.preset.ui]
+usage = "ui"
+genMips = false
+
+[texture.preset.foliage]
+alphaCutoff = 0.5
+
+[[texture.rule]]
+match = ["ui/**", "mods:hud/**"]
+preset = "ui"
+
+[[texture.rule]]
+match = ["env/trees/**", "props/*.glb#*leaf*"]
+preset = "foliage"
+maxSize = 2048
+
+[[texture.rule]]
+match = ["env/**"]          # never reached for env/trees: the first match wins
+maxSize = 512
+
+[[texture.rule]]
+match = ["sky/**"]
+targets = ["compat"]
+maxSize = 1024
+
+[[mesh.rule]]
+match = ["props/**"]
+optimize = false
+)";
+
+} // namespace
+
+KILN_TEST(Project, Globs) {
+    KILN_CHECK(glob_match("ui/**", "ui/a.png"));
+    KILN_CHECK(glob_match("ui/**", "ui/x/y/a.png"));
+    KILN_CHECK(glob_match("**/a.png", "a.png")); // '**/' matches zero segments
+    KILN_CHECK(glob_match("**/a.png", "x/y/a.png"));
+    KILN_CHECK(glob_match("x/**/a.png", "x/a.png"));
+    KILN_CHECK(glob_match("*.png", "a.png"));
+    KILN_CHECK(!glob_match("*.png", "x/a.png")); // '*' stays in one segment
+    KILN_CHECK(glob_match("a?.png", "ab.png"));
+    KILN_CHECK(!glob_match("a?c", "a/c"));
+    KILN_CHECK(glob_match("props/*.glb#*leaf*", "props/tree.glb#big_leaf_2"));
+    KILN_CHECK(!glob_match("props/*.glb#*leaf*", "props/tree.glb#bark"));
+    KILN_CHECK(glob_match("**", "anything/at/all.png"));
+    // Roots: a pattern without one matches the default root only.
+    KILN_CHECK(!glob_match("**", "m:a.png"));
+    KILN_CHECK(glob_match("m:**", "m:a.png"));
+    KILN_CHECK(!glob_match("m:**", "a.png"));
+    KILN_CHECK(!glob_match("mm:**", "m:a.png"));
+}
+
+KILN_TEST(Project, LoadsTablesRootsAndProject) {
+    Loaded l;
+    Status const st = l.load("project_load", kProjectText);
+    if (!KILN_CHECK_MSG(st.ok(), "K%u at %s", l.diag.code, l.diag.where)) return;
+    Span<Root const> const roots = project_roots(l.p);
+    KILN_REQUIRE_EQ(roots.size, usize(2));
+    KILN_CHECK(roots[0].name.empty());
+    KILN_CHECK(roots[0].dir.ends_with("project_load/assets"));
+    KILN_CHECK(roots[1].name == "mods");
+    KILN_CHECK(roots[1].dir.ends_with("project_load/../mods"));
+    KILN_CHECK(project_store(l.p).ends_with("project_load/build/store"));
+    KILN_CHECK(project_target(l.p) == "desktop");
+}
+
+KILN_TEST(Project, DefaultsPresetsAndFirstMatchingRule) {
+    Loaded l;
+    KILN_REQUIRE(l.load("project_rules", kProjectText).ok());
+
+    Result<TextureCookSettings> plain = resolve_tex(l.p, "rock.png");
+    KILN_REQUIRE(plain.ok());
+    KILN_CHECK(plain->quality == EncodeQuality::High); // [texture]
+    KILN_CHECK_EQ(plain->maxSize, 4096u);
+    KILN_CHECK(plain->usage == TextureUsage::Color);
+
+    Result<TextureCookSettings> ui = resolve_tex(l.p, "ui/button.png");
+    KILN_REQUIRE(ui.ok());
+    KILN_CHECK(ui->usage == TextureUsage::Ui && !ui->genMips); // the preset
+    KILN_CHECK(ui->quality == EncodeQuality::High);            // defaults still apply below the rule
+    Result<TextureCookSettings> hud = resolve_tex(l.p, "mods:hud/icon.png");
+    KILN_REQUIRE(hud.ok());
+    KILN_CHECK(hud->usage == TextureUsage::Ui);
+
+    Result<TextureCookSettings> leaf =
+        resolve_tex(l.p, "props/tree.glb#big_leaf", {}, kCompatTarget, SlotHint::BaseColor);
+    KILN_REQUIRE(leaf.ok());
+    KILN_CHECK_EQ(leaf->alphaCutoff, 0.5f); // embedded images match rules too
+    KILN_CHECK_EQ(leaf->maxSize, 2048u);    // the rule's key after its preset
+
+    Result<TextureCookSettings> tree = resolve_tex(l.p, "env/trees/oak.png");
+    KILN_REQUIRE(tree.ok());
+    KILN_CHECK_EQ(tree->maxSize, 2048u); // the first match wins: env/** never applies
+    Result<TextureCookSettings> env = resolve_tex(l.p, "env/rock.png");
+    KILN_REQUIRE(env.ok());
+    KILN_CHECK_EQ(env->maxSize, 512u);
+
+    // `targets`: the rule applies only when cooking for a listed profile.
+    Result<TextureCookSettings> skyCompat  = resolve_tex(l.p, "sky/day.png", {}, kCompatTarget);
+    Result<TextureCookSettings> skyDesktop = resolve_tex(l.p, "sky/day.png", {}, kDesktopTarget);
+    KILN_REQUIRE(skyCompat.ok() && skyDesktop.ok());
+    KILN_CHECK_EQ(skyCompat->maxSize, 1024u);
+    KILN_CHECK_EQ(skyDesktop->maxSize, 4096u);
+
+    Result<MeshCookSettings> mesh =
+        resolve_mesh_layers({}, ResolveDesc{.asset = {"props/chair.glb"}, .project = l.p});
+    KILN_REQUIRE(mesh.ok());
+    KILN_CHECK(mesh->compression == CompressionScheme::MeshoptZstd);
+    KILN_CHECK(!mesh->optimize);
+    Result<MeshCookSettings> other =
+        resolve_mesh_layers({}, ResolveDesc{.asset = {"chair.glb"}, .project = l.p});
+    KILN_REQUIRE(other.ok());
+    KILN_CHECK(other->optimize);
+}
+
+KILN_TEST(Project, OverridesBeatTheFileAndSidecarsBeatOverrides) {
+    Loaded l;
+    KILN_REQUIRE(
+        l.load("project_overrides", kProjectText, "[texture]\nquality = \"fast\"\nmaxSize = 256\n").ok());
+    Result<TextureCookSettings> s = resolve_tex(l.p, "ui/button.png");
+    KILN_REQUIRE(s.ok());
+    KILN_CHECK(s->quality == EncodeQuality::Fast);
+    KILN_CHECK_EQ(s->maxSize, 256u);
+    KILN_CHECK(s->usage == TextureUsage::Ui); // the rule still applies where the flags say nothing
+    Result<TextureCookSettings> side = resolve_tex(l.p, "ui/button.png", "maxSize = 128\n");
+    KILN_REQUIRE(side.ok());
+    KILN_CHECK_EQ(side->maxSize, 128u);
+}
+
+KILN_TEST(Project, OverridesWithoutAFile) {
+    DiagLast d;
+    DiagSink const sink = d.sink();
+    Result<Project*> r = load_project({.overrides = "[mesh]\noptimize = false\n[texture]\n"}, nullptr, &sink);
+    KILN_REQUIRE(r.ok());
+    Result<MeshCookSettings> mesh = resolve_mesh_layers({}, ResolveDesc{.asset = {"a.glb"}, .project = *r});
+    KILN_REQUIRE(mesh.ok());
+    KILN_CHECK(!mesh->optimize);
+    KILN_CHECK_EQ(project_roots(*r).size, usize(0));
+    free_project(*r);
+}
+
+KILN_TEST(Project, DigestFollowsSettingsNotComments) {
+    Loaded a, b, c;
+    KILN_REQUIRE(a.load("project_digest_a", "[texture]\nmaxSize = 1024\n").ok());
+    KILN_REQUIRE(b.load("project_digest_b",
+                        "# a comment\n[roots]\ndefault = \"x\"\n[texture]\nmaxSize = 1024 # same\n")
+                     .ok());
+    KILN_REQUIRE(c.load("project_digest_c", "[texture]\nmaxSize = 2048\n").ok());
+    KILN_CHECK_EQ(project_digest(a.p), project_digest(b.p));
+    KILN_CHECK(project_digest(a.p) != project_digest(c.p));
+}
+
+KILN_TEST(Project, ErrorsNameFileAndLine) {
+    struct Case {
+        char const* text;
+        u32 code;
+        u32 line;
+    };
+    Case const cases[] = {
+        {"maxSize = 1",                                                kDiagSidecarKey,    1}, // keys belong in a table
+        {"[textures]",                                                 kDiagSidecarKey,    1}, // unknown table
+        {"[texture]\nbogus = 1",                                       kDiagSidecarKey,    2},
+        {"[mesh]\nmaxSize = 1",                                        kDiagSidecarKey,    2}, // a texture key on meshes
+        {"[[texture.rule]]\npreset = \"ui\"",                          kDiagSidecarKey,    2}, // no such preset
+        {"[[texture.rule]]\nmaxSize = 1",                              kDiagSidecarKey,    1}, // no match
+        {"[[texture.rule]]\nmatch = []",                               kDiagSidecarKey,    2},
+        {"[[texture.rule]]\nmatch = [\"a**\"]",                        kDiagProjectGlob,   2},
+        {"[[texture.rule]]\nmatch = [\"Bad:**\"]",                     kDiagProjectGlob,   2},
+        {"[[texture.rule]]\nmatch = [\"**\"]\ntargets = [\"mobile\"]", kDiagSidecarKey,    3},
+        {"[texture.preset]\nx = 1",                                    kDiagSidecarKey,    2},
+        {"[target.lowend]",                                            kDiagSidecarKey,    1}, // reserved
+        {"[roots]\nBad = \"x\"",                                       kDiagSidecarKey,    2},
+        {"[roots]\nm = 1",                                             kDiagSidecarKey,    2},
+        {"[project]\nstores = \"x\"",                                  kDiagSidecarKey,    2},
+        {"[texture]\nmaxSize = [1]",                                   kDiagSidecarKey,    2},
+        {"[texture]\nmaxSize = 1\nmaxSize = 2",                        kDiagSidecarSyntax, 3},
+    };
+    int i = 0;
+    for (Case const& c : cases) {
+        char name[32];
+        format(name, sizeof name, "project_err_%d", i++);
+        Loaded l;
+        KILN_CHECK_MSG(l.load(name, c.text).failed(), "accepted: %s", c.text);
+        KILN_CHECK_MSG(l.diag.code == c.code, "%s: code %u", c.text, l.diag.code);
+        char suffix[32];
+        format(suffix, sizeof suffix, "kiln.toml:%u", c.line);
+        KILN_CHECK_MSG(StrView(l.diag.where).ends_with(StrView(suffix)), "%s: where %s", c.text,
+                       l.diag.where);
+    }
+    DiagLast d;
+    DiagSink const sink = d.sink();
+    KILN_CHECK(load_project({.path = "no/such/kiln.toml"}, nullptr, &sink).failed());
+    KILN_CHECK_EQ(d.code, u32(kDiagProjectRead));
+}
+
+KILN_TEST(Project, DefaultIsAReservedRootName) {
+    KILN_CHECK(check_root_name("default") != nullptr);
+    KILN_CHECK(check_root_name("defaults") == nullptr);
+}
+
+namespace {
+
+int run_cli(std::initializer_list<char const*> args) {
+    char storage[12][1100];
+    char* argv[12];
+    int argc = 0;
+    for (char const* a : args) {
+        format(storage[argc], sizeof storage[argc], "%s", a);
+        argv[argc] = storage[argc];
+        ++argc;
+    }
+    return cook_cli_main(argc, argv);
+}
+
+/// The build key the map file `map` lists for `asset`, or empty.
+void key_in_map(char const* map, char const* asset, char* out, usize cap) {
+    out[0]       = '\0';
+    std::FILE* f = std::fopen(map, "rb");
+    if (!f) return;
+    char line[2048];
+    while (std::fgets(line, sizeof line, f)) {
+        usize const n = std::strlen(asset);
+        if (std::strncmp(line, asset, n) != 0 || line[n] != '\t') continue;
+        char const* key = std::strrchr(line, '\t') + 1;
+        format(out, cap, "%.*s", int(std::strcspn(key, "\r\n")), key);
+    }
+    std::fclose(f);
+}
+
+} // namespace
+
+// kiln-cook takes roots, store and settings from --project; its flags beat the file.
+KILN_TEST(ProjectCli, RootsStoreAndFlags) {
+    char dir[1024], src[1100], file[1100], mapA[1100], mapB[1100], storeB[1100], from[1100], to[1100];
+    fresh_dir("project_cli", dir, sizeof dir);
+    format(src, sizeof src, "%s/src", dir);
+    std::error_code ec;
+    std::filesystem::create_directories(src, ec);
+    format(from, sizeof from, "%s/../gltf/generated/external_uri_albedo.png", test::corpus_dir());
+    format(to, sizeof to, "%s/albedo.png", src);
+    std::filesystem::copy_file(from, to, ec);
+    KILN_REQUIRE(!ec);
+    format(file, sizeof file, "%s/kiln.toml", dir);
+    KILN_REQUIRE(write_text(file, "[roots]\ndefault = \"src\"\n[project]\nstore = \"store\"\n"
+                                  "[texture]\ngenMips = false\nquality = \"high\"\n"));
+    format(mapA, sizeof mapA, "%s/a.map", dir);
+    format(mapB, sizeof mapB, "%s/b.map", dir);
+    format(storeB, sizeof storeB, "%s/store_b", dir);
+
+    // The project: no inputs, no --store; --quality fast beats the file's high.
+    KILN_REQUIRE_EQ(run_cli({"kiln-cook", "--project", file, "--quality", "fast", "--map", mapA, "-q"}), 0);
+    char store[1100];
+    format(store, sizeof store, "%s/store/manifest.dir", dir);
+    KILN_CHECK(std::filesystem::exists(store));
+    // The same settings from flags alone give the same build key.
+    KILN_REQUIRE_EQ(
+        run_cli({"kiln-cook", src, "-o", storeB, "--no-mips", "--quality", "fast", "--map", mapB, "-q"}), 0);
+    char keyA[128], keyB[128];
+    key_in_map(mapA, "albedo.png", keyA, sizeof keyA);
+    key_in_map(mapB, "albedo.png", keyB, sizeof keyB);
+    KILN_CHECK(keyA[0] != '\0');
+    KILN_CHECK(StrView(keyA) == StrView(keyB));
+}

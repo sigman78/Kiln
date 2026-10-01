@@ -192,6 +192,8 @@ enum SettingsDiagCode : u32 {
         3006, ///< a sidecar key is unknown, or its value has the wrong type or range (InvalidArgument)
     kDiagPolicyRefused        = 3007, ///< the CookPolicy refused the asset (its status)
     kDiagStoreProfileMismatch = 3008, ///< the provider's target is not the context's profile
+    kDiagProjectGlob          = 3011, ///< a `match` pattern in kiln.toml is not a valid glob
+    kDiagProjectRead          = 3012, ///< the project file cannot be read
 };
 
 // ---------------------------------------------------------------------------
@@ -239,23 +241,27 @@ struct CookPolicy {
     void* user                                                      = nullptr;
 };
 
+struct Project; // kiln/cook/project.h
+
 struct ResolveDesc {
     CookAssetInfo asset;
-    StrView sidecar                = {}; ///< the sidecar text (layer 4); empty: none
-    StrView sidecarPath            = {}; ///< names the sidecar in diagnostics
-    Span<NameRule const> nameRules = {}; ///< layer 5 for a texture with no slot
-    CookPolicy policy              = {}; ///< layer 6
+    Project const* project         = nullptr; ///< layers 3a to 3d; null: none
+    StrView sidecar                = {};      ///< the sidecar text (layer 4); empty: none
+    StrView sidecarPath            = {};      ///< names the sidecar in diagnostics
+    Span<NameRule const> nameRules = {};      ///< layer 5 for a texture with no slot
+    CookPolicy policy              = {};      ///< layer 6
     TargetProfile target           = {};
     CookSession session            = {};
     DiagSink const* diag           = nullptr;
 };
 
-/// Runs layers 4 to 6 over `base` (layers 1 to 3: the host's settings), then resolve_texture:
-/// the sidecar sets the keys it names; a still-Auto usage comes from the slot, else the name
-/// rules, else Color; the policy runs; then derived fields, validation and target caps.
+/// Runs layers 3 to 6 over `base` (layers 1 and 2: the host's settings), then resolve_texture:
+/// the project's defaults, first matching rule and overrides, then the sidecar set the keys they name; a
+/// still-Auto usage comes from the slot, else the name rules, else Color; the policy runs; then derived
+/// fields, validation and target caps.
 KILN_API Result<TextureCookSettings> resolve_texture_layers(TextureCookSettings const& base,
                                                             ResolveDesc const& d);
-/// Layers 4 and 6 over `base`, then resolve_mesh. Meshes have no inference layer.
+/// Layers 3, 4 and 6 over `base`, then resolve_mesh. Meshes have no inference layer.
 KILN_API Result<MeshCookSettings> resolve_mesh_layers(MeshCookSettings const& base, ResolveDesc const& d);
 
 /// Usage inferred from a glTF slot (None -> Color).
