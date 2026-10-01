@@ -63,7 +63,7 @@ endif()
 
 if(TARGET kiln_cook)
     target_sources(kiln_tests PRIVATE test_mesh.cpp test_ktx2.cpp test_ktx2_corpus_rt.cpp
-                                       test_settings.cpp test_sidecar.cpp test_store.cpp
+                                       test_settings.cpp test_sidecar.cpp test_toml_subset.cpp test_store.cpp
                                        png_writer.h hdr_writer.h image_fixtures.h test_image.cpp
                                        test_texture_cook.cpp test_hdr.cpp test_texture_golden.cpp
                                        test_provider.cpp test_parallel.cpp test_texture_bc.cpp

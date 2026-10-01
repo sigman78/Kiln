@@ -1,5 +1,5 @@
-// src/cook/toml_subset.cpp — strict TOML subset: `key = value`, `#` comments, `[a.b]` headers,
-// string, integer, float and boolean values. Every file it accepts is valid TOML.
+// src/cook/toml_subset.cpp — strict TOML subset: `key = value`, `#` comments, table headers, string,
+// integer, float, boolean and (project files) array values. Every file it accepts is valid TOML.
 #include "toml_subset.h"
 
 #include "kiln/cook/settings.h"
@@ -7,49 +7,96 @@
 #include "kiln/log.h"
 
 #include <charconv>
+#include <cstring>
 
 namespace kiln::cook::detail {
 
 namespace {
-
-struct Parser {
-    Arena& arena;
-    Vec<TomlEntry>& out;
-    DiagSink const* diag;
-    StrView file;
-    u32 line = 0;
-
-    Status fail(char const* what) const {
-        char where[1100];
-        format(where, sizeof where, "%.*s:%u", KILN_SV(file), line);
-        return diagf(diag, make_status(Code::ParseError), kDiagSidecarSyntax, Severity::Error, file, where,
-                     "%s", what);
-    }
-};
 
 bool is_ws(char c) { return c == ' ' || c == '\t'; }
 bool is_bare(char c) {
     return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' || c == '-';
 }
 bool is_digit(char c) { return c >= '0' && c <= '9'; }
+/// Control characters TOML forbids outside strings' escapes (tab is allowed).
+bool is_control(char c) { return (u8(c) < 0x20 && c != '\t') || u8(c) == 0x7F; }
 
-void skip_ws(StrView s, usize& at) {
-    while (at < s.size && is_ws(s[at]))
-        ++at;
-}
+struct Parser {
+    StrView s;
+    TomlSyntax syntax;
+    Arena& arena;
+    TomlDoc& out;
+    DiagSink const* diag;
+    StrView file;
+    usize at  = 0;
+    u32 line  = 1;
+    u32 table = 0;
 
-/// After a value or header: only whitespace and a comment may follow.
-bool rest_is_empty(StrView s, usize at) {
-    skip_ws(s, at);
-    return at == s.size || s[at] == '#';
-}
+    Status fail(char const* what) {
+        char where[1100];
+        format(where, sizeof where, "%.*s:%u", KILN_SV(file), line);
+        return diagf(diag, make_status(Code::ParseError), kDiagSidecarSyntax, Severity::Error, file, where,
+                     "%s", what);
+    }
+    Status unsupported(char const* what) {
+        char msg[128];
+        format(msg, sizeof msg, "%s are not supported%s", what,
+               syntax == TomlSyntax::Sidecar ? " in .kiln sidecars" : "");
+        return fail(msg);
+    }
 
-StrView bare_key(StrView s, usize& at) {
-    usize const start = at;
-    while (at < s.size && is_bare(s[at]))
-        ++at;
-    return s.substr(start, at - start);
-}
+    bool eof() const { return at >= s.size; }
+    bool at_eol() const {
+        return at >= s.size || s[at] == '\n' || (s[at] == '\r' && at + 1 < s.size && s[at + 1] == '\n');
+    }
+    void skip_ws() {
+        while (at < s.size && is_ws(s[at]))
+            ++at;
+    }
+    /// The characters left on this line, a bound for decoded strings and names.
+    usize line_rest() const {
+        usize end = at;
+        while (end < s.size && s[end] != '\n')
+            ++end;
+        return end - at;
+    }
+    /// On '#': consumes the comment up to the line end.
+    Status skip_comment() {
+        while (!at_eol()) {
+            if (is_control(s[at])) return fail("control character in a comment");
+            ++at;
+        }
+        return kOk;
+    }
+    /// After a value or header: whitespace, an optional comment, then the line end.
+    Status end_line(char const* what) {
+        skip_ws();
+        if (at < s.size && s[at] == '#') KILN_TRY(skip_comment());
+        if (!at_eol()) return fail(what);
+        newline();
+        return kOk;
+    }
+    void newline() {
+        if (at >= s.size) return;
+        at += s[at] == '\r' ? 2 : 1;
+        ++line;
+    }
+
+    StrView bare_key() {
+        usize const start = at;
+        while (at < s.size && is_bare(s[at]))
+            ++at;
+        return s.substr(start, at - start);
+    }
+
+    Status parse_string(StrView& value);
+    Status parse_number(StrView tok, TomlValue& v);
+    Status parse_scalar(TomlValue& v);
+    Status parse_array(TomlEntry& e);
+    Status parse_header();
+    Status parse_key_value();
+    Status check_key_table_conflicts();
+};
 
 usize put_utf8(char* p, u32 cp) {
     if (cp < 0x80) {
@@ -74,24 +121,23 @@ usize put_utf8(char* p, u32 cp) {
     return 4;
 }
 
-/// A "basic" or 'literal' string starting at `at` (on the quote).
-Status parse_string(Parser& ps, StrView s, usize& at, StrView& value) {
+/// A "basic" or 'literal' string starting on its quote; it ends on the same line.
+Status Parser::parse_string(StrView& value) {
     char const quote = s[at];
-    if (at + 2 < s.size && s[at + 1] == quote && s[at + 2] == quote)
-        return ps.fail("multi-line strings are not supported in .kiln files");
+    if (at + 2 < s.size && s[at + 1] == quote && s[at + 2] == quote) return unsupported("multi-line strings");
     ++at;
-    char* buf = ps.arena.alloc_array<char>(s.size - at + 1);
+    char* buf = arena.alloc_array<char>(line_rest() + 1); // decoding never grows the text
     usize n   = 0;
     for (;;) {
-        if (at >= s.size) return ps.fail("unterminated string");
+        if (at >= s.size || s[at] == '\n' || s[at] == '\r') return fail("unterminated string");
         char const c = s[at++];
         if (c == quote) break;
-        if (u8(c) < 0x20 && c != '\t') return ps.fail("control character in a string");
+        if (is_control(c)) return fail("control character in a string");
         if (c != '\\' || quote == '\'') {
             buf[n++] = c;
             continue;
         }
-        if (at >= s.size) return ps.fail("unterminated escape");
+        if (at >= s.size) return fail("unterminated escape");
         char const e = s[at++];
         switch (e) {
         case 'b': buf[n++] = '\b'; break;
@@ -104,16 +150,16 @@ Status parse_string(Parser& ps, StrView s, usize& at, StrView& value) {
         case 'u':
         case 'U': {
             usize const digits = e == 'u' ? 4 : 8;
-            if (at + digits > s.size) return ps.fail("short unicode escape");
+            if (at + digits > s.size) return fail("short unicode escape");
             u32 cp       = 0;
             auto const r = std::from_chars(s.data + at, s.data + at + digits, cp, 16);
             if (r.ptr != s.data + at + digits || cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF))
-                return ps.fail("invalid unicode escape");
+                return fail("invalid unicode escape");
             at += digits;
             n += put_utf8(buf + n, cp);
             break;
         }
-        default: return ps.fail("unknown escape in a string");
+        default: return fail("unknown escape in a string");
         }
     }
     buf[n] = '\0';
@@ -122,154 +168,239 @@ Status parse_string(Parser& ps, StrView s, usize& at, StrView& value) {
 }
 
 /// Decimal integer or float in TOML's grammar, without underscores, hex, inf or nan.
-Status parse_number(Parser& ps, StrView tok, TomlEntry& e) {
-    usize at = 0;
-    if (at < tok.size && (tok[at] == '+' || tok[at] == '-')) ++at;
-    usize const intStart = at;
-    while (at < tok.size && is_digit(tok[at]))
-        ++at;
-    usize const intLen = at - intStart;
-    if (intLen == 0) return ps.fail("unsupported value (expected a string, number, true or false)");
-    if (intLen > 1 && tok[intStart] == '0') return ps.fail("leading zeros are not allowed");
+Status Parser::parse_number(StrView tok, TomlValue& v) {
+    usize i = 0;
+    if (i < tok.size && (tok[i] == '+' || tok[i] == '-')) ++i;
+    usize const intStart = i;
+    while (i < tok.size && is_digit(tok[i]))
+        ++i;
+    usize const intLen = i - intStart;
+    if (intLen == 0) return fail("unsupported value (expected a string, number, true or false)");
+    if (intLen > 1 && tok[intStart] == '0') return fail("leading zeros are not allowed");
     bool isFloat = false;
-    if (at < tok.size && tok[at] == '.') {
+    if (i < tok.size && tok[i] == '.') {
         isFloat = true;
-        ++at;
-        usize const frac = at;
-        while (at < tok.size && is_digit(tok[at]))
-            ++at;
-        if (at == frac) return ps.fail("a float needs digits after '.'");
+        ++i;
+        usize const frac = i;
+        while (i < tok.size && is_digit(tok[i]))
+            ++i;
+        if (i == frac) return fail("a float needs digits after '.'");
     }
-    if (at < tok.size && (tok[at] == 'e' || tok[at] == 'E')) {
+    if (i < tok.size && (tok[i] == 'e' || tok[i] == 'E')) {
         isFloat = true;
-        ++at;
-        if (at < tok.size && (tok[at] == '+' || tok[at] == '-')) ++at;
-        usize const exp = at;
-        while (at < tok.size && is_digit(tok[at]))
-            ++at;
-        if (at == exp) return ps.fail("a float needs digits in its exponent");
+        ++i;
+        if (i < tok.size && (tok[i] == '+' || tok[i] == '-')) ++i;
+        usize const exp = i;
+        while (i < tok.size && is_digit(tok[i]))
+            ++i;
+        if (i == exp) return fail("a float needs digits in its exponent");
     }
-    if (at != tok.size) return ps.fail("unsupported value (expected a string, number, true or false)");
+    if (i != tok.size) return fail("unsupported value (expected a string, number, true or false)");
 
     char const* const first = tok.data + (tok[0] == '+' ? 1 : 0);
     char const* const last  = tok.data + tok.size;
     if (isFloat) {
-        e.type       = TomlType::Float;
-        auto const r = std::from_chars(first, last, e.f);
-        if (r.ec != std::errc{} || r.ptr != last) return ps.fail("float out of range");
+        v.type       = TomlType::Float;
+        auto const r = std::from_chars(first, last, v.f);
+        if (r.ec != std::errc{} || r.ptr != last) return fail("float out of range");
     } else {
-        e.type       = TomlType::Int;
-        auto const r = std::from_chars(first, last, e.i);
-        if (r.ec != std::errc{} || r.ptr != last) return ps.fail("integer out of range");
+        v.type       = TomlType::Int;
+        auto const r = std::from_chars(first, last, v.i);
+        if (r.ec != std::errc{} || r.ptr != last) return fail("integer out of range");
     }
     return kOk;
 }
 
-Status parse_value(Parser& ps, StrView s, usize& at, TomlEntry& e) {
-    if (at >= s.size || s[at] == '#') return ps.fail("missing value after '='");
+Status Parser::parse_scalar(TomlValue& v) {
+    if (at_eol() || s[at] == '#') return fail("missing value");
     char const c = s[at];
     if (c == '"' || c == '\'') {
-        e.type = TomlType::String;
-        return parse_string(ps, s, at, e.str);
+        v.type = TomlType::String;
+        return parse_string(v.str);
     }
-    if (c == '[') return ps.fail("arrays are not supported in .kiln files");
-    if (c == '{') return ps.fail("inline tables are not supported in .kiln files");
+    if (c == '{') return unsupported("inline tables");
     usize const start = at;
-    while (at < s.size && !is_ws(s[at]) && s[at] != '#')
+    while (at < s.size && !is_ws(s[at]) && s[at] != '#' && s[at] != ',' && s[at] != ']' && s[at] != '\n' &&
+           s[at] != '\r')
         ++at;
     StrView const tok = s.substr(start, at - start);
     if (tok == "true" || tok == "false") {
-        e.type = TomlType::Bool;
-        e.b    = tok == "true";
+        v.type = TomlType::Bool;
+        v.b    = tok == "true";
         return kOk;
     }
-    return parse_number(ps, tok, e);
+    return parse_number(tok, v);
 }
 
-Status parse_header(Parser& ps, StrView s, usize at, StrView& section) {
+/// `[a, b, ...]` of scalars of one type; it may span lines, with comments and a trailing comma.
+Status Parser::parse_array(TomlEntry& e) {
     ++at; // '['
-    if (at < s.size && s[at] == '[') return ps.fail("arrays of tables are not supported in .kiln files");
-    char* buf = ps.arena.alloc_array<char>(s.size + 1);
+    Vec<TomlValue> items(out.entries.allocator(), Tag::Cook);
+    auto skip_gaps = [&]() -> Status {
+        for (;;) {
+            skip_ws();
+            if (at < s.size && s[at] == '#') KILN_TRY(skip_comment());
+            if (at >= s.size || !at_eol()) return kOk;
+            newline();
+        }
+    };
+    for (;;) {
+        KILN_TRY(skip_gaps());
+        if (at >= s.size) return fail("unterminated array");
+        if (s[at] == ']') break;
+        if (s[at] == '[') return unsupported("nested arrays");
+        TomlValue v;
+        KILN_TRY(parse_scalar(v));
+        if (!items.empty() && v.type != items[0].type) return fail("an array must hold values of one type");
+        items.push_back(v);
+        KILN_TRY(skip_gaps());
+        if (at < s.size && s[at] == ',') {
+            ++at;
+            continue;
+        }
+        if (at < s.size && s[at] == ']') break;
+        return fail("expected ',' or ']' in an array");
+    }
+    ++at; // ']'
+    e.type = TomlType::Array;
+    if (!items.empty()) {
+        TomlValue* copy = arena.alloc_array<TomlValue>(items.size());
+        std::memcpy(copy, items.data(), items.size() * sizeof(TomlValue));
+        e.items = Span<TomlValue const>(copy, items.size());
+    }
+    return kOk;
+}
+
+/// "a.b" is a strict prefix of "a.b.c" (not of "a.bc").
+bool is_strict_prefix(StrView prefix, StrView name) {
+    return name.size > prefix.size && name.starts_with(prefix) && name[prefix.size] == '.';
+}
+
+Status Parser::parse_header() {
+    u32 const headerLine = line;
+    ++at; // '['
+    bool const array = at < s.size && s[at] == '[';
+    if (array) {
+        if (syntax == TomlSyntax::Sidecar) return unsupported("arrays of tables");
+        ++at;
+    }
+    char* buf = arena.alloc_array<char>(line_rest() + 1);
     usize n   = 0;
     for (;;) {
-        skip_ws(s, at);
-        if (at < s.size && (s[at] == '"' || s[at] == '\''))
-            return ps.fail("quoted keys are not supported in .kiln files");
-        StrView const seg = bare_key(s, at);
-        if (seg.empty()) return ps.fail("empty or invalid table name");
+        skip_ws();
+        StrView seg;
+        if (at < s.size && (s[at] == '"' || s[at] == '\'')) {
+            if (syntax == TomlSyntax::Sidecar) return unsupported("quoted keys");
+            KILN_TRY(parse_string(seg));
+            if (seg.empty() || seg.find('.') != StrView::kNpos)
+                return fail("a quoted table name may not be empty or contain '.'");
+        } else {
+            seg = bare_key();
+            if (seg.empty()) return fail("empty or invalid table name");
+        }
         if (n) buf[n++] = '.';
         std::memcpy(buf + n, seg.data, seg.size);
         n += seg.size;
-        skip_ws(s, at);
+        skip_ws();
         if (at < s.size && s[at] == '.') {
             ++at;
             continue;
         }
         if (at < s.size && s[at] == ']') break;
-        return ps.fail("expected ']' after the table name");
+        return fail("expected ']' after the table name");
     }
     ++at;
-    if (!rest_is_empty(s, at)) return ps.fail("unexpected text after the table header");
-    buf[n]  = '\0';
-    section = StrView(buf, n);
+    if (array) {
+        if (at >= s.size || s[at] != ']') return fail("expected ']]' after the table name");
+        ++at;
+    }
+    buf[n] = '\0';
+    StrView const name(buf, n);
+
+    for (TomlTable const& t : out.tables) {
+        if (t.array && is_strict_prefix(t.name, name)) return unsupported("tables inside an array of tables");
+        if (t.name == name && (!array || !t.array)) return fail("table defined twice");
+        if (array && is_strict_prefix(name, t.name)) return fail("an array of tables would replace a table");
+    }
+    KILN_TRY(end_line("unexpected text after the table header"));
+    table = u32(out.tables.size());
+    out.tables.push_back(TomlTable{name, array, headerLine});
     return kOk;
 }
 
-Status parse_line(Parser& ps, StrView s, StrView& section, Vec<StrView>& sections) {
-    usize at = 0;
-    skip_ws(s, at);
-    if (at == s.size || s[at] == '#') return kOk;
-    if (s[at] == '[') {
-        KILN_TRY(parse_header(ps, s, at, section));
-        for (StrView const& seen : sections)
-            if (seen == section) return ps.fail("table defined twice");
-        sections.push_back(section);
-        return kOk;
-    }
-    if (s[at] == '"' || s[at] == '\'') return ps.fail("quoted keys are not supported in .kiln files");
-
+Status Parser::parse_key_value() {
+    if (s[at] == '"' || s[at] == '\'') return unsupported("quoted keys");
     TomlEntry e;
-    e.section = section;
-    e.line    = ps.line;
-    e.key     = bare_key(s, at);
-    if (e.key.empty()) return ps.fail("expected a key");
-    skip_ws(s, at);
-    if (at < s.size && s[at] == '.') return ps.fail("dotted keys are not supported in .kiln files");
-    if (at >= s.size || s[at] != '=') return ps.fail("expected '=' after the key");
+    e.table   = table;
+    e.section = out.tables[table].name;
+    e.line    = line;
+    e.key     = bare_key();
+    if (e.key.empty()) return fail("expected a key");
+    skip_ws();
+    if (at < s.size && s[at] == '.') return unsupported("dotted keys");
+    if (at >= s.size || s[at] != '=') return fail("expected '=' after the key");
     ++at;
-    skip_ws(s, at);
-    KILN_TRY(parse_value(ps, s, at, e));
-    if (!rest_is_empty(s, at)) return ps.fail("unexpected text after the value");
-    for (TomlEntry const& seen : ps.out)
-        if (seen.section == e.section && seen.key == e.key) return ps.fail("key defined twice");
-    ps.out.push_back(e);
+    skip_ws();
+    if (at < s.size && s[at] == '[') {
+        if (syntax == TomlSyntax::Sidecar) return unsupported("arrays");
+        KILN_TRY(parse_array(e));
+    } else {
+        KILN_TRY(parse_scalar(e));
+    }
+    for (TomlEntry const& seen : out.entries)
+        if (seen.table == e.table && seen.key == e.key) {
+            line = e.line;
+            return fail("key defined twice");
+        }
+    out.entries.push_back(e);
+    return end_line("unexpected text after the value");
+}
+
+/// TOML forbids a key and a table with the same path: `a = 1` and `[a]`, or `[a] b = 1` and `[a.b.c]`.
+Status Parser::check_key_table_conflicts() {
+    char path[1024];
+    for (TomlEntry const& e : out.entries) {
+        usize const n = e.section.empty()
+                            ? format(path, sizeof path, "%.*s", KILN_SV(e.key))
+                            : format(path, sizeof path, "%.*s.%.*s", KILN_SV(e.section), KILN_SV(e.key));
+        if (n >= sizeof path - 1) continue; // longer than any table name the check could match
+        StrView const p(path, n);
+        for (TomlTable const& t : out.tables)
+            if (t.name == p || is_strict_prefix(p, t.name)) {
+                line = e.line;
+                return fail("a key and a table share a name");
+            }
+    }
     return kOk;
 }
 
 } // namespace
 
-Status parse_toml_subset(StrView text, Arena& arena, Vec<TomlEntry>& out, DiagSink const* diag,
+Status parse_toml_subset(StrView text, TomlSyntax syntax, Arena& arena, TomlDoc& out, DiagSink const* diag,
                          StrView file) {
-    Parser ps{arena, out, diag, file};
     if (text.size >= 3 && u8(text[0]) == 0xEF && u8(text[1]) == 0xBB && u8(text[2]) == 0xBF)
         text = text.substr(3);
-
-    Vec<StrView> sections(default_allocator(), Tag::Cook);
-    StrView section;
-    usize at = 0;
-    while (at <= text.size) {
-        ++ps.line;
-        usize end = at;
-        while (end < text.size && text[end] != '\n')
-            ++end;
-        StrView lineText = text.substr(at, end - at);
-        if (!lineText.empty() && lineText[lineText.size - 1] == '\r')
-            lineText = lineText.substr(0, lineText.size - 1);
-        KILN_TRY(parse_line(ps, lineText, section, sections));
-        if (end == text.size) break;
-        at = end + 1;
+    out.tables.clear();
+    out.entries.clear();
+    out.tables.push_back(TomlTable{});
+    Parser ps{text, syntax, arena, out, diag, file};
+    while (!ps.eof()) {
+        ps.skip_ws();
+        if (ps.at_eol()) {
+            ps.newline();
+            continue;
+        }
+        char const c = ps.s[ps.at];
+        if (c == '#') {
+            KILN_TRY(ps.skip_comment());
+            ps.newline();
+        } else if (c == '[') {
+            KILN_TRY(ps.parse_header());
+        } else {
+            KILN_TRY(ps.parse_key_value());
+        }
     }
-    return kOk;
+    return ps.check_key_table_conflicts();
 }
 
 } // namespace kiln::cook::detail

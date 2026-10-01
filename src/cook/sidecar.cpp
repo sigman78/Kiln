@@ -157,12 +157,12 @@ Status set_field(TomlEntry const& e, MeshCookSettings& s, KeyError const& err) {
 
 template <class Settings> Status apply(StrView text, Settings* s, DiagSink const* diag, StrView file) {
     Arena arena(Arena::Desc{default_allocator(), 4096, Tag::Cook});
-    Vec<TomlEntry> entries(default_allocator(), Tag::Cook);
-    KILN_TRY(detail::parse_toml_subset(text, arena, entries, diag, file));
+    detail::TomlDoc doc(default_allocator());
+    KILN_TRY(detail::parse_toml_subset(text, detail::TomlSyntax::Sidecar, arena, doc, diag, file));
 
     KeyError const err{diag, file};
     Settings next = *s;
-    for (TomlEntry const& e : entries) {
+    for (TomlEntry const& e : doc.entries) {
         if (!e.section.empty()) return err(e, "tables are not used in .kiln files yet");
         KILN_TRY(set_field(e, next, err));
     }
