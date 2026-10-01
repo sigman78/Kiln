@@ -39,6 +39,11 @@ void close_manifest_store(ManifestStore* s) noexcept;
 /// Copies the input record of the unit `name` into `out`: inputs (without paths), and the outputs'
 /// names, kinds, slots and current keys (no bytes). False when there is none.
 [[nodiscard]] bool copy_input_record(ManifestStore* s, StrView name, CookUnit* out, u64* hostDigest) noexcept;
+/// The kCookerVersion that wrote the unit `name`'s record; 0 when unknown (an older store) or
+/// when there is no record.
+[[nodiscard]] u32 record_cooker_version(ManifestStore* s, StrView name) noexcept;
+/// For tests: makes the record look as if another cooker version wrote it.
+void set_record_cooker_version(ManifestStore* s, StrView name, u32 version) noexcept;
 /// Sets the host-settings digest of the unit `name`'s record (its keys were checked again).
 void set_record_digest(ManifestStore* s, StrView name, u64 hostDigest) noexcept;
 /// Sets the stats of the unit `name`'s inputs to those in `rec` (their content did not change).

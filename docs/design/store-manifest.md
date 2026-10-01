@@ -129,7 +129,10 @@ On prepare:
 The **host-settings digest** hashes what the host sets for the whole provider: the cooker version,
 the target, the default texture and mesh settings, the name rules, `fastPreview` and
 `ProviderDesc::policyVersion` (a `CookPolicy` is a function, so the host bumps this number when
-its choices change). It never deletes anything; it only tells step 3 to recompute keys.
+its choices change). It never deletes anything; it only tells step 3 to recompute keys. When a
+record another cooker version wrote cooks again, the writer logs one warning per session: two
+builds of kiln that share a store undo each other's cooks (seen 2026-09-30 with a stale example
+binary).
 
 The cost: an edit that keeps both size and modification time is not seen. `kiln-cook --verify`
 hashes every input for CI and shipping builds. A lost or damaged `manifest.in` only costs time:
@@ -266,7 +269,8 @@ Size: about 1.1 MB for 10 000 entries (72 bytes per entry, plus names).
 
 The cook's own file, never read by the runtime: magic `KMIN`, major 0, minor 3, a record count, a
 root count, the roots (name, directory), then each record as its profile name and its body (unit
-name, kind, host digest, the inputs with role, presence, name, size, time and content hash, the
+name, kind, the `kCookerVersion` that wrote it in one byte (0 in files from before 2026-10-01, whose
+readers skip the byte), host digest, the inputs with role, presence, name, size, time and content hash, the
 outputs with kind, glTF slot, name and build key, zero for an output that failed), then
 an XXH3-128 of everything before it. Records are sorted by profile name, then unit name. A file
 that does not decode is dropped with an info log.

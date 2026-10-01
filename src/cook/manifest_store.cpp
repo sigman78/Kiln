@@ -161,7 +161,8 @@ struct Record {
     bool live      = false;
     bool fresh     = false;     ///< checked or cooked by this process (not written)
     u32 srcOff = 0, srcLen = 0; ///< where the fresh unit's source was found (not written)
-    u64 hostDigest = 0;
+    u64 hostDigest   = 0;
+    u8 cookerVersion = 0;  ///< kCookerVersion of the writer; 0 = unknown (before 2026-10-01)
     Vec<UnitInput> inputs; ///< names into `strings`; no paths
     Vec<RecordOutput> outputs;
 
@@ -227,7 +228,8 @@ struct ManifestStore {
     Vec<OtherProfile> others;
     Vec<char> rootStrings; ///< the root table, shared by every profile
     Vec<RootEntry> roots;
-    bool dirty = false;
+    bool dirty        = false;
+    bool cookerWarned = false; ///< the other-cooker-version warning was logged
 
     explicit ManifestStore(Allocator const* a) noexcept
         : alloc(a), storeDir(a, Tag::Cook), profileName(a, Tag::Cook), names(a, Tag::Cook),
@@ -363,11 +365,14 @@ struct In {
     }
 };
 
-/// One record's body: unit name, kind, digest, inputs, outputs.
+// The cooker version takes a byte that minor 3 wrote as 0 and skipped: old files read as unknown.
+static_assert(kCookerVersion < 256, "manifest.in stores kCookerVersion in one byte");
+
+/// One record's body: unit name, kind, cooker version, digest, inputs, outputs.
 void encode_record(Out& o, Record const& r) noexcept {
     o.str(r.name());
     o.u(u8(r.kind), 1);
-    o.u(0, 1);
+    o.u(r.cookerVersion, 1);
     o.u(r.hostDigest, 8);
     o.u(r.inputs.size(), 2);
     o.u(r.outputs.size(), 2);
@@ -391,16 +396,17 @@ void encode_record(Out& o, Record const& r) noexcept {
 bool decode_record(In& in, Record& r) noexcept {
     StrView const name = in.str();
     u64 const kind     = in.u(1);
-    (void)in.u(1);
+    u64 const cooker   = in.u(1);
     u64 const digest   = in.u(8);
     u64 const nInputs  = in.u(2);
     u64 const nOutputs = in.u(2);
     if (!in.ok || kind > u64(AssetKind::Texture) || check_asset_name(name)) return false;
-    r.nameOff    = r.add(name);
-    r.nameLen    = u32(name.size);
-    r.kind       = AssetKind(kind);
-    r.hostDigest = digest;
-    r.live       = true;
+    r.nameOff       = r.add(name);
+    r.nameLen       = u32(name.size);
+    r.kind          = AssetKind(kind);
+    r.hostDigest    = digest;
+    r.cookerVersion = u8(cooker);
+    r.live          = true;
     for (u64 i = 0; i < nInputs && in.ok; ++i) {
         UnitInput x;
         u64 const role  = in.u(1);
@@ -700,6 +706,7 @@ Status publish_unit(ManifestStore* s, CookUnit& unit, u64 hostDigest, DiagSink c
     next.srcOff              = next.add(sourcePath);
     next.srcLen              = u32(sourcePath.size);
     next.hostDigest          = hostDigest;
+    next.cookerVersion       = u8(kCookerVersion);
     for (UnitInput in : unit.inputs) {
         in.nameOff = next.add(unit.str(in.nameOff, in.nameLen));
         in.pathOff = in.pathLen = 0;
@@ -868,6 +875,20 @@ bool copy_input_record(ManifestStore* s, StrView name, CookUnit* out, u64* hostD
     return true;
 }
 
+u32 record_cooker_version(ManifestStore* s, StrView name) noexcept {
+    std::lock_guard<std::mutex> const lock(s->mutex);
+    Record const* r = s->live_record(name);
+    return r ? r->cookerVersion : 0;
+}
+
+void set_record_cooker_version(ManifestStore* s, StrView name, u32 version) noexcept {
+    std::lock_guard<std::mutex> const lock(s->mutex);
+    if (Record* r = s->live_record(name)) {
+        r->cookerVersion = u8(version);
+        s->dirty         = true;
+    }
+}
+
 void set_record_digest(ManifestStore* s, StrView name, u64 hostDigest) noexcept {
     std::lock_guard<std::mutex> const lock(s->mutex);
     Record* r = s->live_record(name);
@@ -885,6 +906,25 @@ void set_record_stats(ManifestStore* s, StrView name, CookUnit const& rec) noexc
     s->dirty = true;
 }
 
+/// Once per store session: a record another cooker version wrote cooks again. Two builds of kiln that
+/// share a store undo each other's cooks; the warning names that case.
+void warn_other_cooker(ManifestStore* s, StrView name) noexcept {
+    u32 version = 0;
+    {
+        std::lock_guard<std::mutex> const lock(s->mutex);
+        Record const* r = s->live_record(name);
+        if (!r || r->cookerVersion == 0 || r->cookerVersion == kCookerVersion || s->cookerWarned) return;
+        version         = r->cookerVersion;
+        s->cookerWarned = true;
+    }
+    KILN_WARN(
+        "cook",
+        "%.*s was cooked by %s kiln (cooker version %u, this is %u): it cooks again. Does another build "
+        "of kiln share the store %.*s?",
+        KILN_SV(name), version < kCookerVersion ? "an older" : "a newer", version, kCookerVersion,
+        KILN_SV(s->dir()));
+}
+
 bool record_is_current(ManifestStore* s, UnitDesc const& d, u64 hostDigest, bool rehash) noexcept {
     CookUnit rec(d.env.alloc ? d.env.alloc : s->alloc);
     u64 digest = 0;
@@ -900,7 +940,10 @@ bool record_is_current(ManifestStore* s, UnitDesc const& d, u64 hostDigest, bool
     if (inputs == InputsCheck::Changed) return false;
     if (inputs == InputsCheck::Touched) set_record_stats(s, d.name, rec);
     if (digest == hostDigest) return true;
-    if (!recorded_keys_match(d, rec)) return false;
+    if (!recorded_keys_match(d, rec)) {
+        warn_other_cooker(s, d.name);
+        return false;
+    }
     set_record_digest(s, d.name, hostDigest);
     return true;
 }

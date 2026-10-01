@@ -1041,6 +1041,52 @@ u64 recorded_mtime(char const* store, StrView name, InputRole role) {
 
 } // namespace
 
+namespace {
+
+/// Counts the log's "cooks again" warnings about another cooker version.
+struct CookerWarnings {
+    std::atomic<u32> count{0};
+    static void fn(void* user, LogLevel level, StrView, StrView message) {
+        if (level == LogLevel::Warn && std::strstr(message.data, "cooker version") != nullptr)
+            ++static_cast<CookerWarnings*>(user)->count;
+    }
+};
+
+} // namespace
+
+// A record keeps the cooker version that wrote it. A record another version wrote cooks again with
+// one warning per run; a record of this version whose settings changed cooks again without one.
+KILN_TEST(ManifestCli, OtherCookerVersionWarnsOnce) {
+    char store[1024], sources[1024];
+    fresh_dir("manifest-cli-cooker-store", store, sizeof store);
+    fresh_dir("manifest-cli-cooker-src", sources, sizeof sources);
+    copy_sources(sources);
+    KILN_REQUIRE_EQ(run_cook(sources, store), 0);
+    ManifestStore* s = nullptr;
+    KILN_REQUIRE(open_store(store, &s).ok());
+    KILN_CHECK_EQ(record_cooker_version(s, "external_uri.gltf"_sv), kCookerVersion);
+    close_manifest_store(s);
+
+    CookerWarnings w;
+    LogSink const old = log_sink();
+    set_log_sink({&CookerWarnings::fn, &w});
+    KILN_CHECK_EQ(run_cook(sources, store, "--no-mips"), 0); // other settings, same cooker
+    KILN_CHECK_EQ(w.count.load(), 0u);
+
+    KILN_REQUIRE(open_store(store, &s).ok());
+    set_record_cooker_version(s, "external_uri.gltf"_sv, kCookerVersion - 1);
+    set_record_cooker_version(s, "external_uri_albedo.png"_sv, kCookerVersion - 1);
+    KILN_REQUIRE(commit_manifest(s, nullptr).ok());
+    close_manifest_store(s);
+    KILN_CHECK_EQ(run_cook(sources, store), 0); // back to the default settings: both cook again
+    set_log_sink(old);
+    KILN_CHECK_EQ(w.count.load(), 1u);
+
+    KILN_REQUIRE(open_store(store, &s).ok()); // the texture cooked again (the mesh's keys never changed)
+    KILN_CHECK_EQ(record_cooker_version(s, "external_uri_albedo.png"_sv), kCookerVersion);
+    close_manifest_store(s);
+}
+
 KILN_TEST(ManifestCli, CooksOnlyWhatChangedAndVerifies) {
     char store[1024], sources[1024], bin[1100];
     fresh_dir("manifest-cli-store", store, sizeof store);

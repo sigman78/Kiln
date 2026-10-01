@@ -29,6 +29,9 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
   (a direct cook); `profile_hooks(ctx)`, `profile_now_ns()`, `ProfileZone`. Off by default.
   `JobBudget::profile` passes them to the image passes. `kiln-cook --trace <file>` and the examples'
   `KILN_TRACE=<file>` write a Chrome trace and a summary (`tools/trace_writer.h`).
+- **A warning when another kiln build shares the store:** `manifest.in` records keep the cooker
+  version that wrote them (a byte that was reserved, so files stay compatible both ways). A record
+  another version wrote cooks again with one log warning per session.
 - `CookSession::maxQuality` (default `High`, no cap) caps the resolved texture `quality`.
   `ProviderDesc::maxQuality` sets it for the cook provider.
 
