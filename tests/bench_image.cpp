@@ -9,6 +9,7 @@
 // Every source image is synthetic LCG noise, generated in memory (no file IO, no
 // <random>: a fixed seed keeps runs comparable). The one exception is the
 // cook_texture end-to-end row, which needs a real PNG (tests/png_writer.h).
+#include "no_crash_dialogs.h"
 #include "png_writer.h"
 
 #include "kiln/containers.h"
@@ -143,6 +144,7 @@ void print_header() {
 } // namespace
 
 int main(int argc, char** argv) {
+    no_crash_dialogs();
     u32 maxSize = 4096;
     u32 repeat  = 3;
     u32 threads = 1;

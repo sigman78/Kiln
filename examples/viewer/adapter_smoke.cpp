@@ -1,6 +1,7 @@
 // examples/viewer/adapter_smoke.cpp — loads cooked assets through the Vulkan adapter with no
 // window (docs/design/viewer.md): device, adapter, an upload-order check, context, one group
 // waited on, a report per asset, then frames that release everything as they complete.
+#include "no_crash_dialogs.h"
 #include <kiln/assets.h>
 #include <kiln/log.h>
 
@@ -189,6 +190,7 @@ void print_stats(char const* when, ex::AdapterStats const& s) {
 } // namespace
 
 int main(int argc, char** argv) {
+    no_crash_dialogs();
     Options o;
     cli::Option const opts[] = {
         {.name = "--store",

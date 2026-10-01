@@ -13,7 +13,7 @@ if(KILN_BUILD_TESTS)
                                               ${CMAKE_SOURCE_DIR}/tests/test_main.cpp)
     kiln_apply_defaults(kiln_adapter_support_tests)
     target_include_directories(kiln_adapter_support_tests PRIVATE ${CMAKE_SOURCE_DIR}/tests)
-    target_link_libraries(kiln_adapter_support_tests PRIVATE kiln_example_adapter_support)
+    target_link_libraries(kiln_adapter_support_tests PRIVATE kiln_example_adapter_support kiln_no_crash_dialogs)
     target_compile_definitions(kiln_adapter_support_tests PRIVATE
         KILN_TEST_CORPUS_DIR="${CMAKE_SOURCE_DIR}/tests/corpus/ktx2"
         KILN_TEST_GOLDEN_DIR="${CMAKE_SOURCE_DIR}/tests/golden"

@@ -4,6 +4,7 @@
 // use it. The frame plumbing (swapchain, frames, offscreen target) is the viewer's (kiln_example_vk).
 // Meshes are cooked with VertexProfile::Float. The steps a host takes are numbered.
 #include "example_app.h"
+#include "no_crash_dialogs.h"
 #include "vk_render.h"
 
 #include <kiln/assets.h>
@@ -341,6 +342,7 @@ void create_host_objects(Scene& s) {
 } // namespace
 
 int main(int argc, char** argv) {
+    no_crash_dialogs();
     ex::Options o;
     if (int const code = ex::parse_options("kiln-vk-basic", argc, argv, &o); code >= 0) return code;
     ex::install_stdout_log();

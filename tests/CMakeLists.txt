@@ -43,6 +43,7 @@ add_executable(kiln_tests
     test_io.cpp
     test_runtime.cpp
 )
+target_link_libraries(kiln_tests PRIVATE kiln_no_crash_dialogs)
 kiln_apply_defaults(kiln_tests)
 target_include_directories(kiln_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(kiln_tests PRIVATE kiln_core kiln_runtime)
@@ -123,6 +124,7 @@ endif()
 #   build/<preset>/tests/kiln_bench_image [--max 2048|4096|8192] [--repeat N] [--threads N]
 if(TARGET kiln_cook)
     add_executable(kiln_bench_image bench_image.cpp png_writer.h)
+    target_link_libraries(kiln_bench_image PRIVATE kiln_no_crash_dialogs)
     kiln_apply_defaults(kiln_bench_image)
     target_include_directories(kiln_bench_image PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(kiln_bench_image PRIVATE kiln_cook)

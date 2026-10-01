@@ -5,6 +5,7 @@
 #include "cli.h"
 #include "example_app.h"
 #include "nga_adapter.h"
+#include "no_crash_dialogs.h"
 
 #include <kiln/assets.h>
 #include <kiln/log.h>
@@ -165,6 +166,7 @@ bool read_texture(void* user, GpuObject obj, TextureDesc const& desc, Vec<u8>* o
 } // namespace
 
 int main(int argc, char** argv) {
+    no_crash_dialogs();
     ex::Options o;
     bool verify = false;
     if (int const code = parse(argc, argv, &o, &verify); code >= 0) return code;

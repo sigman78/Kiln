@@ -2,7 +2,7 @@
 
 add_executable(kiln-headless headless/main.cpp)
 kiln_apply_defaults(kiln-headless)
-target_link_libraries(kiln-headless PRIVATE kiln_runtime kiln_cli)
+target_link_libraries(kiln-headless PRIVATE kiln_runtime kiln_cli kiln_no_crash_dialogs)
 if(TARGET kiln_cook)
     target_link_libraries(kiln-headless PRIVATE kiln_cook)
     target_compile_definitions(kiln-headless PRIVATE KILN_HEADLESS_HAS_COOK=1)

@@ -3,7 +3,7 @@
 
 add_executable(kiln-info kiln-info/main.cpp)
 kiln_apply_defaults(kiln-info)
-target_link_libraries(kiln-info PRIVATE kiln_runtime kiln_cli)
+target_link_libraries(kiln-info PRIVATE kiln_runtime kiln_cli kiln_no_crash_dialogs)
 set_target_properties(kiln-info PROPERTIES OUTPUT_NAME kiln-info)
 
 if(KILN_INSTALL)
@@ -14,7 +14,7 @@ endif()
 if(TARGET kiln_cook)
     add_executable(kiln-cook kiln-cook/main.cpp)
     kiln_apply_defaults(kiln-cook)
-    target_link_libraries(kiln-cook PRIVATE kiln_cook kiln_cli)
+    target_link_libraries(kiln-cook PRIVATE kiln_cook kiln_cli kiln_no_crash_dialogs)
     set_target_properties(kiln-cook PROPERTIES OUTPUT_NAME kiln-cook)
     if(KILN_INSTALL)
         install(TARGETS kiln-cook RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT cook)

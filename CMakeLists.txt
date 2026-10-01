@@ -207,6 +207,10 @@ endif()
 add_library(kiln_cli INTERFACE tools/cli.h)
 target_include_directories(kiln_cli INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/tools)
 target_link_libraries(kiln_cli INTERFACE kiln_core)
+# no_crash_dialogs(): every program's main() calls it first (tests, tools, examples). Never installed.
+add_library(kiln_no_crash_dialogs STATIC tools/no_crash_dialogs.h tools/no_crash_dialogs.cpp)
+kiln_apply_defaults(kiln_no_crash_dialogs)
+target_include_directories(kiln_no_crash_dialogs PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tools)
 
 if(KILN_BUILD_TOOLS)
     add_subdirectory(tools)

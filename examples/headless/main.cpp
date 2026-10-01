@@ -2,6 +2,7 @@
 // requests, IO, cook-on-miss, MetaReady, Ready, Failed. --slow and --latency add artificial
 // delays so large files visibly take a while. --watch keeps pumping after the assets
 // settle and logs Changed events (hot reload, docs/design/hot-reload.md).
+#include "no_crash_dialogs.h"
 #include <kiln/assets.h>
 #include <kiln/log.h>
 #include <kiln/null_adapter.h>
@@ -282,6 +283,7 @@ bool add_item(void* user, char const* arg) {
 } // namespace
 
 int main(int argc, char** argv) {
+    no_crash_dialogs();
     Options o;
     cli::Option const opts[] = {
         {.name = "--store", .arg = "<dir>", .help = "cooked store root (default: cooked)", .str = &o.store},

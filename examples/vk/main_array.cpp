@@ -5,6 +5,7 @@
 // The floor is the frame plumbing's full-screen pass with this example's shaders.
 #include "cli.h"
 #include "example_app.h"
+#include "no_crash_dialogs.h"
 #include "vk_render.h"
 
 #include <kiln/assets.h>
@@ -166,6 +167,7 @@ void framebuffer_size(void* user, u32* width, u32* height) {
 } // namespace
 
 int main(int argc, char** argv) {
+    no_crash_dialogs();
     Options opt;
     if (int const code = parse(argc, argv, &opt); code >= 0) return code;
     ex::Options const& o = opt.base;

@@ -4,6 +4,7 @@
 // never look textures up per frame (docs/design/integration-examples.md).
 #include "gl_adapter.h"
 #include "gl_util.h"
+#include "no_crash_dialogs.h"
 
 #include <kiln/assets.h>
 #include <kiln/log.h>
@@ -209,6 +210,7 @@ bool scene_settled(Scene const& s) {
 } // namespace
 
 int main(int argc, char** argv) {
+    no_crash_dialogs();
     GlOptions o;
     if (int const code = parse_options("kiln-gl-bindless", argc, argv, &o); code >= 0) return code;
     ex::install_stdout_log();

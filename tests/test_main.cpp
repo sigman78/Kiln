@@ -1,4 +1,5 @@
 #include "kiln_test.h"
+#include "no_crash_dialogs.h"
 
 #include <cstdarg>
 #include <cstdio>
@@ -158,4 +159,7 @@ int run_all(int argc, char** argv) noexcept {
 
 } // namespace kiln::test
 
-int main(int argc, char** argv) { return kiln::test::run_all(argc, argv); }
+int main(int argc, char** argv) {
+    kiln::no_crash_dialogs();
+    return kiln::test::run_all(argc, argv);
+}

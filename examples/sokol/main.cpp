@@ -3,6 +3,7 @@
 // in init, pump() (which runs the adapter's flush) and the draw in frame, destroy() in cleanup.
 // Meshes are cooked with VertexProfile::Float. The steps a host takes are numbered.
 #include "example_app.h"
+#include "no_crash_dialogs.h"
 #include "readback.h"
 #include "sokol_adapter.h"
 
@@ -482,6 +483,7 @@ App g_app; // large; sokol_app hands its address to every callback
 } // namespace
 
 int main(int argc, char** argv) {
+    no_crash_dialogs();
     if (int const code = ex::parse_options("kiln-sokol", argc, argv, &g_app.o); code >= 0) return code;
     ex::install_stdout_log();
     sapp_desc d{};

@@ -3,6 +3,7 @@
 // that samples one sampler2DArray. The steps a host takes are numbered.
 #include "gl_adapter.h"
 #include "gl_util.h"
+#include "no_crash_dialogs.h"
 
 #include "cli.h"
 
@@ -99,6 +100,7 @@ void log_array(Context* ctx, TextureHandle h) noexcept {
 } // namespace
 
 int main(int argc, char** argv) {
+    no_crash_dialogs();
     GlOptions o;
     bool verify = false;
     if (int const code = parse(argc, argv, &o, &verify); code >= 0) return code;

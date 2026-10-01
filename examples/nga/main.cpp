@@ -6,6 +6,7 @@
 #include "example_app.h"
 #include "nga_adapter.h"
 #include "nga_root.h"
+#include "no_crash_dialogs.h"
 
 #include <kiln/assets.h>
 #include <kiln/log.h>
@@ -334,6 +335,7 @@ struct Targets {
 } // namespace
 
 int main(int argc, char** argv) {
+    no_crash_dialogs();
     ex::Options o;
     if (int const code = ex::parse_options("kiln-nga", argc, argv, &o); code >= 0) return code;
     ex::install_stdout_log();

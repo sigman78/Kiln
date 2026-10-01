@@ -31,4 +31,4 @@ add_custom_target(viewer-assets
     COMMAND ${CMAKE_COMMAND} -DOUT_DIR=${CMAKE_SOURCE_DIR}/examples/assets/khronos
             -P ${CMAKE_SOURCE_DIR}/examples/viewer/fetch_assets.cmake
     COMMENT "Fetching the demo models")
-target_link_libraries(kiln_example_common PUBLIC kiln_runtime glfw PRIVATE kiln_cli)
+target_link_libraries(kiln_example_common PUBLIC kiln_runtime glfw kiln_no_crash_dialogs PRIVATE kiln_cli)

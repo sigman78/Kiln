@@ -8,6 +8,10 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
 ## [Unreleased]
 
 ### Added
+- **No crash dialogs in kiln's own programs:** every `main()` of the tests, tools and examples calls
+  `no_crash_dialogs()` (`tools/no_crash_dialogs.h`, target `kiln_no_crash_dialogs`). On Windows a crash,
+  `abort()` (`KILN_PANIC`) or a debug CRT assert ends the process with a message and exit code 3 instead
+  of a dialog box, so automated runs never hang. The library itself changes no process-wide setting.
 - **Runtime texture arrays** (docs/design/runtime-texture-arrays.md, first version):
   `request_texture_array(ctx, TextureArrayDesc{name, layers, ...})` assembles separately cooked 2D
   textures into one `TextureShape::Array` texture at load time, with the usual states, events,

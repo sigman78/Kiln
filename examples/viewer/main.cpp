@@ -3,6 +3,7 @@
 // is waited on; their textures stream in afterwards under a per-frame upload budget, so the
 // first frames show placeholders. --offscreen renders without a window and can dump a PNG. --watch
 // turns on hot reload (docs/design/hot-reload.md).
+#include "no_crash_dialogs.h"
 #include <kiln/assets.h>
 #include <kiln/log.h>
 #if KILN_VIEWER_HAS_COOK
@@ -603,6 +604,7 @@ struct App {
 } // namespace
 
 int main(int argc, char** argv) {
+    no_crash_dialogs();
     Options o;
     cli::Option const opts[] = {
         {.name = "--store", .arg = "<dir>", .help = "cooked store root (default: cooked)", .str = &o.store},

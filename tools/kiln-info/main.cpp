@@ -1,6 +1,7 @@
 // tools/kiln-info/main.cpp — dump a cooked .mesh or .ktx2 file, or a store manifest. Options: README.md.
 // Exit codes: 0 ok, 1 usage, 2 file could not be read, 3 open/validation failed, 4 --check failed.
 #include "cli.h"
+#include "no_crash_dialogs.h"
 
 #include "kiln/containers.h"
 #include "kiln/ktx2.h"
@@ -369,6 +370,7 @@ bool set_path(void* user, char const* arg) {
 } // namespace
 
 int main(int argc, char** argv) {
+    no_crash_dialogs();
     Options o;
     cli::Option const opts[] = {
         {.name = "--blobs", .help = "print the full BLOB table (default: summary only)",    .flag = &o.blobs},

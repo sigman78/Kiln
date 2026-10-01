@@ -3,6 +3,7 @@
 // as a floor of tiles. sokol_app owns the loop, as in kiln-sokol. The steps a host takes are numbered.
 #include "cli.h"
 #include "example_app.h"
+#include "no_crash_dialogs.h"
 #include "readback.h"
 #include "sokol_adapter.h"
 
@@ -282,6 +283,7 @@ App g_app; // sokol_app hands its address to every callback
 } // namespace
 
 int main(int argc, char** argv) {
+    no_crash_dialogs();
     if (int const code = parse(argc, argv, &g_app); code >= 0) return code;
     ex::install_stdout_log();
     sapp_desc d{};
