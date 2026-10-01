@@ -32,7 +32,7 @@ enum class Code : u16 {
 KILN_API char const* code_name(Code c);
 
 /// A compact status: error code plus a 16-bit code-specific detail (e.g. errno).
-struct Status {
+struct [[nodiscard]] Status {
     Code code  = Code::Ok;
     u16 detail = 0;
 
@@ -51,7 +51,7 @@ constexpr Status make_status(Code c, u16 detail = 0) { return {c, detail}; }
 
 /// Value-or-Status. Construct from a T (success) or a Status/Code (failure).
 /// Accessing the value of a failed Result is a programming error (asserts).
-template <class T> class Result {
+template <class T> class [[nodiscard]] Result {
 public:
     static_assert(!std::is_reference_v<T>, "Result<T&> is not supported; use Result<T*>");
     static_assert(NothrowStorable<T>, "Result<T> needs T whose copy, move and destruction never throw");
@@ -125,12 +125,8 @@ public:
     T* operator->() { return &value(); }
     T const* operator->() const { return &value(); }
 
-    T value_or(T fallback) const& noexcept(std::is_nothrow_copy_constructible_v<T>) {
-        return ok() ? ref() : std::move(fallback);
-    }
-    T value_or(T fallback) && noexcept(std::is_nothrow_move_constructible_v<T>) {
-        return ok() ? std::move(ref()) : std::move(fallback);
-    }
+    T value_or(T fallback) const& { return ok() ? ref() : std::move(fallback); }
+    T value_or(T fallback) && { return ok() ? std::move(ref()) : std::move(fallback); }
 
     // Monadic composition, as in std::expected. No heap.
 
