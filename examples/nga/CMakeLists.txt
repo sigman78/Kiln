@@ -24,6 +24,8 @@ FetchContent_Declare(VulkanLoader
     SYSTEM)
 # NoGraphicsAPI: main of 2026-09-28. Sources only (SOURCE_SUBDIR points nowhere): its CMake project
 # wants the SDK's Vulkan package and exports install targets, so kiln builds its one source file below.
+# The example calls its destroy_* without null checks: at this commit they accept null pointers and empty
+# heaps. Recheck when the pin moves.
 FetchContent_Declare(NoGraphicsAPI
     GIT_REPOSITORY https://github.com/sebbbi/NoGraphicsAPI.git
     GIT_TAG ae017a2f545abc0847e546cc7e84139bf3cc4241
