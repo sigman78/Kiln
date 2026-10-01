@@ -1,8 +1,7 @@
 # Project config (`kiln.toml`)
 
-**Status:** Proposed (2026-10-01); owner decided points 1-4 and 6 the same day, point 5 open. Nothing
-is implemented. File format: TOML (owner, 2026-10-01;
-open question 7).
+**Status:** Proposed (2026-10-01). Owner decisions below; point 5 is open. Nothing is implemented.
+File format: TOML (owner, 2026-10-01; open question 7).
 **Decides:** the project file, its syntax and parser, where its layers sit in the resolution order,
 how it reaches `kiln-cook` and the cook provider, how a change to it reaches the store and hot
 reload, and `kiln-cook --explain`. The full settings model it fills in is `../cook-settings.md`;
