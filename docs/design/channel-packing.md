@@ -1,6 +1,9 @@
 # Channel packing
 
-**Status:** Proposed (2026-10-01). Nothing is implemented.
+**Status:** Deferred (owner, 2026-10-01). Nothing is implemented. Separate AO images are rare: of
+the seven demo models, three pack ORM in one image, three have no AO, and one (SheenChair, from
+the babylon.js 3ds Max exporter) keeps AO separate. The common texturing tools export packed ORM.
+Part 2 waits for project config, which is its main way to reach images.
 **Decides:** how the mesh cook merges a glTF material's separate occlusion and
 metallic-roughness images into one ORM texture (part 1, v0.7), and the shape of per-image
 channel operations (part 2, a follow-up).

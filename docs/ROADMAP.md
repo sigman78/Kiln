@@ -50,8 +50,7 @@ Not goals for v1:
   Basic, Meshopt and MeshoptZstd in the writer and the runtime; `Meshopt` by default (owner). Blob
   splitting (B16) waits for streaming.
 - **Textures:** alpha-coverage-preserving mips (done 2026-10-01: texture setting `alphaCutoff`, Auto
-  from a glTF Mask material); channel packing (for example ORM from separate images;
-  [`design/channel-packing.md`](design/channel-packing.md), Proposed).
+  from a glTF Mask material). Channel packing: deferred (owner, 2026-10-01), see Unscheduled.
 - **Project settings:** config files, presets, path rules, target encodings and
   `kiln-cook --explain` ([`cook-settings.md`](cook-settings.md); file format: open question 7).
 - **Dependency tracking for hot reload** (done 2026-10-01). A changed layer reloads the arrays that
@@ -84,6 +83,10 @@ Not goals for v1:
 
 - **LOD generation** (simplifier), which fills `MeshLod.geometricError`, and **RDO** for BC textures:
   postponed from v0.7 (owner, 2026-10-01).
+- **Channel packing** ([`design/channel-packing.md`](design/channel-packing.md)): ORM from a
+  material's separate AO and metallic-roughness images, then per-image `channels` / `invert`
+  settings. Deferred from v0.7 (owner, 2026-10-01): separate AO is rare in practice; the channel
+  settings come with project config.
 - `EXT_meshopt_compression` input (the importer's buffer-view resolution leaves room for a decode
   step).
 - GPU decompression of chunked blobs.
