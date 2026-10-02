@@ -356,7 +356,8 @@ struct CookProvider {
     /// so the provider can free itself. Null: nothing to free.
     void (*release)(void* user) = nullptr;
 };
-/// Replaces the installed provider. The old one is not released: a host that wraps it keeps it.
+/// Replaces the installed provider. The old one is not released: a host that wraps it keeps it. When
+/// it replaces one, it returns after the loads in flight (which may call the old one) are done.
 KILN_API void set_cook_provider(Context* ctx, CookProvider const& provider);
 /// The installed provider (null fn if none), so a host can wrap it.
 KILN_API CookProvider cook_provider(Context* ctx);

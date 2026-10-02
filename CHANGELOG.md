@@ -69,6 +69,8 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
   `ProviderDesc::maxQuality` sets it for the cook provider.
 
 ### Fixed
+- **`uninstall_provider()` freed the provider under loads in flight** (a crash): `set_cook_provider()` now
+  waits for the loads in flight when it replaces a provider, so its caller may free the old one.
 - **glb files with a glTF `MASK` material cooked again on every key check** (since `alphaCutoff`):
   a record did not keep the material's cutoff, so a check under another host digest (each provider
   session on a `kiln-cook` store, a project edit) computed another key for the base color image.

@@ -460,7 +460,13 @@ void destroy(Context* ctx) {
 }
 
 void set_cook_provider(Context* ctx, CookProvider const& provider) {
-    if (ctx) ctx->provider = provider; // pump thread; snapshotted per load at dispatch
+    if (!ctx) return;
+    bool const replaced = ctx->provider.prepare &&
+                          (ctx->provider.prepare != provider.prepare || ctx->provider.user != provider.user);
+    ctx->provider = provider; // pump thread; snapshotted per load at dispatch
+    // Loads in flight hold the old one. Polled as in teardown(); the completion ring never fills.
+    while (replaced && ctx->jobsInFlight.load(std::memory_order_acquire) != 0)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
 }
 CookProvider cook_provider(Context* ctx) { return ctx ? ctx->provider : CookProvider{}; }
 

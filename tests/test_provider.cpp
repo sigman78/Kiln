@@ -265,6 +265,48 @@ KILN_TEST(Provider, DestroyReleasesAnInstalledProvider) {
     KILN_CHECK_EQ(default_alloc_stats(Tag::Cook).bytesCurrent, before);
 }
 
+namespace {
+
+/// A host wrapper that is slow to reach the provider it wraps.
+struct SlowWrapper {
+    CookProvider inner;
+    static Status prepare(void* user, AssetKind kind, StrView name, PrepareMode mode, Allocator const* alloc,
+                          Vec<u8>* out, Hash128* key, DiagSink const* diag) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(300));
+        auto const* self = static_cast<SlowWrapper const*>(user);
+        return self->inner.prepare(self->inner.user, kind, name, mode, alloc, out, key, diag);
+    }
+};
+
+} // namespace
+
+// Uninstalling frees the provider only after the loads that may still call it are done.
+KILN_TEST(Provider, UninstallWaitsForLoadsInFlight) {
+    char root[1024], png[1100];
+    scratch_dir("provider_uninstall_src", root, sizeof root);
+    make_dir(root);
+    format(png, sizeof png, "%s/tile.png", root);
+    u8 rgba[4 * 4 * 4];
+    test_pixels(rgba, 7);
+    replace_file(png, test_png(rgba).span());
+    Root const roots[] = {
+        {{}, StrView(root)}
+    };
+    TestContext tc;
+    if (!tc.init({}, Span<Root const>(roots, 1))) return;
+    KILN_REQUIRE(cook::install_provider(tc.ctx, cook::ProviderDesc{.storeMode = cook::StoreMode::Memory,
+                                                                   .target    = {.blockFormats = 0}})
+                     .ok());
+    SlowWrapper wrapper{cook_provider(tc.ctx)};
+    set_cook_provider(tc.ctx, {&SlowWrapper::prepare, &wrapper, nullptr});
+    TextureHandle const tex = request_texture(tc.ctx, "tile.png");
+    pump(tc.ctx, {}); // dispatches the load, which holds the wrapper
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    cook::uninstall_provider(tc.ctx); // the load is still in the wrapper's sleep
+    KILN_CHECK_EQ(pump_until_settled(tc.ctx, tex), State::Ready);
+    release(tc.ctx, tex);
+}
+
 #if KILN_MESH
 // Disk mode publishes into the manifest; a second context without a provider loads what it wrote.
 KILN_TEST(Provider, DiskModeCooksIntoTheManifest) {
