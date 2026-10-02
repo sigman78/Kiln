@@ -170,62 +170,6 @@ KILN_TEST(Core, HandleEquality) {
     KILN_CHECK(a != d);
 }
 
-int add_ints(int a, int b) { return a + b; } // not noexcept on purpose; add_ints_noexcept covers that case
-
-struct Pair {
-    int a;
-    int b;
-};
-
-int pair_sum_thunk(void* user, int x) {
-    Pair* p = static_cast<Pair*>(user);
-    return p->a + p->b + x;
-}
-
-KILN_TEST_DEPRECATED_BEGIN
-
-KILN_TEST(Core, FunctionRefFromFunctionPointer) {
-    FunctionRef<int(int, int)> f = add_ints;
-    KILN_CHECK(bool(f));
-    KILN_CHECK_EQ(f(2, 3), 5);
-}
-
-// Regression: a noexcept function must pick the function-pointer constructor, not
-// the generic object-callable one (which would cast a function pointer to void*).
-int add_ints_noexcept(int a, int b) noexcept { return a + b; }
-KILN_TEST(Core, FunctionRefFromNoexceptFunctionPointer) {
-    FunctionRef<int(int, int)> f = add_ints_noexcept;
-    KILN_CHECK_EQ(f(2, 3), 5);
-}
-
-KILN_TEST(Core, FunctionRefFromCapturingLambda) {
-    int captured            = 100;
-    auto lam                = [captured](int x) { return x + captured; };
-    FunctionRef<int(int)> f = lam;
-    KILN_CHECK(bool(f));
-    KILN_CHECK_EQ(f(5), 105);
-}
-
-KILN_TEST(Core, FunctionRefFromUserPair) {
-    Pair p{1, 2};
-    FunctionRef<int(int)> f(&pair_sum_thunk, &p);
-    KILN_CHECK(bool(f));
-    KILN_CHECK_EQ(f(10), 13);
-}
-
-KILN_TEST(Core, FunctionRefBoolConversion) {
-    FunctionRef<int(int)> f;
-    KILN_CHECK(!bool(f));
-    FunctionRef<int(int)> g = nullptr;
-    KILN_CHECK(!bool(g));
-    auto lam                = [](int x) { return x * 2; };
-    FunctionRef<int(int)> h = lam;
-    KILN_CHECK(bool(h));
-    KILN_CHECK_EQ(h(21), 42);
-}
-
-KILN_TEST_DEPRECATED_END
-
 static_assert(align_up(u32(5), u32(8)) == u32(8));
 static_assert(align_up(u32(8), u32(8)) == u32(8));
 static_assert(align_up(u64(17), u64(16)) == u64(32));

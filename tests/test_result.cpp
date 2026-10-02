@@ -135,29 +135,6 @@ KILN_TEST(Result, IntFailureFromStatus) {
     KILN_CHECK(r.status() == make_status(Code::Busy, 9));
 }
 
-KILN_TEST_DEPRECATED_BEGIN
-
-KILN_TEST(Result, ValueOr) {
-    Result<int> a = 5;
-    KILN_CHECK_EQ(a.value_or(99), 5);
-    Result<int> b = Code::Unknown;
-    KILN_CHECK_EQ(b.value_or(99), 99);
-}
-
-KILN_TEST(Result, VoidResultOk) {
-    Result<void> r;
-    KILN_CHECK(r.ok());
-    KILN_CHECK(r.code() == Code::Ok);
-}
-
-KILN_TEST(Result, VoidResultFailed) {
-    Result<void> r = Code::IoError;
-    KILN_CHECK(r.failed());
-    KILN_CHECK(r.code() == Code::IoError);
-}
-
-KILN_TEST_DEPRECATED_END
-
 KILN_TEST(Result, TrackedSuccessConstructsAndDestroys) {
     int before = Tracked::liveCount;
     {
@@ -272,61 +249,3 @@ KILN_TEST(Result, DiagfSinkWithNullFnIsNoOp) {
     Status ret = diagf(&sink, kOk, 0, Severity::Info, StrView{}, StrView{}, "irrelevant");
     KILN_CHECK(ret.ok());
 }
-
-namespace {
-Result<int> parse_positive(int v) {
-    if (v <= 0) return Code::InvalidArgument;
-    return v;
-}
-} // namespace
-
-KILN_TEST_DEPRECATED_BEGIN
-
-KILN_TEST(Result, AndThenChainsOnSuccess) {
-    Result<int> r = parse_positive(4).and_then([](int v) -> Result<int> { return v * 10; });
-    KILN_REQUIRE(r.ok());
-    KILN_CHECK_EQ(*r, 40);
-}
-
-KILN_TEST(Result, AndThenForwardsFailureWithoutCalling) {
-    bool called   = false;
-    Result<int> r = parse_positive(-1).and_then([&](int v) -> Result<int> {
-        called = true;
-        return v;
-    });
-    KILN_CHECK(!called);
-    KILN_CHECK(r.failed());
-    KILN_CHECK_EQ(r.code(), Code::InvalidArgument);
-}
-
-KILN_TEST(Result, TransformWrapsValueAndChangesType) {
-    Result<u64> r = parse_positive(7).transform([](int v) { return u64(v) * 3; });
-    KILN_REQUIRE(r.ok());
-    KILN_CHECK_EQ(*r, u64(21));
-    Result<u64> f = parse_positive(0).transform([](int v) { return u64(v); });
-    KILN_CHECK(f.failed());
-}
-
-KILN_TEST(Result, OrElseRecovers) {
-    Result<int> r = parse_positive(-5).or_else([](Status s) -> Result<int> {
-        return s.code == Code::InvalidArgument ? Result<int>(1) : Result<int>(s);
-    });
-    KILN_REQUIRE(r.ok());
-    KILN_CHECK_EQ(*r, 1);
-    Result<int> untouched = parse_positive(9).or_else([](Status) -> Result<int> { return 0; });
-    KILN_REQUIRE(untouched.ok());
-    KILN_CHECK_EQ(*untouched, 9);
-}
-
-KILN_TEST(Result, VoidAndThenTransform) {
-    Result<void> okv;
-    Result<int> a = okv.and_then([] { return Result<int>(3); });
-    KILN_REQUIRE(a.ok());
-    KILN_CHECK_EQ(*a, 3);
-    Result<void> bad = Code::Busy;
-    Result<int> b    = bad.transform([] { return 5; });
-    KILN_CHECK(b.failed());
-    KILN_CHECK_EQ(b.code(), Code::Busy);
-}
-
-KILN_TEST_DEPRECATED_END

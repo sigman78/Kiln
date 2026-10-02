@@ -389,53 +389,6 @@ template <class Tag> struct Handle {
     [[nodiscard]] friend constexpr bool operator!=(Handle a, Handle b) noexcept { return !(a == b); }
 };
 
-/// Non-owning reference to any callable. Deprecated: pass a function pointer and `void* user`.
-template <class Sig> class FunctionRef;
-
-template <class R, class... Args>
-class [[deprecated("pass a function pointer and void* user; removed in v0.8")]] FunctionRef<R(Args...)> {
-public:
-    // gcc ignores the attribute of a partial specialization at its uses; the constructors carry it too.
-    [[deprecated("removed in v0.8")]] constexpr FunctionRef() noexcept = default;
-    // NOLINTNEXTLINE(google-explicit-constructor)
-    [[deprecated("removed in v0.8")]] constexpr FunctionRef(std::nullptr_t) noexcept {}
-
-    /// From a plain function pointer.
-    // NOLINTNEXTLINE(google-explicit-constructor)
-    [[deprecated("removed in v0.8")]] FunctionRef(R (*fn)(Args...)) noexcept
-        : obj_(reinterpret_cast<void*>(fn)), thunk_(&fn_thunk) {}
-
-    /// From a C-style `fn(user, args...)` pair.
-    [[deprecated("removed in v0.8")]] constexpr FunctionRef(R (*fn)(void*, Args...), void* user) noexcept
-        : obj_(user), thunk_(fn) {}
-
-    /// From any callable object. The object must outlive the FunctionRef.
-    template <class F>
-        requires(!std::is_same_v<std::remove_cvref_t<F>, FunctionRef> &&
-                 !std::is_function_v<std::remove_pointer_t<std::remove_reference_t<F>>> &&
-                 std::is_invocable_r_v<R, F&, Args...>)
-    [[deprecated("removed in v0.8")]] FunctionRef(F&& f) noexcept // NOLINT(google-explicit-constructor)
-        : obj_(const_cast<void*>(static_cast<void const*>(&f))),
-          thunk_(&obj_thunk<std::remove_reference_t<F>>) {}
-
-    R operator()(Args... args) const {
-        KILN_ASSERT(thunk_ != nullptr);
-        return thunk_(obj_, std::forward<Args>(args)...);
-    }
-    [[nodiscard]] constexpr explicit operator bool() const noexcept { return thunk_ != nullptr; }
-
-private:
-    static R fn_thunk(void* obj, Args... args) {
-        return reinterpret_cast<R (*)(Args...)>(obj)(std::forward<Args>(args)...);
-    }
-    template <class F> static R obj_thunk(void* obj, Args... args) {
-        return (*static_cast<F*>(obj))(std::forward<Args>(args)...);
-    }
-
-    void* obj_                  = nullptr;
-    R (*thunk_)(void*, Args...) = nullptr;
-};
-
 template <class T, usize N> constexpr usize countof(T const (&)[N]) { return N; }
 
 /// Read or write a trivially copyable T at a possibly unaligned address.

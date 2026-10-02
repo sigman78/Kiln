@@ -85,8 +85,6 @@ Rule: a blocking API never hangs on misuse. It panics at entry, before blocking.
 - `status()`, `code()`, `ok()`, `failed()`.
 - `Result<T&>` is rejected by `static_assert`; use `Result<T*>`. A function with no value returns
   `Status`.
-- Deprecated, removed in v0.8: `value_or`, `and_then`, `transform`, `or_else` and `Result<void>`.
-  Nothing used them.
 - `KILN_TRY(expr)` returns the `Status` on failure; `KILN_TRY_ASSIGN(decl, expr)` also binds the
   value on success. Both accept a `Status` or any `Result<T>`, so the enclosing function returns
   `Status` or a `Result<U>`.

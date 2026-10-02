@@ -7,8 +7,8 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
 
 ## [Unreleased]
 
-### Deprecated
-Unused API, removed in v0.8. Each use now warns, which fails a build with warnings as errors.
+### Removed
+Unused API. Migration:
 - `FunctionRef`: pass a function pointer and a `void* user`, as the rest of kiln does.
 - `Result<T>::value_or`, `and_then`, `transform`, `or_else`: test `ok()` and use `value()`, or
   propagate with `KILN_TRY` / `KILN_TRY_ASSIGN`.
