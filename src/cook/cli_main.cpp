@@ -767,8 +767,11 @@ void reload_project(Ctx& c) {
     if (!same_layout(c.project->p, *loaded))
         std::fprintf(stderr, "kiln-cook: watch: [roots] and [project] changes apply on the next run\n");
     free_project(c.project->p);
-    c.project->p = *loaded;
-    c.hostDigest = cli_host_digest(c);
+    c.project->p     = *loaded;
+    u64 const digest = c.hostDigest;
+    c.hostDigest     = cli_host_digest(c);
+    // New settings can fix what failed, so every failed source cooks again.
+    if (c.hostDigest != digest) c.failedSources.clear();
     if (!c.opt.quiet) std::printf("watch: reloaded %s\n", c.opt.projectFile);
 }
 

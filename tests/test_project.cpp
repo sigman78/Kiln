@@ -496,3 +496,15 @@ KILN_TEST(ProjectCli, WatchReloadKeepsRootsAndStore) {
                                        "[texture]\nmaxSize = 128\n"),
                   0);
 }
+
+// A source that failed under the old settings cooks again when a reload changes them.
+KILN_TEST(ProjectCli, WatchReloadRetriesFailedSources) {
+    char dir[1024], file[1100];
+    KILN_REQUIRE(project_dir(
+        "project_watch_retry",
+        "[roots]\ndefault = \"src\"\n[project]\nstore = \"store\"\n[texture]\nencoding = \"bc6h\"\n", dir,
+        sizeof dir, file, sizeof file));
+    KILN_CHECK_EQ(watch_and_edit(file, "[roots]\ndefault = \"src\"\n[project]\nstore = \"store\"\n"
+                                       "[texture]\nencoding = \"uncompressed\"\n"),
+                  0);
+}
