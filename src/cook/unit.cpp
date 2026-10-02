@@ -436,4 +436,34 @@ Status stat_file(StrView path, IoStat* out) {
     return kOk;
 }
 
+void failed_unit_paths(StrView sourcePath, CookUnit const& unit, Vec<char>* out) {
+    auto const add = [out](StrView p) {
+        out->append(Span<char const>(p.data, p.size));
+        out->push_back('\0');
+    };
+    char side[1200];
+    out->clear();
+    add(sourcePath);
+    add(StrView(side, format(side, sizeof side, "%.*s%.*s", KILN_SV(sourcePath), KILN_SV(kSidecarExt))));
+    for (UnitInput const& in : unit.inputs)
+        if (in.role == InputRole::Buffer) add(unit.str(in.pathOff, in.pathLen));
+}
+
+u64 paths_stats(Span<char const> paths) {
+    Xxh64State h;
+    for (usize at = 0; at < paths.size;) {
+        StrView const p(paths.data + at, std::strlen(paths.data + at));
+        at += p.size + 1;
+        IoStat st{};
+        h.update_value(u8(stat_file(p, &st).ok()));
+        h.update_value(st.size);
+        h.update_value(st.mtimeNs);
+    }
+    return h.digest();
+}
+
+bool failure_is_transient(Status st) {
+    return st.code == Code::IoError || st.code == Code::IoEof || st.code == Code::NotFound;
+}
+
 } // namespace kiln::cook

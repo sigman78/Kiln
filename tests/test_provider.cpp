@@ -959,6 +959,83 @@ KILN_TEST(Provider, ProjectEditReloads) {
     KILN_CHECK_EQ(texture_info(tc.ctx, tex).desc.levels, 3u);
     release(tc.ctx, tex);
 }
+
+namespace {
+
+/// Pumps until `tex` is Ready, for at most 5 s.
+bool pump_until_ready(Context* ctx, TextureHandle tex) {
+    for (int i = 0; i < 500; ++i) {
+        pump(ctx, {});
+        if (state(ctx, tex) == State::Ready) return true;
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    return false;
+}
+
+/// A watching provider over <scratch>/<name>_src/tile.png (`png`, else "not a png") and, if `toml` is
+/// set, <scratch>/<name>_src/kiln.toml. The first request of tile.png fails.
+struct FailingFirstLoad {
+    char root[1024], storeDir[1024], png[1100], project[1100];
+    TestContext tc;
+    TextureHandle tex;
+
+    bool init(char const* name, bool validPng, char const* toml) {
+        char dir[256];
+        format(dir, sizeof dir, "%s_src", name);
+        scratch_dir(dir, root, sizeof root);
+        format(dir, sizeof dir, "%s_store", name);
+        scratch_dir(dir, storeDir, sizeof storeDir);
+        make_dir(root);
+        format(png, sizeof png, "%s/tile.png", root);
+        format(project, sizeof project, "%s/kiln.toml", root);
+        if (validPng)
+            write_png(11);
+        else
+            write_text_file(png, "not a png");
+        if (toml) write_text_file(project, toml);
+        Root const roots[] = {
+            {{}, StrView(root)}
+        };
+        if (!tc.init(StrView(storeDir), Span<Root const>(roots, 1), {}, {.watchStore = true, .pollMs = 20}))
+            return false;
+        cook::ProviderDesc desc = kWatchDesc;
+        if (toml) desc.projectFile = project;
+        if (!KILN_CHECK(cook::install_provider(tc.ctx, desc).ok())) return false;
+        tex = request_texture(tc.ctx, "tile.png");
+        return KILN_CHECK_EQ(pump_until_settled(tc.ctx, tex), State::Failed);
+    }
+    void write_png(u8 seed) {
+        u8 rgba[4 * 4 * 4];
+        test_pixels(rgba, seed);
+        replace_file(png, test_png(rgba).span());
+    }
+};
+
+} // namespace
+
+// A source that fails its first cook has no record to watch; fixing it still reloads it.
+KILN_TEST(Provider, FailedFirstLoadReloadsWhenTheSourceIsFixed) {
+    FailingFirstLoad f;
+    if (!f.init("provider_failed_source", false, nullptr)) return;
+    std::this_thread::sleep_for(std::chrono::milliseconds(50)); // past file-time granularity
+    f.write_png(11);
+    bool const ready = pump_until_ready(f.tc.ctx, f.tex);
+    cook::uninstall_provider(f.tc.ctx);
+    KILN_CHECK_MSG(ready, "tile.png did not reload after its source was fixed");
+    release(f.tc.ctx, f.tex);
+}
+
+// A request that fails on a kiln.toml setting reloads when the project is fixed.
+KILN_TEST(Provider, FailedFirstLoadReloadsWhenTheProjectIsFixed) {
+    FailingFirstLoad f;
+    if (!f.init("provider_failed_project", true, "[texture]\nencoding = \"bc6h\"\n")) return;
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    write_text_file(f.project, "[texture]\nencoding = \"uncompressed\"\n");
+    bool const ready = pump_until_ready(f.tc.ctx, f.tex);
+    cook::uninstall_provider(f.tc.ctx);
+    KILN_CHECK_MSG(ready, "tile.png did not reload after kiln.toml was fixed");
+    release(f.tc.ctx, f.tex);
+}
 #endif
 
 // A project cook tool is cook_cli_main plus its policy.

@@ -295,38 +295,9 @@ void diag_fn(void* user, Diagnostic const& d) {
 
 struct FailedSource {
     Vec<char> paths{default_allocator(), Tag::General}; ///< the files it depends on, NUL-separated
-    u64 stats  = 0;                                     ///< files_stats(paths) when it failed
+    u64 stats  = 0;                                     ///< paths_stats(paths) when it failed
     bool retry = false; ///< an IO failure (a file still being written): try every round, quietly
 };
-
-/// The size and time of every file in `paths` (NUL-separated), hashed: a failed source waits for
-/// a change to one of them.
-u64 files_stats(Vec<char> const& paths) {
-    Xxh64State h;
-    for (usize at = 0; at < paths.size();) {
-        StrView const p(paths.data() + at, std::strlen(paths.data() + at));
-        at += p.size + 1;
-        IoStat st{};
-        h.update_value(u8(stat_file(p, &st).ok()));
-        h.update_value(st.size);
-        h.update_value(st.mtimeNs);
-    }
-    return h.digest();
-}
-
-/// The files a failed cook of the source `path` depends on: the source, its sidecar, and every
-/// input the attempt read (a `.gltf`'s buffers).
-void failed_paths(char const* path, CookUnit const& unit, Vec<char>& out) {
-    auto const add = [&out](StrView p) {
-        out.append(Span<char const>(p.data, p.size));
-        out.push_back('\0');
-    };
-    char side[1100];
-    add(StrView(path));
-    add(StrView(side, format(side, sizeof side, "%s%.*s", path, KILN_SV(kSidecarExt))));
-    for (UnitInput const& in : unit.inputs)
-        if (in.role == InputRole::Buffer) add(unit.str(in.pathOff, in.pathLen));
-}
 
 /// --explain: the layer that last set each key.
 struct ExplainTrace {
@@ -598,7 +569,7 @@ void cook_file(Ctx& c, char const* path, char const* root) {
     // failure, reporting only the first failure of one version.
     u64 const pathHash      = hash_name(StrView(path));
     FailedSource const* was = c.failedSources.find(pathHash);
-    bool const same         = was && files_stats(was->paths) == was->stats;
+    bool const same         = was && paths_stats(was->paths.span()) == was->stats;
     if (same && !was->retry) return;
     c.ds.mute = same;
 
@@ -616,11 +587,11 @@ void cook_file(Ctx& c, char const* path, char const* root) {
     }
     ++c.failed;
     if (st.ok()) st = unit.first_failure();
-    bool const retry = st.code == Code::IoError || st.code == Code::IoEof || st.code == Code::NotFound;
+    bool const retry = failure_is_transient(st);
     if (!c.opt.watch) return;
     FailedSource f;
-    failed_paths(path, unit, f.paths);
-    f.stats = files_stats(f.paths);
+    failed_unit_paths(StrView(path), unit, &f.paths);
+    f.stats = paths_stats(f.paths.span());
     f.retry = retry;
     c.failedSources.insert(pathHash, std::move(f));
 }

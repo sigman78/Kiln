@@ -96,4 +96,12 @@ enum class InputsCheck : u8 {
 /// Size and modification time of a file, through the compat backend's stat when it has one.
 Status stat_file(StrView path, IoStat* out);
 
+/// The files a unit that failed to cook depends on, NUL-separated: the source, its `.kiln` file and
+/// the buffers it read. With no record to watch, a failure waits for one of them to change.
+void failed_unit_paths(StrView sourcePath, CookUnit const& unit, Vec<char>* out);
+/// The size and time (or absence) of every file in `paths` (NUL-separated), hashed.
+u64 paths_stats(Span<char const> paths);
+/// True for a failure that a file still being written can cause: try it again every round.
+[[nodiscard]] bool failure_is_transient(Status st);
+
 } // namespace kiln::cook

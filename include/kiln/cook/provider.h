@@ -26,8 +26,9 @@ struct ProviderDesc {
     /// Manifest layout: the version of the host's `policy`. A policy is code, so the provider cannot
     /// see it change: bump this when it does, and every entry's key is checked again.
     u32 policyVersion = 0;
-    /// Dev builds: poll the source files of cooked assets and re-cook them into the store when
-    /// they change (docs/design/hot-reload.md). The runtime's store poller then reloads them.
+    /// Dev builds: poll the source files of cooked assets, and of requests whose cook failed, and
+    /// cook them into the store when they change (docs/design/hot-reload.md). The runtime's store
+    /// poller then reloads them.
     bool watchSources = false;
     u32 pollMs        = 250;
     /// The project file (kiln.toml, docs/design/project-config.md): settings layers 3a to 3c between
