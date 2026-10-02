@@ -581,8 +581,9 @@ void cook_file(Ctx& c, char const* path, char const* root) {
     if (ok) {
         ++c.cooked;
         c.failedSources.erase(pathHash);
-        // A long run publishes as it goes, so an app watching the store fills in meanwhile.
-        if (c.store) (void)commit_manifest(c.store, &c.sink, kCommitIntervalMs);
+        // A long run publishes as it goes, so an app watching the store fills in meanwhile. A watch
+        // round commits once at its end, so an app reloads the round together.
+        if (c.store && !c.rescan) (void)commit_manifest(c.store, &c.sink, kCommitIntervalMs);
         return;
     }
     ++c.failed;

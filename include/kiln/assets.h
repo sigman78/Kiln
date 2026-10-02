@@ -96,7 +96,8 @@ struct ContextDesc {
     StrView profile      = "compat";
     bool devPlaceholders = KILN_DEBUG != 0; ///< Failed textures show the magenta checker
     /// A store whose profile has formats the adapter cannot sample makes create() fail (K5018).
-    /// True makes that a warning; each such asset then fails on its own. For tools and debugging.
+    /// True makes that a warning; each such asset then fails on its own. For tools and debugging. A
+    /// profile that first appears after create() is checked then, as a warning.
     bool allowUnsampledFormats               = false;
     Span<PlaceholderDesc const> placeholders = {}; ///< overrides per kind; missing kinds use built-ins
 

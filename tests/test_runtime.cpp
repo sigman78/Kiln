@@ -1895,6 +1895,83 @@ KILN_TEST(Runtime, CreateChecksStoreProfile) {
     null_adapter_destroy(*na);
 }
 
+// A profile that a cook writes after create() is checked when it appears, as a warning.
+KILN_TEST(Runtime, ProfileThatAppearsLaterIsChecked) {
+    test::HandStore store;
+    if (!store.init("runtime_store_profile_later")) return;
+    Adapter adapter{};
+    Result<NullAdapter*> na = null_adapter_create({}, &adapter);
+    KILN_REQUIRE(na.ok());
+    adapter.supports_format = &no_bc5;
+    DiagLog log;
+    ContextDesc cd{};
+    cd.adapter         = &adapter;
+    cd.storeDir        = StrView(store.dir()); // no manifest yet
+    cd.diag            = log.sink();
+    Result<Context*> c = create(cd);
+    KILN_REQUIRE(c.ok());
+    Context* ctx = *c;
+    auto settle  = [&](TextureHandle t) {
+        for (int i = 0; i < 2000 && state(ctx, t) == State::Pending; ++i) {
+            pump(ctx, {});
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+    };
+
+    TextureHandle const t = request_texture(ctx, "normal");
+    settle(t);
+    KILN_CHECK_EQ(state(ctx, t), State::Failed);
+    store.set_block_formats(block_format_bit(Format::BC5_UNORM));
+    Vec<u8> tex(default_allocator(), Tag::Test);
+    if (read_golden("ktx2/normal", ".ktx2", tex) &&
+        KILN_CHECK(store.put("normal", AssetKind::Texture, tex.span()))) {
+        request_reload(ctx, t); // reads the manifest again: the profile appears
+        for (int i = 0; i < 200; ++i) {
+            pump(ctx, {});
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        request_reload(ctx, t);
+        for (int i = 0; i < 200; ++i) {
+            pump(ctx, {});
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        KILN_CHECK_EQ(count_code(log, kDiagStoreProfileUnsampled), 1u);
+    }
+    release(ctx, t);
+    destroy(ctx);
+    null_adapter_destroy(*na);
+}
+
+// A manifest without the context's profile is reported once, at create(), with the profiles it has.
+KILN_TEST(Runtime, MissingProfileWarnsAtCreate) {
+    Rt rt;
+    ContextDesc cd;
+    cd.profile = "desktop"; // the golden store has compat only
+    if (!rt.init({}, cd)) return;
+    KILN_CHECK_EQ(count_code(rt.diags, kDiagManifestMissing), 1u);
+    KILN_CHECK_MSG(std::strstr(rt.diags.last, "'compat'") != nullptr, "%s", rt.diags.last);
+}
+
+// A storeDir too long for its manifest path fails create() with a diagnostic.
+KILN_TEST(Runtime, TooLongStoreDirIsDiagnosed) {
+    char longDir[1100];
+    std::memset(longDir, 'a', sizeof longDir - 1);
+    longDir[sizeof longDir - 1] = '\0';
+    Adapter adapter{};
+    Result<NullAdapter*> na = null_adapter_create({}, &adapter);
+    KILN_REQUIRE(na.ok());
+    DiagLog log;
+    ContextDesc cd{};
+    cd.adapter         = &adapter;
+    cd.storeDir        = StrView(longDir);
+    cd.diag            = log.sink();
+    Result<Context*> c = create(cd);
+    KILN_CHECK(c.failed());
+    KILN_CHECK(log.has(kDiagManifestMissing));
+    if (c.ok()) destroy(*c);
+    null_adapter_destroy(*na);
+}
+
 // The goldens as a store (hand_store.h), also the ctest fixture for kiln-headless.
 KILN_TEST(GoldenStore, Build) {
     char path[1200];

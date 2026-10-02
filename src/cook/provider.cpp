@@ -361,15 +361,17 @@ Status provider_prepare(void* user, AssetKind kind, StrView name, PrepareMode mo
 
 /// Re-cook diagnostics go to the log: there is no pump thread to replay them on. Info is dropped.
 struct LogDiag {
-    bool quiet = false; ///< a retry of a source version already reported as failing
+    bool quiet    = false; ///< a retry of a source version already reported as failing
+    StrView asset = {};    ///< the unit's name: cook diagnostics name the source file
 
     static void fn(void* user, Diagnostic const& d) {
         auto const* self = static_cast<LogDiag const*>(user);
         if (self->quiet || d.severity == Severity::Info) return;
+        StrView const who = self->asset.empty() ? d.asset : self->asset;
         if (d.severity == Severity::Warning)
-            KILN_WARN("cook", "K%04u %.*s: %.*s", d.code, KILN_SV(d.asset), KILN_SV(d.message));
+            KILN_WARN("cook", "K%04u %.*s: %.*s", d.code, KILN_SV(who), KILN_SV(d.message));
         else
-            KILN_ERROR("cook", "K%04u %.*s: %.*s", d.code, KILN_SV(d.asset), KILN_SV(d.message));
+            KILN_ERROR("cook", "K%04u %.*s: %.*s", d.code, KILN_SV(who), KILN_SV(d.message));
     }
 };
 
@@ -458,6 +460,7 @@ void poll_failed(Provider* p, ProjectVersion const& v, bool recheckAll) {
         std::lock_guard<std::mutex> const lock(source_lock(*p, sourcePath));
         LogDiag logDiag;
         logDiag.quiet = f.stats == now && !recheckAll; // reported when it failed
+        logDiag.asset = name;
         DiagSink const sink{&LogDiag::fn, &logDiag};
         CookUnit unit(p->alloc);
         UnitDesc d   = unit_desc(*p, v, f.kind, name, sourcePath, p->alloc, &sink);
@@ -532,6 +535,7 @@ bool poll_round(Provider* p, Vec<char>& units, HashMap<u64, FailedUnit>& failed,
         std::lock_guard<std::mutex> const lock(source_lock(*p, sourcePath));
         LogDiag logDiag;
         logDiag.quiet = last && last->inputs == now;
+        logDiag.asset = name;
         DiagSink const sink{&LogDiag::fn, &logDiag};
         CookUnit unit(p->alloc);
         UnitDesc d   = unit_desc(*p, *ref.v, rec.outputs[0].kind, name, sourcePath, p->alloc, &sink);

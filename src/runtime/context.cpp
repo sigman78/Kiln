@@ -242,24 +242,37 @@ void teardown(Context* ctx) {
 namespace {
 
 /// A store with a profile the adapter cannot fully sample is a configuration error: one report
-/// here instead of a failure per asset (docs/design/target-profiles.md).
-Status check_formats(ContextDesc const& desc, StrView profile, u64 blockFormats) {
+/// here instead of a failure per asset (docs/design/target-profiles.md). With `allow`, a warning.
+Status check_formats(Adapter const& adapter, DiagSink const* diag, StrView storeDir, StrView profile,
+                     u64 blockFormats, bool allow) {
     char missing[512] = {};
     usize at          = 0;
     for (u32 v = u32(Format::BC1_RGB_UNORM); v <= u32(Format::ASTC_12x12_SRGB); ++v) {
         Format const f = Format(v);
         if (!(blockFormats & block_format_bit(f))) continue;
-        if (desc.adapter->supports_format(desc.adapter->user, f, FormatUsage::SampledImage)) continue;
+        if (adapter.supports_format(adapter.user, f, FormatUsage::SampledImage)) continue;
         FormatInfo const* info = format_info(f);
         at += format(missing + at, sizeof missing - at, "%s%s", at ? " " : "", info ? info->name : "?");
     }
     if (at == 0) return kOk;
-    bool const allow = desc.allowUnsampledFormats;
-    Status const out = diagf(
-        &desc.diag, allow ? kOk : make_status(Code::Unsupported), kDiagStoreProfileUnsampled,
-        allow ? Severity::Warning : Severity::Error, desc.storeDir, "create",
-        "the store's profile '%.*s' has formats the adapter cannot sample: %s", KILN_SV(profile), missing);
+    Status const out = diagf(diag, allow ? kOk : make_status(Code::Unsupported), kDiagStoreProfileUnsampled,
+                             allow ? Severity::Warning : Severity::Error, storeDir, "store",
+                             "the store's profile '%.*s' has formats the adapter cannot sample: %s",
+                             KILN_SV(profile), missing);
     return allow ? kOk : out;
+}
+
+/// A manifest without the context's profile: requests miss until a cook writes it. One warning
+/// that names the profiles it has, since a wrong profile name looks the same.
+void warn_profile_missing(ContextDesc const& desc, ManifestView const& v) {
+    char have[256] = {};
+    usize at       = 0;
+    for (u32 i = 0; i < v.profile_count() && at < sizeof have; ++i)
+        at += format(have + at, sizeof have - at, "%s'%.*s'", i ? ", " : "", KILN_SV(v.profile(i).name()));
+    (void)diagf(
+        &desc.diag, kOk, kDiagManifestMissing, Severity::Warning, desc.storeDir, "create",
+        "the store's manifest has no profile '%.*s' (it has %s): requests miss until a cook writes it",
+        KILN_SV(desc.profile), at ? have : "none");
 }
 
 /// Reads and validates the store's manifest into `bytes`. A missing manifest (or no store) is no
@@ -271,7 +284,9 @@ Status load_manifest(ContextDesc const& desc, Allocator const* a, Vec<u8>* bytes
     if (desc.storeDir.empty()) return kOk;
     char path[1024];
     usize const n = manifest_file_path(desc.storeDir, path, sizeof path);
-    if (n >= sizeof path - 1) return make_status(Code::InvalidArgument);
+    if (n >= sizeof path - 1)
+        return diagf(&desc.diag, make_status(Code::InvalidArgument), kDiagManifestMissing, Severity::Error,
+                     desc.storeDir, "create", "storeDir is too long (%zu bytes)", desc.storeDir.size);
     IoBackend const* io = desc.io ? desc.io : compat_io_backend();
     Status const st     = io_read_file(io, StrView(path, n), a, bytes);
     if (st.code == Code::NotFound) return kOk;
@@ -282,8 +297,12 @@ Status load_manifest(ContextDesc const& desc, Allocator const* a, Vec<u8>* bytes
     if (v.failed()) return v.status();
     *view = *v;
     ManifestProfile p;
-    if (!v->find_profile(desc.profile, &p)) return kOk;
-    return check_formats(desc, p.name(), p.block_formats());
+    if (!v->find_profile(desc.profile, &p)) {
+        warn_profile_missing(desc, *v);
+        return kOk;
+    }
+    return check_formats(*desc.adapter, &desc.diag, desc.storeDir, p.name(), p.block_formats(),
+                         desc.allowUnsampledFormats);
 }
 
 } // namespace
@@ -291,6 +310,13 @@ Status load_manifest(ContextDesc const& desc, Allocator const* a, Vec<u8>* bytes
 void adopt_manifest(Context* ctx, Vec<u8>&& bytes, ManifestView const& v) {
     ctx->manifestBytes   = std::move(bytes); // the view's bytes stay where they are
     ctx->manifestPresent = v.find_profile(StrView(ctx->profile, ctx->profileLen), &ctx->manifest);
+    // The profile appeared after create(): check its formats now, as a warning (each asset whose
+    // format the adapter cannot sample fails on its own).
+    if (ctx->manifestPresent && !ctx->formatsChecked) {
+        ctx->formatsChecked = true;
+        (void)check_formats(ctx->adapter, &ctx->diag, StrView(ctx->storeDir, ctx->storeDirLen),
+                            ctx->manifest.name(), ctx->manifest.block_formats(), true);
+    }
 }
 
 void refresh_manifest(Context* ctx) {
@@ -374,11 +400,13 @@ Result<Context*> create(ContextDesc const& desc) {
     ctx->maxGroups    = desc.maxGroups;
     ctx->maxEvents    = desc.maxEvents;
 
-    ctx->storeDirLen = desc.storeDir.size;
-    ctx->storeDir    = copy_str(a, desc.storeDir);
-    ctx->profileLen  = desc.profile.size;
-    ctx->profile     = copy_str(a, desc.profile);
+    ctx->storeDirLen    = desc.storeDir.size;
+    ctx->storeDir       = copy_str(a, desc.storeDir);
+    ctx->profileLen     = desc.profile.size;
+    ctx->profile        = copy_str(a, desc.profile);
+    ctx->formatsChecked = true; // load_manifest() checked the profile, if it is there
     if (!manifestBytes.empty()) adopt_manifest(ctx, std::move(manifestBytes), manifest);
+    ctx->formatsChecked = ctx->manifestPresent;
     if (!desc.roots.empty()) {
         usize chars = 0;
         for (Root const& m : desc.roots)

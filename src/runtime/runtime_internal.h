@@ -320,7 +320,8 @@ struct Context {
 
     CookProvider provider;
 
-    rt::Watch* watch = nullptr; ///< store poller (null unless ContextDesc::hotReload.watchStore works)
+    rt::Watch* watch    = nullptr; ///< store poller (null unless ContextDesc::hotReload.watchStore works)
+    bool formatsChecked = false;   ///< the profile's formats were checked against the adapter (K5018)
 
     // post_reload(): any thread pushes, pump swaps `posted` with `postedDrain` and reloads.
     std::mutex postMutex;
