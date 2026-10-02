@@ -34,14 +34,6 @@ void main() {
 }
 )";
 
-char const* const kSkyVs = R"(#version 460 core
-out vec2 vNdc;
-void main() {
-    vNdc        = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2) * 2.0 - 1.0;
-    gl_Position = vec4(vNdc, 1.0, 1.0);
-}
-)";
-
 char const* const kCommonFs = R"(
 vec3 aces(vec3 x) { return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0); }
 vec3 to_srgb(vec3 c) { return mix(12.92 * c, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(0.0031308, c)); }
@@ -274,15 +266,10 @@ bool begin_frame(GLFWwindow* w, ex::OrbitCamera const& camera, Target& t, Frame*
     glfwGetFramebufferSize(w, &fw, &fh);
     if (fw <= 0 || fh <= 0) return false;
     t.resize(u32(fw), u32(fh));
-    f->aspect           = f32(fw) / f32(fh);
-    f->view             = ex::orbit_view(camera, ex::Vec3{}, 1.0f, kFovY, f->aspect);
-    f->viewProj         = ex::perspective_gl(kFovY, f->aspect, f->view.nearZ, f->view.farZ) * f->view.view;
-    ex::Vec3 const fwd  = ex::normalize(ex::Vec3{} - f->view.eye);
-    ex::Vec3 const side = ex::normalize(ex::cross(fwd, ex::Vec3{0, 1, 0}));
-    f32 const tanV      = std::tan(kFovY * 0.5f);
-    f->skyForward       = fwd;
-    f->skyRight         = side * (tanV * f->aspect);
-    f->skyUp            = ex::cross(side, fwd) * tanV;
+    f->aspect   = f32(fw) / f32(fh);
+    f->view     = ex::orbit_view(camera, ex::Vec3{}, 1.0f, kFovY, f->aspect);
+    f->viewProj = ex::perspective_gl(kFovY, f->aspect, f->view.nearZ, f->view.farZ) * f->view.view;
+    f->rays     = ex::view_rays(f->view.eye, ex::Vec3{}, kFovY, f->aspect);
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, t.fbo);
     glViewport(0, 0, fw, fh);
     glClearColor(0.15f, 0.16f, 0.19f, 1.0f);

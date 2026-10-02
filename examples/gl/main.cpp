@@ -2,6 +2,7 @@
 // to units per draw (docs/design/integration-examples.md). The steps a host takes are numbered.
 // Meshes are cooked with VertexProfile::Float, so the shaders read plain float attributes.
 #include "gl_adapter.h"
+#include "gl_background.h"
 #include "gl_util.h"
 #include "no_crash_dialogs.h"
 
@@ -22,7 +23,7 @@ constexpr u32 kMaxTextures = 32;
 
 // Texture units: one per material slot the shader reads, then the sky.
 constexpr GLuint kUnitBaseColor = 0, kUnitNormal = 1, kUnitMetalRough = 2, kUnitOcclusion = 3,
-                 kUnitEmissive = 4, kUnitSky = 5;
+                 kUnitEmissive = 4, kUnitSky = kEnvironmentUnit;
 
 constexpr char const* kMeshFs = R"(
 in vec3 vWorld;
@@ -59,20 +60,6 @@ void main() {
 }
 )";
 
-constexpr char const* kSkyFs = R"(
-in vec2 vNdc;
-layout(binding = 5) uniform samplerCube uSky;
-layout(location = 0) uniform vec3 uForward;
-layout(location = 1) uniform vec3 uRight;
-layout(location = 2) uniform vec3 uUp;
-layout(location = 4) uniform float uExposure;
-out vec4 outColor;
-void main() {
-    vec3 dir = normalize(uForward + vNdc.x * uRight + vNdc.y * uUp);
-    outColor = display(texture(uSky, cube_dir(dir)).rgb, uExposure);
-}
-)";
-
 struct TextureItem {
     AssetId id = 0;
     TextureHandle handle;
@@ -86,11 +73,11 @@ struct Scene {
     GlAdapter* gla      = nullptr;
     StrView modelName;
     MeshHandle model;
-    TextureHandle sky;
+    TextureHandle environment;
     TextureItem textures[kMaxTextures];
     u32 textureCount = 0;
     Geometry geometry;
-    u32 skyBit = 0; ///< this frame: the sky is bound to kUnitSky
+    u32 environmentBit = 0; ///< this frame: the sky is bound to kUnitSky
 };
 
 TextureHandle find_item(Scene const& s, AssetId id) {
@@ -133,7 +120,7 @@ void handle_event(Scene& s, Event const& e) {
 void bind_material(void* user, u32 material) {
     Scene const& s          = *static_cast<Scene const*>(user);
     mesh::MeshView const& v = *mesh_view(s.ctx, s.model);
-    u32 mask                = s.skyBit;
+    u32 mask                = s.environmentBit;
     if (material < v.materials().size()) {
         mesh::MaterialSlot const& m = v.materials()[material];
         for (u32 t = 0; t < m.textureCount && m.textureFirst + t < v.textures().size(); ++t) {
@@ -165,7 +152,7 @@ void bind_material(void* user, u32 material) {
 
 bool scene_settled(Scene const& s) {
     if (!ex::settled(state(s.ctx, s.model))) return false;
-    if (s.sky && !ex::settled(state(s.ctx, s.sky))) return false;
+    if (s.environment && !ex::settled(state(s.ctx, s.environment))) return false;
     for (u32 i = 0; i < s.textureCount; ++i)
         if (!ex::settled(state(s.ctx, s.textures[i].handle))) return false;
     return true;
@@ -219,13 +206,13 @@ int main(int argc, char** argv) {
     s.modelName = StrView(o.model);
     s.model     = request_mesh(ctx, s.modelName);
     if (o.sky)
-        s.sky = request_texture(ctx, StrView(o.sky), RequestOptions{.textureShape = TextureShape::Cube});
+        s.environment =
+            request_texture(ctx, StrView(o.sky), RequestOptions{.textureShape = TextureShape::Cube});
 
     GLuint const meshProgram = build_program(kMeshVs, "", kMeshFs);
-    GLuint const skyProgram  = build_program(kSkyVs, "", kSkyFs);
-    GLuint emptyVao          = 0; // the sky triangle has no vertex data
-    glCreateVertexArrays(1, &emptyVao);
-    GLuint samplers[2] = {}; // [0] materials: repeat; [1] the sky: clamp
+    Background background;
+    background.create(false);
+    GLuint samplers[2] = {}; // [0] materials: repeat; [1] the environment: clamp
     glCreateSamplers(2, samplers);
     for (GLuint sm : samplers) {
         glSamplerParameteri(sm, GL_TEXTURE_MIN_FILTER, GLint(GL_LINEAR_MIPMAP_LINEAR));
@@ -253,20 +240,11 @@ int main(int argc, char** argv) {
         // 5b. Draw: the sky, then the model; every texture is whatever gpu_object() returns now.
         Frame f;
         if (!begin_frame(window, camera, target, &f)) continue;
-        GlTexture const sky = s.sky ? gl_texture(s.gla, gpu_object(ctx, s.sky)) : GlTexture{};
-        s.skyBit            = sky.target == GL_TEXTURE_CUBE_MAP ? 1u << kUnitSky : 0u;
-        if (s.skyBit) {
-            glBindTextureUnit(kUnitSky, sky.name);
-            glUseProgram(skyProgram);
-            glUniform3f(0, f.skyForward.x, f.skyForward.y, f.skyForward.z);
-            glUniform3f(1, f.skyRight.x, f.skyRight.y, f.skyRight.z);
-            glUniform3f(2, f.skyUp.x, f.skyUp.y, f.skyUp.z);
-            glUniform1f(4, camera.exposure);
-            glDisable(GL_DEPTH_TEST);
-            glDepthMask(GL_FALSE);
-            glBindVertexArray(emptyVao);
-            glDrawArrays(GL_TRIANGLES, 0, 3);
-            glDepthMask(GL_TRUE);
+        GlTexture const sky = s.environment ? gl_texture(s.gla, gpu_object(ctx, s.environment)) : GlTexture{};
+        s.environmentBit    = sky.target == GL_TEXTURE_CUBE_MAP ? 1u << kUnitSky : 0u;
+        if (s.environmentBit) {
+            glBindTextureUnit(kUnitSky, sky.name); // the background and mesh lighting both sample it
+            background.draw(f.rays, camera.exposure);
         }
         glEnable(GL_DEPTH_TEST);
         glDepthFunc(GL_LEQUAL);
@@ -294,10 +272,9 @@ int main(int argc, char** argv) {
     destroy(ctx);
     ex::finish_trace();
     release_geometry(s.geometry);
-    glDeleteVertexArrays(1, &emptyVao);
+    background.release();
     glDeleteSamplers(2, samplers);
     glDeleteProgram(meshProgram);
-    glDeleteProgram(skyProgram);
     target.release();
     gl_adapter_destroy(s.gla);
     glfwDestroyWindow(window);

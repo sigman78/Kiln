@@ -8,6 +8,11 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
 ## [Unreleased]
 
 ### Changed
+- **Example background rendering**: GL, GL bindless, Sokol, NGA, and Vulkan share camera-ray math
+  and group background drawing in backend helpers. The environment is scene data; Vulkan basic
+  binds it independently of mesh materials. Example renderer migration: `skyVert` / `skyFrag`
+  become `fullscreenVert` / `fullscreenFrag`; use `vkx::draw_background` from `vk_background.h`
+  for skies, or `renderer_draw_fullscreen` with pass-specific push bytes for other fullscreen draws.
 - **`.mesh` mount extras are the glTF `extras` JSON as written**: `Mount.extrasStr` was a flat
   `key=value;key=value` string of scalar values only. Now the cook copies the node's `extras` byte for
   byte, nested values included, so nothing is dropped and numbers keep their precision (the old
