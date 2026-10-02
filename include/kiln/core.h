@@ -390,28 +390,31 @@ template <class Tag> struct Handle {
 };
 
 /// Non-owning reference to any callable. Deprecated: pass a function pointer and `void* user`.
-template <class Sig>
-class [[deprecated("pass a function pointer and void* user; removed in v0.8")]] FunctionRef;
+template <class Sig> class FunctionRef;
 
 template <class R, class... Args>
 class [[deprecated("pass a function pointer and void* user; removed in v0.8")]] FunctionRef<R(Args...)> {
 public:
-    constexpr FunctionRef() noexcept = default;
-    constexpr FunctionRef(std::nullptr_t) noexcept {} // NOLINT(google-explicit-constructor)
+    // gcc ignores the attribute of a partial specialization at its uses; the constructors carry it too.
+    [[deprecated("removed in v0.8")]] constexpr FunctionRef() noexcept = default;
+    // NOLINTNEXTLINE(google-explicit-constructor)
+    [[deprecated("removed in v0.8")]] constexpr FunctionRef(std::nullptr_t) noexcept {}
 
     /// From a plain function pointer.
-    FunctionRef(R (*fn)(Args...)) noexcept // NOLINT(google-explicit-constructor)
+    // NOLINTNEXTLINE(google-explicit-constructor)
+    [[deprecated("removed in v0.8")]] FunctionRef(R (*fn)(Args...)) noexcept
         : obj_(reinterpret_cast<void*>(fn)), thunk_(&fn_thunk) {}
 
     /// From a C-style `fn(user, args...)` pair.
-    constexpr FunctionRef(R (*fn)(void*, Args...), void* user) noexcept : obj_(user), thunk_(fn) {}
+    [[deprecated("removed in v0.8")]] constexpr FunctionRef(R (*fn)(void*, Args...), void* user) noexcept
+        : obj_(user), thunk_(fn) {}
 
     /// From any callable object. The object must outlive the FunctionRef.
     template <class F>
         requires(!std::is_same_v<std::remove_cvref_t<F>, FunctionRef> &&
                  !std::is_function_v<std::remove_pointer_t<std::remove_reference_t<F>>> &&
                  std::is_invocable_r_v<R, F&, Args...>)
-    FunctionRef(F&& f) noexcept // NOLINT(google-explicit-constructor)
+    [[deprecated("removed in v0.8")]] FunctionRef(F&& f) noexcept // NOLINT(google-explicit-constructor)
         : obj_(const_cast<void*>(static_cast<void const*>(&f))),
           thunk_(&obj_thunk<std::remove_reference_t<F>>) {}
 
