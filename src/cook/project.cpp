@@ -217,6 +217,12 @@ StrView child_of(StrView name, StrView prefix) {
     return name.substr(prefix.size + 1);
 }
 
+/// The name of a preset table `<prefix>.<name>`, or empty: a deeper table is not a preset.
+StrView preset_name(StrView table, StrView prefix) {
+    StrView const n = child_of(table, prefix);
+    return n.find('.') == StrView::kNpos ? n : StrView();
+}
+
 Status parse_roots(Project& p, u32 t, DiagSink const* diag) {
     KeyError const err{diag, p.file};
     for (TomlEntry const& e : p.doc.entries) {
@@ -254,12 +260,11 @@ Status parse_file(Project& p, DiagSink const* diag) {
     // Presets first: rules name them wherever they are in the file.
     for (u32 t = 1; t < p.doc.tables.size(); ++t) {
         StrView const name = p.doc.tables[t].name;
-        if (StrView const n = child_of(name, "texture.preset"); !n.empty() && n.find('.') == StrView::kNpos) {
+        if (StrView const n = preset_name(name, "texture.preset"); !n.empty()) {
             Preset pr{n, {}};
             KILN_TRY(collect_keys<TextureCookSettings>(p, p.doc, t, &pr.keys, diag, p.file));
             p.tex.presets.push_back(pr);
-        } else if (StrView const m = child_of(name, "mesh.preset");
-                   !m.empty() && m.find('.') == StrView::kNpos) {
+        } else if (StrView const m = preset_name(name, "mesh.preset"); !m.empty()) {
             Preset pr{m, {}};
             KILN_TRY(collect_keys<MeshCookSettings>(p, p.doc, t, &pr.keys, diag, p.file));
             p.mesh.presets.push_back(pr);
@@ -268,9 +273,8 @@ Status parse_file(Project& p, DiagSink const* diag) {
     for (u32 t = 1; t < p.doc.tables.size(); ++t) {
         TomlTable const& table = p.doc.tables[t];
         StrView const name     = table.name;
-        bool const preset =
-            !child_of(name, "texture.preset").empty() || !child_of(name, "mesh.preset").empty();
-        if (preset) continue;
+        if (!preset_name(name, "texture.preset").empty() || !preset_name(name, "mesh.preset").empty())
+            continue;
         if (name == "roots") {
             KILN_TRY(parse_roots(p, t, diag));
         } else if (name == "project") {

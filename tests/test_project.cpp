@@ -331,6 +331,7 @@ KILN_TEST(Project, ErrorsNameFileAndLine) {
         {"[[texture.rule]]\nmatch = [\"Bad:**\"]",                     kDiagProjectGlob,   2},
         {"[[texture.rule]]\nmatch = [\"**\"]\ntargets = [\"mobile\"]", kDiagSidecarKey,    3},
         {"[texture.preset]\nx = 1",                                    kDiagSidecarKey,    2},
+        {"[texture.preset.ui.typo]\nnonsense = true",                  kDiagSidecarKey,    1}, // not a preset
         {"[target.lowend]",                                            kDiagSidecarKey,    1}, // reserved
         {"[roots]\nBad = \"x\"",                                       kDiagSidecarKey,    2},
         {"[roots]\nm = 1",                                             kDiagSidecarKey,    2},
