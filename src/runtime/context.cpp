@@ -176,6 +176,8 @@ void free_tables(Context* ctx) {
     ctx->meshMap.release();
     ctx->texMap.release();
     ctx->retired.release();
+    ctx->posted.release();
+    ctx->postedDrain.release();
     ctx->orphans.release();
     ctx->freeBindSlots.release();
     watch_free(ctx);
@@ -415,6 +417,8 @@ Result<Context*> create(ContextDesc const& desc) {
     ctx->texMap.reserve(ctx->maxAssets);
     // Grow only when the host lets many frames' worth of drops pile up.
     ctx->retired.init(a, Tag::Registry);
+    ctx->posted.init(a, Tag::Registry);
+    ctx->postedDrain.init(a, Tag::Registry);
     ctx->retired.reserve(ctx->maxAssets);
     ctx->orphans.init(a, Tag::Registry);
     ctx->orphans.reserve(ctx->maxAssets);
@@ -512,6 +516,13 @@ namespace kiln {
 
 // A host's reload may follow an edit the provider has not seen: the load checks the sources again.
 // A reload after a manifest change does not: the store's writer checked them.
+void post_reload(Context* ctx, AssetKind kind, StrView name) {
+    AssetId const id = asset_id(name);
+    if (!ctx || !id) return;
+    std::lock_guard<std::mutex> const lock(ctx->postMutex);
+    ctx->posted.push_back({id, kind});
+}
+
 void request_reload(Context* ctx, MeshHandle h) {
     if (rt::Slot* s = rt::resolve(ctx, h.bits(), AssetKind::Mesh)) {
         s->recheck = true;

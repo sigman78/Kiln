@@ -120,9 +120,11 @@ A texture serves its placeholder until `Ready`, and after `Failed`.
 
 ## Hot reload
 
-Two pollers that do not know each other, joined by the manifest on disk (`hot-reload.md`). The
-source poller exists only with a cook provider and `ProviderDesc::watchSources`; the store poller
-only with `KILN_HOT_RELOAD` and `ContextDesc::hotReload.watchStore`. Either one also works alone.
+Two pollers (`hot-reload.md`). The source poller exists only with a cook provider and
+`ProviderDesc::watchSources`: it cooks what changed and hands the reloads to the context with
+`post_reload()`, which needs no store poller. The store poller exists only with `KILN_HOT_RELOAD` and
+`ContextDesc::hotReload.watchStore`: it follows manifest rewrites by another process, such as
+`kiln-cook --watch`. Either one works alone.
 
 ```mermaid
 sequenceDiagram
@@ -143,6 +145,7 @@ sequenceDiagram
     SP->>SP: size or mtime changed and the content too, re-cook
     SP->>Store: publish the new artifacts, rewrite the manifest once per round
     Note over SP,Store: a failed re-cook logs an error and keeps the old manifest entry
+    SP-->>Host: post_reload() for the unit's assets (mutex)
 
     loop every pollMs
         RP->>Store: stat manifest.dir

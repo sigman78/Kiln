@@ -1381,3 +1381,191 @@ KILN_TEST(Provider, ArrayReloadsWhenASourceChanges) {
     release(tc.ctx, arr);
 }
 #endif
+
+namespace {
+
+/// Pumps until `tex` reaches content version `v`, for at most 5 s.
+bool pump_until_version(Context* ctx, TextureHandle tex, u32 v) {
+    for (int i = 0; i < 500; ++i) {
+        pump(ctx, {});
+        if (texture_info(ctx, tex).version >= v) return true;
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    return false;
+}
+
+/// <scratch>/<name> holding tile.png (and tileB.png) for a watching provider.
+struct WatchedPngs {
+    char root[1024], png[1100], pngB[1100];
+    Root roots[1];
+
+    void init(char const* name) {
+        scratch_dir(name, root, sizeof root);
+        make_dir(root);
+        format(png, sizeof png, "%s/tile.png", root);
+        format(pngB, sizeof pngB, "%s/tileB.png", root);
+        write(png, 21);
+        write(pngB, 22);
+        roots[0] = {{}, StrView(root)};
+    }
+    static void write(char const* path, u8 seed) {
+        u8 rgba[4 * 4 * 4];
+        test_pixels(rgba, seed);
+        replace_file(path, test_png(rgba).span());
+    }
+    Span<Root const> span() const { return Span<Root const>(roots, 1); }
+};
+
+cook::ProviderDesc memory_watch() {
+    cook::ProviderDesc d = kWatchDesc;
+    d.storeMode          = cook::StoreMode::Memory;
+    return d;
+}
+
+} // namespace
+
+// Without a store the poller watches what it cooked this session and reloads it when it changes.
+KILN_TEST(Provider, MemoryModeReloadsAnEditedSource) {
+    WatchedPngs w;
+    w.init("provider_memory_watch");
+    TestContext tc;
+    if (!tc.init({}, w.span())) return;
+    KILN_REQUIRE(cook::install_provider(tc.ctx, memory_watch()).ok());
+    TextureHandle const tex = request_texture(tc.ctx, "tile.png");
+    KILN_REQUIRE_EQ(pump_until_settled(tc.ctx, tex), State::Ready);
+    std::this_thread::sleep_for(std::chrono::milliseconds(50)); // past file-time granularity
+    WatchedPngs::write(w.png, 99);
+    bool const reloaded = pump_until_version(tc.ctx, tex, 2);
+    cook::uninstall_provider(tc.ctx);
+    KILN_CHECK_MSG(reloaded, "tile.png did not reload after its source changed");
+    release(tc.ctx, tex);
+}
+
+// A kiln.toml edit reloads what a provider without a store cooked.
+KILN_TEST(Provider, MemoryModeReloadsOnProjectEdit) {
+    WatchedPngs w;
+    w.init("provider_memory_project");
+    char project[1100];
+    format(project, sizeof project, "%s/kiln.toml", w.root);
+    write_text_file(project, "[texture]\ngenMips = false\n");
+    TestContext tc;
+    if (!tc.init({}, w.span())) return;
+    cook::ProviderDesc desc = memory_watch();
+    desc.projectFile        = project;
+    KILN_REQUIRE(cook::install_provider(tc.ctx, desc).ok());
+    TextureHandle const tex = request_texture(tc.ctx, "tile.png");
+    KILN_REQUIRE_EQ(pump_until_settled(tc.ctx, tex), State::Ready);
+    KILN_CHECK_EQ(texture_info(tc.ctx, tex).desc.levels, 1u);
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    write_text_file(project, "[texture]\ngenMips = true\n");
+    bool const reloaded = pump_until_version(tc.ctx, tex, 2);
+    cook::uninstall_provider(tc.ctx);
+    if (!KILN_CHECK_MSG(reloaded, "tile.png did not reload after kiln.toml changed")) return;
+    KILN_CHECK_EQ(texture_info(tc.ctx, tex).desc.levels, 3u);
+    release(tc.ctx, tex);
+}
+
+// A layer is not an asset of its own: the poller's reload reaches the arrays that use it.
+KILN_TEST(Provider, MemoryModeReloadsAnArrayLayer) {
+    WatchedPngs w;
+    w.init("provider_memory_array");
+    TestContext tc;
+    if (!tc.init({}, w.span())) return;
+    KILN_REQUIRE(cook::install_provider(tc.ctx, memory_watch()).ok());
+    StrView const layers[] = {"tile.png", "tileB.png"};
+    TextureHandle const arr =
+        request_texture_array(tc.ctx, {.name = "arr/tiles", .layers = Span<StrView const>(layers, 2)});
+    KILN_REQUIRE_EQ(pump_until_settled(tc.ctx, arr), State::Ready);
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    WatchedPngs::write(w.pngB, 98);
+    bool const reloaded = pump_until_version(tc.ctx, arr, 2);
+    cook::uninstall_provider(tc.ctx);
+    KILN_CHECK_MSG(reloaded, "the array did not reload after a layer changed");
+    release(tc.ctx, arr);
+}
+
+// The provider reloads what it re-cooks: the context needs no store poller for that.
+KILN_TEST(Provider, DiskModeWatchReloadsWithoutTheStorePoller) {
+    WatchedPngs w;
+    w.init("provider_disk_watch_src");
+    char storeDir[1024];
+    scratch_dir("provider_disk_watch_store", storeDir, sizeof storeDir);
+    TestContext tc;
+    if (!tc.init(StrView(storeDir), w.span())) return;
+    KILN_REQUIRE(cook::install_provider(tc.ctx, kWatchDesc).ok());
+    TextureHandle const tex = request_texture(tc.ctx, "tile.png");
+    KILN_REQUIRE_EQ(pump_until_settled(tc.ctx, tex), State::Ready);
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    WatchedPngs::write(w.png, 97);
+    bool const reloaded = pump_until_version(tc.ctx, tex, 2);
+    cook::uninstall_provider(tc.ctx);
+    KILN_CHECK_MSG(reloaded, "tile.png did not reload after its source changed");
+    release(tc.ctx, tex);
+}
+
+// Roots name sources only a cook provider reads: a miss without one says so.
+KILN_TEST(Provider, MissWithRootsAndNoProviderSaysSo) {
+    WatchedPngs w;
+    w.init("provider_none_src");
+    char storeDir[1024];
+    scratch_dir("provider_none_store", storeDir, sizeof storeDir);
+    DiagCapture diags;
+    TestContext tc;
+    if (!tc.init(StrView(storeDir), w.span(), diags.sink())) return;
+    TextureHandle const tex = request_texture(tc.ctx, "tile.png");
+    KILN_REQUIRE_EQ(pump_until_settled(tc.ctx, tex), State::Failed);
+    KILN_CHECK_MSG(std::strstr(diags.firstMsg, "no cook provider") != nullptr, "%s", diags.firstMsg);
+}
+
+// A store poller without a store has nothing to poll.
+KILN_TEST(Provider, StorePollerNeedsAStoreDir) {
+    DiagCapture diags;
+    TestContext tc;
+    if (!tc.init({}, {}, diags.sink(), {.watchStore = true, .pollMs = 20})) return;
+    KILN_CHECK_EQ(diags.firstCode, u32(kDiagHotReloadUnavailable));
+}
+
+#if defined(KILN_HOT_RELOAD) && KILN_HOT_RELOAD
+// Another writer's manifest rewrite leaves assets cooked in memory alone: they have no entry to follow.
+KILN_TEST(Provider, MemoryModeIgnoresManifestRewrites) {
+    WatchedPngs w, other;
+    w.init("provider_memory_shared_src");
+    other.init("provider_memory_shared_other");
+    char storeDir[1024];
+    scratch_dir("provider_memory_shared_store", storeDir, sizeof storeDir);
+    TestContext tc;
+    if (!tc.init(StrView(storeDir), w.span(), {}, {.watchStore = true, .pollMs = 20})) return;
+    cook::ProviderDesc desc = memory_watch();
+    desc.watchSources       = false;
+    KILN_REQUIRE(cook::install_provider(tc.ctx, desc).ok());
+    TextureHandle const tex = request_texture(tc.ctx, "tile.png");
+    KILN_REQUIRE_EQ(pump_until_settled(tc.ctx, tex), State::Ready);
+
+    char arg0[] = "kiln-cook", argO[] = "-o", argQ[] = "-q";
+    char* argv[] = {arg0, other.root, argO, storeDir, argQ};
+    KILN_REQUIRE_EQ(cook::cook_cli_main(5, argv), 0); // writes an entry named tile.png
+    for (int i = 0; i < 60; ++i) {
+        pump(tc.ctx, {});
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    KILN_CHECK_EQ(texture_info(tc.ctx, tex).version, 1u);
+    release(tc.ctx, tex);
+}
+#endif
+
+// Two reloads in a row of an asset cooked in memory: the second waits for the first to settle.
+KILN_TEST(Provider, MemoryModeReloadTwice) {
+    WatchedPngs w;
+    w.init("provider_memory_twice");
+    TestContext tc;
+    if (!tc.init({}, w.span())) return;
+    KILN_REQUIRE(cook::install_provider(tc.ctx, cook::ProviderDesc{.storeMode = cook::StoreMode::Memory,
+                                                                   .target    = {.blockFormats = 0}})
+                     .ok());
+    TextureHandle const tex = request_texture(tc.ctx, "tile.png");
+    KILN_REQUIRE_EQ(pump_until_settled(tc.ctx, tex), State::Ready);
+    request_reload(tc.ctx, tex);
+    request_reload(tc.ctx, tex);
+    KILN_CHECK(pump_until_version(tc.ctx, tex, 3));
+    release(tc.ctx, tex);
+}

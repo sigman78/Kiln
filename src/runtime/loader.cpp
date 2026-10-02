@@ -103,22 +103,19 @@ struct Input {
     bool* keyValid           = nullptr;
     Vec<u8>* cooked          = nullptr;
     bool* cookedValid        = nullptr;
+    bool* providerOwned      = nullptr;
     Buffer const* registered = nullptr; ///< register_*() bytes; null for store entries
 };
 
 Input slot_input(Slot& s) {
-    return {s.kind,
-            path_of(s),
-            &s.jobKey,
-            &s.jobKeyValid,
-            &s.cooked,
-            &s.cookedValid,
-            s.source == SourceKind::Memory ? &s.memory : nullptr};
+    return {
+        s.kind,    path_of(s),     &s.jobKey,           &s.jobKeyValid,
+        &s.cooked, &s.cookedValid, &s.jobProviderOwned, s.source == SourceKind::Memory ? &s.memory : nullptr};
 }
 
 Input layer_input(Slot& s, ArrayLayer& l) {
-    return {AssetKind::Texture, s.array->name(l), &l.jobKey, &l.jobKeyValid,
-            &l.cooked,          &l.cookedValid,   nullptr};
+    return {AssetKind::Texture, s.array->name(l), &l.jobKey,           &l.jobKeyValid,
+            &l.cooked,          &l.cookedValid,   &l.jobProviderOwned, nullptr};
 }
 
 /// The provider checks the asset and names its artifact, or cooks it into `*in.cooked`, which then
@@ -138,7 +135,8 @@ Status prepare_source(Context* ctx, Slot& s, Input const& in, Source& src) {
             s.jobDiag = kDiagStoreMiss;
         } else {
             note(s.capture, "cook provider failed");
-            s.jobDiag = kDiagCookOnMissFailed;
+            s.jobDiag         = kDiagCookOnMissFailed;
+            *in.providerOwned = true; // a fix reaches it through the provider
         }
         return s.jobStatus = st;
     }
@@ -148,7 +146,10 @@ Status prepare_source(Context* ctx, Slot& s, Input const& in, Source& src) {
         *in.keyValid = true;
     }
     if (out.empty()) return kOk;
-    if (key.is_zero()) *in.keyValid = false; // bytes without an artifact (memory mode)
+    if (key.is_zero()) { // bytes without an artifact (memory mode)
+        *in.keyValid      = false;
+        *in.providerOwned = true;
+    }
     *in.cooked      = std::move(out);
     *in.cookedValid = true;
     src.memory      = true;
@@ -171,10 +172,13 @@ Status open_source(Context* ctx, Slot& s, Input const& in, Source& src, bool all
         if (src.memory) return kOk;
     }
     if (!*in.keyValid) {
+        // Roots name sources, but only a cook provider reads them.
+        char const* const hint =
+            ctx->rootCount && !s.provider.prepare ? "; no cook provider is installed" : "";
         if (s.jobManifestPresent)
-            note(s.capture, "not in profile '%s' of the store's manifest", ctx->profile);
+            note(s.capture, "not in profile '%s' of the store's manifest%s", ctx->profile, hint);
         else
-            note(s.capture, "the store has no manifest, or no profile '%s' in it", ctx->profile);
+            note(s.capture, "the store has no manifest, or no profile '%s' in it%s", ctx->profile, hint);
         s.jobDiag          = s.jobManifestPresent ? kDiagStoreMiss : kDiagManifestMissing;
         return s.jobStatus = make_status(Code::NotFound);
     }

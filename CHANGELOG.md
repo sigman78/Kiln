@@ -8,6 +8,13 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
 ## [Unreleased]
 
 ### Added
+- **`post_reload(ctx, kind, name)`**: `request_reload()` by name from any thread; the next `pump()`
+  reloads the asset and every texture array that has it as a layer. The cook provider's source poller
+  uses it, so `ProviderDesc::watchSources` reloads edits without the context's store poller, and it now
+  works in Memory mode too (it was turned off there with a warning): edits to sources and `kiln.toml`
+  reload the assets cooked this session. Assets cooked in memory, or whose cook failed, no longer
+  reload on another writer's manifest rewrite. `watchStore` without a `storeDir` is K5011; a store miss
+  in a context with roots and no cook provider says so.
 - **Project file `kiln.toml`** (docs/design/project-config.md): project defaults (`[texture]`,
   `[mesh]`), named presets (`[texture.preset.<name>]`), and path rules (`[[texture.rule]]`,
   `[[mesh.rule]]`) whose `match` globs cover asset names, embedded images included; the first

@@ -319,6 +319,10 @@ KILN_API GroupStatus wait(Context* ctx, Group g, WaitOptions const& opt = {});
 /// (K5012). Works without KILN_HOT_RELOAD; the store poller (ContextDesc::hotReload) calls this for you.
 KILN_API void request_reload(Context* ctx, MeshHandle h);
 KILN_API void request_reload(Context* ctx, TextureHandle h);
+/// request_reload() by name, from any thread: the next pump() reloads the asset `name` of `kind`, and
+/// every texture array with `name` as a layer. A name nothing uses is ignored. For watchers that run
+/// on their own thread, such as the cook provider's source poller.
+KILN_API void post_reload(Context* ctx, AssetKind kind, StrView name);
 
 // ---------------------------------------------------------------------------
 // In-memory registration (procedural / generated content, tests, mods)

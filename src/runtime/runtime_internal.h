@@ -58,6 +58,12 @@ enum class QueueId : u8 { None = 0, MetaHigh, MetaNormal, UploadHigh, UploadNorm
 
 enum class CompletionKind : u8 { MetaReady = 0, Uploaded, Failed, BusyRetry };
 
+/// A reload post_reload() asked for.
+struct PostedReload {
+    AssetId id     = 0;
+    AssetKind kind = AssetKind::Texture;
+};
+
 struct Completion {
     u32 slot            = 0;
     u32 generation      = 0; ///< Slot::jobGen at submit (assertion only)
@@ -103,8 +109,10 @@ struct ArrayLayer {
     Hash128 failedKey;     ///< the artifact a failed reload of a Ready array tried
     bool failedKeyValid = false;
     Hash128 jobKey;
-    bool jobKeyValid = false;
-    Vec<u8> cooked; ///< cook provider output
+    bool jobKeyValid      = false;
+    bool jobProviderOwned = false;
+    bool providerOwned    = false; ///< as Slot::providerOwned
+    Vec<u8> cooked;                ///< cook provider output
     bool cookedValid = false;
     /// Per level (srcLevels of them): [srcOffset | srcLength] in the layer's file.
     u64* src      = nullptr;
@@ -174,7 +182,9 @@ struct Slot {
     bool jobKeyValid        = false; ///< false: the name missed the manifest
     bool jobManifestPresent = false; ///< Context::manifestPresent at dispatch
     bool jobRecheck         = false; ///< the provider checks the sources again (PrepareMode::Recheck)
+    bool jobProviderOwned   = false; ///< the provider cooked without an artifact, or its cook failed
     bool recheck            = false; ///< pump thread: request_reload() asked for it; the next load takes it
+    u64 postedBatch         = 0;     ///< the pump whose post_reload() batch last reloaded it
 
     // --- keys (pump thread) ---------------------------------------------------------
     bool manifestCheck = false; ///< a new manifest came during the load: compare keys when it settles
@@ -182,6 +192,9 @@ struct Slot {
     bool keyValid = false;      ///< false: no artifact (provider bytes, a miss) or not loaded
     Hash128 failedKey;          ///< the build key a failed reload of a Ready slot tried
     bool failedKeyValid = false;
+    /// The last load came from the provider without an artifact (memory mode, or a failed cook): the
+    /// provider reports its changes (post_reload), so manifest changes leave it alone.
+    bool providerOwned = false;
 
     // --- metadata (docs/design/hot-reload.md) ----------------------------------------
     // Queries answer from `cur` once Ready. The meta stage (worker) writes only `next`;
@@ -309,6 +322,11 @@ struct Context {
 
     rt::Watch* watch = nullptr; ///< store poller (null unless ContextDesc::hotReload.watchStore works)
 
+    // post_reload(): any thread pushes, pump swaps `posted` with `postedDrain` and reloads.
+    std::mutex postMutex;
+    Vec<rt::PostedReload> posted;
+    Vec<rt::PostedReload> postedDrain;
+
     std::thread::id pumpThread;
     bool pumpBound      = false;
     u64 pumpIndex       = 0;
@@ -338,6 +356,8 @@ void free_array_job_data(Allocator const* a, ArrayDecl& d);
 void adopt_job_keys(Slot& s);
 /// A reload of a Ready slot failed: later manifest checks skip the artifacts it tried.
 void remember_failed_keys(Slot& s);
+/// Runs the reloads post_reload() queued: each loaded slot with the name, and each array with it as a layer.
+void drain_posted_reloads(Context* ctx);
 void free_slot(Context* ctx, Slot& s);
 /// kiln no longer uses `obj` (may be null) and bindless slot `bindSlot` (may be kInvalid):
 /// released now if the host reported no frame that may still use them, else in process_retired().

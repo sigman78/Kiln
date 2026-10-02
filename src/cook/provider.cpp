@@ -56,16 +56,18 @@ void release_version(ProjectVersion* v) {
     delete_object(v->alloc, v, Tag::Cook);
 }
 
-/// A request whose cook failed. The store has no record of it for the poller to watch, so the
-/// poller cooks it again when one of its files or the project changes.
-struct FailedRequest {
+/// A unit the store has no record of for the poller to watch: in Disk mode a request whose cook
+/// failed, which the poller cooks again; in Memory mode every unit cooked this session, whose assets
+/// the poller reloads. Both when one of its files or the project changes.
+struct UnrecordedUnit {
     Vec<char> strings; ///< the unit name, its source path, then failed_unit_paths()
+    Vec<char> reloads; ///< Memory mode: the assets to reload, each a kind byte, a name and a NUL
     AssetKind kind = AssetKind::Mesh;
-    u64 stats      = 0;     ///< paths_stats() of the files when it failed
-    bool retry     = false; ///< a transient failure: try every round
-    bool resolved  = false; ///< the poller cooked it
+    u64 stats      = 0;     ///< paths_stats() of the files when it cooked or failed
+    bool retry     = false; ///< Disk mode, a transient failure: try every round
+    bool resolved  = false; ///< Disk mode: the poller cooked it
 
-    explicit FailedRequest(Allocator const* a) : strings(a, Tag::Cook) {}
+    explicit UnrecordedUnit(Allocator const* a) : strings(a, Tag::Cook), reloads(a, Tag::Cook) {}
     StrView name() const { return StrView(strings.data(), std::strlen(strings.data())); }
     StrView source() const {
         char const* s = strings.data() + name().size + 1;
@@ -103,15 +105,15 @@ struct Provider {
 
     std::thread poller;
     bool watching = false; ///< the poller runs; set before requests can arrive
-    std::mutex failedMutex;
-    HashMap<u64, FailedRequest> failedRequests; ///< by unit name hash; under failedMutex
+    std::mutex unrecordedMutex;
+    HashMap<u64, UnrecordedUnit> unrecorded; ///< by unit name hash; under unrecordedMutex
     std::mutex pollMutex;
     std::condition_variable pollWake;
     std::atomic<bool> stopping{false};
 
     explicit Provider(Allocator const* a)
         : storeDirBuf(a, Tag::Cook), rootsBuf(a, Tag::Cook), roots(a, Tag::Cook), ruleStrings(a, Tag::Cook),
-          nameRules(a, Tag::Cook), alloc(a), projectPath(a, Tag::Cook), failedRequests(a, Tag::Cook) {}
+          nameRules(a, Tag::Cook), alloc(a), projectPath(a, Tag::Cook), unrecorded(a, Tag::Cook) {}
 
     /// The current version with a reference the caller releases (release_version).
     ProjectVersion* acquire_version() {
@@ -254,11 +256,18 @@ Status cook_and_publish(Provider& p, u64 hostDigest, UnitDesc d, DiagSink const*
     return kOk;
 }
 
-/// Lets the poller retry a unit whose cook failed on a request.
-void note_failed(Provider& p, AssetKind kind, StrView name, StrView sourcePath, CookUnit const& unit,
-                 Status st) {
+void add_reload(Vec<char>& out, AssetKind kind, StrView name) {
+    out.push_back(char(kind));
+    out.append(Span<char const>(name.data, name.size));
+    out.push_back('\0');
+}
+
+/// Lets the poller watch a unit without a record: in Disk mode one whose cook failed on a request, in
+/// Memory mode any. `asset` is the request's; its reload covers a failed cook with no outputs.
+void note_unrecorded(Provider& p, AssetKind kind, StrView name, StrView sourcePath, CookUnit const& unit,
+                     Status st, AssetKind assetKind, StrView asset) {
     if (!p.watching) return;
-    FailedRequest f(p.alloc);
+    UnrecordedUnit f(p.alloc);
     f.kind = kind;
     f.strings.append(Span<char const>(name.data, name.size));
     f.strings.push_back('\0');
@@ -269,14 +278,24 @@ void note_failed(Provider& p, AssetKind kind, StrView name, StrView sourcePath, 
     f.strings.append(paths.span());
     f.stats = paths_stats(paths.span());
     f.retry = failure_is_transient(st);
-    std::lock_guard<std::mutex> const lock(p.failedMutex);
-    p.failedRequests.insert(hash_name(name), std::move(f));
+    add_reload(f.reloads, assetKind, asset);
+    for (UnitOutput const& o : unit.outputs)
+        add_reload(f.reloads, o.kind, unit.str(o.nameOff, o.nameLen));
+    std::lock_guard<std::mutex> const lock(p.unrecordedMutex);
+    p.unrecorded.insert(hash_name(name), std::move(f));
 }
 
+/// Disk mode: the unit has a record now.
 void forget_failed(Provider& p, StrView name) {
-    if (!p.watching) return;
-    std::lock_guard<std::mutex> const lock(p.failedMutex);
-    p.failedRequests.erase(hash_name(name));
+    if (!p.watching || !p.store) return;
+    std::lock_guard<std::mutex> const lock(p.unrecordedMutex);
+    p.unrecorded.erase(hash_name(name));
+}
+
+/// The context reloads every output of `unit`, without waiting for its store poller.
+void post_outputs(Provider const& p, CookUnit const& unit) {
+    for (UnitOutput const& o : unit.outputs)
+        post_reload(p.ctx, o.kind, unit.str(o.nameOff, o.nameLen));
 }
 
 Status provider_prepare(void* user, AssetKind kind, StrView name, PrepareMode mode, Allocator const* alloc,
@@ -300,10 +319,13 @@ Status provider_prepare(void* user, AssetKind kind, StrView name, PrepareMode mo
     }
     CookUnit unit(alloc);
     if (Status const st = cook_and_publish(*p, ref.v->hostDigest, d, diag, &unit); st.failed()) {
-        note_failed(*p, r.unitKind, r.owner, sourcePath, unit, st);
+        note_unrecorded(*p, r.unitKind, r.owner, sourcePath, unit, st, kind, name);
         return st;
     }
-    forget_failed(*p, r.owner);
+    if (p->store)
+        forget_failed(*p, r.owner);
+    else
+        note_unrecorded(*p, r.unitKind, r.owner, sourcePath, unit, kOk, kind, name);
     UnitOutput* o = unit.find(kind, name);
     if (!o) return make_status(Code::NotFound);
     if (o->status.failed()) return o->status;
@@ -401,15 +423,15 @@ bool poll_project(Provider* p, ProjectWatch& w) {
 /// Cooks again the failed requests whose files changed (with `recheckAll`, every one). A unit that
 /// cooks is published and from then on watched through its record.
 void poll_failed(Provider* p, ProjectVersion const& v, bool recheckAll) {
-    HashMap<u64, FailedRequest> pending(p->alloc, Tag::Cook);
+    HashMap<u64, UnrecordedUnit> pending(p->alloc, Tag::Cook);
     {
-        std::lock_guard<std::mutex> const lock(p->failedMutex);
-        if (p->failedRequests.size() == 0) return;
-        pending = std::move(p->failedRequests);
+        std::lock_guard<std::mutex> const lock(p->unrecordedMutex);
+        if (p->unrecorded.size() == 0) return;
+        pending = std::move(p->unrecorded);
     }
     for (auto& e : pending) {
-        FailedRequest& f = e.value;
-        u64 const now    = paths_stats(f.paths());
+        UnrecordedUnit& f = e.value;
+        u64 const now     = paths_stats(f.paths());
         if (p->stopping.load() || (!f.retry && f.stats == now && !recheckAll)) continue;
         StrView const name = f.name(), sourcePath = f.source();
         std::lock_guard<std::mutex> const lock(source_lock(*p, sourcePath));
@@ -423,6 +445,7 @@ void poll_failed(Provider* p, ProjectVersion const& v, bool recheckAll) {
         if (s.ok()) s = publish_unit(p->store, unit, v.hostDigest, &sink);
         if (s.ok()) {
             mark_fresh(p->store, name, sourcePath);
+            post_outputs(*p, unit);
             f.resolved = true;
             KILN_INFO("cook", "cooked %.*s", KILN_SV(name));
             continue;
@@ -433,10 +456,28 @@ void poll_failed(Provider* p, ProjectVersion const& v, bool recheckAll) {
         f.retry = failure_is_transient(s);
     }
     // A request may have noted a newer failure meanwhile; it wins.
-    std::lock_guard<std::mutex> const lock(p->failedMutex);
+    std::lock_guard<std::mutex> const lock(p->unrecordedMutex);
     for (auto& e : pending)
-        if (!e.value.resolved && !p->failedRequests.find(e.key))
-            p->failedRequests.insert(e.key, std::move(e.value));
+        if (!e.value.resolved && !p->unrecorded.find(e.key)) p->unrecorded.insert(e.key, std::move(e.value));
+}
+
+/// Memory mode: reloads the assets of every unit whose files changed (with `recheckAll`, of every
+/// unit). Their loads cook again. A unit that keeps failing reloads only when it changes again.
+void poll_memory(Provider* p, bool recheckAll) {
+    std::lock_guard<std::mutex> const lock(p->unrecordedMutex);
+    for (auto& e : p->unrecorded) {
+        UnrecordedUnit& u = e.value;
+        u64 const now     = paths_stats(u.paths());
+        if (now == u.stats && !recheckAll) continue;
+        u.stats = now;
+        for (usize at = 0; at < u.reloads.size();) {
+            auto const kind = AssetKind(u.reloads[at]);
+            StrView const name(u.reloads.data() + at + 1, std::strlen(u.reloads.data() + at + 1));
+            at += name.size + 2;
+            post_reload(p->ctx, kind, name);
+        }
+        KILN_INFO("cook", "%.*s changed; reloading its assets", KILN_SV(u.name()));
+    }
 }
 
 /// Re-cooks every fresh unit whose inputs changed (with `recheckAll`, also those whose settings
@@ -478,6 +519,7 @@ bool poll_round(Provider* p, Vec<char>& units, HashMap<u64, FailedUnit>& failed,
         if (s.ok()) s = publish_unit(p->store, unit, ref.v->hostDigest, &sink);
         if (s.ok()) {
             failed.erase(hash_name(name));
+            post_outputs(*p, unit);
             if (Status const images = unit.first_failure(); images.failed())
                 KILN_ERROR("cook", "re-cooked %.*s, but an embedded image failed (%s)", KILN_SV(name),
                            code_name(images.code));
@@ -513,7 +555,10 @@ void poller_main(Provider* p) {
             if (p->pollWake.wait_for(lock, period, [p] { return p->stopping.load(); })) return;
         }
         bool const recheck = poll_project(p, project);
-        if (!poll_round(p, units, failed, recheck)) return;
+        if (!p->store)
+            poll_memory(p, recheck);
+        else if (!poll_round(p, units, failed, recheck))
+            return;
     }
 }
 
@@ -705,12 +750,8 @@ Status install_provider(Context* ctx, ProviderDesc const& desc) {
         // A later kiln-cook run without inputs cooks from these roots.
         record_store_roots(p->store, Span<Root const>(p->roots.data(), p->roots.size()));
     }
-    if (effective.watchSources) {
-        if (effective.storeMode != StoreMode::Disk)
-            KILN_WARN("cook", "ProviderDesc.watchSources needs StoreMode::Disk; sources are not watched");
-        else if (!(p->watching = start_poller(p)))
-            KILN_WARN("cook", "could not start the source poller thread; sources are not watched");
-    }
+    if (effective.watchSources && !(p->watching = start_poller(p)))
+        KILN_WARN("cook", "could not start the source poller thread; sources are not watched");
 
     {
         std::lock_guard<std::mutex> const lock(registry_mutex());

@@ -124,11 +124,11 @@ bool manifest_names_other(Context const* ctx, Slot const& s) {
     ManifestEntry e;
     if (!ctx->manifestPresent) return false;
     if (!s.array)
-        return ctx->manifest.find(s.kind, path_of(s), &e) &&
+        return !s.providerOwned && ctx->manifest.find(s.kind, path_of(s), &e) &&
                key_is_new(e.key, s.keyValid, s.key, s.failedKeyValid, s.failedKey);
     for (u32 i = 0; i < s.array->count; ++i) {
         ArrayLayer const& l = s.array->layers[i];
-        if (ctx->manifest.find(AssetKind::Texture, s.array->name(l), &e) &&
+        if (!l.providerOwned && ctx->manifest.find(AssetKind::Texture, s.array->name(l), &e) &&
             key_is_new(e.key, l.keyValid, l.key, l.failedKeyValid, l.failedKey))
             return true;
     }
@@ -158,6 +158,42 @@ void reload_slot(Context* ctx, Slot& s) {
     queue_push(ctx, s.priority == Priority::High ? QueueId::MetaHigh : QueueId::MetaNormal, s);
 }
 
+void drain_posted_reloads(Context* ctx) {
+    {
+        std::lock_guard<std::mutex> const lock(ctx->postMutex);
+        if (ctx->posted.empty()) return;
+        std::swap(ctx->posted, ctx->postedDrain); // both keep their capacity
+    }
+    // A name posted twice in one batch (a request and its unit's output) reloads once.
+    u64 const batch   = ctx->pumpIndex;
+    auto const reload = [ctx, batch](Slot& s) {
+        if (!s.live || s.zombie || s.source == SourceKind::Memory || s.postedBatch == batch) return;
+        s.postedBatch = batch;
+        s.recheck     = true;
+        reload_slot(ctx, s);
+    };
+    bool arrays = false;
+    for (PostedReload const& r : ctx->postedDrain) {
+        if (u32 const* i = map_for(ctx, r.kind).find(r.id)) reload(ctx->slots[*i]);
+        arrays |= r.kind == AssetKind::Texture;
+    }
+    // A layer is not a slot of its own: find the arrays that use it.
+    for (u32 i = 0; arrays && i < ctx->maxAssets; ++i) {
+        Slot& s = ctx->slots[i];
+        if (!s.live || !s.array) continue;
+        for (u32 l = 0; l < s.array->count; ++l) {
+            AssetId const id = asset_id(s.array->name(s.array->layers[l]));
+            bool posted      = false;
+            for (PostedReload const& r : ctx->postedDrain)
+                posted |= r.kind == AssetKind::Texture && r.id == id;
+            if (!posted) continue;
+            reload(s);
+            break;
+        }
+    }
+    ctx->postedDrain.clear();
+}
+
 void submit_stage(Context* ctx, Slot& s, Stage stage) {
     KILN_ASSERT(!s.jobInFlight && s.queue == QueueId::None);
     s.jobStage    = stage;
@@ -165,10 +201,11 @@ void submit_stage(Context* ctx, Slot& s, Stage stage) {
     s.jobInFlight = true;
     s.phase       = stage == Stage::Meta ? Phase::MetaJob : Phase::UploadJob;
     if (stage == Stage::Meta) {
-        s.jobRecheck  = s.recheck;
-        s.recheck     = false;
-        s.provider    = ctx->provider;
-        s.jobKeyValid = false;
+        s.jobRecheck       = s.recheck;
+        s.recheck          = false;
+        s.provider         = ctx->provider;
+        s.jobKeyValid      = false;
+        s.jobProviderOwned = false;
         // The artifact is chosen here, so a manifest swapped in later leaves this load alone.
         ManifestEntry e;
         if (s.source == SourceKind::File && !s.cookedValid && ctx->manifestPresent &&
@@ -177,8 +214,9 @@ void submit_stage(Context* ctx, Slot& s, Stage stage) {
             s.jobKeyValid = true;
         }
         for (u32 i = 0; s.array && i < s.array->count; ++i) {
-            ArrayLayer& l = s.array->layers[i];
-            l.jobKeyValid = false;
+            ArrayLayer& l      = s.array->layers[i];
+            l.jobKeyValid      = false;
+            l.jobProviderOwned = false;
             if (!l.cookedValid && ctx->manifestPresent &&
                 ctx->manifest.find(AssetKind::Texture, s.array->name(l), &e)) {
                 l.jobKey      = e.key;
@@ -463,6 +501,7 @@ PumpStats pump_impl(Context* ctx, PumpOptions const& opt, bool keepEvents) {
     ctx->cur = {};
     if (!keepEvents) ctx->eventCount = 0;
     ctx->droppedWarned = false;
+    drain_posted_reloads(ctx);
     watch_drain(ctx); // reloads the store poller asked for; dispatched below
     poll_placeholders(ctx);
     poll_orphans(ctx);

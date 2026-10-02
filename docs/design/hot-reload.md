@@ -58,7 +58,16 @@ store (K3009).
 
 ### Cook side
 
-- `ProviderDesc::watchSources` and `pollMs` start the source poller in `install_provider`.
+- `ProviderDesc::watchSources` and `pollMs` start the source poller in `install_provider`, in both
+  store modes. After a re-cook it calls `post_reload()` for the unit's assets: a thread-safe queue that
+  the next `pump()` drains, as `request_reload()` would. So the provider's own edits reload without the
+  store poller, which is for another writer (`kiln-cook --watch`).
+- Memory mode has no records: the poller watches the units it cooked this session (source, sidecar,
+  buffers) and only posts their reloads; the reload cooks again. The list grows with the sources cooked
+  and holds no cooked bytes. An asset whose load came from cooked bytes without an artifact, or whose
+  cook failed, follows the provider only: the store poller leaves it alone.
+- A request whose cook failed has no record either: the poller keeps it and tries again when one of its
+  files or the project changes (Disk mode), or posts its reload (Memory mode).
 - The provider's input records (`store-manifest.md`) hold, per source, every input with its size,
   time and content hash, and the outputs. A re-cook runs on the poller thread, so a glb publishes
   its mesh and its embedded images again; an image its texture.

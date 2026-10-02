@@ -103,6 +103,10 @@ void unavailable(Context* ctx, char const* why) {
 
 void watch_start(Context* ctx, HotReloadDesc const& desc) {
     if (!desc.watchStore) return;
+    if (!ctx->storeDirLen) {
+        unavailable(ctx, "the context has no storeDir");
+        return;
+    }
     if (!ctx->io->stat) {
         unavailable(ctx, "the IO backend has no stat()");
         return;
