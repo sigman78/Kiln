@@ -709,7 +709,8 @@ u32 material_for(Cook& k, u32 key) {
     }
 
     mesh::MaterialDesc md;
-    FixedArray<mesh::TextureBindingDesc, kSlotCount> bind;
+    mesh::TextureBindingDesc bind[kSlotCount];
+    u32 bindCount = 0;
     StrView base;
     if (key == kDefaultMaterial) {
         base     = "default";
@@ -750,13 +751,12 @@ u32 material_for(Cook& k, u32 key) {
             if (slot == mesh::TextureSlot::BaseColor && im.alphaMode == mesh::AlphaMode::Mask &&
                 k.refs[r].alphaCutoff == 0.0f)
                 k.refs[r].alphaCutoff = im.alphaCutoff;
-            mesh::TextureBindingDesc b;
-            b.path  = k.refs[r].path;
-            b.slot  = slot;
-            b.uvSet = u8(min(t.texcoord, 255u));
-            b.flags = u16((k.refs[r].srgb ? mesh::kTextureSrgb : 0) |
-                          (k.refs[r].external ? mesh::kTextureExternal : 0));
-            bind.push_back(b);
+            mesh::TextureBindingDesc& b = bind[bindCount++];
+            b.path                      = k.refs[r].path;
+            b.slot                      = slot;
+            b.uvSet                     = u8(min(t.texcoord, 255u));
+            b.flags                     = u16((k.refs[r].srgb ? mesh::kTextureSrgb : 0) |
+                                              (k.refs[r].external ? mesh::kTextureExternal : 0));
         }
     }
 
@@ -768,7 +768,7 @@ u32 material_for(Cook& k, u32 key) {
         for (u32 i = 0; i < u32(k.materials.size()); ++i)
             if (k.materials[i].name == name) same = i;
         if (same == kInvalid) break;
-        if (same_material(k, k.materials[same], md, bind.span())) {
+        if (same_material(k, k.materials[same], md, Span<mesh::TextureBindingDesc const>(bind, bindCount))) {
             found = same;
             break;
         }
@@ -781,9 +781,9 @@ u32 material_for(Cook& k, u32 key) {
                       KILN_SV(base), KILN_SV(name));
         md.name         = name;
         md.textureFirst = u32(k.bindings.size());
-        md.textureCount = u32(bind.size());
-        for (mesh::TextureBindingDesc const& b : bind)
-            k.bindings.push_back(b);
+        md.textureCount = bindCount;
+        for (u32 i = 0; i < bindCount; ++i)
+            k.bindings.push_back(bind[i]);
         found = u32(k.materials.size());
         k.materials.push_back(md);
     }

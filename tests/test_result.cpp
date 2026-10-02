@@ -135,6 +135,8 @@ KILN_TEST(Result, IntFailureFromStatus) {
     KILN_CHECK(r.status() == make_status(Code::Busy, 9));
 }
 
+KILN_TEST_DEPRECATED_BEGIN
+
 KILN_TEST(Result, ValueOr) {
     Result<int> a = 5;
     KILN_CHECK_EQ(a.value_or(99), 5);
@@ -153,6 +155,8 @@ KILN_TEST(Result, VoidResultFailed) {
     KILN_CHECK(r.failed());
     KILN_CHECK(r.code() == Code::IoError);
 }
+
+KILN_TEST_DEPRECATED_END
 
 KILN_TEST(Result, TrackedSuccessConstructsAndDestroys) {
     int before = Tracked::liveCount;
@@ -276,6 +280,8 @@ Result<int> parse_positive(int v) {
 }
 } // namespace
 
+KILN_TEST_DEPRECATED_BEGIN
+
 KILN_TEST(Result, AndThenChainsOnSuccess) {
     Result<int> r = parse_positive(4).and_then([](int v) -> Result<int> { return v * 10; });
     KILN_REQUIRE(r.ok());
@@ -322,3 +328,5 @@ KILN_TEST(Result, VoidAndThenTransform) {
     KILN_CHECK(b.failed());
     KILN_CHECK_EQ(b.code(), Code::Busy);
 }
+
+KILN_TEST_DEPRECATED_END

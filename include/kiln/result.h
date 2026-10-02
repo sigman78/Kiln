@@ -125,31 +125,44 @@ public:
     T* operator->() noexcept { return &value(); }
     T const* operator->() const noexcept { return &value(); }
 
-    T value_or(T fallback) const& { return ok() ? ref() : std::move(fallback); }
-    T value_or(T fallback) && { return ok() ? std::move(ref()) : std::move(fallback); }
+    [[deprecated("test ok() and use value(); removed in v0.8")]] T value_or(T fallback) const& {
+        return ok() ? ref() : std::move(fallback);
+    }
+    [[deprecated("test ok() and use value(); removed in v0.8")]] T value_or(T fallback) && {
+        return ok() ? std::move(ref()) : std::move(fallback);
+    }
 
-    // Monadic composition, as in std::expected. No heap.
+    // Monadic composition, as in std::expected. No heap. Deprecated: unused, removed in v0.8.
 
     /// f(T) -> Result<U>. On failure the Status is forwarded unchanged.
-    template <class F> auto and_then(F&& f) && -> std::invoke_result_t<F, T&&> {
+    template <class F>
+    [[deprecated("use KILN_TRY; removed in v0.8")]] auto and_then(F&& f) && -> std::invoke_result_t<F, T&&> {
         using R = std::invoke_result_t<F, T&&>;
         return ok() ? f(std::move(ref())) : R(status_);
     }
-    template <class F> auto and_then(F&& f) const& -> std::invoke_result_t<F, T const&> {
+    template <class F>
+    [[deprecated("use KILN_TRY; removed in v0.8")]] auto
+    and_then(F&& f) const& -> std::invoke_result_t<F, T const&> {
         using R = std::invoke_result_t<F, T const&>;
         return ok() ? f(ref()) : R(status_);
     }
     /// f(T) -> U, wrapped into Result<U>. On failure the Status is forwarded unchanged.
-    template <class F> auto transform(F&& f) && -> Result<std::invoke_result_t<F, T&&>> {
+    template <class F>
+    [[deprecated("use KILN_TRY; removed in v0.8")]] auto
+    transform(F&& f) && -> Result<std::invoke_result_t<F, T&&>> {
         using R = Result<std::invoke_result_t<F, T&&>>;
         return ok() ? R(f(std::move(ref()))) : R(status_);
     }
-    template <class F> auto transform(F&& f) const& -> Result<std::invoke_result_t<F, T const&>> {
+    template <class F>
+    [[deprecated("use KILN_TRY; removed in v0.8")]] auto
+    transform(F&& f) const& -> Result<std::invoke_result_t<F, T const&>> {
         using R = Result<std::invoke_result_t<F, T const&>>;
         return ok() ? R(f(ref())) : R(status_);
     }
     /// f(Status) -> Result<T>, called only on failure (recovery / substitution).
-    template <class F> Result or_else(F&& f) && { return ok() ? std::move(*this) : Result(f(status_)); }
+    template <class F> [[deprecated("use KILN_TRY; removed in v0.8")]] Result or_else(F&& f) && {
+        return ok() ? std::move(*this) : Result(f(status_));
+    }
 
 private:
     T& ref() noexcept { return *std::launder(reinterpret_cast<T*>(storage_)); }
@@ -164,8 +177,8 @@ private:
     Status status_;
 };
 
-/// Result<void> carries only a Status.
-template <> class Result<void> {
+/// Result<void> carries only a Status. Deprecated: return Status.
+template <> class [[deprecated("return Status; removed in v0.8")]] Result<void> {
 public:
     constexpr Result() noexcept = default;
     constexpr Result(Status s) noexcept : status_(s) {}            // NOLINT(google-explicit-constructor)
@@ -177,12 +190,15 @@ public:
     constexpr Code code() const noexcept { return status_.code; }
 
     /// f() -> Result<U>; the Status is forwarded on failure.
-    template <class F> auto and_then(F&& f) const -> std::invoke_result_t<F> {
+    template <class F>
+    [[deprecated("use KILN_TRY; removed in v0.8")]] auto and_then(F&& f) const -> std::invoke_result_t<F> {
         using R = std::invoke_result_t<F>;
         return ok() ? f() : R(status_);
     }
     /// f() -> U, wrapped into Result<U>.
-    template <class F> auto transform(F&& f) const -> Result<std::invoke_result_t<F>> {
+    template <class F>
+    [[deprecated("use KILN_TRY; removed in v0.8")]] auto transform(F&& f) const
+        -> Result<std::invoke_result_t<F>> {
         using R = Result<std::invoke_result_t<F>>;
         return ok() ? R(f()) : R(status_);
     }

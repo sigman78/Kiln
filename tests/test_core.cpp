@@ -182,6 +182,8 @@ int pair_sum_thunk(void* user, int x) {
     return p->a + p->b + x;
 }
 
+KILN_TEST_DEPRECATED_BEGIN
+
 KILN_TEST(Core, FunctionRefFromFunctionPointer) {
     FunctionRef<int(int, int)> f = add_ints;
     KILN_CHECK(bool(f));
@@ -221,6 +223,8 @@ KILN_TEST(Core, FunctionRefBoolConversion) {
     KILN_CHECK(bool(h));
     KILN_CHECK_EQ(h(21), 42);
 }
+
+KILN_TEST_DEPRECATED_END
 
 static_assert(align_up(u32(5), u32(8)) == u32(8));
 static_assert(align_up(u32(8), u32(8)) == u32(8));

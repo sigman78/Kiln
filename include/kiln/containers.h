@@ -1,4 +1,4 @@
-// kiln/containers.h — FixedArray<T,N>, Vec<T>, HashMap<K,V>.
+// kiln/containers.h — Vec<T>, HashMap<K,V>, and the deprecated FixedArray<T,N>.
 // Vec and HashMap allocate through their Allocator and Tag, only on growth.
 // A null Allocator means default_allocator(). Index checks are debug-only.
 #pragma once
@@ -41,8 +41,8 @@ template <class T> inline void default_construct_n(T* p, usize n) {
 
 } // namespace detail
 
-/// Inline storage for up to N elements. Never allocates.
-template <class T, usize N> class FixedArray {
+/// Inline storage for up to N elements. Never allocates. Deprecated: use `T[N]` and a count.
+template <class T, usize N> class [[deprecated("use T[N] and a count; removed in v0.8")]] FixedArray {
 public:
     static_assert(N > 0);
     static_assert(NothrowStorable<T>, "FixedArray<T> needs T whose copy, move and destruction never throw");

@@ -1,5 +1,5 @@
 // kiln/core.h — config macros, fundamental types, panic/assert, and the basic
-// vocabulary types (Span, StrView, Handle, FunctionRef).
+// vocabulary types (Span, StrView, Handle).
 #pragma once
 
 #include <bit>
@@ -389,10 +389,12 @@ template <class Tag> struct Handle {
     [[nodiscard]] friend constexpr bool operator!=(Handle a, Handle b) noexcept { return !(a == b); }
 };
 
-/// Non-owning reference to any callable.
-template <class Sig> class FunctionRef;
+/// Non-owning reference to any callable. Deprecated: pass a function pointer and `void* user`.
+template <class Sig>
+class [[deprecated("pass a function pointer and void* user; removed in v0.8")]] FunctionRef;
 
-template <class R, class... Args> class FunctionRef<R(Args...)> {
+template <class R, class... Args>
+class [[deprecated("pass a function pointer and void* user; removed in v0.8")]] FunctionRef<R(Args...)> {
 public:
     constexpr FunctionRef() noexcept = default;
     constexpr FunctionRef(std::nullptr_t) noexcept {} // NOLINT(google-explicit-constructor)

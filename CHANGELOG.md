@@ -7,6 +7,14 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
 
 ## [Unreleased]
 
+### Deprecated
+Unused API, removed in v0.8. Each use now warns, which fails a build with warnings as errors.
+- `FunctionRef`: pass a function pointer and a `void* user`, as the rest of kiln does.
+- `Result<T>::value_or`, `and_then`, `transform`, `or_else`: test `ok()` and use `value()`, or
+  propagate with `KILN_TRY` / `KILN_TRY_ASSIGN`.
+- `Result<void>`: return `Status`.
+- `FixedArray<T, N>`: use `T[N]` with a count, and `Span` to pass it on.
+
 ## [0.7.0] - 2026-10-01
 
 Project settings in `kiln.toml` (defaults, presets, first-match path rules, usage sections,

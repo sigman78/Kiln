@@ -98,6 +98,8 @@ struct BadHash {
 
 } // namespace
 
+KILN_TEST_DEPRECATED_BEGIN
+
 KILN_TEST(Containers, FixedArrayPushEmplacePop) {
     FixedArray<int, 4> a;
     KILN_CHECK(a.empty());
@@ -187,6 +189,8 @@ KILN_TEST(Containers, FixedArrayNonTrivialDestroys) {
     }
     KILN_CHECK_EQ(Live::count, before);
 }
+
+KILN_TEST_DEPRECATED_END
 
 KILN_TEST(Containers, VecDefaultThenInitPush1000) {
     Vec<int> v;

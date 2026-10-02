@@ -119,3 +119,13 @@ bool check_ne(char const* file, int line, char const* expr, A const& a, B const&
     do {                                                                                                     \
         if (!KILN_CHECK_EQ(a, b)) return;                                                                    \
     } while (0)
+
+// Brackets tests of deprecated API: they stay covered until it is removed.
+#if defined(_MSC_VER) && !defined(__clang__)
+#define KILN_TEST_DEPRECATED_BEGIN _Pragma("warning(push)") _Pragma("warning(disable : 4996)")
+#define KILN_TEST_DEPRECATED_END _Pragma("warning(pop)")
+#else
+#define KILN_TEST_DEPRECATED_BEGIN                                                                           \
+    _Pragma("GCC diagnostic push") _Pragma("GCC diagnostic ignored \"-Wdeprecated-declarations\"")
+#define KILN_TEST_DEPRECATED_END _Pragma("GCC diagnostic pop")
+#endif
