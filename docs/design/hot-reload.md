@@ -49,8 +49,8 @@ store (K3009).
   memory-registered asset has no file to reload from: K5012, warning, ignored.
 - `IoBackend::stat` is a new optional entry point (`IoStat { size, mtimeNs }`). The compat backend
   implements it; a host backend that leaves it null gets K5011 when `watchStore` is on. The compat
-  backend opens files with `FILE_SHARE_DELETE` on Windows so a rewrite by rename can replace a file
-  the loader is reading.
+  backend opens files with `FILE_SHARE_DELETE` on Windows, and the store writer renames with POSIX
+  semantics (NTFS; `MoveFileEx` elsewhere), so a rewrite can replace a file the loader is reading.
 - The poller stats `manifest.dir`, sleeps `pollMs` between rounds, reads and validates a changed
   manifest, and hands it to `pump()` under a mutex; the pump thread swaps it in and reloads. It is
   joined by `destroy()`. Without the poller, a reload reads the manifest again when it starts, so

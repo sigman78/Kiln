@@ -12,7 +12,7 @@
 
 #if defined(KILN_OS_WINDOWS)
 #include <direct.h>  // _mkdir
-#include <windows.h> // MoveFileExA; WIN32_LEAN_AND_MEAN/NOMINMAX set by kiln_apply_defaults
+#include <windows.h> // SetFileInformationByHandle; WIN32_LEAN_AND_MEAN/NOMINMAX set by kiln_apply_defaults
 #else
 #include <sys/stat.h> // mkdir
 #include <unistd.h>   // getpid
@@ -21,6 +21,37 @@
 namespace kiln::cook {
 
 namespace {
+
+#if defined(KILN_OS_WINDOWS)
+/// Replaces `dst` with `tmp`; 0 or the Windows error. MoveFileEx fails while a reader holds `dst`
+/// open, even with FILE_SHARE_DELETE; a POSIX-semantics rename (NTFS, Windows 10 1607+) does not.
+/// Other volumes and systems fall back to MoveFileEx. Paths are in the ANSI code page, as before.
+DWORD rename_over(char const* tmp, char const* dst) {
+    wchar_t wtmp[1024], wrel[1024];
+    if (!MultiByteToWideChar(CP_ACP, 0, tmp, -1, wtmp, 1024) ||
+        !MultiByteToWideChar(CP_ACP, 0, dst, -1, wrel, 1024))
+        return ERROR_FILENAME_EXCED_RANGE;
+    alignas(FILE_RENAME_INFO) unsigned char buf[sizeof(FILE_RENAME_INFO) + 1024 * sizeof(wchar_t)];
+    auto* info      = reinterpret_cast<FILE_RENAME_INFO*>(buf);
+    DWORD const len = GetFullPathNameW(wrel, 1024, info->FileName, nullptr);
+    if (len == 0 || len >= 1024) return ERROR_FILENAME_EXCED_RANGE;
+    info->Flags          = FILE_RENAME_FLAG_REPLACE_IF_EXISTS | FILE_RENAME_FLAG_POSIX_SEMANTICS;
+    info->RootDirectory  = nullptr;
+    info->FileNameLength = len * sizeof(wchar_t);
+
+    HANDLE const h =
+        CreateFileW(wtmp, DELETE | SYNCHRONIZE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                    nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return GetLastError();
+    BOOL const ok   = SetFileInformationByHandle(h, FileRenameInfoEx, info, DWORD(sizeof buf));
+    DWORD const err = ok ? 0 : GetLastError();
+    CloseHandle(h);
+    if (ok) return 0;
+    if (err != ERROR_INVALID_PARAMETER && err != ERROR_NOT_SUPPORTED && err != ERROR_INVALID_FUNCTION)
+        return err;
+    return MoveFileExW(wtmp, info->FileName, MOVEFILE_REPLACE_EXISTING) ? 0 : GetLastError();
+}
+#endif
 
 /// Copies `s` into `out` (NUL-terminated). False if it would overflow `cap`.
 [[nodiscard]] bool to_cstr(char* out, usize cap, StrView s) {
@@ -147,8 +178,8 @@ Status store_write(StrView dir, StrView name, Span<u8 const> bytes, DiagSink con
     bool renamed    = false;
     int renameErrno = 0;
 #if defined(KILN_OS_WINDOWS)
-    renamed = MoveFileExA(tmp, dst, MOVEFILE_REPLACE_EXISTING) != 0;
-    if (!renamed) renameErrno = int(GetLastError());
+    renameErrno = int(rename_over(tmp, dst));
+    renamed     = renameErrno == 0;
 #else
     renamed = std::rename(tmp, dst) == 0;
     if (!renamed) renameErrno = errno;

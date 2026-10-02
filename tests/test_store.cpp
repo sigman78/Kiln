@@ -1,6 +1,7 @@
 #include "kiln_test.h"
 
 #include "kiln/cook/cook.h"
+#include "kiln/io.h"
 
 #include <cstdio>
 #include <cstring>
@@ -218,3 +219,30 @@ KILN_TEST(Store, OverwriteReplacesExistingFile) {
 // ---------------------------------------------------------------------------
 // Store profiles (docs/design/target-profiles.md)
 // ---------------------------------------------------------------------------
+
+// A rewrite replaces a file that a reader holds open, as the runtime's store poller does
+// (docs/design/hot-reload.md); the reader keeps the bytes it opened.
+KILN_TEST(Store, OverwriteWhileAReaderHoldsTheFile) {
+    char storeDir[1024], path[1100];
+    format(storeDir, sizeof storeDir, "%s/store", kiln::test::sample_dir());
+    StrView const name("held_open.bin");
+    format(path, sizeof path, "%s/%.*s", storeDir, KILN_SV(name));
+    std::remove(path);
+    u8 const first[] = {1, 2, 3}, second[] = {4, 5, 6, 7};
+    KILN_REQUIRE(store_write(StrView(storeDir), name, Span<u8 const>(first, sizeof first)).ok());
+
+    IoBackend const* io = compat_io_backend();
+    IoFile f{};
+    KILN_REQUIRE(io->open(io->user, StrView(path), &f).ok());
+    Status const st =
+        store_write(StrView(storeDir), name, Span<u8 const>(second, sizeof second), nullptr, true);
+    u8 held[3]        = {};
+    Status const read = io->read_range(io->user, f, 0, sizeof held, held);
+    io->close(io->user, f);
+    if (!KILN_CHECK_MSG(st.ok(), "rewrite failed: %s", code_name(st.code))) return;
+    KILN_CHECK(read.ok() && std::memcmp(held, first, sizeof first) == 0);
+    Vec<u8> onDisk(default_allocator(), Tag::Test);
+    KILN_REQUIRE(read_whole_file(path, onDisk));
+    KILN_REQUIRE_EQ(onDisk.size(), sizeof second);
+    KILN_CHECK(std::memcmp(onDisk.data(), second, sizeof second) == 0);
+}
