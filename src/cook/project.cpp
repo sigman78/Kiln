@@ -81,7 +81,8 @@ StrView project_path(Project& p, StrView rel) {
     while (rel.size > 1 && (rel[rel.size - 1] == '/' || rel[rel.size - 1] == '\\') &&
            rel[rel.size - 2] != ':')
         rel = rel.substr(0, rel.size - 1);
-    usize const slash = p.file.rfind('/') != StrView::kNpos ? p.file.rfind('/') : p.file.rfind('\\');
+    usize const fwd = p.file.rfind('/'), back = p.file.rfind('\\');
+    usize const slash = fwd == StrView::kNpos ? back : back == StrView::kNpos || fwd > back ? fwd : back;
     if (is_absolute(rel) || slash == StrView::kNpos) return p.arena.copy(rel);
     char buf[1100];
     usize const n = format(buf, sizeof buf, "%.*s/%.*s", int(slash), p.file.data, KILN_SV(rel));

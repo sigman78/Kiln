@@ -161,12 +161,30 @@ KILN_TEST(Project, LoadsTablesRootsAndProject) {
 
 KILN_TEST(Project, RootsDropTrailingSeparators) {
     Loaded l;
-    KILN_REQUIRE(l.load("project_root_trim", "[roots]\ndefault = \"src//\"\nmm =\"mods\\\\\"\n").ok());
+    KILN_REQUIRE(l.load("project_root_trim", "[roots]\ndefault = \"src//\"\nmm = \"mods\\\\\"\n").ok());
     Span<Root const> const roots = project_roots(l.p);
     KILN_REQUIRE_EQ(roots.size, usize(2));
     KILN_CHECK(roots[0].dir.ends_with("project_root_trim/src"));
     KILN_CHECK(roots[1].dir.ends_with("project_root_trim/mods"));
 }
+
+#ifdef _WIN32
+// The last separator of either kind ends the project file's directory.
+KILN_TEST(Project, MixedSeparatorsInTheFilePath) {
+    char dir[1024], sub[1100], file[1100];
+    fresh_dir("project_mixed_sep", dir, sizeof dir);
+    format(sub, sizeof sub, "%s/configs", dir);
+    std::error_code ec;
+    std::filesystem::create_directories(sub, ec);
+    format(file, sizeof file, "%s/kiln.toml", sub);
+    KILN_REQUIRE(write_text(file, "[roots]\ndefault = \"src\"\n"));
+    format(file, sizeof file, "%s\\kiln.toml", sub);
+    Result<Project*> const r = load_project({.path = StrView(file)});
+    KILN_REQUIRE(r.ok());
+    KILN_CHECK(project_roots(*r)[0].dir.ends_with("configs/src"));
+    free_project(*r);
+}
+#endif
 
 KILN_TEST(Project, DefaultsPresetsAndFirstMatchingRule) {
     Loaded l;
