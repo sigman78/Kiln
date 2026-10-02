@@ -94,6 +94,9 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
   version nor the failed attempt used.
 
 ### Changed
+- **Memory mode cooks only the requested output**: a mesh request no longer encodes its embedded images,
+  and an embedded image request encodes that image only (a mesh with 4 images and 5 requests took 5
+  whole-unit cooks). Disk mode still cooks whole units, since a record covers the whole unit.
 - **`kiln-cook` setting flags moved to layer 3d** (`--quality`, `--zstd`, `--no-mips`,
   `--mesh-compression`, `--mesh-zstd`, `--profile`, `--no-tangents`, `--no-optimize`, `--no-lods`):
   they beat `kiln.toml` and yield to sidecars, as before. Only the flags given patch; the others

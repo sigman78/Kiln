@@ -160,6 +160,41 @@ KILN_TEST(CookUnit, EmbeddedImagesAreOutputs) {
     }
 }
 
+// A cook without a store cooks only what was asked for: the mesh alone, or the mesh and one image,
+// with the keys and bytes a whole-unit cook gives them.
+KILN_TEST(CookUnit, OnlyCooksTheNamedOutput) {
+    char source[1024];
+    format(source, sizeof source, "%s/../gltf/generated/pbr_textures.glb", kiln::test::corpus_dir());
+    MeshCookSettings const mesh;
+    TextureCookSettings const tex;
+    UnitDesc d{.kind            = AssetKind::Mesh,
+               .name            = "pbr_textures.glb",
+               .sourcePath      = StrView(source),
+               .meshDefaults    = &mesh,
+               .textureDefaults = &tex,
+               .target          = &kCompatTarget};
+    CookUnit all(default_allocator());
+    KILN_REQUIRE(cook_unit(d, &all).ok());
+    KILN_REQUIRE(all.outputs.size() > usize(2));
+
+    d.only = "pbr_textures.glb";
+    CookUnit meshOnly(default_allocator());
+    KILN_REQUIRE(cook_unit(d, &meshOnly).ok());
+    KILN_REQUIRE_EQ(meshOnly.outputs.size(), usize(1));
+    KILN_CHECK(meshOnly.outputs[0].key == all.outputs[0].key);
+
+    UnitOutput const& want = all.outputs[2];
+    d.only                 = all.name(want);
+    CookUnit one(default_allocator());
+    KILN_REQUIRE(cook_unit(d, &one).ok());
+    KILN_REQUIRE_EQ(one.outputs.size(), usize(2));
+    UnitOutput const* got = one.find(AssetKind::Texture, all.name(want));
+    KILN_REQUIRE(got != nullptr);
+    KILN_CHECK(got->key == want.key);
+    KILN_CHECK(got->bytes.size() == want.bytes.size() &&
+               std::memcmp(got->bytes.data(), want.bytes.data(), want.bytes.size()) == 0);
+}
+
 #endif
 // ---------------------------------------------------------------------------
 // Manifest format 0.1

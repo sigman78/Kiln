@@ -59,6 +59,9 @@ struct UnitDesc {
     CookSession session                        = {};
     CookEnv env                                = {};
     bool statInputs                            = false;
+    /// The one output to cook, for a cook without a store: a mesh's own name skips its embedded
+    /// images; an image's name cooks the mesh and that image only. Empty: every output.
+    StrView only = {};
 };
 
 /// Reads the source, its sidecar and any external buffers, and cooks every output. A mesh source

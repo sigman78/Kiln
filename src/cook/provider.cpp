@@ -61,7 +61,7 @@ void release_version(ProjectVersion* v) {
 /// the poller reloads. Both when one of its files or the project changes.
 struct UnrecordedUnit {
     Vec<char> strings; ///< the unit name, its source path, then failed_unit_paths()
-    Vec<char> reloads; ///< Memory mode: the assets to reload, each a kind byte, a name and a NUL
+    Vec<char> reloads; ///< Memory mode: the assets to reload, each '0' + kind, a name and a NUL
     AssetKind kind = AssetKind::Mesh;
     u64 stats      = 0;     ///< paths_stats() of the files when it cooked or failed
     bool retry     = false; ///< Disk mode, a transient failure: try every round
@@ -256,8 +256,18 @@ Status cook_and_publish(Provider& p, u64 hostDigest, UnitDesc d, DiagSink const*
     return kOk;
 }
 
+/// True if `list` (NUL-terminated entries) holds `entry`.
+bool has_entry(Vec<char> const& list, StrView entry) {
+    for (usize at = 0; at < list.size();) {
+        StrView const e(list.data() + at, std::strlen(list.data() + at));
+        if (e == entry) return true;
+        at += e.size + 1;
+    }
+    return false;
+}
+
 void add_reload(Vec<char>& out, AssetKind kind, StrView name) {
-    out.push_back(char(kind));
+    out.push_back(char('0' + u8(kind)));
     out.append(Span<char const>(name.data, name.size));
     out.push_back('\0');
 }
@@ -282,6 +292,16 @@ void note_unrecorded(Provider& p, AssetKind kind, StrView name, StrView sourcePa
     for (UnitOutput const& o : unit.outputs)
         add_reload(f.reloads, o.kind, unit.str(o.nameOff, o.nameLen));
     std::lock_guard<std::mutex> const lock(p.unrecordedMutex);
+    // Memory mode cooks one output per request: keep the reloads of the unit's earlier requests.
+    if (UnrecordedUnit const* old = p.unrecorded.find(hash_name(name)))
+        for (usize at = 0; at < old->reloads.size();) {
+            StrView const entry(old->reloads.data() + at, std::strlen(old->reloads.data() + at));
+            at += entry.size + 1;
+            if (!has_entry(f.reloads, entry)) {
+                f.reloads.append(Span<char const>(entry.data, entry.size));
+                f.reloads.push_back('\0');
+            }
+        }
     p.unrecorded.insert(hash_name(name), std::move(f));
 }
 
@@ -307,7 +327,8 @@ Status provider_prepare(void* user, AssetKind kind, StrView name, PrepareMode mo
     // One check or cook per source at a time: a mesh and its images often arrive together.
     std::lock_guard<std::mutex> const lock(source_lock(*p, sourcePath));
     Provider::VersionRef const ref(*p);
-    UnitDesc const d = unit_desc(*p, *ref.v, r.unitKind, r.owner, sourcePath, alloc, diag);
+    UnitDesc d = unit_desc(*p, *ref.v, r.unitKind, r.owner, sourcePath, alloc, diag);
+    if (!p->store) d.only = name; // no record to fill: the other outputs would be thrown away
 
     // Recheck: the host saw a change the session's earlier check cannot know of.
     bool const fresh = p->store && mode == PrepareMode::Normal && is_fresh(p->store, r.owner);
@@ -471,7 +492,7 @@ void poll_memory(Provider* p, bool recheckAll) {
         if (now == u.stats && !recheckAll) continue;
         u.stats = now;
         for (usize at = 0; at < u.reloads.size();) {
-            auto const kind = AssetKind(u.reloads[at]);
+            auto const kind = AssetKind(u.reloads[at] - '0');
             StrView const name(u.reloads.data() + at + 1, std::strlen(u.reloads.data() + at + 1));
             at += name.size + 2;
             post_reload(p->ctx, kind, name);

@@ -1569,3 +1569,35 @@ KILN_TEST(Provider, MemoryModeReloadTwice) {
     KILN_CHECK(pump_until_version(tc.ctx, tex, 3));
     release(tc.ctx, tex);
 }
+
+#if KILN_MESH
+// Without a store each request cooks its own output; a glb edit still reloads every image requested.
+KILN_TEST(Provider, MemoryModeReloadsEveryRequestedImage) {
+    char root[1024], gltfDir[1024], from[1100], glb[1100];
+    scratch_dir("provider_memory_glb", root, sizeof root);
+    make_dir(root);
+    gltf_generated_dir(gltfDir, sizeof gltfDir);
+    format(from, sizeof from, "%s/pbr_textures.glb", gltfDir);
+    format(glb, sizeof glb, "%s/pbr_textures.glb", root);
+    copy_file(from, glb);
+    Root const roots[] = {
+        {{}, StrView(root)}
+    };
+    TestContext tc;
+    if (!tc.init({}, Span<Root const>(roots, 1))) return;
+    KILN_REQUIRE(cook::install_provider(tc.ctx, memory_watch()).ok());
+    TextureHandle const a = request_texture(tc.ctx, "pbr_textures.glb#hull_albedo");
+    TextureHandle const b = request_texture(tc.ctx, "pbr_textures.glb#hull_normal");
+    KILN_REQUIRE_EQ(pump_until_settled(tc.ctx, a), State::Ready);
+    KILN_REQUIRE_EQ(pump_until_settled(tc.ctx, b), State::Ready);
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    std::error_code ec;
+    std::filesystem::last_write_time(glb, std::filesystem::file_time_type::clock::now(), ec);
+    KILN_REQUIRE(!ec);
+    bool const reloaded = pump_until_version(tc.ctx, a, 2) && pump_until_version(tc.ctx, b, 2);
+    cook::uninstall_provider(tc.ctx);
+    KILN_CHECK_MSG(reloaded, "an image of the edited glb did not reload");
+    release(tc.ctx, a);
+    release(tc.ctx, b);
+}
+#endif

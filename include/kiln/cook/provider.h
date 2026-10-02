@@ -48,7 +48,8 @@ struct ProviderDesc {
 /// by the size and time of its recorded inputs (a new time is hashed first), and cooked again when
 /// their content changed. In Disk mode the provider writes the profile's entries in the store's
 /// manifest and holds the store's lock until it is released (K3009 for a second writer); in Memory
-/// mode it cooks every load and writes nothing.
+/// mode it cooks every load and writes nothing, and cooks only the requested output: a mesh without
+/// its embedded images, an embedded image without the others.
 /// Call install_provider and uninstall_provider on the pump thread. destroy(ctx) frees a provider
 /// that is still installed, so uninstall_provider is needed only to remove it earlier.
 KILN_API Status install_provider(Context* ctx, ProviderDesc const& desc);

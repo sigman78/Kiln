@@ -169,7 +169,7 @@ void cook_embedded_images(UnitDesc const& d, CookUnit& u, Span<TextureRef const>
                           Allocator const* alloc) {
     Vec<ImageJob> jobs(alloc, Tag::Cook);
     for (TextureRef const& t : refs) {
-        if (t.embedded.empty()) continue;
+        if (t.embedded.empty() || (!d.only.empty() && t.assetPath != d.only)) continue;
         ImageJob& j = jobs.emplace_back();
         j.ref       = &t;
         Layers layers;
