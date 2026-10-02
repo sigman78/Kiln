@@ -41,6 +41,49 @@ struct TextureItem {
     TextureHandle handle;
 };
 
+struct Background {
+    sg_shader shader{};
+    sg_pipeline pipeline{};
+    sg_sampler sampler{};
+
+    void create() {
+        shader = sg_make_shader(sky_shader_desc(sg_query_backend()));
+        sg_pipeline_desc pd{};
+        pd.shader        = shader;
+        pd.depth.compare = SG_COMPAREFUNC_ALWAYS;
+        pd.label         = "kiln background";
+        pipeline         = sg_make_pipeline(&pd);
+        sg_sampler_desc sd{};
+        sd.min_filter = sd.mag_filter = sd.mipmap_filter = SG_FILTER_LINEAR;
+        sd.wrap_u = sd.wrap_v = sd.wrap_w = SG_WRAP_CLAMP_TO_EDGE;
+        sd.max_anisotropy                 = 1;
+        sampler                           = sg_make_sampler(&sd);
+    }
+
+    void draw(ex::ViewRays const& rays, f32 exposure, sg_view environment) const {
+        if (!environment.id) return;
+        sky_fs_params_t const p{
+            .forward = {rays.forward.x, rays.forward.y, rays.forward.z, exposure},
+            .right   = {rays.right.x,   rays.right.y,   rays.right.z,   0       },
+            .up      = {rays.up.x,      rays.up.y,      rays.up.z,      0       },
+        };
+        sg_bindings b{};
+        b.views[VIEW_sky_tex]   = environment;
+        b.samplers[SMP_sky_smp] = sampler;
+        sg_apply_pipeline(pipeline);
+        sg_apply_bindings(&b);
+        sg_range const ub{&p, sizeof p};
+        sg_apply_uniforms(UB_sky_fs_params, &ub);
+        sg_draw(0, 3, 1);
+    }
+
+    void release() {
+        sg_destroy_pipeline(pipeline);
+        sg_destroy_shader(shader);
+        sg_destroy_sampler(sampler);
+    }
+};
+
 struct App {
     /// The model content version the materials and geometry were set up for. MetaReady, Changed
     /// and a Ready that follows Failed (a repaired model: reloads emit no MetaReady) carry a new one.
@@ -55,15 +98,15 @@ struct App {
     bool provider    = false;
 
     MeshHandle model;
-    TextureHandle sky;
+    TextureHandle environment;
     TextureItem textures[kMaxTextures];
     u32 textureCount = 0;
 
-    sg_shader meshShader{}, skyShader{};
+    sg_shader meshShader{};
     sg_pipeline pipelines[kMaxLayouts][2] = {}; ///< per vertex layout, per index type (U16, U32)
     bool unsupported                      = false;
-    sg_pipeline skyPipeline{};
-    sg_sampler sampler{}, skySampler{};
+    Background background;
+    sg_sampler sampler{};
     /// kiln's placeholders, bound where a material has no texture (sokol wants every slot bound) and
     /// as the sky without one.
     sg_view fallback[kMaterialViews] = {};
@@ -161,7 +204,7 @@ void handle_event(App& app, Event const& e) {
 
 bool scene_settled(App const& app) {
     if (!ex::settled(state(app.ctx, app.model))) return false;
-    if (app.sky && !ex::settled(state(app.ctx, app.sky))) return false;
+    if (app.environment && !ex::settled(state(app.ctx, app.environment))) return false;
     for (u32 i = 0; i < app.textureCount; ++i)
         if (!ex::settled(state(app.ctx, app.textures[i].handle))) return false;
     return true;
@@ -216,27 +259,9 @@ void draw_scene(App& app, sg_pass const& pass, f32 aspect) {
         ex::perspective_gl(kFovY, aspect, view.nearZ, view.farZ) * view.view; // see scene.glsl
     f32 const exposure = app.camera.exposure;
 
-    sg_view const sky = app.sky ? sokol_texture(app.sa, gpu_object(app.ctx, app.sky)) : sg_view{};
-    if (sky.id) {
-        Vec3 const f    = ex::normalize(Vec3{} - view.eye);
-        Vec3 const side = ex::normalize(ex::cross(f, Vec3{0, 1, 0}));
-        f32 const tanV  = std::tan(kFovY * 0.5f);
-        Vec3 const r    = side * (tanV * aspect);
-        Vec3 const u    = ex::cross(side, f) * tanV;
-        sky_fs_params_t const p{
-            .forward = {f.x, f.y, f.z, exposure},
-            .right   = {r.x, r.y, r.z, 0       },
-            .up      = {u.x, u.y, u.z, 0       },
-        };
-        sg_bindings b{};
-        b.views[VIEW_sky_tex]   = sky;
-        b.samplers[SMP_sky_smp] = app.skySampler;
-        sg_apply_pipeline(app.skyPipeline);
-        sg_apply_bindings(&b);
-        sg_range const ub{&p, sizeof p};
-        sg_apply_uniforms(UB_sky_fs_params, &ub);
-        sg_draw(0, 3, 1);
-    }
+    sg_view const sky =
+        app.environment ? sokol_texture(app.sa, gpu_object(app.ctx, app.environment)) : sg_view{};
+    app.background.draw(ex::view_rays(view.eye, Vec3{}, kFovY, aspect), exposure, sky);
 
     mesh::MeshView const* v = mesh_view(app.ctx, app.model);
     sg_buffer const buffer  = sokol_buffer(app.sa, gpu_object(app.ctx, app.model)); // invalid until Ready
@@ -278,7 +303,7 @@ void draw_scene(App& app, sg_pass const& pass, f32 aspect) {
                 b.index_buffer_offset   = int(lod.indexOffset);
                 b.views[VIEW_sky_tex]   = sky.id ? sky : app.fallbackCube;
                 b.samplers[SMP_smp]     = app.sampler;
-                b.samplers[SMP_sky_smp] = app.skySampler;
+                b.samplers[SMP_sky_smp] = app.background.sampler;
                 bind_material(app, *v, sm.material, b, fs);
                 sg_apply_bindings(&b);
                 sg_range const fsRange{&fs, sizeof fs};
@@ -378,24 +403,16 @@ void init(void* user) {
     // 3. Requests; nothing blocks.
     app.model = request_mesh(app.ctx, StrView(app.o.model));
     if (app.o.sky)
-        app.sky =
+        app.environment =
             request_texture(app.ctx, StrView(app.o.sky), RequestOptions{.textureShape = TextureShape::Cube});
 
     // 4. What the host owns: shaders, the sky pipeline, samplers. create() waited for the placeholders.
     app.meshShader = sg_make_shader(mesh_shader_desc(sg_query_backend()));
-    app.skyShader  = sg_make_shader(sky_shader_desc(sg_query_backend()));
-    sg_pipeline_desc sp{};
-    sp.shader        = app.skyShader;
-    sp.depth.compare = SG_COMPAREFUNC_ALWAYS;
-    sp.label         = "kiln sky";
-    app.skyPipeline  = sg_make_pipeline(&sp);
+    app.background.create();
     sg_sampler_desc sd{};
     sd.min_filter = sd.mag_filter = sd.mipmap_filter = SG_FILTER_LINEAR;
     sd.max_anisotropy                                = 8;
     app.sampler                                      = sg_make_sampler(&sd);
-    sd.wrap_u = sd.wrap_v = sd.wrap_w       = SG_WRAP_CLAMP_TO_EDGE;
-    sd.max_anisotropy                       = 1;
-    app.skySampler                          = sg_make_sampler(&sd);
     TextureKind const kinds[kMaterialViews] = {TextureKind::BaseColor, TextureKind::Normal, TextureKind::Orm,
                                                TextureKind::Orm, TextureKind::Emissive}; // VIEW_* order
     for (int i = 0; i < kMaterialViews; ++i)
@@ -449,6 +466,7 @@ void cleanup(void* user) {
     destroy(app.ctx);
     ex::finish_trace();
     sokol_adapter_destroy(app.sa);
+    app.background.release();
     sg_shutdown();
 }
 

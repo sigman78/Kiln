@@ -1,6 +1,5 @@
 #version 460
-// examples/vk/shaders/basic/sky.frag — the cube at set 1, binding 5 of the sky's own descriptor
-// set, along the camera ray through this pixel. The target is sRGB: the output stays linear.
+// examples/vk/shaders/basic/sky.frag — the scene cube at set 2, binding 0, along the camera ray through this pixel. The target is sRGB: the output stays linear.
 
 layout(set = 0, binding = 0) uniform Frame {
     mat4 viewProj;
@@ -9,7 +8,7 @@ layout(set = 0, binding = 0) uniform Frame {
     vec4 tonemap; // x: 2^exposure
 } frame;
 
-layout(set = 1, binding = 5) uniform samplerCube uSky;
+layout(set = 2, binding = 0) uniform samplerCube uSky;
 
 // The camera basis; right and up are scaled by the half extents of the view at distance 1.
 layout(push_constant) uniform Sky {

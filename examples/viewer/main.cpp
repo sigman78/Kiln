@@ -14,8 +14,8 @@
 #include "png_writer.h"
 #include "viewer_math.h"
 #include "vk_adapter.h"
+#include "vk_background.h"
 #include "vk_device.h"
-#include "vk_render.h"
 
 // volk (through vk_device.h) comes first so GLFW sees the Vulkan types; GLFW_INCLUDE_NONE is set.
 #include <GLFW/glfw3.h>
@@ -469,7 +469,7 @@ bool is_hdr_format(Format f) {
 
 /// The frame uniforms, and the camera basis the sky shader turns into a ray per pixel.
 void write_uniforms(Scene const& s, Camera const& cam, VkExtent2D extent, bool aces, f32 exposure,
-                    vkx::FrameUniforms* u, vkx::SkyPush* sky) {
+                    vkx::FrameUniforms* u, ex::ViewRays* rays) {
     f32 const aspect = extent.height ? f32(extent.width) / f32(extent.height) : 1.0f;
     Vec3 const dir{std::cos(cam.elevation) * std::sin(cam.azimuth), std::sin(cam.elevation),
                    std::cos(cam.elevation) * std::cos(cam.azimuth)};
@@ -508,20 +508,7 @@ void write_uniforms(Scene const& s, Camera const& cam, VkExtent2D extent, bool a
     u->tonemap[2] = 0.0f;
     u->tonemap[3] = 0.0f;
 
-    // The same basis as look_at(); right and up span the view at distance 1.
-    Vec3 const f    = vkx::normalize(s.center - eye);
-    Vec3 const side = vkx::normalize(vkx::cross(f, Vec3{0, 1, 0}));
-    Vec3 const up   = vkx::cross(side, f);
-    f32 const tanV  = std::tan(kFovY * 0.5f);
-    Vec3 const r    = side * (tanV * aspect);
-    Vec3 const v    = up * tanV;
-    *sky            = vkx::SkyPush{
-                   .forward  = {f.x, f.y, f.z, 0},
-                   .right    = {r.x, r.y, r.z, 0},
-                   .up       = {v.x, v.y, v.z, 0},
-                   .cubeSlot = kInvalid,
-                   .pad      = {}
-    };
+    *rays = ex::view_rays({eye.x, eye.y, eye.z}, {s.center.x, s.center.y, s.center.z}, kFovY, aspect);
 }
 
 Input* input_of(GLFWwindow* w) { return static_cast<Input*>(glfwGetWindowUserPointer(w)); }
@@ -915,13 +902,13 @@ int main(int argc, char** argv) {
             TextureInfo const ti = texture_info(app.ctx, scene.textures[skyItem].handle);
             aces                 = !ti.isPlaceholder && is_hdr_format(ti.desc.format);
         }
-        vkx::SkyPush sky{};
+        ex::ViewRays rays;
         write_uniforms(scene, input.camera, vkx::renderer_extent(app.ren), aces, f32(std::exp2(o.exposure)),
-                       vkx::renderer_uniforms(app.ren), &sky);
+                       vkx::renderer_uniforms(app.ren), &rays);
         if (skyItem != kInvalid) {
             // The slot serves the cube placeholder until the real cube arrives.
-            sky.cubeSlot = gpu_object(app.ctx, scene.textures[skyItem].handle).slot;
-            if (sky.cubeSlot != kInvalid) vkx::renderer_draw_sky(app.ren, cmd, sky);
+            u32 const environment = gpu_object(app.ctx, scene.textures[skyItem].handle).slot;
+            vkx::draw_background(app.ren, cmd, rays, environment);
         }
         draw_scene(scene, cmd);
         vkx::renderer_end(app.ren, last && o.dump != nullptr);

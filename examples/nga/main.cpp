@@ -65,8 +65,8 @@ struct Scene {
     NgaAdapter* na      = nullptr;
     StrView modelName;
     MeshHandle model;
-    TextureHandle sky;
-    u32 skySlot = kInvalid;
+    TextureHandle environment;
+    u32 environmentSlot = kInvalid;
     TextureItem textures[kMaxTextures];
     u32 textureCount                    = 0;
     u32 materialSlots[kMaxMaterials][5] = {}; ///< kiln's stable slots, filled once per load
@@ -158,7 +158,7 @@ void handle_event(Scene& s, Event const& e) {
 
 bool scene_settled(Scene const& s) {
     if (!ex::settled(state(s.ctx, s.model))) return false;
-    if (s.sky && !ex::settled(state(s.ctx, s.sky))) return false;
+    if (s.environment && !ex::settled(state(s.ctx, s.environment))) return false;
     for (u32 i = 0; i < s.textureCount; ++i)
         if (!ex::settled(state(s.ctx, s.textures[i].handle))) return false;
     return true;
@@ -181,8 +181,8 @@ u32 descriptor_of(NgaAdapter* na, u32 slot) {
     return slot == kInvalid ? kNoTexture : nga_descriptor(na, slot);
 }
 
-void draw_model(Scene& s, gpu::CommandBuffer* cmd, Bump& frame, Mat4 const& viewProj, Vec3 eye,
-                f32 exposure) {
+void draw_model(Scene& s, gpu::CommandBuffer* cmd, Bump& frame, Mat4 const& viewProj, Vec3 eye, f32 exposure,
+                u32 environment) {
     mesh::MeshView const* v = mesh_view(s.ctx, s.model);
     NgaMesh const payload   = nga_mesh(s.na, gpu_object(s.ctx, s.model)); // zero until Ready
     if (!v || !payload.gpu) return;
@@ -229,7 +229,7 @@ void draw_model(Scene& s, gpu::CommandBuffer* cmd, Bump& frame, Mat4 const& view
             r->texMetalRough            = descriptor_of(s.na, slots[2]);
             r->texOcclusion             = descriptor_of(s.na, slots[3]);
             r->texEmissive              = descriptor_of(s.na, slots[4]);
-            r->texSky                   = descriptor_of(s.na, s.skySlot);
+            r->texSky                   = environment;
             ex::MaterialFactors const f = ex::material_factors(*v, sm.material);
             std::memcpy(r->baseColorFactor, f.baseColor, sizeof r->baseColorFactor);
             std::memcpy(r->emissiveNormal, f.emissiveNormal, sizeof r->emissiveNormal);
@@ -282,6 +282,35 @@ gpu::PSO* make_pso(gpu::Device* device, char const* vsPath, char const* vsEntry,
     kiln::free(default_allocator(), fs.data, fs.size, 4, Tag::Io);
     return pso;
 }
+
+struct Background {
+    gpu::PSO* pipeline = nullptr;
+
+    void create(gpu::Device* device, gpu::Format color) {
+        pipeline = make_pso(device, KILN_NGA_SHADER_DIR "/skyVertex.spv", "skyVertex",
+                            KILN_NGA_SHADER_DIR "/skyFragment.spv", "skyFragment", color);
+    }
+
+    void draw(gpu::CommandBuffer* cmd, Bump& frame, ex::ViewRays const& rays, f32 exposure,
+              u32 environment) const {
+        if (environment == kNoTexture) return;
+        void* rootGpu = nullptr;
+        if (SkyRoot* sr = frame.alloc<SkyRoot>(&rootGpu)) {
+            *sr = SkyRoot{
+                .forward = {rays.forward.x, rays.forward.y, rays.forward.z, exposure},
+                .right   = {rays.right.x, rays.right.y, rays.right.z, 0},
+                .up      = {rays.up.x, rays.up.y, rays.up.z, 0},
+                .sky     = environment,
+                .pad     = {},
+            };
+            gpu::bind_pso(cmd, pipeline);
+            gpu::set_depth_stencil(cmd, {.depth_test = false, .depth_write = false});
+            gpu::draw(cmd, rootGpu, 3);
+        }
+    }
+
+    void release() { gpu::destroy_pso(pipeline); }
+};
 
 /// The host's render targets: depth always, color when offscreen; placed in one texture heap.
 struct Targets {
@@ -410,15 +439,15 @@ int main(int argc, char** argv) {
     s.modelName = StrView(o.model);
     s.model     = request_mesh(ctx, s.modelName);
     if (o.sky) {
-        s.sky     = request_texture(ctx, StrView(o.sky), {.textureShape = TextureShape::Cube});
-        s.skySlot = gpu_object(ctx, s.sky).slot;
+        s.environment     = request_texture(ctx, StrView(o.sky), {.textureShape = TextureShape::Cube});
+        s.environmentSlot = gpu_object(ctx, s.environment).slot;
     }
 
     // 5. What the host owns: pipelines, per-frame root memory, render targets, frame sync.
-    gpu::PSO* const meshPso      = make_pso(device, KILN_NGA_SHADER_DIR "/meshVertex.spv", "meshVertex",
-                                            KILN_NGA_SHADER_DIR "/meshFragment.spv", "meshFragment", colorFormat);
-    gpu::PSO* const skyPso       = make_pso(device, KILN_NGA_SHADER_DIR "/skyVertex.spv", "skyVertex",
-                                            KILN_NGA_SHADER_DIR "/skyFragment.spv", "skyFragment", colorFormat);
+    gpu::PSO* const meshPso = make_pso(device, KILN_NGA_SHADER_DIR "/meshVertex.spv", "meshVertex",
+                                       KILN_NGA_SHADER_DIR "/meshFragment.spv", "meshFragment", colorFormat);
+    Background background;
+    background.create(device, colorFormat);
     gpu::GpuHeap const frameHeap = gpu::create_gpu_heap(device, kFrameBytes * kFif);
     gpu::GpuHeap readback{};
     if (o.dump)
@@ -429,7 +458,7 @@ int main(int argc, char** argv) {
     for (gpu::CommandPool*& p : pools)
         p = gpu::create_command_pool(device);
     gpu::TimelinePoint done{.semaphore = gpu::create_timeline_semaphore(device), .value = 0};
-    int exitCode = (meshPso && skyPso && frameHeap.range.cpu) ? 0 : 2;
+    int exitCode = (meshPso && background.pipeline && frameHeap.range.cpu) ? 0 : 2;
 
     // 6. Frames.
     bool settledOnce     = false;
@@ -509,32 +538,15 @@ int main(int argc, char** argv) {
                                                    .load        = gpu::LoadOp::clear,
                                                    .store       = gpu::StoreOp::discard}
         });
-        f32 const aspect    = f32(w) / f32(h);
-        ex::View const view = ex::orbit_view(camera, Vec3{}, 1.0f, kFovY, aspect);
-        Mat4 const viewProj = ex::perspective_vk(kFovY, aspect, view.nearZ, view.farZ) * view.view;
-        f32 const exposure  = std::exp2(camera.exposure);
-        if (s.skySlot != kInvalid) {
-            Vec3 const f    = ex::normalize(Vec3{} - view.eye);
-            Vec3 const side = ex::normalize(ex::cross(f, Vec3{0, 1, 0}));
-            f32 const tanV  = std::tan(kFovY * 0.5f);
-            Vec3 const r    = side * (tanV * aspect);
-            Vec3 const up   = ex::cross(side, f) * tanV;
-            void* rootGpu   = nullptr;
-            if (SkyRoot* sr = frame.alloc<SkyRoot>(&rootGpu)) {
-                *sr = SkyRoot{
-                    .forward = {f.x, f.y, f.z, exposure},
-                    .right   = {r.x, r.y, r.z, 0},
-                    .up      = {up.x, up.y, up.z, 0},
-                    .sky     = nga_descriptor(s.na, s.skySlot),
-                    .pad     = {}
-                };
-                gpu::bind_pso(cmd, skyPso);
-                gpu::draw(cmd, rootGpu, 3);
-            }
-        }
+        f32 const aspect      = f32(w) / f32(h);
+        ex::View const view   = ex::orbit_view(camera, Vec3{}, 1.0f, kFovY, aspect);
+        Mat4 const viewProj   = ex::perspective_vk(kFovY, aspect, view.nearZ, view.farZ) * view.view;
+        f32 const exposure    = std::exp2(camera.exposure);
+        u32 const environment = descriptor_of(s.na, s.environmentSlot);
+        background.draw(cmd, frame, ex::view_rays(view.eye, Vec3{}, kFovY, aspect), exposure, environment);
         gpu::bind_pso(cmd, meshPso);
         gpu::set_depth_stencil(cmd, {.depth_test = true, .depth_write = true});
-        draw_model(s, cmd, frame, viewProj, view.eye, exposure);
+        draw_model(s, cmd, frame, viewProj, view.eye, exposure, environment);
         gpu::end_render_pass(cmd);
         bool const dumpNow = last && o.dump && readback.range.cpu;
         if (dumpNow) {
@@ -592,7 +604,7 @@ int main(int argc, char** argv) {
     gpu::destroy_gpu_heap(readback);
     gpu::destroy_gpu_heap(frameHeap);
     gpu::destroy_pso(meshPso);
-    gpu::destroy_pso(skyPso);
+    background.release();
     gpu::destroy_device(device);
     glfwTerminate(); // destroys the window; nothing when GLFW never started
     return exitCode;

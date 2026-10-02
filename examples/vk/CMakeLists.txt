@@ -64,7 +64,7 @@ endfunction()
 # ---------------------------------------------------------------------------
 kiln_vk_embed_shaders(KILN_VK_BINDLESS_HEADERS bindless "" mesh.vert mesh.frag sky.vert sky.frag)
 add_library(kiln_example_vk STATIC
-    vk_render.h vk_render.cpp
+    vk_render.h vk_render.cpp vk_background.h
     vk_device.h vk_device.cpp
     vk_adapter.h vk_adapter.cpp
     ${KILN_VK_BINDLESS_HEADERS})
@@ -89,7 +89,7 @@ endfunction()
 
 if(KILN_EXAMPLE_VK_BASIC)
     kiln_vk_embed_shaders(KILN_VK_BASIC_HEADERS basic basic_ mesh.vert mesh.frag sky.vert sky.frag)
-    kiln_vk_example(kiln-vk-basic main_basic.cpp ${KILN_VK_BASIC_HEADERS})
+    kiln_vk_example(kiln-vk-basic main_basic.cpp vk_environment.h ${KILN_VK_BASIC_HEADERS})
     kiln_vk_embed_shaders(KILN_VK_ARRAY_HEADERS array array_ floor.vert floor_sets.frag floor_bindless.frag)
     kiln_vk_example(kiln-vk-array main_array.cpp ${KILN_VK_ARRAY_HEADERS})
 endif()

@@ -25,6 +25,13 @@ using namespace kiln;
 
 namespace {
 
+struct FloorPush {
+    f32 grid[4];
+    u32 slot;
+    u32 pad[3];
+};
+static_assert(sizeof(FloorPush) == 32);
+
 char const kTilesDir[] = KILN_EXAMPLE_ASSETS_DIR "/tiles";
 char const kStore[]    = KILN_EXAMPLE_STORE_DIR;
 
@@ -204,18 +211,18 @@ int main(int argc, char** argv) {
     // 3. The frame plumbing; its full-screen pass draws the floor. Without bindless, set 1 is ours.
     ArraySets sets;
     if (!opt.bindless) create_sets(device.device, sets);
-    Result<vkx::Renderer*> rr =
-        vkx::renderer_create({.device          = &device,
-                              .adapter         = *va,
-                              .surface         = surface,
-                              .width           = o.width,
-                              .height          = o.height,
-                              .framebufferSize = &framebuffer_size,
-                              .user            = window,
-                              .skyVert         = k_array_floor_vert_spv,
-                              .skyFrag = opt.bindless ? Span<u32 const>(k_array_floor_bindless_frag_spv)
-                                                      : Span<u32 const>(k_array_floor_sets_frag_spv),
-                              .materialSetLayout = sets.layout});
+    Result<vkx::Renderer*> rr = vkx::renderer_create(
+        {.device            = &device,
+         .adapter           = *va,
+         .surface           = surface,
+         .width             = o.width,
+         .height            = o.height,
+         .framebufferSize   = &framebuffer_size,
+         .user              = window,
+         .fullscreenVert    = k_array_floor_vert_spv,
+         .fullscreenFrag    = opt.bindless ? Span<u32 const>(k_array_floor_bindless_frag_spv)
+                                           : Span<u32 const>(k_array_floor_sets_frag_spv),
+         .materialSetLayout = sets.layout});
     if (rr.failed()) return 2;
     vkx::Renderer* const ren = *rr;
 
@@ -295,17 +302,15 @@ int main(int argc, char** argv) {
         }
         // The push block the full-screen pass takes, read by floor.glsl as the grid and the slot.
         u32 const layers = opt.bindless ? texture_info(ctx, tiles).desc.layers : sets.layers[slot];
-        vkx::SkyPush const push{
-            .forward  = {kCols, kRows, f32(max(layers, 1u)), 0},
-            .right    = {},
-            .up       = {},
-            .cubeSlot = gpu_object(ctx, tiles).slot,
-            .pad      = {}
+        FloorPush const push{
+            .grid = {kCols, kRows, f32(max(layers, 1u)), 0},
+              .slot = gpu_object(ctx, tiles).slot, .pad = {}
         };
         if (!opt.bindless && sets.written[slot])
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkx::renderer_pipeline_layout(ren),
                                     1, 1, &sets.sets[slot], 0, nullptr);
-        if (opt.bindless || sets.written[slot]) vkx::renderer_draw_sky(ren, cmd, push);
+        if (opt.bindless || sets.written[slot])
+            vkx::renderer_draw_fullscreen(ren, cmd, {reinterpret_cast<u8 const*>(&push), sizeof push});
         vkx::renderer_end(ren, last && o.dump != nullptr);
         if (last) break;
     }

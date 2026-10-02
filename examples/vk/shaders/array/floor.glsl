@@ -2,12 +2,9 @@
 // sampling one layer of the array. Included after `sample_tile(uv, layer)` is defined. The target is
 // sRGB: the output stays linear.
 
-// The frame plumbing's `Sky` push block, read as: grid.xy = columns, rows; grid.z = the layers the
-// bound texture has (the placeholder has one); slot = the array's bindless slot.
+// grid.xy: columns and rows; grid.z: available layers; slot: the array's bindless slot.
 layout(push_constant) uniform Floor {
     vec4 grid;
-    vec4 unused0;
-    vec4 unused1;
     uint slot;
 } floorPush;
 

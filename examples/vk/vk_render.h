@@ -50,17 +50,6 @@ struct DrawPush {
 };
 static_assert(sizeof(DrawPush) == 112); // mat4 + 2 vec4 + 4 uint, as laid out by the shaders
 
-/// The sky shaders' push constant block `Sky`: the camera basis, right and up scaled by the half
-/// extents of the view at distance 1, and the cube's bindless slot.
-struct SkyPush {
-    f32 forward[4];
-    f32 right[4];
-    f32 up[4];
-    u32 cubeSlot;
-    u32 pad[3];
-};
-static_assert(sizeof(SkyPush) <= sizeof(DrawPush)); // shares the pipeline layout's push range
-
 enum DrawFlags : u32 {
     kDrawBaseColor   = 1u << 0, ///< baseColorSlot holds a bindless slot
     kDrawVertexColor = 1u << 1, ///< the material uses vertex color
@@ -78,11 +67,13 @@ struct RendererDesc {
     void (*framebufferSize)(void* user, u32* width, u32* height) = nullptr;
     void* user                                                   = nullptr;
     /// A host with descriptor sets of its own (kiln-vk-basic) passes its SPIR-V and the layout of
-    /// its material set: set 0 is then the frame set and set 1 the material set, which the host
-    /// binds per draw (and before renderer_draw_sky). Empty: the viewer's bindless shaders, with
+    /// its material set: set 0 is then the frame set and set 1 the host set, bound where shaders use it.
+    /// Empty: the viewer's bindless shaders, with
     /// the adapter's bindless set at 0 and the frame set at 1.
-    Span<u32 const> meshVert = {}, meshFrag = {}, skyVert = {}, skyFrag = {};
+    Span<u32 const> meshVert = {}, meshFrag = {}, fullscreenVert = {}, fullscreenFrag = {};
     VkDescriptorSetLayout materialSetLayout = VK_NULL_HANDLE;
+    /// Optional scene resources at set 2, shared by mesh and fullscreen shaders.
+    VkDescriptorSetLayout sceneSetLayout = VK_NULL_HANDLE;
 };
 
 /// One graphics pipeline per distinct vertex layout. Bindings 0..streamCount-1 are the
@@ -119,9 +110,9 @@ FrameNumbers renderer_wait_frame(Renderer* r);
 VkExtent2D renderer_extent(Renderer* r);
 /// This frame's uniform block, host-visible; write it between begin and end.
 FrameUniforms* renderer_uniforms(Renderer* r);
-/// Draws the cube in `push.cubeSlot` behind everything: call right after renderer_begin(),
-/// before the meshes. No depth test and no depth write.
-void renderer_draw_sky(Renderer* r, VkCommandBuffer cmd, SkyPush const& push);
+/// Draws three generated vertices, with no vertex input or depth test/write. Call before meshes.
+/// The push data must be nonempty, a multiple of 4 bytes, and no larger than DrawPush.
+void renderer_draw_fullscreen(Renderer* r, VkCommandBuffer cmd, Span<u8 const> push);
 /// Step 3: ends rendering and submits, waiting on the adapter's upload watermark; presents in
 /// window mode. `readback` (offscreen only) also copies the color image into the readback
 /// buffer for renderer_read_back().
