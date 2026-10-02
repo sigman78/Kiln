@@ -29,7 +29,8 @@ KILN_API Result<Project*> load_project(ProjectDesc const& desc, Allocator const*
 KILN_API void free_project(Project* p);
 
 /// `[roots]`: one root per key, `default` for the default root; dirs relative to the file's
-/// directory are made relative to the working directory. Empty without a file.
+/// directory are made relative to the working directory, without a trailing separator. Empty
+/// without a file.
 KILN_API Span<Root const> project_roots(Project const* p);
 /// `[project] store` and `target` (store resolved like a root dir), or empty.
 KILN_API StrView project_store(Project const* p);

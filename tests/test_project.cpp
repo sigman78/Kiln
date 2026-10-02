@@ -159,6 +159,15 @@ KILN_TEST(Project, LoadsTablesRootsAndProject) {
     KILN_CHECK(project_target(l.p) == "desktop");
 }
 
+KILN_TEST(Project, RootsDropTrailingSeparators) {
+    Loaded l;
+    KILN_REQUIRE(l.load("project_root_trim", "[roots]\ndefault = \"src//\"\nmm =\"mods\\\\\"\n").ok());
+    Span<Root const> const roots = project_roots(l.p);
+    KILN_REQUIRE_EQ(roots.size, usize(2));
+    KILN_CHECK(roots[0].dir.ends_with("project_root_trim/src"));
+    KILN_CHECK(roots[1].dir.ends_with("project_root_trim/mods"));
+}
+
 KILN_TEST(Project, DefaultsPresetsAndFirstMatchingRule) {
     Loaded l;
     KILN_REQUIRE(l.load("project_rules", kProjectText).ok());
@@ -507,4 +516,15 @@ KILN_TEST(ProjectCli, WatchReloadRetriesFailedSources) {
     KILN_CHECK_EQ(watch_and_edit(file, "[roots]\ndefault = \"src\"\n[project]\nstore = \"store\"\n"
                                        "[texture]\nencoding = \"uncompressed\"\n"),
                   0);
+}
+
+// A trailing separator does not change a root: "src/" names the directory "src" does.
+KILN_TEST(ProjectCli, RootsDropTrailingSeparators) {
+    char dir[1024], file[1100], map[1100], key[128];
+    KILN_REQUIRE(project_dir("project_root_slash", "[roots]\nmods = \"src/\"\n[project]\nstore = \"store\"\n",
+                             dir, sizeof dir, file, sizeof file));
+    format(map, sizeof map, "%s/a.map", dir);
+    KILN_REQUIRE_EQ(run_cli({"kiln-cook", "--project", file, "--map", map, "-q"}), 0);
+    key_in_map(map, "mods:albedo.png", key, sizeof key);
+    KILN_CHECK(key[0] != '\0');
 }

@@ -110,6 +110,14 @@ void normalize_slashes(char* s) {
         if (*s == '\\') *s = '/';
 }
 
+/// A directory as roots and inputs compare: '/' separators and no trailing '/'.
+void normalize_dir(char* s) {
+    normalize_slashes(s);
+    usize n = std::strlen(s);
+    while (n > 1 && s[n - 1] == '/')
+        s[--n] = '\0';
+}
+
 StrView extension(StrView path) {
     usize dot = path.rfind('.'), slash = path.rfind('/');
     if (dot == StrView::kNpos || (slash != StrView::kNpos && dot < slash)) return {};
@@ -662,15 +670,12 @@ void cook_inputs(Ctx& c) {
     for (char const* input : c.opt.inputs) {
         char in[1024];
         format(in, sizeof in, "%s", input);
-        normalize_slashes(in);
-        usize n = std::strlen(in);
-        while (n > 1 && in[n - 1] == '/')
-            in[--n] = '\0';
+        normalize_dir(in);
 
         char root[1024];
         if (c.opt.defaultRoot) {
             format(root, sizeof root, "%s", c.opt.defaultRoot);
-            normalize_slashes(root);
+            normalize_dir(root);
         } else if (is_dir(in)) {
             format(root, sizeof root, "%s", in);
         } else {
@@ -706,10 +711,7 @@ void cook_inputs(Ctx& c) {
 /// The directory of the default root an input implies: the input itself, or a file's directory.
 void implied_root(char const* input, char* out, usize cap) {
     format(out, cap, "%s", input);
-    normalize_slashes(out);
-    usize n = std::strlen(out);
-    while (n > 1 && out[n - 1] == '/')
-        out[--n] = '\0';
+    normalize_dir(out);
     if (is_dir(out)) return;
     if (char* slash = std::strrchr(out, '/'))
         *slash = '\0';
@@ -824,10 +826,7 @@ bool add_root(void* user, char const* arg) {
     }
     format(m.name, sizeof m.name, "%.*s", int(eq - arg), arg);
     format(m.dir, sizeof m.dir, "%s", eq + 1);
-    normalize_slashes(m.dir);
-    usize n = std::strlen(m.dir);
-    while (n > 1 && m.dir[n - 1] == '/')
-        m.dir[--n] = '\0';
+    normalize_dir(m.dir);
     for (NamedRoot const& other : o->roots)
         if (std::strcmp(other.name, m.name) == 0) {
             std::fprintf(stderr, "kiln-cook: --root: '%s' is given twice\n", m.name);
@@ -884,13 +883,14 @@ bool load_cli_project(Options& o, bool noTangents, bool noOptimize, bool noMips,
         for (Root const& r : project_roots(out->p)) {
             if (r.name.empty()) {
                 format(o.projectDefaultRoot, sizeof o.projectDefaultRoot, "%.*s", KILN_SV(r.dir));
+                normalize_dir(o.projectDefaultRoot);
                 o.defaultRoot = o.projectDefaultRoot;
                 continue;
             }
             NamedRoot m{};
             format(m.name, sizeof m.name, "%.*s", KILN_SV(r.name));
             format(m.dir, sizeof m.dir, "%.*s", KILN_SV(r.dir));
-            normalize_slashes(m.dir);
+            normalize_dir(m.dir);
             o.roots.push_back(m);
         }
         o.projectRoots = !project_roots(out->p).empty();
@@ -1127,7 +1127,7 @@ int kiln::cook::cook_cli_main(int argc, char** argv, CookPolicy const& policy, u
         // The default root: --root <dir>, or the one directory every input implies.
         if (o.defaultRoot) {
             format(implied, sizeof implied, "%s", o.defaultRoot);
-            normalize_slashes(implied);
+            normalize_dir(implied);
             c.defaultRootDir = implied;
         } else {
             implied_root(o.inputs[0], implied, sizeof implied);

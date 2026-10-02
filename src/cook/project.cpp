@@ -75,8 +75,12 @@ bool is_absolute(StrView p) {
     return (!p.empty() && (p[0] == '/' || p[0] == '\\')) || (p.size >= 2 && p[1] == ':');
 }
 
-/// `rel` against the project file's directory, unless it is absolute.
+/// `rel` against the project file's directory, unless it is absolute. A trailing separator is
+/// dropped, so "src/" and "src" name the same root.
 StrView project_path(Project& p, StrView rel) {
+    while (rel.size > 1 && (rel[rel.size - 1] == '/' || rel[rel.size - 1] == '\\') &&
+           rel[rel.size - 2] != ':')
+        rel = rel.substr(0, rel.size - 1);
     usize const slash = p.file.rfind('/') != StrView::kNpos ? p.file.rfind('/') : p.file.rfind('\\');
     if (is_absolute(rel) || slash == StrView::kNpos) return p.arena.copy(rel);
     char buf[1100];
