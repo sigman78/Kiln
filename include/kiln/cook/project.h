@@ -42,7 +42,8 @@ KILN_API u64 project_digest(Project const* p);
 
 /// True if `pattern` (a `match` glob) matches the asset name `name`. `*` matches within a path
 /// segment, `**` any number of segments, `?` one character but `/`. A pattern without `root:`
-/// matches names of the default root only. For tests and tools; rules call it internally.
+/// matches names of the default root only; one whose path is longer than 255 characters matches
+/// nothing. For tests and tools; rules call it internally.
 [[nodiscard]] KILN_API bool glob_match(StrView pattern, StrView name);
 
 } // namespace kiln::cook

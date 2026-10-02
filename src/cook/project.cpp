@@ -70,6 +70,7 @@ namespace detail {
 namespace {
 
 constexpr StrView kOverridesName = "kiln-cook flags";
+constexpr usize kMaxGlobLen      = 255; // as asset names
 
 bool is_absolute(StrView p) {
     return (!p.empty() && (p[0] == '/' || p[0] == '\\')) || (p.size >= 2 && p[1] == ':');
@@ -107,6 +108,7 @@ char const* check_glob(StrView pattern) {
         if (path.find(':') != StrView::kNpos) return "':' only after a root name";
     }
     if (path.empty()) return "empty path after the root";
+    if (path.size > kMaxGlobLen) return "longer than 255 characters";
     for (usize i = 0; i + 1 < path.size; ++i) {
         if (path[i] != '*' || path[i + 1] != '*') continue;
         bool const segStart = i == 0 || path[i - 1] == '/';
@@ -118,29 +120,50 @@ char const* check_glob(StrView pattern) {
     return nullptr;
 }
 
-bool glob_path(StrView p, StrView s) {
-    usize pi = 0, si = 0;
-    while (pi < p.size) {
-        if (pi + 1 < p.size && p[pi] == '*' && p[pi + 1] == '*') {
-            pi += 2;
-            if (pi < p.size && p[pi] == '/' && glob_path(p.substr(pi + 1), s.substr(si))) return true;
-            for (usize k = si; k <= s.size; ++k)
-                if (glob_path(p.substr(pi), s.substr(k))) return true;
-            return false;
+/// The positions of a glob that a match can be at: the states of its automaton.
+struct GlobStates {
+    u64 bits[(kMaxGlobLen + 64) / 64] = {};
+    void set(usize i) { bits[i / 64] |= u64(1) << (i % 64); }
+    bool has(usize i) const { return (bits[i / 64] >> (i % 64)) & 1; }
+};
+
+bool double_star_at(StrView p, usize i) { return i + 1 < p.size && p[i] == '*' && p[i + 1] == '*'; }
+
+/// Adds the states that `s` reaches without reading a character. These steps only go forward, so
+/// one pass in order finds them all.
+void glob_closure(StrView p, GlobStates& s) {
+    for (usize i = 0; i < p.size; ++i) {
+        if (!s.has(i)) continue;
+        if (double_star_at(p, i)) {
+            s.set(i + 2);
+            if (i + 2 < p.size && p[i + 2] == '/') s.set(i + 3); // "**/" matches no segment too
+        } else if (p[i] == '*') {
+            s.set(i + 1);
         }
-        if (p[pi] == '*') {
-            ++pi;
-            for (usize k = si;; ++k) {
-                if (glob_path(p.substr(pi), s.substr(k))) return true;
-                if (k == s.size || s[k] == '/') return false;
-            }
-        }
-        if (si >= s.size) return false;
-        if (p[pi] == '?' ? s[si] == '/' : p[pi] != s[si]) return false;
-        ++pi;
-        ++si;
     }
-    return si == s.size;
+}
+
+/// Runs the pattern as an automaton, all states at once: pattern x name steps, never backtracking.
+bool glob_path(StrView p, StrView s) {
+    if (p.size > kMaxGlobLen) return false;
+    GlobStates cur;
+    cur.set(0);
+    glob_closure(p, cur);
+    for (char const c : s) {
+        GlobStates next;
+        for (usize i = 0; i < p.size; ++i) {
+            if (!cur.has(i)) continue;
+            if (double_star_at(p, i))
+                next.set(i);
+            else if (p[i] == '*') {
+                if (c != '/') next.set(i);
+            } else if (p[i] == '?' ? c != '/' : p[i] == c)
+                next.set(i + 1);
+        }
+        glob_closure(p, next);
+        cur = next;
+    }
+    return cur.has(p.size);
 }
 
 Range push_strings(Project& p, TomlEntry const& e) {

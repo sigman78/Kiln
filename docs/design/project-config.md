@@ -120,9 +120,10 @@ So is an unknown table, a table below a preset, and `[[...]]` on anything but a 
 
 **Globs** match the full asset name (`root:path/file.ext#sub`), byte for byte, as names are
 compared. `*` matches within one path segment, `**` matches any number of segments, `?` matches one
-character. A pattern without `root:` matches the default root only. `#` is an ordinary character,
-so `"*.glb#*"` matches every embedded image of a glb in the folder. This gives embedded images the
-per-asset settings that sidecars cannot.
+character. A pattern without `root:` matches the default root only. A path longer than 255 characters
+(the asset name limit) is K3011. `#` is an ordinary character, so `"*.glb#*"` matches every
+embedded image of a glb in the folder. This gives embedded images the per-asset settings that
+sidecars cannot.
 
 **The first matching rule wins** (owner, 2026-10-01). Rules are tried in file order; the first
 one whose globs match the asset applies, its preset first, then its own keys, and no later rule

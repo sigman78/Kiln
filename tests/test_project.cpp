@@ -143,6 +143,20 @@ KILN_TEST(Project, Globs) {
     KILN_CHECK(glob_match("m:**", "m:a.png"));
     KILN_CHECK(!glob_match("m:**", "a.png"));
     KILN_CHECK(!glob_match("mm:**", "m:a.png"));
+    // No backtracking: this pattern took exponential time to fail.
+    char slow[64] = {}, name[64] = {};
+    for (int i = 0; i < 22; ++i)
+        format(slow + 2 * i, 3, "*a");
+    format(slow + 44, sizeof slow - 44, "c.png");
+    std::memset(name, 'a', 40);
+    format(name + 40, sizeof name - 40, "b.png");
+    KILN_CHECK(!glob_match(StrView(slow), StrView(name)));
+    name[40] = 'c';
+    KILN_CHECK(glob_match(StrView(slow), StrView(name)));
+    char longest[300] = {};
+    std::memset(longest, '?', 256);
+    KILN_CHECK(glob_match(StrView(longest, 255), StrView(longest, 255)));
+    KILN_CHECK(!glob_match(StrView(longest, 256), StrView(longest, 256))); // longer than any name
 }
 
 KILN_TEST(Project, LoadsTablesRootsAndProject) {
