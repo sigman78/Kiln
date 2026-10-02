@@ -13,6 +13,7 @@
 #include <cstring>
 #include <filesystem>
 #include <system_error>
+#include <thread>
 
 namespace kiln::test {
 
@@ -102,8 +103,17 @@ private:
         if (!KILN_CHECK_MSG(f != nullptr, "cannot write %s", tmp)) return false;
         bool const ok = std::fwrite(bytes.data, 1, bytes.size, f) == bytes.size;
         std::fclose(f);
+        // Windows: the rename fails while a store poller has `path` open; the reader closes it soon.
         std::error_code ec;
-        std::filesystem::rename(tmp, path, ec);
+        for (int attempt = 0; attempt < 200; ++attempt) {
+            std::filesystem::rename(tmp, path, ec);
+            if (!ec) break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        if (ec) {
+            std::error_code ignored;
+            std::filesystem::remove(tmp, ignored);
+        }
         return KILN_CHECK_MSG(ok && !ec, "cannot write %s", path);
     }
 
