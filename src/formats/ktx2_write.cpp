@@ -4,6 +4,8 @@
 
 #include "formats_internal.h"
 
+#include <algorithm>
+
 // The custom-allocator API is stable only within one zstd version; the vendored one is pinned.
 #define ZSTD_STATIC_LINKING_ONLY
 #include <zstd.h>
@@ -204,15 +206,8 @@ Result<Vec<u8>> write(WriteDesc const& desc, Allocator const* alloc, DiagSink co
     entries[entryCount++] = {StrView(kWriterKey), desc.writerTag};
     for (usize i = 0; i < desc.extraKeys.size; ++i)
         entries[entryCount++] = {desc.extraKeys[i].key, desc.extraKeys[i].value};
-    for (u32 i = 1; i < entryCount; ++i) { // insertion sort by key
-        Entry e = entries[i];
-        u32 j   = i;
-        while (j > 0 && compare(entries[j - 1].key, e.key) > 0) {
-            entries[j] = entries[j - 1];
-            --j;
-        }
-        entries[j] = e;
-    }
+    std::sort(entries, entries + entryCount,
+              [](Entry const& a, Entry const& b) { return compare(a.key, b.key) < 0; });
     if (desc.zstdLevel > u32(ZSTD_maxCLevel()))
         return invalid(diag, kDiagKtxSupercompression, "zstdLevel %llu is above %llu", desc.zstdLevel,
                        u32(ZSTD_maxCLevel()));

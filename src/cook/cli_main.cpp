@@ -21,6 +21,7 @@
 #include "kiln/io.h"
 #include "kiln/log.h"
 
+#include <algorithm>
 #include <cerrno>
 #include <chrono>
 #include <cstdio>
@@ -179,30 +180,10 @@ struct FileList {
     usize size() const { return offsets.size(); }
 };
 
-void sort_names(Vec<char>& names, Vec<usize>& offs) {
-    // insertion sort by strcmp (directory listings are small)
-    for (usize i = 1; i < offs.size(); ++i) {
-        usize key = offs[i];
-        usize j   = i;
-        while (j > 0 && std::strcmp(names.data() + offs[j - 1], names.data() + key) > 0) {
-            offs[j] = offs[j - 1];
-            --j;
-        }
-        offs[j] = key;
-    }
-}
-
 /// Adds the sources under `dir`, recursively; false when a directory could not be listed in full
 /// (the list is then partial).
 bool scan_dir(char const* dir, FileList& out) {
-    Vec<char> names{default_allocator(), Tag::General};
-    Vec<usize> offs{default_allocator(), Tag::General};
-    auto push = [&](char const* name) {
-        offs.push_back(names.size());
-        usize n        = std::strlen(name);
-        Span<char> dst = names.append_uninit(n + 1);
-        std::memcpy(dst.data, name, n + 1);
-    };
+    FileList names;
 #if defined(KILN_OS_WINDOWS)
     char pattern[1024];
     format(pattern, sizeof pattern, "%s/*", dir);
@@ -210,7 +191,8 @@ bool scan_dir(char const* dir, FileList& out) {
     HANDLE h = FindFirstFileA(pattern, &fd);
     if (h == INVALID_HANDLE_VALUE) return false;
     do {
-        if (std::strcmp(fd.cFileName, ".") != 0 && std::strcmp(fd.cFileName, "..") != 0) push(fd.cFileName);
+        if (std::strcmp(fd.cFileName, ".") != 0 && std::strcmp(fd.cFileName, "..") != 0)
+            names.add(fd.cFileName);
     } while (FindNextFileA(h, &fd));
     bool complete = GetLastError() == ERROR_NO_MORE_FILES;
     FindClose(h);
@@ -221,15 +203,17 @@ bool scan_dir(char const* dir, FileList& out) {
         errno           = 0;
         dirent* const e = readdir(d);
         if (!e) break;
-        if (std::strcmp(e->d_name, ".") != 0 && std::strcmp(e->d_name, "..") != 0) push(e->d_name);
+        if (std::strcmp(e->d_name, ".") != 0 && std::strcmp(e->d_name, "..") != 0) names.add(e->d_name);
     }
     bool complete = errno == 0;
     closedir(d);
 #endif
-    sort_names(names, offs);
-    for (usize i = 0; i < offs.size(); ++i) {
+    std::sort(names.offsets.begin(), names.offsets.end(), [&](usize a, usize b) {
+        return std::strcmp(names.pool.data() + a, names.pool.data() + b) < 0;
+    });
+    for (usize i = 0; i < names.size(); ++i) {
         char path[1024];
-        format(path, sizeof path, "%s/%s", dir, names.data() + offs[i]);
+        format(path, sizeof path, "%s/%s", dir, names.at(i));
         if (is_dir(path))
             complete &= scan_dir(path, out);
         else if (is_source_ext(extension(StrView(path))))

@@ -5,6 +5,7 @@
 #include "kiln/cook/image.h"
 #include "kiln/log.h"
 
+#include <algorithm>
 #include <cmath>
 
 #if defined(__clang__)
@@ -858,12 +859,8 @@ Status build_parts(Ctx& c, Vec<ImportPart>& out) {
         mine.clear();
         for (usize k = 0; k < c.lodCands.size(); ++k)
             if (candPart[k] == p) mine.push_back(u32(k));
-        for (usize a = 1; a < mine.size(); ++a) // insertion sort: small, stable
-            for (usize b = a; b > 0 && c.lodCands[mine[b - 1]].n > c.lodCands[mine[b]].n; --b) {
-                u32 const t = mine[b - 1];
-                mine[b - 1] = mine[b];
-                mine[b]     = t;
-            }
+        std::stable_sort(mine.begin(), mine.end(),
+                         [&](u32 a, u32 b) { return c.lodCands[a].n < c.lodCands[b].n; });
         u32 expect = 1;
         bool gap   = false;
         for (usize a = 0; a < mine.size(); ++a) {
