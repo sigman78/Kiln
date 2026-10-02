@@ -1503,6 +1503,41 @@ void pump_for(Rt& rt, int ms) {
     }
 }
 
+// A loaded asset whose entry leaves the manifest stays Ready with one K5022, until its entry is back.
+KILN_TEST(Runtime, StorePollerWarnsWhenAnEntryLeaves) {
+    ReloadStore store;
+    if (!store.init("entry_gone")) return;
+    Vec<u8> a(default_allocator(), Tag::Test), b(default_allocator(), Tag::Test);
+    if (!read_golden("ktx2/normal", ".ktx2", a) || !read_golden("ktx2/color_srgb", ".ktx2", b)) return;
+    KILN_REQUIRE(store.hand.put("a", AssetKind::Texture, a.span()));
+    KILN_REQUIRE(store.hand.put("b", AssetKind::Texture, b.span()));
+
+    Rt rt;
+    ContextDesc cd;
+    cd.storeDir  = store.dir;
+    cd.hotReload = {.watchStore = true, .pollMs = 20};
+    if (!rt.init({}, cd)) return;
+    TextureHandle const t = request_texture(rt.ctx, "a");
+    KILN_REQUIRE(rt.pump_until([&] { return state(rt.ctx, t) == State::Ready; }));
+    auto gone = [&] { return count_code(rt.diags, kDiagEntryRemoved); };
+
+    KILN_REQUIRE(store.hand.remove("a", AssetKind::Texture));
+    KILN_REQUIRE(rt.pump_until([&] { return gone() > 0; }));
+    KILN_CHECK_EQ(state(rt.ctx, t), State::Ready);
+    KILN_CHECK_EQ(version(rt.ctx, t), 1u);
+
+    KILN_REQUIRE(store.hand.remove("b", AssetKind::Texture)); // another rewrite: no second warning
+    pump_for(rt, 300);
+    KILN_CHECK_EQ(gone(), 1u);
+
+    KILN_REQUIRE(store.hand.put("a", AssetKind::Texture, a.span())); // back, same artifact: no reload
+    pump_for(rt, 300);
+    KILN_REQUIRE(store.hand.remove("a", AssetKind::Texture));
+    KILN_CHECK(rt.pump_until([&] { return gone() == 2; }));
+    KILN_CHECK_EQ(version(rt.ctx, t), 1u);
+    release(rt.ctx, t);
+}
+
 // After a failed reload, a change to another asset's entry does not reload this one again
 // (open-questions R13); a new entry for it does.
 KILN_TEST(Runtime, StorePollerSkipsFailedKey) {

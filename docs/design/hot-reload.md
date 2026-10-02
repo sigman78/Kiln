@@ -52,7 +52,8 @@ store (K3009).
   backend opens files with `FILE_SHARE_DELETE` on Windows, and the store writer renames with POSIX
   semantics (NTFS; `MoveFileEx` elsewhere), so a rewrite can replace a file the loader is reading.
 - The poller stats `manifest.dir`, sleeps `pollMs` between rounds, reads and validates a changed
-  manifest, and hands it to `pump()` under a mutex; the pump thread swaps it in and reloads. It is
+  manifest, and hands it to `pump()` under a mutex; the pump thread swaps it in and reloads. A Ready
+  asset whose entry left the manifest keeps its version and gets one K5022 warning. It is
   joined by `destroy()`. Without the poller, a reload reads the manifest again when it starts, so
   `request_reload` sees a manifest rewritten meanwhile.
 

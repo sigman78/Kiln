@@ -420,7 +420,8 @@ enum RuntimeDiagCode : u32 {
     kDiagArrayDeclaration =
         5020, ///< request_texture_array(): a bad declaration, or its name is used by another asset or list
     kDiagArrayLayerMismatch =
-        5021, ///< an array layer is not 2D or differs from layer 0 (format, size, levels)
+        5021,                 ///< an array layer is not 2D or differs from layer 0 (format, size, levels)
+    kDiagEntryRemoved = 5022, ///< a loaded asset's entry left the manifest; it stays loaded (Warning)
 };
 
 } // namespace kiln

@@ -8,6 +8,8 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
 ## [Unreleased]
 
 ### Added
+- **K5022** (`kDiagEntryRemoved`): the store poller warns once when a Ready asset's entry (or an array layer's)
+  leaves the manifest, as when kiln-cook drops a unit whose source is gone. The asset stays Ready.
 - **`post_reload(ctx, kind, name)`**: `request_reload()` by name from any thread; the next `pump()`
   reloads the asset and every texture array that has it as a layer. The cook provider's source poller
   uses it, so `ProviderDesc::watchSources` reloads edits without the context's store poller, and it now

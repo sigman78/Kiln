@@ -52,6 +52,13 @@ public:
         it->bytes = bytes.size;
         return write_manifest();
     }
+    /// The entry (`name`, `kind`) leaves the manifest; its artifact stays, as after a kiln-cook drop.
+    bool remove(StrView name, AssetKind kind) {
+        Item* it = find(name, kind);
+        if (!KILN_CHECK(it != nullptr)) return false;
+        *it = items_[--count_];
+        return write_manifest();
+    }
     /// put() with the bytes of the file `path`.
     bool put_file(StrView name, AssetKind kind, char const* path) {
         Vec<u8> bytes(default_allocator(), Tag::Test);

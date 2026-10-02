@@ -195,6 +195,7 @@ struct Slot {
     /// The last load came from the provider without an artifact (memory mode, or a failed cook): the
     /// provider reports its changes (post_reload), so manifest changes leave it alone.
     bool providerOwned = false;
+    bool goneWarned = false; ///< K5022 was reported for the manifest in use; cleared when the entry is back
 
     // --- metadata (docs/design/hot-reload.md) ----------------------------------------
     // Queries answer from `cur` once Ready. The meta stage (worker) writes only `next`;

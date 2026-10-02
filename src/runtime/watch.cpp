@@ -69,8 +69,38 @@ void poll_manifest(Context* ctx, Watch& w) {
     w.hasPending  = true;
 }
 
+/// The name of `s` (or of one of its layers) whose loaded entry is not in the manifest in use, or
+/// empty. Loads the provider answered without an artifact have no entry to lose.
+StrView entry_gone(Context const* ctx, Slot const& s) {
+    ManifestEntry e;
+    if (!s.array) {
+        bool const gone = s.keyValid && !s.providerOwned && !ctx->manifest.find(s.kind, path_of(s), &e);
+        return gone ? path_of(s) : StrView();
+    }
+    for (u32 i = 0; i < s.array->count; ++i) {
+        ArrayLayer const& l = s.array->layers[i];
+        StrView const name  = s.array->name(l);
+        if (l.keyValid && !l.providerOwned && !ctx->manifest.find(AssetKind::Texture, name, &e)) return name;
+    }
+    return {};
+}
+
+/// A Ready asset whose entry left the manifest (kiln-cook dropped it: its source is gone) keeps its
+/// data: one warning until the entry is back.
+void warn_if_gone(Context* ctx, Slot& s) {
+    StrView const gone = s.state == State::Ready && ctx->manifestPresent ? entry_gone(ctx, s) : StrView();
+    if (gone.empty() || s.goneWarned) {
+        s.goneWarned = !gone.empty();
+        return;
+    }
+    s.goneWarned = true;
+    (void)diagf(&ctx->diag, kOk, kDiagEntryRemoved, Severity::Warning, path_of(s), "reload",
+                "'%.*s' left the store's manifest (was its source removed?); the loaded version stays",
+                KILN_SV(gone));
+}
+
 /// A new manifest is in use: reload each asset whose entry names another artifact than the one it
-/// loaded or tried. An asset that left the manifest stays as it is.
+/// loaded or tried. An asset that left the manifest stays as it is (K5022).
 void manifest_changed(Context* ctx) {
     for (u32 i = 0; i < ctx->maxAssets; ++i) {
         Slot& s = ctx->slots[i];
@@ -80,6 +110,8 @@ void manifest_changed(Context* ctx) {
             s.manifestCheck = true;
         else if (manifest_names_other(ctx, s))
             reload_slot(ctx, s);
+        else
+            warn_if_gone(ctx, s);
     }
 }
 
