@@ -260,6 +260,7 @@ Status parse_file(Project& p, DiagSink const* diag) {
     // Presets first: rules name them wherever they are in the file.
     for (u32 t = 1; t < p.doc.tables.size(); ++t) {
         StrView const name = p.doc.tables[t].name;
+        if (p.doc.tables[t].array) continue; // rejected below
         if (StrView const n = preset_name(name, "texture.preset"); !n.empty()) {
             Preset pr{n, {}};
             KILN_TRY(collect_keys<TextureCookSettings>(p, p.doc, t, &pr.keys, diag, p.file));
@@ -273,6 +274,10 @@ Status parse_file(Project& p, DiagSink const* diag) {
     for (u32 t = 1; t < p.doc.tables.size(); ++t) {
         TomlTable const& table = p.doc.tables[t];
         StrView const name     = table.name;
+        bool const rule        = name == "texture.rule" || name == "mesh.rule";
+        if (table.array != rule)
+            return table_error(p, table, "only rules are arrays of tables: [[texture.rule]], [[mesh.rule]]",
+                               diag);
         if (!preset_name(name, "texture.preset").empty() || !preset_name(name, "mesh.preset").empty())
             continue;
         if (name == "roots") {
@@ -283,9 +288,9 @@ Status parse_file(Project& p, DiagSink const* diag) {
             KILN_TRY(collect_keys<TextureCookSettings>(p, p.doc, t, &p.tex.defaults, diag, p.file));
         } else if (name == "mesh") {
             KILN_TRY(collect_keys<MeshCookSettings>(p, p.doc, t, &p.mesh.defaults, diag, p.file));
-        } else if (name == "texture.rule" && table.array) {
+        } else if (name == "texture.rule") {
             KILN_TRY(parse_rule<TextureCookSettings>(p, p.tex, t, diag));
-        } else if (name == "mesh.rule" && table.array) {
+        } else if (name == "mesh.rule") {
             KILN_TRY(parse_rule<MeshCookSettings>(p, p.mesh, t, diag));
         } else if (StrView const u = child_of(name, "texture.usage"); !u.empty()) {
             TextureUsage usage = TextureUsage::Auto;
@@ -313,9 +318,10 @@ Status parse_overrides(Project& p, DiagSink const* diag) {
         if (e.table == 0) return KeyError{diag, kOverridesName}(e, "overrides belong in [texture] or [mesh]");
     for (u32 t = 1; t < p.over.tables.size(); ++t) {
         StrView const name = p.over.tables[t].name;
-        if (name == "texture")
+        bool const array   = p.over.tables[t].array;
+        if (name == "texture" && !array)
             KILN_TRY(collect_keys<TextureCookSettings>(p, p.over, t, &p.tex.overrides, diag, kOverridesName));
-        else if (name == "mesh")
+        else if (name == "mesh" && !array)
             KILN_TRY(collect_keys<MeshCookSettings>(p, p.over, t, &p.mesh.overrides, diag, kOverridesName));
         else
             return diagf(diag, make_status(Code::InvalidArgument), kDiagSidecarKey, Severity::Error,

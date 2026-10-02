@@ -116,6 +116,7 @@ so this is a CHANGELOG break.
 
 Keys are the sidecar keys, so one key means the same thing in a sidecar, a preset, a rule and
 the defaults. An unknown key, preset, usage or profile name, or a rule without `match`, is K3006.
+So is an unknown table, a table below a preset, and `[[...]]` on anything but a rule.
 
 **Globs** match the full asset name (`root:path/file.ext#sub`), byte for byte, as names are
 compared. `*` matches within one path segment, `**` matches any number of segments, `?` matches one

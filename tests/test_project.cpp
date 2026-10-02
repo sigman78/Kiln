@@ -290,6 +290,12 @@ KILN_TEST(Project, UsageSections) {
     KILN_CHECK_EQ(bad3.diag.code, u32(kDiagSidecarKey));
 }
 
+KILN_TEST(Project, OverridesAreTables) {
+    Loaded l;
+    KILN_CHECK(l.load("project_over_array", "", "[[texture]]\nmaxSize = 4\n").failed());
+    KILN_CHECK_EQ(l.diag.code, u32(kDiagSidecarKey));
+}
+
 KILN_TEST(Project, OverridesWithoutAFile) {
     DiagLast d;
     DiagSink const sink = d.sink();
@@ -332,6 +338,10 @@ KILN_TEST(Project, ErrorsNameFileAndLine) {
         {"[[texture.rule]]\nmatch = [\"**\"]\ntargets = [\"mobile\"]", kDiagSidecarKey,    3},
         {"[texture.preset]\nx = 1",                                    kDiagSidecarKey,    2},
         {"[texture.preset.ui.typo]\nnonsense = true",                  kDiagSidecarKey,    1}, // not a preset
+        {"[[texture]]\nmaxSize = 4\n[[texture]]\ngenMips = false",     kDiagSidecarKey,    1},
+        {"[[texture.preset.ui]]\nmaxSize = 4",                         kDiagSidecarKey,    1},
+        {"[[project]]\nstore = \"x\"",                                 kDiagSidecarKey,    1},
+        {"[texture.rule]\nmatch = [\"**\"]",                           kDiagSidecarKey,    1},
         {"[target.lowend]",                                            kDiagSidecarKey,    1}, // reserved
         {"[roots]\nBad = \"x\"",                                       kDiagSidecarKey,    2},
         {"[roots]\nm = 1",                                             kDiagSidecarKey,    2},
