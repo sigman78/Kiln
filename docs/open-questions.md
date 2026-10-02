@@ -126,6 +126,7 @@ Every item that a design note reserves for later. Nothing here is built in v0.5.
 | `try`/`catch` boundary compiled out under `KILN_NO_EXCEPTIONS` | error-model | hardening | v1.0 |
 | `KILN_API` export/import macro (empty now; CMake wires it if a shared build is added) | core.h | shared library build | unscheduled |
 | `ThreadPoolDesc::priority` on macOS and other POSIX (applied on Windows and Linux) | threading-and-io | worker priority | when a mac preset runs in CI |
+| Full TOML library behind `TomlDoc` (reviewed 2026-10-02: tomlc17 is the candidate; toml++ is too heavy, toml11 throws). The own subset parser stays until then | project-config §2 | inline tables, dotted keys, multi-line strings, dates | if users ask for them |
 | Diagnostic ranges K6000-9999 | error-model | new areas | as needed |
 | `Code` values (append only) | error-model | new failure kinds | as needed |
 | `EXT_meshopt_compression` decode at buffer-view resolution | dependencies | compressed glTF input | unscheduled |
