@@ -199,8 +199,7 @@ void handle_event(Scene& s, Event const& e) {
 
 /// Rewrites this frame slot's set of every material whose stamp moved since the slot was written.
 void update_sets(Scene& s, u32 slot) {
-    if (s.environment.written[slot] != s.environment.stamp) ++s.descriptorWrites;
-    s.environment.update(s.device, s.va, s.ctx, slot);
+    if (s.environment.update(s.device, s.va, s.ctx, slot)) ++s.descriptorWrites;
     for (u32 m = 0; m < s.materialCount; ++m) {
         Material& mat = s.materials[m];
         if (!mat.sets[slot] || mat.written[slot] == mat.stamp) continue;
@@ -466,7 +465,7 @@ int main(int argc, char** argv) {
         u->tonemap[0]   = std::exp2(camera.exposure);
         s.environment.bind(s.ren, cmd, slot);
         if (s.environment.present[slot])
-            vkx::draw_background(s.ren, cmd, ex::view_rays(view.eye, Vec3{}, kFovY, aspect), 0);
+            vkx::draw_background(s.ren, cmd, ex::view_rays(view.eye, Vec3{}, kFovY, aspect));
         draw_model(s, cmd, slot);
         vkx::renderer_end(s.ren, last && o.dump != nullptr);
         if (last) break;

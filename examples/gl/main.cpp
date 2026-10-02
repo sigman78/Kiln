@@ -23,7 +23,7 @@ constexpr u32 kMaxTextures = 32;
 
 // Texture units: one per material slot the shader reads, then the sky.
 constexpr GLuint kUnitBaseColor = 0, kUnitNormal = 1, kUnitMetalRough = 2, kUnitOcclusion = 3,
-                 kUnitEmissive = 4, kUnitSky = 5;
+                 kUnitEmissive = 4, kUnitSky = kEnvironmentUnit;
 
 constexpr char const* kMeshFs = R"(
 in vec3 vWorld;
@@ -212,13 +212,18 @@ int main(int argc, char** argv) {
     GLuint const meshProgram = build_program(kMeshVs, "", kMeshFs);
     Background background;
     background.create(false);
-    GLuint sampler = 0;
-    glCreateSamplers(1, &sampler);
-    glSamplerParameteri(sampler, GL_TEXTURE_MIN_FILTER, GLint(GL_LINEAR_MIPMAP_LINEAR));
-    glSamplerParameteri(sampler, GL_TEXTURE_MAG_FILTER, GLint(GL_LINEAR));
-    glSamplerParameterf(sampler, GL_TEXTURE_MAX_ANISOTROPY, 8.0f);
+    GLuint samplers[2] = {}; // [0] materials: repeat; [1] the environment: clamp
+    glCreateSamplers(2, samplers);
+    for (GLuint sm : samplers) {
+        glSamplerParameteri(sm, GL_TEXTURE_MIN_FILTER, GLint(GL_LINEAR_MIPMAP_LINEAR));
+        glSamplerParameteri(sm, GL_TEXTURE_MAG_FILTER, GLint(GL_LINEAR));
+        glSamplerParameterf(sm, GL_TEXTURE_MAX_ANISOTROPY, 8.0f);
+    }
+    for (GLenum wrap : {GL_TEXTURE_WRAP_S, GL_TEXTURE_WRAP_T, GL_TEXTURE_WRAP_R})
+        glSamplerParameteri(samplers[1], wrap, GLint(GL_CLAMP_TO_EDGE));
     for (GLuint unit = kUnitBaseColor; unit <= kUnitEmissive; ++unit)
-        glBindSampler(unit, sampler);
+        glBindSampler(unit, samplers[0]);
+    glBindSampler(kUnitSky, samplers[1]);
 
     // 5. The frame loop.
     Target target;
@@ -237,7 +242,10 @@ int main(int argc, char** argv) {
         if (!begin_frame(window, camera, target, &f)) continue;
         GlTexture const sky = s.environment ? gl_texture(s.gla, gpu_object(ctx, s.environment)) : GlTexture{};
         s.environmentBit    = sky.target == GL_TEXTURE_CUBE_MAP ? 1u << kUnitSky : 0u;
-        background.draw(f.rays, camera.exposure, s.environmentBit ? sky.name : 0);
+        if (s.environmentBit) {
+            glBindTextureUnit(kUnitSky, sky.name); // the background and mesh lighting both sample it
+            background.draw(f.rays, camera.exposure);
+        }
         glEnable(GL_DEPTH_TEST);
         glDepthFunc(GL_LEQUAL);
         mesh::MeshView const* v = mesh_view(ctx, s.model);
@@ -265,7 +273,7 @@ int main(int argc, char** argv) {
     ex::finish_trace();
     release_geometry(s.geometry);
     background.release();
-    glDeleteSamplers(1, &sampler);
+    glDeleteSamplers(2, samplers);
     glDeleteProgram(meshProgram);
     target.release();
     gl_adapter_destroy(s.gla);

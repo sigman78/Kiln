@@ -1,5 +1,6 @@
 #version 460
-// examples/vk/shaders/basic/sky.frag — the scene cube at set 2, binding 0, along the camera ray through this pixel. The target is sRGB: the output stays linear.
+// examples/vk/shaders/basic/sky.frag — the scene cube at set 2, binding 0, along the camera ray
+// through this pixel. The target is sRGB: the output stays linear.
 
 layout(set = 0, binding = 0) uniform Frame {
     mat4 viewProj;

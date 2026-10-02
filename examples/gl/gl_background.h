@@ -6,14 +6,17 @@
 
 namespace kiln::glx {
 
+/// Without bindless, the background samples the cube on this unit. The host binds it with a sampler.
+inline constexpr GLuint kEnvironmentUnit = 5;
+
 struct Background {
-    GLuint program = 0, vao = 0, sampler = 0;
+    GLuint program = 0, vao = 0;
     bool bindless = false;
 
     void create(bool useBindless);
-    /// Before meshes: binding is a cube texture name (0 = absent), or a kiln slot (kInvalid = absent).
-    /// Leaves the cube bound for mesh lighting; mesh drawing sets its own depth state.
-    void draw(ex::ViewRays const& rays, f32 exposure, u32 binding) const;
+    /// Draws the cube behind the meshes with no depth test or write. The caller checks that the cube is
+    /// present. Without bindless it is bound to kEnvironmentUnit; with bindless `slot` is its kiln slot.
+    void draw(ex::ViewRays const& rays, f32 exposure, u32 slot = kInvalid) const;
     void release();
 };
 

@@ -908,7 +908,7 @@ int main(int argc, char** argv) {
         if (skyItem != kInvalid) {
             // The slot serves the cube placeholder until the real cube arrives.
             u32 const environment = gpu_object(app.ctx, scene.textures[skyItem].handle).slot;
-            vkx::draw_background(app.ren, cmd, rays, environment);
+            if (environment != kInvalid) vkx::draw_background(app.ren, cmd, rays, environment);
         }
         draw_scene(scene, cmd);
         vkx::renderer_end(app.ren, last && o.dump != nullptr);

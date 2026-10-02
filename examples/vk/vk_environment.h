@@ -51,9 +51,9 @@ struct Environment {
         VKX_CHECK(vkCreateSampler(device, &sci, nullptr, &sampler));
     }
 
-    /// After renderer_wait_frame(): only the completed frame slot may be rewritten.
-    void update(VkDevice device, VkAdapter* adapter, Context* ctx, u32 slot) {
-        if (written[slot] == stamp) return;
+    /// After renderer_wait_frame(): only the completed frame slot may be rewritten. True if it was.
+    bool update(VkDevice device, VkAdapter* adapter, Context* ctx, u32 slot) {
+        if (written[slot] == stamp) return false;
         TextureView view = texture ? adapter_texture(adapter, gpu_object(ctx, texture)) : TextureView{};
         present[slot]    = view.view && view.shape == TextureShape::Cube;
         if (!present[slot])
@@ -68,6 +68,7 @@ struct Environment {
         write.pImageInfo      = &image;
         vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
         written[slot] = stamp;
+        return true;
     }
 
     void bind(Renderer* renderer, VkCommandBuffer cmd, u32 slot) const {

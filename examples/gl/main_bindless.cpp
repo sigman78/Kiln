@@ -273,7 +273,7 @@ int main(int argc, char** argv) {
 
         Frame f;
         if (!begin_frame(window, camera, target, &f)) continue;
-        background.draw(f.rays, camera.exposure, s.environmentSlot);
+        if (s.environmentSlot != kInvalid) background.draw(f.rays, camera.exposure, s.environmentSlot);
         glEnable(GL_DEPTH_TEST);
         glDepthFunc(GL_LEQUAL);
         mesh::MeshView const* v = mesh_view(ctx, s.model);

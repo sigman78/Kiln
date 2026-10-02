@@ -291,9 +291,9 @@ struct Background {
                             KILN_NGA_SHADER_DIR "/skyFragment.spv", "skyFragment", color);
     }
 
+    /// The caller checks that the environment is present.
     void draw(gpu::CommandBuffer* cmd, Bump& frame, ex::ViewRays const& rays, f32 exposure,
               u32 environment) const {
-        if (environment == kNoTexture) return;
         void* rootGpu = nullptr;
         if (SkyRoot* sr = frame.alloc<SkyRoot>(&rootGpu)) {
             *sr = SkyRoot{
@@ -543,7 +543,9 @@ int main(int argc, char** argv) {
         Mat4 const viewProj   = ex::perspective_vk(kFovY, aspect, view.nearZ, view.farZ) * view.view;
         f32 const exposure    = std::exp2(camera.exposure);
         u32 const environment = descriptor_of(s.na, s.environmentSlot);
-        background.draw(cmd, frame, ex::view_rays(view.eye, Vec3{}, kFovY, aspect), exposure, environment);
+        if (environment != kNoTexture)
+            background.draw(cmd, frame, ex::view_rays(view.eye, Vec3{}, kFovY, aspect), exposure,
+                            environment);
         gpu::bind_pso(cmd, meshPso);
         gpu::set_depth_stencil(cmd, {.depth_test = true, .depth_write = true});
         draw_model(s, cmd, frame, viewProj, view.eye, exposure, environment);

@@ -14,7 +14,7 @@ void main() {
 
 constexpr char const* kSkyFs = R"(
 in vec2 vNdc;
-layout(binding = 5) uniform samplerCube uSky;
+layout(binding = 5) uniform samplerCube uSky; // kEnvironmentUnit
 layout(location = 0) uniform vec3 uForward;
 layout(location = 1) uniform vec3 uRight;
 layout(location = 2) uniform vec3 uUp;
@@ -48,29 +48,15 @@ void Background::create(bool useBindless) {
     program  = build_program(kSkyVs, bindless ? "#extension GL_ARB_bindless_texture : require\n" : "",
                             bindless ? kBindlessSkyFs : kSkyFs);
     glCreateVertexArrays(1, &vao);
-    if (!bindless) {
-        glCreateSamplers(1, &sampler);
-        glSamplerParameteri(sampler, GL_TEXTURE_MIN_FILTER, GLint(GL_LINEAR_MIPMAP_LINEAR));
-        glSamplerParameteri(sampler, GL_TEXTURE_MAG_FILTER, GLint(GL_LINEAR));
-        glSamplerParameterf(sampler, GL_TEXTURE_MAX_ANISOTROPY, 8.0f);
-        for (GLenum wrap : {GL_TEXTURE_WRAP_S, GL_TEXTURE_WRAP_T, GL_TEXTURE_WRAP_R})
-            glSamplerParameteri(sampler, wrap, GLint(GL_CLAMP_TO_EDGE));
-    }
 }
 
-void Background::draw(ex::ViewRays const& rays, f32 exposure, u32 binding) const {
-    if (bindless ? binding == kInvalid : binding == 0) return;
+void Background::draw(ex::ViewRays const& rays, f32 exposure, u32 slot) const {
     glUseProgram(program);
     glUniform3f(0, rays.forward.x, rays.forward.y, rays.forward.z);
     glUniform3f(1, rays.right.x, rays.right.y, rays.right.z);
     glUniform3f(2, rays.up.x, rays.up.y, rays.up.z);
     glUniform1f(4, exposure);
-    if (bindless) {
-        glUniform1ui(5, binding);
-    } else {
-        glBindTextureUnit(5, binding);
-        glBindSampler(5, sampler);
-    }
+    if (bindless) glUniform1ui(5, slot);
     glDisable(GL_DEPTH_TEST);
     glDepthMask(GL_FALSE);
     glBindVertexArray(vao);
@@ -80,9 +66,8 @@ void Background::draw(ex::ViewRays const& rays, f32 exposure, u32 binding) const
 
 void Background::release() {
     glDeleteVertexArrays(1, &vao);
-    glDeleteSamplers(1, &sampler);
     glDeleteProgram(program);
-    program = vao = sampler = 0;
+    program = vao = 0;
 }
 
 } // namespace kiln::glx

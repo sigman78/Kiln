@@ -40,7 +40,8 @@ measures.
 
 The scene owns the environment texture, which is used by both mesh lighting and the background.
 Requests, readiness checks, and kiln events stay in each example. Backend background helpers group
-shader/pipeline creation, the fullscreen draw, and teardown. GL shares `gl_background.*` between its
+shader/pipeline creation, the fullscreen draw, and teardown. They only draw: the scene binds the
+environment and its sampler for both passes, and skips the draw while the cube is absent. GL shares `gl_background.*` between its
 two binding models; Sokol and NGA keep their small `Background` helpers next to the scene code.
 All use `ex::view_rays` from `common/example_math.h`; shader packing and clip-space Y conventions
 remain backend-specific.

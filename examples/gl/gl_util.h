@@ -24,8 +24,8 @@ using ex::parse_options;
 [[nodiscard]] GLFWwindow* open_window(GlOptions const& o, char const* title);
 
 /// Shader code both examples use. kMeshVs: attributes 0 position, 1 normal, 2 tangent, 3 UV;
-/// uniforms 0 model, 1 view-projection. kCommonFs: tonemap,
-/// sRGB, cube_dir, perturb (normal map) and shade (the lighting).
+/// uniforms 0 model, 1 view-projection. kCommonFs: tonemap, sRGB, cube_dir, perturb (normal map)
+/// and shade (the lighting).
 extern char const* const kMeshVs;
 extern char const* const kCommonFs;
 /// The fragment shader is `#version 460 core`, then `fsHeader`, kCommonFs, `fs`. 0 on failure.

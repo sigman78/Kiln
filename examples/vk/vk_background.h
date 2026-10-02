@@ -17,9 +17,9 @@ struct SkyPush {
 };
 static_assert(sizeof(SkyPush) <= sizeof(DrawPush)); // shares the pipeline layout's push range
 
-/// The caller binds the environment set in non-bindless examples; cubeSlot is then unused.
-inline void draw_background(Renderer* r, VkCommandBuffer cmd, ex::ViewRays const& rays, u32 cubeSlot) {
-    if (cubeSlot == kInvalid) return;
+/// The caller checks that the cube is present. Bindless shaders read `cubeSlot`; shaders that
+/// sample the scene set (vk_environment.h) ignore it.
+inline void draw_background(Renderer* r, VkCommandBuffer cmd, ex::ViewRays const& rays, u32 cubeSlot = 0) {
     SkyPush const push{
         .forward  = {rays.forward.x, rays.forward.y, rays.forward.z, 0},
         .right    = {rays.right.x, rays.right.y, rays.right.z, 0},
