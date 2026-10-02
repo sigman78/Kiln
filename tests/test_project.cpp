@@ -6,9 +6,11 @@
 #include "kiln/cook/project.h"
 #include "kiln/cook/settings.h"
 
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <thread>
 
 using namespace kiln;
 using namespace kiln::cook;
@@ -452,4 +454,45 @@ KILN_TEST(ProjectCli, RootsStoreAndFlags) {
     key_in_map(mapB, "albedo.png", keyB, sizeof keyB);
     KILN_CHECK(keyA[0] != '\0');
     KILN_CHECK(StrView(keyA) == StrView(keyB));
+}
+
+namespace {
+
+/// <sample dir>/<name> with src/albedo.png and a kiln.toml holding `text`.
+bool project_dir(char const* name, char const* text, char* dir, usize dirCap, char* file, usize fileCap) {
+    char src[1100], from[1100], to[1100];
+    fresh_dir(name, dir, dirCap);
+    format(src, sizeof src, "%s/src", dir);
+    std::error_code ec;
+    std::filesystem::create_directories(src, ec);
+    format(from, sizeof from, "%s/../gltf/generated/external_uri_albedo.png", test::corpus_dir());
+    format(to, sizeof to, "%s/albedo.png", src);
+    std::filesystem::copy_file(from, to, ec);
+    format(file, fileCap, "%s/kiln.toml", dir);
+    return !ec && write_text(file, text);
+}
+
+/// Runs `kiln-cook --project <file> --watch` for 3 s and writes `edit` to the file after 1 s.
+int watch_and_edit(char const* file, char const* edit) {
+    int code = -1;
+    std::thread cook(
+        [&] { code = run_cli({"kiln-cook", "--project", file, "-q", "--watch", "--timeout", "3"}); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+    bool const written = write_text(file, edit);
+    cook.join();
+    return written ? code : -1;
+}
+
+} // namespace
+
+// A reload frees the old project: the store and roots it gave must outlive it.
+KILN_TEST(ProjectCli, WatchReloadKeepsRootsAndStore) {
+    char dir[1024], file[1100];
+    KILN_REQUIRE(
+        project_dir("project_watch_reload",
+                    "[roots]\ndefault = \"src\"\n[project]\nstore = \"store\"\n[texture]\nmaxSize = 64\n",
+                    dir, sizeof dir, file, sizeof file));
+    KILN_CHECK_EQ(watch_and_edit(file, "[roots]\ndefault = \"src\"\n[project]\nstore = \"store\"\n"
+                                       "[texture]\nmaxSize = 128\n"),
+                  0);
 }

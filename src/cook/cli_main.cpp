@@ -84,6 +84,10 @@ struct Options {
     char const* projectFile     = nullptr;   ///< the project file in use, if any
     char const* explain         = nullptr;   ///< --explain <asset>
     char projectOverrides[1024] = {};        ///< the flags as layer 3d (load_cli_project)
+    // Copies of what kiln.toml gave: --watch frees the project when it reloads it.
+    char projectStore[1024]       = {};
+    char projectTarget[64]        = {};
+    char projectDefaultRoot[1024] = {};
     MeshCookSettings mesh;
     TextureCookSettings tex;
     TargetProfile target;
@@ -732,6 +736,16 @@ u64 cli_host_digest(Ctx const& c) {
     return host_digest(host, c.policyVersion);
 }
 
+/// True if `a` and `b` give the same roots, store and target: what a watch keeps from its start.
+bool same_layout(Project const* a, Project const* b) {
+    Span<Root const> const ra = project_roots(a), rb = project_roots(b);
+    if (ra.size != rb.size || project_store(a) != project_store(b) || project_target(a) != project_target(b))
+        return false;
+    for (usize i = 0; i < ra.size; ++i)
+        if (ra[i].name != rb[i].name || ra[i].dir != rb[i].dir) return false;
+    return true;
+}
+
 /// --watch: loads the project file again when it changed. The next scan then checks every unit
 /// against the new settings; an edit with errors keeps the previous project.
 void reload_project(Ctx& c) {
@@ -750,6 +764,8 @@ void reload_project(Ctx& c) {
                      c.opt.projectFile);
         return;
     }
+    if (!same_layout(c.project->p, *loaded))
+        std::fprintf(stderr, "kiln-cook: watch: [roots] and [project] changes apply on the next run\n");
     free_project(c.project->p);
     c.project->p = *loaded;
     c.hostDigest = cli_host_digest(c);
@@ -851,12 +867,21 @@ bool load_cli_project(Options& o, bool noTangents, bool noOptimize, bool noMips,
         return false;
     }
     out->p = *loaded;
-    if (!o.store) o.store = project_store(out->p).empty() ? "cooked" : project_store(out->p).data;
-    if (!o.targetName && !project_target(out->p).empty()) o.targetName = project_target(out->p).data;
+    if (!o.store) {
+        StrView const store = project_store(out->p);
+        format(o.projectStore, sizeof o.projectStore, "%.*s",
+               KILN_SV(store.empty() ? StrView("cooked") : store));
+        o.store = o.projectStore;
+    }
+    if (!o.targetName && !project_target(out->p).empty()) {
+        format(o.projectTarget, sizeof o.projectTarget, "%.*s", KILN_SV(project_target(out->p)));
+        o.targetName = o.projectTarget;
+    }
     if (!o.defaultRoot && o.roots.empty()) {
         for (Root const& r : project_roots(out->p)) {
             if (r.name.empty()) {
-                o.defaultRoot = r.dir.data;
+                format(o.projectDefaultRoot, sizeof o.projectDefaultRoot, "%.*s", KILN_SV(r.dir));
+                o.defaultRoot = o.projectDefaultRoot;
                 continue;
             }
             NamedRoot m{};

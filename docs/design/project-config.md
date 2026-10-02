@@ -179,7 +179,7 @@ Each beats the layers above it:
   the file again. If the new file has an error, it logs it and keeps the previous project. If not,
   it swaps the project in, and every unit checked this session is checked again under the new
   digest. A unit whose keys changed cooks again, and the manifest is rewritten once. `kiln-cook
-  --watch` does the same.
+  --watch` does the same for settings; a change to `[roots]` or `[project]` applies on its next run.
 
 ### 7. `kiln-cook --explain <asset>`
 
