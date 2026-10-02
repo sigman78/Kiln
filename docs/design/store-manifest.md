@@ -267,14 +267,21 @@ Size: about 1.1 MB for 10 000 entries (72 bytes per entry, plus names).
 
 ## Input records (`manifest.in`)
 
-The cook's own file, never read by the runtime: magic `KMIN`, major 0, minor 4, a record count, a
-root count, the roots (name, directory), then each record as its profile name and its body (unit
+The cook's own file, never read by the runtime: magic `KMIN`, major 0, minor 5, a record count, a
+root count, the roots (name, directory), the last writer of each profile (minor 5: a count, then the
+profile name, the writer kind (`kiln-cook` or a cook provider) and five u64 digests of its settings:
+target, host defaults, name rules, policy version, project file), then each record as its profile name and its body (unit
 name, kind, the `kCookerVersion` that wrote it in one byte (0 in files from before 2026-10-01, whose
 readers skip the byte), host digest, the inputs with role, presence, name, size, time and content hash, the
 outputs with kind, glTF slot, the Mask material's alpha cutoff (f32 bits; minor 4), name and build
 key, zero for an output that failed), then
 an XXH3-128 of everything before it. Records are sorted by profile name, then unit name. A file
-that does not decode is dropped with an info log.
+that does not decode is dropped with an info log; minor 4 still reads, without writers.
+
+When a record cooks again because its keys changed, and the profile's last writer was the other kind
+of program with other settings, the writer warns once per session and names the settings that differ
+(open-questions R19): `kiln-cook` and a provider that disagree undo each other's cooks. A provider's
+quality cap is left out, since `kiln-cook` upgrading capped entries is intended.
 
 ## Diagnostics
 

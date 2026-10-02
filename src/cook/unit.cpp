@@ -286,6 +286,26 @@ u64 host_digest(UnitDesc const& d, u32 policyVersion) {
     return h.digest();
 }
 
+HostParts host_parts(UnitDesc const& d, u32 policyVersion) {
+    HostParts p;
+    p.target = hash_target(*d.target);
+    Xxh64State defaults;
+    defaults.update_value(hash_settings(*d.meshDefaults));
+    defaults.update_value(hash_settings(*d.textureDefaults));
+    p.defaults = defaults.digest();
+    Xxh64State rules;
+    for (NameRule const& r : d.nameRules) {
+        rules.update_value(u32(r.suffix.size));
+        rules.update(r.suffix);
+        rules.update_value(u8(r.usage));
+        rules.update_value(u8(r.shape));
+    }
+    p.nameRules = rules.digest();
+    p.policy    = policyVersion;
+    p.project   = project_digest(d.project);
+    return p;
+}
+
 bool recorded_keys_match(UnitDesc const& d, CookUnit const& rec) {
     Allocator const* alloc = d.env.alloc ? d.env.alloc : default_allocator();
     Vec<u8> sidecar(alloc, Tag::Cook);

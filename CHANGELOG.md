@@ -8,6 +8,10 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
 ## [Unreleased]
 
 ### Added
+- **Two store writers that disagree say so**: `manifest.in` (minor 5; minor 4 still reads) records each
+  profile's last writer (`kiln-cook` or a cook provider) and digests of its settings. When one re-cooks
+  the other's entries because their settings differ, it warns once and names them (project file, host
+  defaults, name rules, policy version, target).
 - **K5022** (`kDiagEntryRemoved`): the store poller warns once when a Ready asset's entry (or an array layer's)
   leaves the manifest, as when kiln-cook drops a unit whose source is gone. The asset stays Ready.
 - **`post_reload(ctx, kind, name)`**: `request_reload()` by name from any thread; the next `pump()`

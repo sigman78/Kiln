@@ -432,6 +432,10 @@ bool poll_project(Provider* p, ProjectWatch& w) {
     v->project = *loaded;
     v->hostDigest =
         host_digest(unit_desc(*p, *v, AssetKind::Mesh, {}, {}, p->alloc, nullptr), p->desc.policyVersion);
+    if (p->store)
+        set_store_writer(
+            p->store, StoreWriter::Provider,
+            host_parts(unit_desc(*p, *v, AssetKind::Mesh, {}, {}, p->alloc, nullptr), p->desc.policyVersion));
     ProjectVersion* old = nullptr;
     {
         std::lock_guard<std::mutex> const lock(p->versionMutex);
@@ -774,6 +778,9 @@ Status install_provider(Context* ctx, ProviderDesc const& desc) {
         }
         // A later kiln-cook run without inputs cooks from these roots.
         record_store_roots(p->store, Span<Root const>(p->roots.data(), p->roots.size()));
+        set_store_writer(p->store, StoreWriter::Provider,
+                         host_parts(unit_desc(*p, *p->version, AssetKind::Mesh, {}, {}, alloc, nullptr),
+                                    effective.policyVersion));
     }
     if (effective.watchSources && !(p->watching = start_poller(p)))
         KILN_WARN("cook", "could not start the source poller thread; sources are not watched");

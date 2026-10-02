@@ -41,6 +41,15 @@ Status commit_manifest(ManifestStore* s, DiagSink const* diag, u32 minIntervalMs
 /// The kCookerVersion that wrote the unit `name`'s record; 0 when unknown (an older store) or
 /// when there is no record.
 u32 record_cooker_version(ManifestStore* s, StrView name);
+
+/// The kind of program that writes a store's profile; manifest.in records the last one.
+enum class StoreWriter : u8 { Unknown = 0, Cli, Provider };
+/// This session's writer and settings (host_parts()); call again when the settings change. A record
+/// that cooks again because the profile's last writer was the other kind, with other settings, warns
+/// once: the two undo each other's cooks (open-questions R19).
+void set_store_writer(ManifestStore* s, StoreWriter writer, HostParts const& parts);
+/// The profile's last writer as manifest.in recorded it when the store opened (tests).
+StoreWriter last_store_writer(ManifestStore* s);
 /// For tests: makes the record look as if another cooker version wrote it.
 void set_record_cooker_version(ManifestStore* s, StrView name, u32 version);
 /// Sets the host-settings digest of the unit `name`'s record (its keys were checked again).

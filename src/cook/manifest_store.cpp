@@ -30,7 +30,8 @@ namespace {
 
 constexpr u32 kInputsMagic = fourcc('K', 'M', 'I', 'N');
 constexpr u16 kInputsMajor = 0;
-constexpr u16 kInputsMinor = 4; ///< 2: the root table; 3: outputs carry their build keys; 4: and alphaCutoff
+constexpr u16 kInputsMinor = 5; ///< 2: the root table; 3: outputs carry their build keys; 4: and alphaCutoff;
+                                ///< 5: the last writer of each profile (minor 4 still reads)
 
 // ---------------------------------------------------------------------------
 // Paths and the lock
@@ -196,6 +197,8 @@ struct OtherProfile {
     Vec<OtherEntry> entries;
     Vec<u8> records; ///< encoded records, one after another
     Vec<u32> recordEnds;
+    StoreWriter writer = StoreWriter::Unknown; ///< its last writer, kept as read
+    HostParts writerParts;
 
     explicit OtherProfile(Allocator const* a)
         : strings(a, Tag::Cook), entries(a, Tag::Cook), records(a, Tag::Cook), recordEnds(a, Tag::Cook) {}
@@ -230,8 +233,13 @@ struct ManifestStore {
     Vec<OtherProfile> others;
     Vec<char> rootStrings; ///< the root table, shared by every profile
     Vec<RootEntry> roots;
-    bool dirty        = false;
-    bool cookerWarned = false; ///< the other-cooker-version warning was logged
+    bool dirty         = false;
+    bool cookerWarned  = false;                ///< the other-cooker-version warning was logged
+    StoreWriter writer = StoreWriter::Unknown; ///< this session (set_store_writer)
+    HostParts writerParts;
+    StoreWriter lastWriter = StoreWriter::Unknown; ///< the profile's last writer, read at open
+    HostParts lastParts;
+    bool writerWarned = false; ///< the other-writer warning was logged
 
     explicit ManifestStore(Allocator const* a)
         : alloc(a), storeDir(a, Tag::Cook), profileName(a, Tag::Cook), names(a, Tag::Cook),
@@ -457,7 +465,9 @@ bool load_records(ManifestStore& s, Span<u8 const> bytes, bool ownDropped) {
     std::memcpy(stored.bytes, body.end(), 16);
     if (!(xxh3_128(body) == stored)) return false;
     In in{body};
-    if (in.u(4) != kInputsMagic || in.u(2) != kInputsMajor || in.u(2) != kInputsMinor) return false;
+    if (in.u(4) != kInputsMagic || in.u(2) != kInputsMajor) return false;
+    u64 const minor = in.u(2);
+    if (minor != kInputsMinor && minor != 4) return false;
     u64 const count     = in.u(4);
     u64 const rootCount = in.u(4);
     for (u64 k = 0; k < rootCount && in.ok; ++k) {
@@ -465,6 +475,27 @@ bool load_records(ManifestStore& s, Span<u8 const> bytes, bool ownDropped) {
         StrView const dir  = in.str();
         if (!in.ok || (!name.empty() && check_root_name(name)) || dir.empty()) return false;
         (void)s.set_root(name, dir);
+    }
+    u64 const writerCount = minor >= 5 ? in.u(4) : 0;
+    for (u64 k = 0; k < writerCount && in.ok; ++k) {
+        StrView const profile = in.str();
+        auto const writer     = StoreWriter(in.u(1));
+        HostParts p;
+        p.target    = in.u(8);
+        p.defaults  = in.u(8);
+        p.nameRules = in.u(8);
+        p.policy    = in.u(8);
+        p.project   = in.u(8);
+        if (!in.ok || u8(writer) > u8(StoreWriter::Provider)) return false;
+        if (profile == s.profile()) {
+            s.lastWriter = writer;
+            s.lastParts  = p;
+        }
+        for (OtherProfile& o : s.others)
+            if (o.name() == profile) {
+                o.writer      = writer;
+                o.writerParts = p;
+            }
     }
     for (u64 k = 0; k < count && in.ok; ++k) {
         StrView const profile = in.str();
@@ -793,6 +824,32 @@ Status commit_manifest(ManifestStore* s, DiagSink const* diag, u32 minIntervalMs
             o.str(s->root_str(s->roots[i].nameOff, s->roots[i].nameLen));
             o.str(s->root_str(s->roots[i].dirOff, s->roots[i].dirLen));
         }
+        // The last writer of each profile: this session's for its own, as read for the others.
+        auto const writer_of = [s](u32 p, HostParts* parts) {
+            if (p != 0) {
+                *parts = s->others[p - 1].writerParts;
+                return s->others[p - 1].writer;
+            }
+            bool const ours = s->writer != StoreWriter::Unknown;
+            *parts          = ours ? s->writerParts : s->lastParts;
+            return ours ? s->writer : s->lastWriter;
+        };
+        u32 writers = 0;
+        HostParts parts;
+        for (u32 const p : order)
+            writers += writer_of(p, &parts) != StoreWriter::Unknown;
+        o.u(writers, 4);
+        for (u32 const p : order) {
+            StoreWriter const w = writer_of(p, &parts);
+            if (w == StoreWriter::Unknown) continue;
+            o.str(p == 0 ? s->profile() : s->others[p - 1].name());
+            o.u(u8(w), 1);
+            o.u(parts.target, 8);
+            o.u(parts.defaults, 8);
+            o.u(parts.nameRules, 8);
+            o.u(parts.policy, 8);
+            o.u(parts.project, 8);
+        }
         u64 count = 0;
         for (u32 const p : order) {
             if (p == 0) {
@@ -925,6 +982,49 @@ void warn_other_cooker(ManifestStore* s, StrView name) {
         KILN_SV(s->dir()));
 }
 
+void set_store_writer(ManifestStore* s, StoreWriter writer, HostParts const& parts) {
+    std::lock_guard<std::mutex> const lock(s->mutex);
+    s->writer      = writer;
+    s->writerParts = parts;
+}
+
+StoreWriter last_store_writer(ManifestStore* s) {
+    std::lock_guard<std::mutex> const lock(s->mutex);
+    return s->lastWriter;
+}
+
+/// Once per store session: a record cooks again, and the profile's last writer was the other kind
+/// of program with other settings. Each undoes the other's cooks; the warning names what differs.
+void warn_other_writer(ManifestStore* s, StrView name) {
+    char what[160] = {};
+    usize at       = 0;
+    StoreWriter last{};
+    {
+        std::lock_guard<std::mutex> const lock(s->mutex);
+        last = s->lastWriter;
+        if (s->writerWarned || s->writer == StoreWriter::Unknown || last == StoreWriter::Unknown ||
+            last == s->writer)
+            return;
+        HostParts const& a = s->writerParts;
+        HostParts const& b = s->lastParts;
+        auto const add     = [&](bool differ, char const* part) {
+            if (differ) at += format(what + at, sizeof what - at, "%s%s", at ? ", " : "", part);
+        };
+        add(a.project != b.project, "project file");
+        add(a.defaults != b.defaults, "host defaults");
+        add(a.nameRules != b.nameRules, "name rules");
+        add(a.policy != b.policy, "policy version");
+        add(a.target != b.target, "target profile");
+        if (at == 0) return;
+        s->writerWarned = true;
+    }
+    KILN_WARN("cook",
+              "%.*s cooks again: %s last wrote the store %.*s with another %s. The two undo each other's "
+              "cooks; give both the same settings",
+              KILN_SV(name), last == StoreWriter::Cli ? "kiln-cook" : "a cook provider", KILN_SV(s->dir()),
+              what);
+}
+
 bool record_is_current(ManifestStore* s, UnitDesc const& d, u64 hostDigest, bool rehash) {
     CookUnit rec(d.env.alloc ? d.env.alloc : s->alloc);
     u64 digest = 0;
@@ -942,6 +1042,7 @@ bool record_is_current(ManifestStore* s, UnitDesc const& d, u64 hostDigest, bool
     if (digest == hostDigest) return true;
     if (!recorded_keys_match(d, rec)) {
         warn_other_cooker(s, d.name);
+        warn_other_writer(s, d.name);
         return false;
     }
     set_record_digest(s, d.name, hostDigest);

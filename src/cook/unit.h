@@ -76,6 +76,14 @@ void unit_build_inputs(CookUnit const& unit, BuildInput* out);
 /// session and `policyVersion`. Another digest means the recorded keys must be checked again.
 u64 host_digest(UnitDesc const& d, u32 policyVersion);
 
+/// The parts of host_digest() that two writers of one store may set apart. The cooker version has
+/// a warning of its own; the session (a provider's quality cap) differs by design.
+struct HostParts {
+    u64 target = 0, defaults = 0, nameRules = 0, policy = 0, project = 0;
+    bool operator==(HostParts const&) const = default;
+};
+HostParts host_parts(UnitDesc const& d, u32 policyVersion);
+
 /// True if the settings of `d` give every output of the recorded unit `rec` the key it has
 /// (copy_input_record()): the settings are resolved again over the recorded inputs, reading only
 /// the sidecar next to `d.sourcePath`. False when an output has no key or the sidecar cannot be read.

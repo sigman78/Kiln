@@ -720,6 +720,20 @@ bool same_layout(Project const* a, Project const* b) {
     return true;
 }
 
+/// The host digest records are checked against, and the settings the store records for its writer.
+void set_host(Ctx& c) {
+    c.hostDigest = cli_host_digest(c);
+    if (!c.store) return;
+    UnitDesc const host{.meshDefaults    = &c.opt.mesh,
+                        .textureDefaults = &c.opt.tex,
+                        .nameRules       = kDefaultNameRules,
+                        .project         = c.project->p,
+                        .policy          = c.policy,
+                        .target          = &c.opt.target,
+                        .session         = c.session};
+    set_store_writer(c.store, StoreWriter::Cli, host_parts(host, c.policyVersion));
+}
+
 /// --watch: loads the project file again when it changed. The next scan then checks every unit
 /// against the new settings; an edit with errors keeps the previous project.
 void reload_project(Ctx& c) {
@@ -743,7 +757,7 @@ void reload_project(Ctx& c) {
     free_project(c.project->p);
     c.project->p     = *loaded;
     u64 const digest = c.hostDigest;
-    c.hostDigest     = cli_host_digest(c);
+    set_host(c);
     // New settings can fix what failed, so every failed source cooks again.
     if (c.hostDigest != digest) c.failedSources.clear();
     if (!c.opt.quiet) std::printf("watch: reloaded %s\n", c.opt.projectFile);
@@ -1120,7 +1134,7 @@ int kiln::cook::cook_cli_main(int argc, char** argv, CookPolicy const& policy, u
             used.push_back(Root{StrView(r.name), StrView(r.dir)});
         record_store_roots(c.store, used.span());
 
-        c.hostDigest = cli_host_digest(c);
+        set_host(c);
     }
 
     cli::TraceWriter trace;

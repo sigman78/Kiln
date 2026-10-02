@@ -14,6 +14,7 @@
 #include "kiln/manifest.h"
 #include "kiln/null_adapter.h"
 
+#include <atomic>
 #include <cerrno>
 #include <chrono>
 #include <cstdio>
@@ -1601,3 +1602,58 @@ KILN_TEST(Provider, MemoryModeReloadsEveryRequestedImage) {
     release(tc.ctx, b);
 }
 #endif
+
+namespace {
+
+/// Counts the log's warnings about the other kind of store writer.
+struct WriterWarnings {
+    std::atomic<u32> count{0};
+    std::atomic<u32> project{0}; ///< of them, naming the project file
+    static void fn(void* user, LogLevel level, StrView, StrView message) {
+        auto* self = static_cast<WriterWarnings*>(user);
+        if (level != LogLevel::Warn || std::strstr(message.data, "last wrote the store") == nullptr) return;
+        ++self->count;
+        if (std::strstr(message.data, "project file") != nullptr) ++self->project;
+    }
+};
+
+} // namespace
+
+// kiln-cook with a kiln.toml and a provider without one undo each other's cooks: each says so once.
+KILN_TEST(Provider, OtherWriterWithOtherSettingsWarns) {
+    WatchedPngs w;
+    w.init("provider_writers_src");
+    char storeDir[1024], project[1100];
+    scratch_dir("provider_writers_store", storeDir, sizeof storeDir);
+    format(project, sizeof project, "%s/kiln.toml", w.root);
+    write_text_file(project, "[texture]\ngenMips = false\n");
+    auto cook = [&] {
+        char a0[] = "kiln-cook", a1[] = "--project", a3[] = "-o", a5[] = "-q";
+        char* argv[] = {a0, a1, project, w.root, a3, storeDir, a5};
+        return cook::cook_cli_main(7, argv);
+    };
+
+    WriterWarnings warnings;
+    LogSink const old = log_sink();
+    set_log_sink({&WriterWarnings::fn, &warnings});
+    KILN_CHECK_EQ(cook(), 0);
+    KILN_CHECK_EQ(warnings.count.load(), 0u);
+    {
+        TestContext tc;
+        if (tc.init(StrView(storeDir), w.span())) {
+            KILN_CHECK(cook::install_provider(
+                           tc.ctx, {.storeMode = cook::StoreMode::Disk, .target = cook::kCompatTarget})
+                           .ok());
+            TextureHandle const tex = request_texture(tc.ctx, "tile.png");
+            KILN_CHECK_EQ(pump_until_settled(tc.ctx, tex), State::Ready);
+            release(tc.ctx, tex);
+        }
+    }
+    KILN_CHECK_EQ(warnings.count.load(), 1u); // the provider re-cooked kiln-cook's entry
+    KILN_CHECK_EQ(cook(), 0);
+    KILN_CHECK_EQ(warnings.count.load(), 2u); // and kiln-cook the provider's
+    KILN_CHECK_EQ(cook(), 0);
+    KILN_CHECK_EQ(warnings.count.load(), 2u); // kiln-cook after kiln-cook: its own settings
+    set_log_sink(old);
+    KILN_CHECK_EQ(warnings.project.load(), 2u);
+}
