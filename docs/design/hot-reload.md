@@ -115,7 +115,9 @@ are created the same way. `kiln-headless --watch` does the same without a GPU.
 
 ## Consequences / what this constrains later
 
-- Fuller dependency tracking (v0.7) extends the provider's records; the runtime side is unchanged.
+- Fuller dependency tracking (v0.7, done 2026-10-01) extended the provider's records (texture
+  arrays reload the arrays that contain a changed layer, R12; a failed reload stops repeating on
+  every manifest change, R13); the runtime side is unchanged.
 - Staleness at first load (source edited while the app was closed) is a provider check before
   load, not part of M5.
 - Progressive loads (v0.8) reuse the `next` set for partial swaps.

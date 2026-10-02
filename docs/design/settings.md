@@ -7,8 +7,8 @@ resolved settings are hashed into the store key.
 
 ## Decision
 
-The C++ structs are the real interface. Config files, presets and rules come in v0.7 as layers that
-produce the same structs.
+The C++ structs are the real interface. Config files, presets and rules shipped in v0.7
+(`project-config.md`) as layers that produce the same structs.
 
 ### Texture
 
@@ -47,7 +47,7 @@ Texture settings schema: 2 (`shape`, `slices`). `encoding`, `quality`, `supercom
 | `genTangents` | true | MikkTSpace |
 | `optimize` | true | vertex cache, overdraw, vertex fetch |
 | `useAuthoredLods` | true | pass through `_lodN` nodes |
-| `genLods` | false | reserved: the simplifier lands in v0.7 |
+| `genLods` | false | reserved: the simplifier is postponed (owner, 2026-10-01; unscheduled) |
 | `posTolMm` | 0.1 | quantization tolerance before falling back to float positions |
 | `weldTol` | 0 | 0 = exact-match welding only |
 | `compression` | `Meshopt` | `None`: every blob codec `None`, the cooker sets `kPayloadRaw`. `Meshopt`: MeshoptVertex / MeshoptIndex. `MeshoptZstd`: Meshopt + `kBlobOuterZstd` |
@@ -60,11 +60,10 @@ Reserved: indexWidthPolicy, unit/axis override, name prefixes to strip.
 
 - The schemes are the candidate schemes of mesh-format-spec §5.9. `Meshopt` is the default (owner,
   2026-10-01, from the measurements in `mesh-compression.md`); `MeshoptZstd` is the size option.
-- A non-zero `blobChunkSize` is a K3001 error: blobs are not split yet (B16).
-- Later the scheme becomes selectable **per target** (a default in `TargetProfile`) and **per
-  asset** (presets and rules in v0.7).
-- The **default scheme is picked by measurement** (ratio and decode MB/s on real assets) in
-  v0.7. Until then the default stays `None`.
+- A non-zero `blobChunkSize` is a K3001 error: blobs are not split yet (B16); split blobs now
+  wait for streaming (v0.8), not for codec work (`mesh-compression.md`).
+- Later the scheme becomes selectable **per target** (a default in `TargetProfile`; not yet
+  built) and **per asset** (presets and rules, shipped v0.7).
 
 ### Target and session
 

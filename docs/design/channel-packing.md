@@ -5,8 +5,8 @@ the seven demo models, three pack ORM in one image, three have no AO, and one (S
 the babylon.js 3ds Max exporter) keeps AO separate. The common texturing tools export packed ORM.
 Part 2 waits for project config, which is its main way to reach images.
 **Decides:** how the mesh cook merges a glTF material's separate occlusion and
-metallic-roughness images into one ORM texture (part 1, v0.7), and the shape of per-image
-channel operations (part 2, a follow-up).
+metallic-roughness images into one ORM texture (part 1), and the shape of per-image
+channel operations (part 2, a follow-up). Both are deferred (see Status above).
 
 ## Problem
 
@@ -23,7 +23,7 @@ both with usage `Orm`:
 Sources outside glTF have other layouts (gloss instead of roughness, Unity's mask map with
 smoothness in alpha). A renderer wants one layout. That is part 2.
 
-## Part 1: ORM packing in the mesh cook (v0.7)
+## Part 1: ORM packing in the mesh cook (deferred)
 
 ### Rule
 
@@ -126,7 +126,7 @@ The packed texture has usage `Orm`, linear, and is encoded as any ORM texture of
 
 ## Part 2: channel operations on one image (follow-up)
 
-Not scheduled for v0.7. Recorded so part 1's composer takes a shape part 2 can reuse.
+Deferred along with part 1 (owner, 2026-10-01). Recorded so part 1's composer takes a shape part 2 can reuse.
 
 - A texture setting `channels`: four characters, one per output channel R, G, B, A. Each is
   `r`, `g`, `b`, `a` (an input channel) or `0`, `1` (a constant). The default `rgba` is the

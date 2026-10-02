@@ -7,6 +7,14 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-01
+
+Project settings in `kiln.toml` (defaults, presets, first-match path rules, usage sections,
+`kiln-cook --explain`), runtime texture arrays, `.mesh` payload compression (Meshopt by default),
+faster BC encoding, alpha-coverage mips and profiling hooks. Live reload works in every store mode
+(`post_reload()`), and a review of each mode of use fixed what it found. Breaks are listed below with
+migration notes.
+
 ### Added
 - **Two store writers that disagree say so**: `manifest.in` (minor 5; minor 4 still reads) records each
   profile's last writer (`kiln-cook` or a cook provider) and digests of its settings. When one re-cooks

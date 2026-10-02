@@ -21,7 +21,7 @@ links it.
 | BC6H encoder | **ispc_bc6h**: kiln's scalar C++ port of the ISPC Texture Compressor's BC6H | MIT | cook only | ported from a pinned commit into `third_party/ispc_bc6h/` |
 | BC decoder for tests | **bcdec** | MIT or public domain | `kiln_tests` only | vendored header in `third_party/bcdec/` |
 | ASTC encoder | deferred (v0.9) | to be chosen | cook only | to be chosen |
-| Config parsing | deferred (v0.7), leaning TOML | to be chosen | cook only | to be chosen |
+| Config parsing | **own** TOML subset parser (`src/cook/toml_subset.cpp`) | n/a | cook only | in-tree (shipped v0.7, `project-config.md`) |
 | File watching | **own** polling watcher (M5) | n/a | runtime (dev builds, `KILN_HOT_RELOAD`) | in-tree |
 | Tests | **own** runner `tests/kiln_test.h` | n/a | tests | in-tree |
 | Viewer GPU API | raw **Vulkan 1.4** (Vulkan-Headers) + **volk** | Apache-2.0 / MIT; MIT | example viewer only | FetchContent, commit hash (no SDK) |
@@ -31,9 +31,10 @@ links it.
 | NoGraphicsAPI example | **NoGraphicsAPI** (one source file), **Vulkan-Loader** (built from source) | MIT; Apache-2.0 | `kiln-nga` only | FetchContent, commit hash |
 | NoGraphicsAPI shaders | **Slang** release (slangc) | Apache-2.0 with LLVM exception | `kiln-nga` build only | downloaded per host at a release, checked by SHA-256 |
 
-`kiln_runtime` has one third-party dependency: zstd's decoder, for Zstd-supercompressed KTX2.
-Everything else third-party is cook-only (through the helper target `kiln_third_party_cook`) or
-example-only. The `.mesh` blob decode loop ships with codec `None` only, which needs no library.
+`kiln_runtime` has two third-party dependencies: zstd's decoder, for Zstd-supercompressed KTX2,
+and meshoptimizer's decoder, for `.mesh` payload compression (`Meshopt`, `MeshoptZstd`; v0.7,
+`mesh-compression.md`). Everything else third-party is cook-only (through the helper target
+`kiln_third_party_cook`) or example-only.
 
 ### glTF: cgltf
 
@@ -114,10 +115,10 @@ example-only. The `.mesh` blob decode loop ships with codec `None` only, which n
 
 ### Mesh processing: meshoptimizer + MikkTSpace
 
-- meshoptimizer: vertex cache, overdraw and vertex fetch optimization in v0.5. Later:
-  simplification (LOD generation, v0.7) and vertex/index codecs.
-- If a meshopt scheme is chosen for `.mesh` payloads (by measurement, v0.7), its vertex and
-  index **decoder** sources may be compiled into `kiln_runtime`. The rest stays cook-only.
+- meshoptimizer: vertex cache, overdraw and vertex fetch optimization in v0.5. Vertex and index
+  codecs (`Meshopt`, `MeshoptZstd`) shipped in v0.7, by measurement (`mesh-compression.md`): its
+  vertex and index **decoder** sources are compiled into `kiln_runtime`; the rest stays cook-only.
+  Later: simplification (LOD generation), postponed from v0.7 (owner, 2026-10-01), unscheduled.
 - MikkTSpace: the reference implementation, so tangents match what bakers (Blender, Substance,
   xNormal) assume.
 
@@ -169,8 +170,8 @@ behind `KILN_EXAMPLE_NGA`, OFF in every preset, and the manual `extended` workfl
 
 `kiln_runtime` accepts third-party code only as **decoders**: matching an encoder or writer in
 `kiln_cook`, built from source with kiln's own flags (never a prebuilt binary), and never able to
-write files or import a source format. The only one is zstd (decode-only, since 2026-09-29);
-meshoptimizer's decoder sources are the next candidate. This rule, the `include/kiln/cook/` header
+write files or import a source format. zstd (decode-only, since 2026-09-29) and meshoptimizer's
+decoder sources (since v0.7) are the only ones. This rule, the `include/kiln/cook/` header
 boundary and the `shipping` CI job form the read-only shipping contract (`shipping-split.md`).
 
 ## Rationale
@@ -204,8 +205,10 @@ boundary and the `shipping` CI job form the read-only shipping contract (`shippi
   the viewer, but CI never runs it. Linux runners need the X11 development packages GLFW builds
   against.
 - `kiln_runtime` gained its first third-party code with Zstd textures, unconditionally: Zstd is
-  the cook's default, so a runtime without the decoder could not load a default store. Further
-  `.mesh` codecs (meshopt) should still be behind a CMake option.
+  the cook's default, so a runtime without the decoder could not load a default store. The
+  meshoptimizer decoder landed the same way in v0.7 (`Meshopt` is the default `.mesh` compression),
+  not behind a CMake option as once proposed here; whether a texture-only build should still be
+  able to drop it is open (`open-questions.md` R22).
 
 ## Open points for the owner
 

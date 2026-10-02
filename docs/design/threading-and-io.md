@@ -111,11 +111,13 @@ One upload job per mesh (mesh-format-spec §5.9, §7):
   payloadDecodedSize)` directly into the adapter destination. No scratch buffer, no per-byte work.
   The `BLOB` table is only validated.
 - **`kPayloadRaw` clear:** read `GPUD` into a `Tag::Io` scratch buffer, then `mesh::decode_payload`
-  zero-fills the destination and decodes blob by blob. Any codec or filter other than `None` fails
-  the asset with `Code::Unsupported` (K4015).
-- Proposed for when compressed codecs land (v0.7): one job per blob (or small batch of blobs),
-  a per-worker reused scratch arena, the job owning the preceding range zero-fills each gap, and
-  the last job to finish commits or reports the failure.
+  zero-fills the destination and decodes blob by blob, one job for the whole payload. Since v0.7
+  this decodes every `Codec` and `Filter` except `Delta` (`mesh-compression.md`); `Delta` still
+  fails the asset with `Code::Unsupported` (K4015).
+- Still proposed, now that compressed codecs have landed (v0.7): split the single decode job into
+  one job per blob (or small batch of blobs), a per-worker reused scratch arena, the job owning
+  the preceding range zero-fills each gap, and the last job to finish commits or reports the
+  failure.
 
 ### IO backend
 

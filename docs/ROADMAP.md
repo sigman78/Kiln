@@ -29,8 +29,9 @@ Not goals for v1:
 |---|---|---|
 | **v0.5** | 2026-09-29 | M0-M5: `.mesh` and KTX2 formats, the cooker, the async runtime (placeholders, `MetaReady`, load groups), the adapter interface with Vulkan, GL, sokol and NoGraphicsAPI examples, hot reload; BC1-BC7 and Zstd textures |
 | **v0.6** | 2026-09-30 | Target profiles; PBR material factors; the store manifest with `kiln-cook --gc` and `--export` |
+| **v0.7** | 2026-10-01 | Project settings (`kiln.toml`, `--explain`); runtime texture arrays; `.mesh` compression; faster BC; alpha-coverage mips; profiling hooks; live reload in every store mode |
 
-## v0.7: quality and pipeline
+## v0.7: quality and pipeline (released 2026-10-01)
 
 - **Runtime texture arrays** ([`design/runtime-texture-arrays.md`](design/runtime-texture-arrays.md);
   runtime and the examples `kiln-gl-array`, `kiln-vk-array` done 2026-09-30). Independently cooked 2D assets assembled into one GPU array at load time. First
@@ -59,6 +60,10 @@ Not goals for v1:
   contain it, and a failed reload no longer repeats on every manifest change (open-questions R13).
   kiln follows no references between assets (`design/asset-model-next.md`); config files and packed
   textures add their inputs to the cook records when they land.
+- **Review of the modes of use** (2026-10-01): a frozen loader, a cook provider with and without a
+  store, `kiln-cook --watch` beside a running app, and live reload. Fixes and open-questions R16-R21:
+  the provider reloads what it watches in both store modes (`post_reload()`), Memory mode cooks only
+  the requested output, writers that disagree say so, store checks at and after `create()`.
 
 ## v0.8: streaming
 
@@ -92,6 +97,9 @@ Not goals for v1:
 - `EXT_meshopt_compression` input (the importer's buffer-view resolution leaves room for a decode
   step).
 - GPU decompression of chunked blobs.
+- One settings desc that `cook_cli_main` and the cook provider share, so a project's `kiln-cook`
+  matches its provider (open-questions R19 b, c).
+- Asset metadata in the manifest (size, format, counts, bounds), readable before a load *(discuss)*.
 - Pack files, and `create()` with a manifest path (open point 3 of `design/store-manifest.md`).
 - Store manifest phase C: a memory-mapped manifest, several writers (set aside 2026-09-30).
 - EXR sources; a bgfx adapter example.

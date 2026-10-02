@@ -24,7 +24,7 @@ The format originated as Orbital's `.mesh` (magic `OMSH`); kiln adopts it under 
 > - `Mount.extrasStr` grammar: no `;` or `=` inside keys or values, scalar extras only (B5). Authored LODs get `geometricError = 0` (B6). The `vertexBase` limit covers every index size; the v0.5 cooker never emits U8 (B7). The sRGB bit of `TextureBinding.flags` comes from slot inference (B11). Sparse accessors and Draco input are rejected; `.gltf` with external files is accepted (B9, B10).
 > - §8 draw call uses `lod.indexOffset / indexSize + sm.indexFirst` (B8).
 > - `BLOB`: one filter per blob, chained-filter sentence removed (B13); filters apply before the codec on encode and are undone after it on decode, with an allowed codec/filter table (B14); `kBlobOuterZstd` only with `Meshopt*` codecs (B15).
-> - `BLOB`: split rules deferred to v0.7, the v0.5 cooker never splits (B16); index blob size, alignment and U8 rules (B17); `elementSize` is always set (follows from B16, B17).
+> - `BLOB`: split rules deferred, now to v0.8 (streaming); the cooker never splits yet (B16); index blob size, alignment and U8 rules (B17); `elementSize` is always set (follows from B16, B17).
 > - `BLOB`: encoded ranges never overlap, the table is sorted by `encodedOffset` with non-decreasing `lodRank`, decoded order is free (B18); `lodRank = lodCount(part) - 1 - lodIndex`, capped at 255 (B22).
 > - `gpuDataSize == GPUD size == fileSize - gpuDataOffset`, padding included; with `kPayloadRaw` also `== payloadDecodedSize` (B19). `BLOB` is always required; exact per-blob conditions for `kPayloadRaw`, validated on load (B20).
 > - Decoder output must be exactly `decodedSize`; short output is `Corrupt` (B21). Checksum 0 means "not stored" even if the real xxh32 is 0 (B23, B27). Encoded and decoded payloads are each limited to 4 GiB (B24).
@@ -610,5 +610,5 @@ vkCmdDrawIndexed(cmd, sm.indexCount, instanceCount,
 - **Per-LOD LOD-switch hysteresis:** stored in the file or engine-global?
 - ~~**Default compression scheme**~~: decided 2026-10-01, `Meshopt` (`design/mesh-compression.md`).
 - **Delta filter semantics:** per-lane delta over which lane width (element-size lanes vs 2-byte vs 4-byte)? Specify precisely before the first cooker emits it, or drop it if measurements show no gain over ByteShuffle alone. Until then writers must not emit `Delta`.
-- **Split blobs (v0.7):** chunk size fixed (e.g. 64 KB decoded) or cooker-chosen per range? Must split blobs start 16-B aligned (split step `lcm(unit, 16)`, e.g. 48 B for a 24-B stride or U16 triangles), or is whole-element alignment enough? Decide with the codec work; until then the cooker writes one blob per range.
+- **Split blobs (v0.8):** chunk size fixed (e.g. 64 KB decoded) or cooker-chosen per range? Must split blobs start 16-B aligned (split step `lcm(unit, 16)`, e.g. 48 B for a 24-B stride or U16 triangles), or is whole-element alignment enough? Decide with the streaming work; until then the cooker writes one blob per range.
 - **meshopt filters on float data:** only relevant for the `precise` profile. Possibly never needed if quantized profiles dominate.

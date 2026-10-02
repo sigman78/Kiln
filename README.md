@@ -9,8 +9,8 @@ memory the renderer provides, and hot-reloads them when a source changes. The li
 a graphics API: every GPU interaction goes through a small adapter struct that the renderer fills
 in.
 
-**Status:** v0.6 (milestones M0-M5, BC and Zstd textures, target profiles, PBR factors, the store
-manifest). The API is not stable yet; breaks
+**Status:** v0.7 (milestones M0-M5, BC and Zstd textures, target profiles, PBR factors, the store
+manifest, project settings in `kiln.toml`, runtime texture arrays, `.mesh` compression). The API is not stable yet; breaks
 are listed in `CHANGELOG.md` with migration notes. Next: see `docs/ROADMAP.md`.
 
 ```
