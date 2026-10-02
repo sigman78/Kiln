@@ -12,6 +12,8 @@ The format originated as Orbital's `.mesh` (magic `OMSH`); kiln adopts it under 
 > - The v0.5 cooker emits uncompressed blobs only, and loaders must support at least codec `None`.
 
 > **v0.5 changes:** `MaterialSlot` carries the glTF metallic-roughness factors (§5.7) and grows from 32 to 80 bytes: `baseColorFactor[4]`, `emissiveFactor[3]` (with `KHR_materials_emissive_strength` folded in), `metallicFactor`, `roughnessFactor`, `normalScale`, `occlusionStrength` and a reserved `u32` (0). `kVersionMinor` is 5.
+>
+> Later in v0.5: `Mount.extrasStr` holds the node's glTF `extras` JSON as written, not `key=value` pairs (§5.8). The layout does not change, so `kVersionMinor` stays 5.
 
 > **v0.4 changes:** `TextureBinding.flags` bit1 `External` (§5.7): the binding names an image the source references by URI, which the cooker does not cook. Embedded images are named `<mesh asset name>#<image name>`, where the mesh asset name includes its extension (e.g. `meshes/ship.glb#hull_albedo`). `kVersionMinor` is 4.
 
@@ -393,14 +395,14 @@ struct Mount {                      // 48 bytes
     uint64_t nameHash;
     float    translation[3];        // relative to parent part
     float    rotation[4];           // xyzw; +Z = slot forward, +Y = slot up
-    uint32_t extrasStr;             // "key=value;key=value" or kInvalid
+    uint32_t extrasStr;             // glTF extras JSON as written, or kInvalid
 };
 static_assert(sizeof(Mount) == 48);
 ```
 
 Mounts are sorted by `nameHash`, so a lookup is a binary search with no hash map needed.
 
-`extrasStr` is a flat string of `key=value` pairs separated by `;`. Keys and values must not contain `;` or `=`; the cooker drops such pairs with a warning. Only scalar glTF extras are carried. Structured extras wait for the reserved `XTRA` section (§9).
+`extrasStr` is the mount node's glTF `extras` value, byte for byte as the source writes it (any JSON value, nested ones included). The cooker does not parse or check it beyond what the glTF loader does; the game parses it.
 
 ### 5.9 `BLOB` — payload blobs and encoding
 
@@ -598,7 +600,6 @@ vkCmdDrawIndexed(cmd, sm.indexCount, instanceCount,
 | `MORF` | Morph target deltas |
 | `MLET` | Meshlets and cluster bounds (optional, for mesh-shader hardware) |
 | `COLL` | Collision proxies (`col_*` nodes) |
-| `XTRA` | Structured extras (if `key=value` strings become insufficient) |
 
 ---
 

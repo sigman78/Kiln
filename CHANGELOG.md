@@ -7,6 +7,13 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
 
 ## [Unreleased]
 
+### Changed
+- **`.mesh` mount extras are the glTF `extras` JSON as written**: `Mount.extrasStr` was a flat
+  `key=value;key=value` string of scalar values only. Now the cook copies the node's `extras` byte for
+  byte, nested values included, so nothing is dropped and numbers keep their precision (the old
+  `%g` reformat cut them to 6 digits). The `.mesh` layout and `kVersionMinor` stay the same;
+  `kCookerVersion` is 7, so stores recook. Migration: parse `extrasStr` as JSON.
+
 ### Removed
 Unused API. Migration:
 - `FunctionRef`: pass a function pointer and a `void* user`, as the rest of kiln does.
@@ -14,6 +21,7 @@ Unused API. Migration:
   propagate with `KILN_TRY` / `KILN_TRY_ASSIGN`.
 - `Result<void>`: return `Status`.
 - `FixedArray<T, N>`: use `T[N]` with a count, and `Span` to pass it on.
+- `cook::kDiagGltfExtrasDropped` (K1015): the cook no longer drops mount extras. The code stays unused.
 
 ## [0.7.0] - 2026-10-01
 

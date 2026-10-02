@@ -18,7 +18,8 @@ namespace kiln::cook {
 
 /// Bump when cooked output changes for identical input and settings. Part of every build key.
 inline constexpr u32 kCookerVersion =
-    6; // 6: BC7 Fast and Normal with Basis bc7f
+    7; // 7: Mount.extrasStr holds the glTF extras JSON as written
+       // 6: BC7 Fast and Normal with Basis bc7f
        // 5: .mesh 0.5, MaterialSlot carries the PBR factors
        // 4: Zstd kept only when it saves kZstdMinSaving of a texture file
        // 3: .mesh 0.4; embedded images named "<mesh>#<name>", external images as kTextureExternal
@@ -45,10 +46,8 @@ enum GltfDiagCode : u32 {
     kDiagGltfScaleBaked      = 1011,  ///< non-uniform or negative node scale baked into vertices (Info)
     kDiagGltfMaterialRenamed = 1012,  ///< `.NNN` suffix stripped from a material name (Info)
     kDiagGltfImageUnresolvable =
-        1013,              ///< texture references an image with no usable source (Warning; binding dropped)
-    kDiagGltfLimit = 1014, ///< too many streams/attributes/vertices for the format (Unsupported)
-    kDiagGltfExtrasDropped =
-        1015, ///< mount extras pair with `;`/`=` in key or value, or non-scalar, dropped (Warning)
+        1013, ///< texture references an image with no usable source (Warning; binding dropped)
+    kDiagGltfLimit         = 1014,  ///< too many streams/attributes/vertices for the format (Unsupported)
     kDiagGltfEmptyMesh     = 1016,  ///< a part ended up with zero triangles (Warning)
     kDiagGltfUsageConflict = 1017,  ///< the same image is bound to slots implying different usages (Warning)
     kDiagGltfQuantFallback = 1018,  ///< positions/UVs fell back to the precise profile (Info)

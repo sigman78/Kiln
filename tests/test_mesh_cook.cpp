@@ -619,13 +619,13 @@ KILN_TEST(MeshCook, CorpusMountsExtras) {
     KILN_REQUIRE(gun != nullptr);
     KILN_CHECK_EQ(v.str(gun->nameStr), StrView("mount_gun"));
     KILN_CHECK_EQ(gun->parentPart, 0u);
-    // Pairs in the order the file writes them (this file's JSON keys are sorted).
-    KILN_CHECK_EQ(v.str(gun->extrasStr), StrView("enabled=true;size=2;slot=hardpoint"));
+    // Stored as written, nested values and ';' included.
+    KILN_CHECK_EQ(v.str(gun->extrasStr),
+                  StrView(R"({"bad;key":"x","enabled":true,"nested":{"a":1},"size":2,"slot":"hardpoint"})"));
     KILN_CHECK(std::fabs(gun->rotation[1] - 0.382683f) < 1e-4f &&
                std::fabs(gun->rotation[3] - 0.92388f) < 1e-4f);
     KILN_CHECK(std::fabs(gun->translation[1] - 0.3f) < 1e-6f &&
                std::fabs(gun->translation[2] - 0.8f) < 1e-6f);
-    KILN_CHECK_EQ(c.diags.count_of(cook::kDiagGltfExtrasDropped, Severity::Warning), 2);
     mesh::Mount const* e1 = v.find_mount(hash_name("mount_engine_01"));
     KILN_REQUIRE(e1 != nullptr);
     KILN_CHECK_EQ(e1->extrasStr, kInvalid);

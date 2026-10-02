@@ -66,7 +66,7 @@ struct MountDesc {
     u32 parentPart     = kInvalid;
     f32 translation[3] = {0, 0, 0};
     f32 rotation[4]    = {0, 0, 0, 1};
-    StrView extras     = {}; ///< "key=value;key=value"; empty = none (kInvalid)
+    StrView extras     = {}; ///< glTF `extras` JSON as written; empty = none (kInvalid)
 };
 
 struct WriteDesc {

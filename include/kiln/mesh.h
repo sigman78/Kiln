@@ -64,7 +64,7 @@ inline constexpr u32 kSecTextures  = fourcc('M', 'T', 'E', 'X');
 inline constexpr u32 kSecMounts    = fourcc('M', 'N', 'T', 'S');
 inline constexpr u32 kSecBlobs     = fourcc('B', 'L', 'O', 'B');
 inline constexpr u32 kSecGpuData   = fourcc('G', 'P', 'U', 'D');
-// Reserved (spec §9): SKIN MORF MLET COLL XTRA
+// Reserved (spec §9): SKIN MORF MLET COLL
 
 struct Bounds {
     f32 center[3];
@@ -218,7 +218,7 @@ struct Mount {
     u64 nameHash;
     f32 translation[3]; ///< relative to parent part
     f32 rotation[4];    ///< xyzw; +Z = slot forward, +Y = slot up
-    u32 extrasStr;      ///< "key=value;key=value" or kInvalid
+    u32 extrasStr;      ///< the glTF node's `extras` JSON as written, or kInvalid
 };
 static_assert(sizeof(Mount) == 48);
 

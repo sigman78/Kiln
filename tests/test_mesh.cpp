@@ -167,7 +167,7 @@ struct TestMesh {
         mounts[1].parentPart     = 1;
         mounts[2].name           = "mount_gun";
         mounts[2].parentPart     = 1;
-        mounts[2].extras         = "slot=hardpoint;size=2";
+        mounts[2].extras         = R"({"slot":"hardpoint","size":2})";
     }
     TestMesh(TestMesh const&)            = delete;
     TestMesh& operator=(TestMesh const&) = delete;
@@ -421,7 +421,7 @@ KILN_TEST(Mesh, RoundTripRaw) {
     Mount const* gun = v.find_mount(hash_name("mount_gun"));
     KILN_REQUIRE(gun != nullptr);
     KILN_CHECK_EQ(v.str(gun->nameStr), StrView("mount_gun"));
-    KILN_CHECK_EQ(v.str(gun->extrasStr), StrView("slot=hardpoint;size=2"));
+    KILN_CHECK_EQ(v.str(gun->extrasStr), StrView(R"({"slot":"hardpoint","size":2})"));
     KILN_CHECK_EQ(gun->parentPart, 1u);
     Mount const* e1 = v.find_mount(hash_name("mount_engine_01"));
     KILN_REQUIRE(e1 != nullptr);

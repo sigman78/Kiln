@@ -562,8 +562,8 @@ def build_mounts_extras():
         "slot": "hardpoint",
         "size": 2,
         "enabled": True,
-        "bad;key": "x",  # dropped: ';' not allowed in extrasStr keys/values
-        "nested": {"a": 1},  # dropped: not a scalar
+        "bad;key": "x",
+        "nested": {"a": 1},
     }
     mount_e0 = doc.add_empty_node("mount_engine_00", translation=(-0.3, -0.2, -1.0))
     mount_e1 = doc.add_empty_node("mount_engine_01", translation=(0.3, -0.2, -1.0))
