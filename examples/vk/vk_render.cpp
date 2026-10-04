@@ -724,13 +724,13 @@ LayoutPipeline const* renderer_pipeline(Renderer* r, mesh::VertexLayout const& l
 
 VkPipelineLayout renderer_pipeline_layout(Renderer* r) { return r->pipelineLayout; }
 
-void renderer_draw_fullscreen(Renderer* r, VkCommandBuffer cmd, Span<u8 const> push) {
-    KILN_VERIFY(!push.empty() && push.size <= sizeof(DrawPush) && push.size % 4 == 0);
+void renderer_draw_fullscreen_bytes(Renderer* r, VkCommandBuffer cmd, void const* push, u32 size) {
+    KILN_VERIFY(size && size <= sizeof(DrawPush) && size % 4 == 0);
     if (!r->fullscreenPipeline) r->fullscreenPipeline = create_fullscreen_pipeline(r);
     if (!r->fullscreenPipeline) return;
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->fullscreenPipeline);
     vkCmdPushConstants(cmd, r->pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
-                       u32(push.size), push.data);
+                       size, push);
     vkCmdDraw(cmd, 3, 1, 0, 0);
 }
 VkBuffer renderer_zero_buffer(Renderer* r) { return r->zero; }
