@@ -1,162 +1,247 @@
-# Readiness sets and aggregate signals
+# Group readiness
 
-**Status:** Proposed (2026-09-29), not implemented. The owner requested a signal for a set of
+**Status:** Proposed (2026-09-29), revised 2026-10-04: the readiness set is dropped and `Group` is
+extended instead (owner, 2026-10-04). Not implemented. The owner requested a signal for a set of
 textures, or a mesh and its textures, becoming usable or failing, and selected **live readiness**
-over one-time completion. The interface and remaining semantics below are the proposed design.
-**Decides:** Explicit required membership, overlapping sets, aggregate state and notifications,
-and the boundary between readiness and rendering policy.
-**Related:** [handles-and-states.md](handles-and-states.md),
-[project terminology](../../CONTEXT.md).
+over one-time completion.
+**Decides:** Several groups per asset, a sealed group's aggregate state and its events, and the
+boundary between readiness and rendering policy.
+**Related:** [handles-and-states.md](handles-and-states.md) (load groups, R5g),
+[hot-reload.md](hot-reload.md). Open points: `../open-questions.md` R25.
 
-## Need and existing API
+The file keeps its name so that links stay valid.
+
+## Need
 
 A host should be able to hide an object until its mesh and required PBR textures are usable,
-then enable rendering with one aggregate state check or notification. The set can instead cover
-only a material's required textures. LODs and independently progressive resources need not join it.
+then enable rendering with one aggregate state check or notification. The collection can instead
+cover only a material's required textures. LODs and independently progressive resources need not
+join it.
 
-Existing `Group` supports progress counts and blocking `wait()`. It has no aggregate event, and
-`join_group` in `src/runtime/registry.cpp` assigns each asset to its first live group only. Reusing
-a texture in a second material therefore cannot express a second independent readiness condition.
-`pending == 0` also does not distinguish successful loading from failures or unfinished dependency
-discovery. This proposal adds a separate concept; it does not silently change group semantics.
+## Why Group, not a second concept
+
+`Group` already counts `ready`, `failed` and `pending` members, moves a member from `failed` to
+`ready` when a reload recovers it, and has a blocking `wait()`. `pending == 0 && failed == 0` is
+already the success test. Three things are missing:
+
+1. **One group per asset** (R5g). `join_group` in `src/runtime/registry.cpp` gives an asset to its
+   first live group only. A texture shared by two materials cannot count in both.
+2. **No aggregate event.** The host must poll `progress()`.
+3. **No "membership is complete" marker.** While a mesh's textures are still being discovered,
+   `pending == 0` can be true too early.
+
+The first version of this note added a second aggregate (`ReadinessSet`: ten functions, a handle
+type, a second event stream) beside `Group`. This revision closes the three gaps in `Group`:
+one new function, one new status field, three new event kinds. One mechanism serves loading
+screens, `wait()` and per-object readiness.
 
 ## Proposed surface
 
 Names are illustrative, not a public API commitment:
 
 ```cpp
-enum class ReadinessState : u8 { Building, Pending, Ready, Failed };
-
-struct ReadinessStatus {
-    ReadinessState state;
-    u32 revision;
-    u32 required, ready, pending, failed;
+enum class GroupState : u8 {
+    Open,    // not sealed: membership may be incomplete; never Ready
+    Pending, // sealed; a member has no usable payload yet
+    Ready,   // sealed; every member is Ready
+    Failed,  // sealed; a member is Failed, or a join failed
 };
 
-Result<ReadinessSet> readiness_set(Context*);
-Status add_required(Context*, ReadinessSet, TextureHandle);
-Status add_required(Context*, ReadinessSet, MeshHandle);
-Status seal(Context*, ReadinessSet);
-Status begin_update(Context*, ReadinessSet); // reopen membership, start a new revision
-Status remove_required(Context*, ReadinessSet, TextureHandle);
-Status remove_required(Context*, ReadinessSet, MeshHandle);
-ReadinessStatus readiness(Context*, ReadinessSet);
-Span<ReadinessEvent const> readiness_events(Context*);
-void release(Context*, ReadinessSet);
+struct GroupStatus {
+    u32 ready, failed, pending;  // as today
+    u64 bytesDone, bytesTotal;   // as today
+    GroupState state;            // new
+    bool settled() const;        // as today: pending == 0
+};
+
+void seal(Context*, Group);      // new: the host has requested every member
+
+enum class EventKind : u8 { MetaReady, Ready, Changed, Failed,
+                            GroupPending, GroupReady, GroupFailed }; // three new
 ```
 
-`ReadinessEvent` identifies the set (including handle generation), membership revision, transition
-sequence, old/new state, and a status snapshot. All operations are pump-thread operations. Signals
-are events consumed by the host, not worker callbacks into rendering code. Capacity and invalid-
-handle errors are returned by membership operations and must be handled before sealing.
+`group()`, `release(ctx, Group)`, `progress()`, `wait()` and `RequestOptions::group` keep their
+signatures. A group that is never sealed behaves exactly as today and emits no events.
 
-The implementation must support many sets per asset and deduplicate members by asset kind plus
-full handle. Adding the same member twice is a no-op, not an additional reference or count.
-Only live handles from the same context are accepted; null/stale handles are rejected. If a request
-itself returns null, the host must treat that as setup failure rather than omitting the requirement
-and sealing an incomplete set. An already-Failed live handle is a valid required member.
+### Membership
 
-## State and notification rules
+- An asset joins a group through `request_*(..., { .group = g })`, `register_*` or
+  `TextureArrayDesc::group`, as today. **The first-group-wins rule (R5g) goes:** each request that
+  names a group joins the asset to that group. One request call still names one group.
+- Joining the same group twice is a no-op for the group. The request still takes its reference.
+- An asset that is already `Ready` or `Failed` joins with that state, as today.
+- **A membership holds no reference**, as today. The host keeps its request reference; it needs
+  the handle for `gpu_object()` each frame anyway. Handles follow the usual refcount rule and do
+  not depend on the group.
+- A member whose last reference is released leaves all its groups, as today. In a sealed group
+  this changes the result: releasing a `Failed` member can turn the group `Ready`. Rule for the
+  host: release the group before the references of its members.
+- `release(ctx, Group)` frees the record and its memberships. Members stay requested.
+- There is no call to remove one member, and no call to reopen a sealed group. A changed set of
+  requirements gets a new group ("Reload and update").
+- A join after `seal()` is allowed. The group evaluates again and can go back to `Pending`.
 
-- Newly created or reopened sets are `Building`: discovery is incomplete, so they cannot be Ready.
-- Sealing declares that the host has supplied all requirements for this membership revision.
-- A sealed set is `Failed` as soon as any required member is Failed; other members may still load.
-- Otherwise it is `Pending` while any required member lacks a usable GPU payload.
-- Otherwise it is `Ready`. Placeholders and `MetaReady` do not satisfy a requirement.
-- A sealed empty set is Ready. An empty Building set is not Ready.
-- `settled` can be derived separately as sealed with `pending == 0`; fail-fast notification must
-  not require waiting for every other texture to finish.
+### State rules
 
-Aggregate transitions are evaluated and emitted at the end of `pump()`, after asset transitions.
-Membership edits immediately make the query state Building; sealing is scheduled for evaluation
-at the next pump. An already-loaded collection therefore produces a Ready signal on that next
-pump, not a synchronous callback from `seal()`.
+- A group is `Open` until `seal()`. `Open` is never `Ready`.
+- A sealed group is `Failed` as soon as one member is `Failed`; other members may still load.
+- Otherwise it is `Pending` while a member lacks a usable GPU payload. Placeholders and
+  `MetaReady` do not satisfy a member.
+- Otherwise it is `Ready`. A sealed empty group is `Ready`.
+- `settled()` stays `pending == 0`. It differs from the state: a group can be `Failed` and not yet
+  settled. `wait()` still returns when the group settles, sealed or not.
+- **A join that fails makes the group `Failed`** and emits K5005 (membership storage full, see
+  "Storage"). A group that lacks a member must never report `Ready`. If a request itself returns a
+  null handle, the host treats that as setup failure and does not seal.
 
-Emit on state changes; a new revision receives its own initial evaluated state even when equal
-to the previous revision's state. Coalesce transitions within one pump to the final state.
-Every event carries its revision so hosts can ignore superseded notifications. The persistent
-status query is authoritative if events are missed; document event capacity/overflow and expose
-an overflow count. A failure snapshot reports counts and allows inspection of failed members;
-existing per-asset diagnostics remain the source of detailed load errors.
+`progress()` computes the state from the counters, so the query is always current: a group whose
+members are all loaded reads `Ready` immediately after `seal()`.
 
-For rendering, the predicate is simply `readiness(ctx, set).state == ReadinessState::Ready`.
-The renderer chooses whether failure means hiding the object, drawing an error representation,
-or accepting a fallback. Kiln does not toggle renderer objects itself.
+### Events
 
-## Ownership
+Group events use the existing stream, `events(ctx)`. There is no second stream.
 
-Each unique membership retains one reference to its asset. The caller may release its original
-request reference after successful insertion. Releasing a set drops only the references it owns;
-shared assets remain alive through other sets or request references. Removing a member does the
-same. All membership mutations are allowed only while Building.
+- `Event::kind` is `GroupPending`, `GroupReady` or `GroupFailed`. `Event::handle` is
+  `Group::bits()`. `Event::asset` and `Event::version` carry no meaning; a host reads `kind` first.
+- Only sealed groups emit. A group emits when its state differs from the state it last reported.
+  Sealing reports the first state on the next `pump()`, also when that state is `Ready`.
+- Group events come at the end of `pump()`, after every asset event of that pump. Several changes
+  in one pump become one event with the final state.
+- The ring is shared, so the existing overflow rule applies: the oldest event is dropped, K5006,
+  `PumpStats::eventsDropped`. `progress()` is authoritative when events are missed.
+- An event for a released group carries a stale handle; the host compares it with the group it
+  holds now.
 
-This avoids a released failed member silently disappearing and turning the set into a success.
-It also gives the host one lifetime owner for a renderable asset bundle. Cycles do not arise in the
-initial design: sets contain asset handles only, not other sets.
+For rendering, the predicate is `progress(ctx, g).state == GroupState::Ready`. The renderer
+chooses whether failure means hiding the object, drawing an error representation, or accepting a
+fallback. Kiln does not toggle renderer objects itself. Per-asset diagnostics remain the source of
+detailed load errors.
 
-Use separate bounded membership storage and reverse asset-to-set links. Mark affected sets dirty
-when members change, then evaluate them during pump. Avoid scanning every set every frame.
-Expose limits for set count and total memberships; partial setup must remain Building on errors.
+`wait()` and the events of a sealed group work together: the events of every pump inside one
+`wait()` accumulate, as today.
+
+## Storage
+
+One membership table replaces the four group fields of `Slot` (`groupIndex`, `groupGen`,
+`groupBytes`, `groupAs`):
+
+- A pool of links, sized at `create()` by a new `ContextDesc::maxGroupMembers`. Each link is in two
+  intrusive lists: its group's members and its asset's groups. `groupBytes` and `groupAs` move
+  into the link.
+- A slot transition walks the asset's links and updates each group's counters. A group whose
+  counters change goes on a dirty list; `pump()` evaluates only that list. Nothing scans every
+  group, and nothing allocates in steady state.
+- `wait()`'s priority raise (`boost_group`) walks the group's member list. Today it scans every slot.
+- `ContextDesc::maxGroups` defaults to 64, which suits loading screens. A host with one group per
+  renderable object raises it.
 
 ## Mesh and its textures
 
-Kiln still loads the assets the host requests. The mesh does not automatically load every image
-reference or decide which PBR inputs are required by the renderer.
+Kiln still loads only what the host requests. A mesh load does not load its textures, and the
+renderer decides which PBR inputs it requires.
 
-The host sequence is:
+A helper carries most of the work, so it is part of this proposal:
 
-1. Create a Building set, request the mesh, and add it as required.
-2. Once metadata is available, inspect the material bindings relevant to this renderable object.
-3. Resolve names with `texture_asset_name`, request the selected textures with the appropriate
-   texture kind/shape, and add them as required. Deduplicate shared textures.
-4. Seal only after all required requests/memberships have been established successfully.
-5. Enable rendering when the set reports Ready; react to Failed according to host policy.
+```cpp
+struct MeshTexturesDesc {
+    Group group       = {};
+    Priority priority = Priority::Normal;
+    u32 slots         = ~0u; // one bit per mesh::TextureSlot: the slots the renderer requires
+};
+/// Requests the texture of each binding of the mesh whose slot is in `slots`, with the kind
+/// texture_kind_for_slot() gives, into `group`. Each name is requested once. Writes the handles to
+/// `out` and returns their count; the host releases them. Needs has_meta(mesh).
+Result<u32> request_mesh_textures(Context*, MeshHandle, MeshTexturesDesc const&, Span<TextureHandle> out);
+```
 
-If the mesh fails before metadata is available, seal the set containing that failed mesh. It then
-reports Failed: discovery cannot proceed and must not leave the host waiting forever in Building.
-If that mesh subsequently recovers, rebuild membership before drawing; the recovered mesh may
-introduce textures that were never discovered during the failed attempt.
+It is a loop over `mesh_view()->textures()` with `texture_asset_name()` and `request_texture()`.
+The host calls it; kiln does not follow the references on its own (`asset-model-next.md`).
 
-The host must inspect current mesh state/version as well as asset events, since the mesh may
-already be Ready at insertion and events may have been missed. Track the mesh version used for
-discovery. A helper for this workflow may follow, but its required-material selection must remain
-explicit and it must process a successful Failed-to-Ready recovery as well as MetaReady/Changed.
+The host sequence:
 
-## Reload and update semantics
+1. Create a group and request the mesh into it.
+2. When the mesh has metadata (`has_meta()`, or its `MetaReady` event), call
+   `request_mesh_textures` with the same group.
+3. `seal()` the group.
+4. Draw when `progress()` reports `Ready`. React to `Failed` according to host policy.
 
-The set observes usable current assets continuously (owner-selected behavior). A texture reload keeps the set
-Ready while the old successful payload remains usable. A failed replacement also leaves it Ready,
-matching kiln's existing per-asset behavior. Failed-to-Ready recovery can move a sealed set back to
-Ready once all requirements are satisfied. A separate once-only subscription can later stop
-observing after its first terminal outcome.
+The mesh may already have metadata at step 1, so check `has_meta()` and do not rely on the event
+alone.
 
-If a mesh version changes its dependencies, the host calls `begin_update`, reconciles required
-members, and seals again. Process mesh version changes before making this frame's visibility
-decision; an event for the preceding set revision must not enable the new dependency configuration.
-Beginning an update makes the set Building immediately, so it gates drawing while new requirements
-load. Keep the old membership references until explicitly removed or the set is released.
+If the mesh fails before it has metadata, seal the group with the failed mesh in it. It reports
+`Failed`, so the host does not wait in `Open` forever. If the mesh recovers later (a `Ready` event
+with a new version), its textures were never requested: the host requests them into the same group
+when it handles that event, and the group goes to `Pending` until they load. Handle the asset
+events of a pump before the draw decision, and take the decision from `progress()`: a `GroupReady`
+event from that pump can already be out of date.
 
-Readiness is not an atomic multi-asset publication transaction. Kiln still swaps individual asset
-versions independently. Keeping an entire previous mesh/material generation visible until an
-entire new generation is ready would require version pinning and a separate transaction design.
-This proposal promises that every declared required asset is usable, not that all assets came
-from the same cook/reload generation.
+## Reload and update
 
-## Validation before implementation is complete
+A group observes its members continuously (owner-selected behavior). The existing counters already
+do this:
 
-- Texture-only set: no Ready signal until all required uploads are Ready; placeholders never count.
-- Mesh discovery: sealing prevents premature success; failure before metadata produces Failed.
-- Shared textures in multiple sets; deduplication; insertion of already-Ready/Failed assets.
-- One member fails while another remains pending; fail-fast and settled are distinguished.
-- Caller releases its request refs; set retains its members; releasing one set preserves others.
-- Failed-to-Ready recovery, failed hot reload retaining old content, and mesh dependency updates.
-- Empty sets, invalid handles, capacity exhaustion, revision changes, and stale events.
-- Event overflow followed by status resynchronization; no worker callbacks or steady-state
-  allocation from evaluating unchanged sets.
+- A reload of a `Ready` member leaves the group `Ready`: the old payload stays usable. A failed
+  reload leaves it `Ready` too.
+- A `Failed` member that reloads successfully moves from `failed` to `ready`, so the group can go
+  from `Failed` to `Ready`.
 
-## Decision and remaining design scope
+**A mesh version with other dependencies gets a new group.** The host keeps the current group and
+keeps drawing with it, builds a second group for the new version (the mesh, then
+`request_mesh_textures`, then `seal()`), and when the second group is `Ready` it switches,
+releases the old group and then the references it no longer needs. Shared textures are requested
+again, which costs one reference each. The object is never hidden during the update, which follows
+hot reload's rule of serving the current version. The first version of this note reopened the set
+and hid the object until the new textures loaded.
 
-The owner selected continuous readiness observation because the use case controls rendering over
-time. A once-only subscription is optional future work. The proposed names, retaining ownership,
-sealing/update operations, and event representation remain reviewable API design; they are not
-implemented by this document.
+Readiness is not an atomic multi-asset publication. Kiln still swaps each asset version on its
+own: after a mesh reload the new mesh draws with the old textures until the new group is `Ready`.
+The proposal promises that every member is usable, not that all members come from the same cook.
+Ordering a mesh reload after its re-keyed embedded textures (left to this note by R21) needs
+version pinning. This note does not provide it; R25 (b) holds the question.
+
+## v0.8: partial payloads and eviction
+
+`State::Partial` and eviction are not designed yet. The proposed rule for a group:
+
+- A member counts as ready only in `State::Ready`. A `Partial` member counts as `pending`.
+- A member that loses its payload (eviction) leaves `ready`, so a sealed group can go from `Ready`
+  back to `Pending`. The `GroupPending` event exists for this case and for a join after `seal()`.
+- A host that draws with a partial payload (coarse mips, coarse LOD) leaves that asset out of the
+  group, as the Need section says for LODs.
+
+The v0.8 design must confirm or replace this rule (R25 (c)).
+
+## Validation
+
+- Texture-only group: not `Ready` until every member's upload is `Ready`; placeholders never count.
+- An unsealed group emits no events and reports the same counts as today (existing group tests).
+- Mesh discovery: an `Open` group is never `Ready`; failure before metadata gives `Failed`.
+- A texture in several groups counts in each; a duplicate join; joins of `Ready` / `Failed` assets.
+- One member fails while another is pending: `Failed` state, `settled()` false.
+- A member's last reference released in a sealed group; a group released before its members.
+- `Failed` to `Ready` recovery; a failed reload of a `Ready` member; the two-group mesh update.
+- A join after `seal()`; an empty sealed group; a stale group; membership storage full (`Failed`).
+- Group events after asset events in one pump; one event per group per pump; event overflow, then
+  `progress()`.
+- `wait()` on a sealed and on an unsealed group.
+- No steady-state allocation; `pump()` touches only dirty groups.
+
+## API breaks when implemented
+
+To record in `CHANGELOG.md` at that time:
+
+- A request that names a second group for a live asset now joins it (was: ignored, R5g).
+- `EventKind` gains three values; a host's `switch` over it needs the new cases. For group events
+  `Event::asset` carries no meaning.
+- `GroupStatus` gains `state`; `ContextDesc` gains `maxGroupMembers`.
+
+## Open points for the owner
+
+- Confirm that a membership holds no reference. The alternative (the group owns a reference to each
+  member) removes the "release the group first" rule, but changes `release(ctx, Group)` for every
+  existing host.
+- Confirm that a join after `seal()` is allowed. The alternative is to treat it as misuse.
+- `request_mesh_textures` in `kiln_runtime` (proposed, beside `texture_asset_name`) or in
+  `examples/adapter_support/`.
+- The default of `maxGroupMembers` (proposed: `maxAssets`), and whether `maxGroups` rises.
+- A once-only subscription (stop observing after the first terminal state) is optional future work.

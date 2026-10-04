@@ -136,7 +136,10 @@ One upload job per mesh (mesh-format-spec §5.9, §7):
 
 ### Path to true async IO
 
-When native async backends land (Win32 overlapped / IoRing, io_uring, dispatch IO):
+Superseded by the proposal in [async-read-path.md](async-read-path.md) (§4): `read_range` stays
+synchronous, and a separate `AsyncReadBackend` (`submit_read`, `poll`, `cancel`) sits beside
+`IoBackend`. The load pipeline changes too: it needs persistent load attempts. The plan recorded
+here before that note:
 
 - `read_range` gains a completion token and returns at once.
 - A new `poll(user, Span<u64> completed)` call is added, drained by an IO thread or by `pump()`.

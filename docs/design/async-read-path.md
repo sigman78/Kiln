@@ -1,12 +1,22 @@
 # Asynchronous cooked-asset reads
 
-**Status:** Proposed (2026-09-29). The owner selected the cooked-asset read path as the
-optimization scope; the interface and implementation below are a proposal, not implemented.
-**Decides:** Explicit read submission and completion, request ownership, loader continuations,
-native IOCP / io_uring backends, and the limits of the first implementation.
+**Status:** Proposed (2026-09-29), revised 2026-10-04 after a review against the code. Nothing here
+is implemented. The note is now two parts with separate sign-off:
+
+- **Part 1, load attempts** (proposed for v0.8): the load benchmark, persistent load attempts, the
+  read contract, a fake backend and dedicated blocking readers.
+- **Part 2, native backends** (v0.9, on hold): IOCP and io_uring. They wait until the Part 1
+  benchmark shows that blocking readers are not enough.
+
+**Decides:** Explicit read submission and completion, request ownership, loader continuations, and
+what must be measured before a native backend is built.
 **Related:** [threading-and-io.md](threading-and-io.md), [adapter.md](adapter.md),
 [shipping-split.md](shipping-split.md), [hot-reload.md](hot-reload.md),
-[project terminology](../../CONTEXT.md).
+[store-manifest.md](store-manifest.md). Open points: `../open-questions.md` R24.
+
+Terms: the **read path** is the work to load an existing cooked asset: read, validate, decode,
+upload. A **load attempt** is one attempt to obtain one version of an asset. A reload is a new
+attempt; the previous successful version stays available.
 
 ## 1. Goal and scope
 
@@ -19,9 +29,9 @@ Included:
 - Opening the cooked file, obtaining its size, metadata and payload reads, and closing the file.
 - Metadata validation, decoding supported payload codecs, row repacking, and padding.
 - Admission limits, priorities, short reads, cancellation, hot-reload replacement, and shutdown.
-- The handoff to `Adapter::begin_upload`, `commit_upload`, and `upload_status`.
-- Windows overlapped reads with IOCP; Linux reads through io_uring.
-- A compatibility backend with the same asynchronous contract and dedicated blocking readers.
+- The handoff to `Adapter::begin_upload`, `commit_upload`, `discard_upload` and `upload_status`.
+- Part 1: dedicated blocking readers behind the asynchronous contract.
+- Part 2: Windows overlapped reads with IOCP; Linux reads through io_uring.
 
 Excluded:
 
@@ -31,72 +41,162 @@ Excluded:
 - Direct/unbuffered IO, registered buffers/files, kernel submission polling, and universal
   zero-copy guarantees in the initial implementation.
 
-Cook on miss remains supported through the existing provider boundary. A miss leaves the read
-path, runs the provider as today, and rejoins loading with its returned bytes or published file.
-Its CPU and write costs are measured separately. Memory-registered assets bypass filesystem IO.
-Runtime decoding of an existing cooked payload IS in scope, even when the codec is compute-heavy.
+Memory-registered assets bypass filesystem IO. Runtime decoding of an existing cooked payload IS in
+scope, even when the codec is compute-heavy. The cook provider's place is in §3.3.
+
+### Cost against the library's size
+
+The runtime is about 3,900 lines (`src/runtime/`). A read-service thread, a file-control executor,
+two native backends and a compatibility service together are a large addition. The measured
+problem so far is one: a CPU worker is occupied while a read is pending, and the IO-byte limiter
+can put a worker to sleep. Dedicated blocking readers remove both. A native backend needs its own
+evidence (§9).
 
 ## 2. Current implementation and required change
 
 `IoBackend::read_range` in `include/kiln/io.h` is synchronous. The compatibility implementation
-uses blocking positional reads. `src/runtime/loader.cpp` runs an entire metadata or upload stage
-on a worker; local `Source` and scratch objects assume a read has finished when it returns.
-The current IO-byte limiter can also put a worker to sleep while waiting for admission.
+uses blocking positional reads. `src/runtime/loader.cpp` runs two worker jobs per load attempt:
 
-Replacing the system call inside `read_range` and waiting for its result would retain this
-behavior. The new path instead keeps a persistent load attempt and resumes it after explicit
-completions. Request storage, scratch buffers, and upload reservations outlive individual jobs.
+- **Meta job:** with a cook provider installed, call its `prepare` (§3.3); open the artifact, read
+  and validate the metadata, close the artifact. A texture array does this for every layer.
+- **Upload job:** `begin_upload`, open the artifact again, read, decode, then `commit_upload`, or
+  `discard_upload` if a read or decode failed.
+
+Local `Source` and scratch objects assume a read has finished when it returns. The `IoBytes`
+limiter waits on a worker when `ioInFlightBytes` is used up.
+
+Facts the first version of this note did not have:
+
+- **Artifacts are immutable** and named by build key. The key is chosen at dispatch
+  (`JobOutput::key`). Opening the artifact a second time cannot return other content.
+- **`Adapter::discard_upload` exists** (optional). A failed load after `begin_upload` no longer has
+  to commit.
+- **Compressed payloads decode into scratch memory**, then one copy goes to the upload target.
+  Zstd reads its own output back, and staging memory is often write-combined: decoding into it was
+  about 10 times slower (`cook-tracing.md`, "First findings").
+- **A texture array reads up to 2048 artifacts** in one attempt, one after another.
+- **Direct reads are the smaller case.** Meshes cook with Meshopt by default, and textures with
+  Zstd where it saves 10% of the file. A read goes straight into adapter memory only for a raw
+  mesh, and for a texture level that Zstd skipped and whose row pitch needs no padding.
+
+Replacing the system call inside `read_range` and waiting for its result would keep a worker
+occupied. The new path keeps a persistent load attempt and resumes it after explicit completions.
+Request storage, scratch buffers, and upload reservations outlive individual jobs.
 
 The existing synchronous interface remains available to tools, cook code, and existing hosts.
 The async path is additive. It must not silently change synchronous callback semantics.
 
-## 3. Read service and threading
+# Part 1: load attempts (proposed for v0.8)
 
-The initial built-in implementation has one read-service owner thread per service instance.
-It submits native reads, collects completions, advances IO-only continuations, and manages its
-request table. A context owns a service by default; a host can supply a service implementation.
-Sharing one service across contexts requires separate logical endpoints and is not an implicit
-property of passing the same backend pointer twice.
+v0.8 needs this part for its own reasons: `State::Partial` and range reads load one asset in
+several steps, so the attempt must outlive a job.
 
-Roles:
+## 3. Load attempts
 
-| Role | Responsibilities |
-|---|---|
-| Pump thread | Asset registry, priorities, releasing handles, adapter capability checks, public events and state, dispatch of CPU jobs |
-| Read service | Read admission, native submission/completion, resubmitting short reads, cancellation requests, IO-owned bookkeeping |
-| File-control executor | Potentially blocking open/size/stat/close work; bounded separately from decode workers |
-| CPU workers | Parse/validate metadata, decode/repack payloads, worker-safe adapter begin/commit calls |
-| Adapter / pump thread | Existing GPU progress, binding, failure publication, and frame retirement contract |
+Each attempt owns its artifact key (per layer for an array), immutable metadata snapshot, IO
+requests, scratch allocations, and optional upload target until those resources have no users.
+A handle release marks the attempt abandoned; it does not recycle the attempt's storage while
+requests or jobs reference it. The slot's `JobInput` / `JobOutput` (R8) are the starting point.
 
-Messages transfer ownership between these roles. The read service never mutates a registry
-`Slot` or invokes user diagnostics. Stable request IDs identify messages; generation checks reject
-stale load-attempt references. Allocator callbacks retain their existing thread-safety requirement.
+```mermaid
+flowchart TD
+    P[Dev only: provider prepare on a CPU worker] --> A
+    A[Open the artifact and obtain its size] --> B[Read header and metadata ranges]
+    B --> C[Validate metadata]
+    C --> D[Pump approves formats and publishes MetaReady]
+    D --> E[Admit payload memory]
+    E --> F[Submit payload reads]
+    F --> G[Read completions]
+    G --> H[Decode or repack on CPU worker if required]
+    H --> I[Reserve upload target, copy, commit]
+    I --> J[Pump observes adapter completion]
+    J --> K[Ready or Changed]
+```
 
-Open/stat/close are explicitly a bounded blocking lane in the first release. Windows IOCP does
-not turn ordinary file opening into an asynchronous operation. A later backend may implement
-these operations natively, without changing the load-attempt lifecycle.
+The diagram describes a successful first load. Header-dependent metadata reads can take multiple
+steps. Reloads preserve the current event rules and keep the previous successful payload available;
+they do not publish an intermediate `MetaReady`. Backend or decode failure follows existing
+asset-load diagnostics; a failed reload preserves the old version.
 
-### Progress and pump boundaries
+### 3.1 Files
 
-Accepted native reads progress without `pump()`. Their completions are collected by the service;
-short-read continuations also run without a frame boundary. The service waits on a notification
-when idle; it does not busy-poll.
+An attempt does **not** need to keep one file open from metadata to payload. The build key fixes
+the content, so a second open reads the same bytes. If `kiln-cook --gc` removes the artifact
+between the two opens, the load fails as it does today (K5003).
 
-For the first implementation, CPU continuations are posted to kiln's completion queue and
-dispatched through the existing `JobSystem` by `pump()`. Metadata admission and adapter operations
-already owned by the pump stay there. Consequently, transitions from IO to CPU work and back can
-incur pump latency; this is an explicit limitation, not a claim of fully autonomous loading.
-`wait()` continues pumping and therefore makes progress.
+Keeping the file open is an optimization: it saves one open per asset. Decide it with the
+benchmark. If kept, it is bounded: an array attempt holds at most a few layer files open at once,
+never one per layer. An open-file budget is needed only in that case.
 
-Do not invoke an arbitrary host `JobSystem::submit` on the completion collector: its existing
-contract permits blocking when full. Fully background CPU continuation scheduling would require
-a separate nonblocking dispatch contract and is deferred until pump-latency measurements justify
-it. No public asset state or event may be published outside `pump()` in either design.
+In-place mutation of an artifact is still not a snapshot. Store producers publish immutable files
+by replacement; format validation handles truncation and corruption.
+
+### 3.2 Texture arrays
+
+An array attempt has many inputs. Its metadata step reads every layer's header and checks it
+against layer 0. Its payload step reads every layer into one upload. The attempt keeps a per-layer
+level table (`ArrayLayer::src`), as today. Layers are independent reads into disjoint ranges, so
+they are the best case for concurrent reads; the benchmark has an array case (§9). A failed layer
+fails the attempt and cancels the reads not yet submitted.
+
+### 3.3 Cook provider
+
+In dev builds the provider's `prepare` runs before every load of a file asset, hit or miss, and
+once per array layer. It does blocking stats, sometimes hashing, and on a miss a cook that takes
+seconds and splits its work over the job system.
+
+`prepare` is the first step of an attempt and runs on a **CPU worker**, as today. It never runs on
+a reader or on the read-service thread. It returns a build key, which the read path then opens, or
+cooked bytes, which make the attempt a memory source and bypass IO. Its time is measured apart
+from the read path. Shipping builds have no provider and skip the step.
+
+### 3.4 Destinations and adapter ownership
+
+- **Scratch is the main path.** Compressed payloads read into encoded scratch, decode into decoded
+  scratch, and go to the upload target with one copy. Padded texture rows repack from scratch.
+  Do not issue an IO request for every row.
+- **Direct reads are an optimization for the smaller case** (§2): a raw mesh, or a texture level
+  without Zstd and without row padding. A direct read into mapped GPU or staging memory needs an
+  explicit backend capability and platform validation. A CPU-addressable pointer is not proof.
+  Without the capability, read into scratch and copy.
+- On the scratch path, acquire the upload target after the reads and the decode finish. This keeps
+  GPU staging space free during storage stalls.
+- Budget the temporary coexistence of encoded scratch, decoded data, and the target. The on-disk
+  size does not bound decoded memory.
+- No commit, discard, destruction, or staging reuse while an IO request or CPU job can still write
+  its range.
+- After a successful `begin_upload`, kiln calls exactly one of `commit_upload` and
+  `discard_upload`, after all writers finish. An abandoned or failed attempt discards. Without
+  `discard_upload` it commits, then kiln drains the upload and destroys the object (`adapter.md`).
+
+### 3.5 Pump boundaries: a risk to the goal
+
+Today a first load crosses the pump three times: dispatch to the meta job, `MetaReady` to the
+upload job, and the adapter's completion. One job does open, read and validate.
+
+CPU continuations are posted to kiln's completion queue and dispatched through the existing
+`JobSystem` by `pump()`. If every hop from IO to CPU work waits for a pump, a small asset pays
+several extra frames to reach `Ready`. That makes the common case slower, which defeats the goal.
+
+Rules for Part 1:
+
+- **The metadata step stays one unit.** One reader opens, reads the header and metadata, and
+  validates them, as the meta job does now. Metadata is small; splitting it gains nothing.
+- **A payload with no CPU work has no CPU hop.** A direct read completes, then the pump commits.
+- **A payload with CPU work has one hop**, from the last read completion to the decode job.
+- The benchmark reports pumps and time from request to `MetaReady` and to `Ready`, per asset size
+  class, against today's loader (§9). A regression for small assets blocks the change.
+
+Do not invoke an arbitrary host `JobSystem::submit` from a completion collector: its contract
+permits blocking when full. Fully background CPU dispatch needs a separate nonblocking contract and
+waits until the measurements ask for it. No public asset state or event is published outside
+`pump()`. `wait()` continues pumping and therefore makes progress.
 
 ## 4. Proposed backend interface
 
 This is an interface sketch; names and layout are not an ABI commitment. It lives alongside the
-synchronous interface and contains no OS types.
+synchronous interface and contains no OS types. It replaces the earlier idea of a completion token
+on `IoBackend::read_range` (`threading-and-io.md`, "Path to true async IO").
 
 ```cpp
 struct IoRead {
@@ -122,18 +222,19 @@ struct AsyncReadBackend {
 };
 ```
 
-`submit_read`, `poll`, `cancel`, and `wait` have one owner: the read-service thread. Only `wake`
-is callable concurrently, to interrupt the service when new work or shutdown arrives. The service
-inbox and wake protocol must prevent a notification between the empty check and sleep from being
-lost. `wait` consumes no completions and returns on completion availability, wake, timeout, or
-backend failure. It cannot require a new completion to arrive if one is already queued.
+`submit_read`, `poll`, `cancel`, and `wait` have one owner thread. Only `wake` is callable
+concurrently, to interrupt the owner when new work or shutdown arrives. The owner's inbox and wake
+protocol must prevent a notification between the empty check and sleep from being lost. `wait`
+consumes no completions and returns on completion availability, wake, timeout, or backend failure.
+It cannot require a new completion to arrive if one is already queued.
 
-The native backend factory supplies a compatible file backend as well as the read backend and
-reports its execution mode (`IOCP`, `IoUring`, or `BlockingWorkers`). File handles are specific to
-that pair: a handle opened by the old Windows compatibility backend, for example, is not valid
-for native overlapped submission. Host-provided backends must supply a compatible pair too.
-The synchronous `read_range` member remains usable by tools; the async runtime never calls it
-on its CPU workers.
+Which thread is the owner is an open point (§11): the pump thread is enough for blocking readers;
+a native backend needs a read-service thread (§8).
+
+A backend factory supplies a compatible file backend as well as the read backend and reports its
+execution mode (`BlockingWorkers`, later `IOCP` or `IoUring`). File handles are specific to that
+pair. Host-provided backends must supply a compatible pair too. The synchronous `read_range`
+member remains usable by tools; the async runtime never calls it on its CPU workers.
 
 ### Acceptance and completion
 
@@ -159,74 +260,32 @@ on its CPU workers.
 
 Submission does not deliberately wait for read completion. This is not a hard upper bound on
 native syscall latency: buffered filesystem operations can still do work during submission.
-Keeping submission on the read service protects the pump and CPU worker pool from that latency.
 
-The first backend submits requests promptly. Batching is an internal optimization and may not
-leave an accepted request waiting indefinitely for another request or another pump.
+A backend submits requests promptly. Batching is an internal optimization and may not leave an
+accepted request waiting indefinitely for another request or another pump.
 
-## 5. Load attempts and file consistency
+## 5. Blocking readers
 
-Each attempt owns its file, immutable metadata snapshot, IO requests, scratch allocations, and
-optional upload target until those resources have no users. A handle release marks the attempt
-abandoned; it does not recycle the attempt's storage while requests or jobs reference it.
+The Part 1 backend is a small set of dedicated reader threads behind the §4 contract. They never
+use the host's CPU job workers to wait on storage. A reader opens, reads and closes, so Part 1
+needs no separate file-control executor. A reader finishes a short read itself. Cancellation only
+suppresses work not yet started. Other platforms use this mode too.
 
-```mermaid
-flowchart TD
-    A[Open cooked file and obtain size] --> B[Read header and metadata ranges]
-    B --> C[Validate metadata on CPU worker]
-    C --> D[Pump approves formats and publishes MetaReady]
-    D --> E[Admit payload memory and reserve upload target]
-    E --> F[Submit payload reads]
-    F --> G[Read completions]
-    G --> H[Decode or repack on CPU worker if required]
-    H --> I[Commit upload]
-    I --> J[Pump observes adapter completion]
-    J --> K[Ready or Changed]
-```
-
-The diagram describes a successful first load. Header-dependent metadata reads can take multiple
-steps. Reloads preserve the current event rules and keep the previous successful payload available;
-they do not publish an intermediate `MetaReady`. Backend or decode failure follows existing
-asset-load diagnostics; a failed reload preserves the old version.
-
-Retain the same open file through metadata and payload reads. This avoids reopening a newer file
-after validating an older file's metadata, and permits atomic rename replacement while loading.
-It does not make in-place mutation a snapshot. Store producers must publish immutable files by
-replacement; format validation still handles truncation/corruption. Changed files start new attempts
-through existing reload scheduling. File count is budgeted to bound the cost of retaining handles.
-
-### Destinations and adapter ownership
-
-- Raw mesh data and matching texture layouts may read directly into adapter-provided writable
-  memory when the backend supports that destination. Successful `begin_upload` grants exclusive
-  write use until commit under the existing adapter contract.
-- The initial guaranteed path is ordinary CPU scratch memory. Direct reads into mapped GPU/staging
-  memory require platform validation and an explicit backend capability; they are not assumed safe
-  merely because a pointer is CPU-addressable. Unsupported destinations use scratch plus a copy.
-- Compressed payloads use encoded scratch and decode into the final upload target. Padded texture
-  rows use scratch/repacking where necessary; do not issue an IO request for every row by default.
-- No commit, destruction, or staging reuse while an IO request or CPU job can still write its range.
-- Preserve the current adapter ticket contract: after successful begin, commit exactly once, even
-  on an abandoned/failed load, then let kiln drain the upload and destroy its object. This occurs
-  only after all writers finish. An adapter discard callback is a separate improvement, not a
-  prerequisite hidden in this spec.
-
-On the scratch path, prefer acquiring the upload target after reads finish to avoid holding GPU
-staging space during storage stalls. Budget the temporary coexistence of encoded scratch, decoded
-data, and the target; do not assume the on-disk size bounds decoded memory.
+`ContextDesc::maxIoJobs` keeps its meaning for the existing path. The reader count gets its own
+setting.
 
 ## 6. Admission and back-pressure
 
 Separate configuration/metrics for:
 
-- Active load attempts and open files.
+- Active load attempts, and open files if §3.1 keeps them.
 - Outstanding read requests and the sum of their destination byte ranges.
 - Retained CPU scratch bytes, including completed reads waiting for decode.
 - CPU jobs queued/running; existing upload-per-pump admission and adapter staging limits.
 
-The current `maxIoJobs` remains meaningful for the compatibility path; do not silently reinterpret
-it as every new limit. Proposed async settings get their own descriptor. Existing `ioInFlightBytes`
-can cap outstanding read bytes, but it does not account for scratch retained after completion.
+Do not silently reinterpret `maxIoJobs` as every new limit. Proposed async settings get their own
+descriptor. Existing `ioInFlightBytes` can cap outstanding read bytes, but it does not account for
+scratch retained after completion.
 
 Admission precedes submission and runs through ready queues. No CPU worker sleeps waiting for
 an IO budget. A failed attempt releases permits only as ownership ends, not at handle release.
@@ -238,10 +297,10 @@ requires an indivisible scratch allocation above its budget, fail with a clear r
 diagnostic instead of waiting for impossible capacity. An upload larger than the adapter can ever
 accept must likewise fail, while temporary pressure remains retryable.
 
-Priority changes affect unsubmitted work. Native requests already in flight are not assumed
-preemptible. High-priority work receives preference with a bounded fairness rule so normal loads
-eventually progress. Initial constants and defaults are selected with benchmarks, not baked into
-the public contract. Ring saturation and full long-lived heaps are reported distinctly.
+Priority changes affect unsubmitted work. Requests already in flight are not assumed preemptible.
+High-priority work receives preference with a bounded fairness rule so normal loads eventually
+progress. Initial constants and defaults are selected with benchmarks, not baked into the public
+contract.
 
 ## 7. Cancellation and shutdown
 
@@ -252,18 +311,19 @@ Backend cancellation-operation completions (such as io_uring cancel CQEs) are in
 not appear as duplicate read completions.
 
 When an attempt is abandoned: stop submitting its remaining ranges, request cancellation where
-supported, consume all accepted completions, join its CPU continuations, and retire its resources.
-The attempt generation prevents late messages from affecting a reused asset slot. An unsupported
-cancel operation falls back to letting the read finish.
+supported, consume all accepted completions, join its CPU continuations, discard its upload target
+if it has one, and retire its resources. The attempt generation prevents late messages from
+affecting a reused asset slot. An unsupported cancel operation falls back to letting the read
+finish.
 
 Shutdown sequence:
 
 1. Stop admission and prevent new continuations from launching work.
-2. Cancel/drain reads and file-control tasks while keeping the service running.
+2. Cancel/drain reads and file tasks while keeping the readers running.
 3. Finish CPU jobs and reconcile their messages; no producer may still reference context memory.
-4. Finalize outstanding adapter tickets and complete their uploads; retain the existing host
+4. Finalize outstanding adapter tickets (discard, or commit and complete); retain the existing host
    requirement that rendering uses have finished before GPU object destruction.
-5. Close retained files, stop/join owned service threads, and free request/attempt tables.
+5. Close retained files, stop/join owned threads, and free request/attempt tables.
 
 The backend and supplied allocator outlive this sequence. A timeout is diagnostic information,
 not permission to free memory the OS might still access. Initial destruction may block on stalled
@@ -271,36 +331,97 @@ storage, just as existing destruction can wait for workers. An asynchronous cont
 API is out of scope. Host GPU-idle waiting does not cover new uploads committed during draining;
 those still require adapter completion before their resources are destroyed.
 
-## 8. Platform mapping, selection, and build boundaries
+# Part 2: native backends (v0.9, on hold)
+
+Build nothing here until the Part 1 benchmark shows that blocking readers limit throughput or
+latency on a real workload (§9). The contract in §4 and §7 is written so that a native backend
+fits without changing the load-attempt lifecycle.
+
+## 8. Read service, platforms and selection
+
+### Read service and threading
+
+A native backend needs one read-service owner thread per service instance. It submits native
+reads, collects completions, advances IO-only continuations (short reads), and manages its request
+table. It waits on a notification when idle; it does not busy-poll. A context owns a service by
+default; a host can supply a service implementation. Sharing one service across contexts requires
+separate logical endpoints.
+
+| Role | Responsibilities |
+|---|---|
+| Pump thread | Asset registry, priorities, releasing handles, adapter capability checks, public events and state, dispatch of CPU jobs |
+| Read service | Read admission, native submission/completion, resubmitting short reads, cancellation requests, IO-owned bookkeeping |
+| File-control executor | Potentially blocking open/size/stat/close work; bounded separately from decode workers |
+| CPU workers | Provider `prepare`, parse/validate metadata, decode/repack payloads, worker-safe adapter begin/commit/discard calls |
+| Adapter / pump thread | Existing GPU progress, binding, failure publication, and frame retirement contract |
+
+Messages transfer ownership between these roles. The read service never mutates a registry
+`Slot` or invokes user diagnostics. Stable request IDs identify messages; generation checks reject
+stale load-attempt references. Allocator callbacks retain their existing thread-safety requirement.
+
+Open/stat/close are a bounded blocking lane. Windows IOCP does not turn ordinary file opening into
+an asynchronous operation. A later backend may implement these operations natively.
+
+### Platform mapping
 
 **Windows:** open compatible handles with overlapped mode, associate them with IOCP, and retain
 one native request record per outstanding read. Normalize immediate success, immediate error,
 queued completion, short reads, and cancellation into the acceptance contract above. Do not
 configure success-notification suppression without providing the missing logical completion.
-Wake packets must be distinguishable from read completions.
+Wake packets must be distinguishable from read completions. A handle opened by the blocking
+backend is not valid for overlapped submission.
 
 **Linux:** use ordinary buffered positional reads through io_uring, with request IDs in user data.
 Start with single-shot reads and ordinary submission, with explicit SQ/CQ capacity handling.
 Cancellation CQEs and read CQEs have separate internal identities. Runtime initialization probes
 availability; an installed kernel version alone does not guarantee permission to use io_uring.
+Ring saturation and full long-lived heaps are reported distinctly.
 
-**Compatibility:** dedicated blocking readers implement the same submit/completion contract.
-They never consume the host's general CPU job workers merely to wait on storage. Cancellation
-may only suppress work not yet started. Other platforms can use this mode initially.
+### Selection and build
 
 Proposed selection: `Compatibility`, `Auto`, or `NativeRequired`. Preserve compatibility as the
-initial default. Auto may fall back at service creation and reports the selected backend/reason;
+default. Auto may fall back at service creation and reports the selected backend/reason;
 NativeRequired reports initialization failure. Never silently switch backends with requests in
 flight or migrate handles between incompatible providers.
 
 Build the native backends optionally with kiln_runtime; all modes remain read-only and usable
 with `KILN_BUILD_COOK=OFF`. No example/window dependencies enter the runtime. The current
 shipping dependency policy admits third-party decoders only: using liburing would need an
-explicit policy exception. The proposed initial Linux implementation uses a small private
-kernel-ABI wrapper; compare maintenance cost with liburing during its implementation milestone
-before committing to either dependency choice. The read contract is independent of that choice.
+explicit policy exception. The proposed Linux implementation uses a small private kernel-ABI
+wrapper; compare maintenance cost with liburing before committing to either. The read contract is
+independent of that choice.
+
+# Both parts
 
 ## 9. Validation and performance gates
+
+### Benchmark first
+
+Build the benchmark before any loader change. It runs today's loader, then each later mode, on the
+same pre-cooked corpus with equal resource budgets:
+
+- many small assets; a few large assets; a texture array with many layers; mixed priorities;
+- default cook settings (Meshopt meshes, Zstd textures) and a raw corpus, with the share of direct
+  reads reported for each;
+- warm and cold cache runs (record how coldness is established);
+- a host with a constrained worker pool;
+- a pump at a fixed frame rate, so pump-boundary delay shows.
+
+Exclude cook-on-miss, provider `prepare` and cache writes from read-path timing.
+
+Report time and pump count to `MetaReady` and `Ready` (including tail latency) per size class,
+throughput, outstanding IO depth, CPU-worker occupancy, time in open/stat/read/decode/copy/adapter
+stages, peak scratch and staging bytes, and cancellation/shutdown drain time.
+
+Gates:
+
+- **Part 1 lands** only with no regression in time-to-`Ready` for small assets and warm-cache
+  loads against today's loader.
+- **Part 2 starts** only if blocking readers show a measured limit that a native backend removes.
+- A native backend becomes the default only with evidence of benefit and no material regression
+  for warm-cache loads. No claimed speedup without measurement.
+
+### Tests
 
 First implement a deterministic fake async backend that exercises:
 
@@ -309,39 +430,41 @@ First implement a deterministic fake async backend that exercises:
 - Cancel before submission, during IO, after completion, and unsupported cancellation.
 - Release/re-request and reload with late completions; generation reuse and stale messages.
 - Shutdown with outstanding reads, CPU jobs, file operations, and adapter uploads.
-- A file replaced between metadata and payload reads; separate in-place corruption cases.
+- An artifact removed between the metadata and payload opens; separate in-place corruption cases.
+- An array with a failing layer; an abandoned attempt that discards its upload.
 - Saturated scratch/read/staging budgets, large chunked reads, and permanent capacity failure.
 
 Use guarded/tracked destinations to establish that no writer survives reclamation. Run sanitizer
-coverage where available. Native integration tests verify the same behavior, plus fallback and
-NativeRequired behavior. Test direct-to-staging separately for each supported backend/adapter
+coverage where available. Native integration tests (Part 2) verify the same behavior, plus fallback
+and NativeRequired behavior. Test direct-to-staging separately for each supported backend/adapter
 pair; scratch remains the valid fallback. Existing golden payloads and event/reload tests must
 continue to pass, including shipping builds and the synchronous backend.
 
-Benchmark existing blocking workers, dedicated compatibility readers, and native async reads on
-the same pre-cooked corpus: many small assets, a few large assets, mixed priorities, warm/cold
-cache runs (record how coldness is established), and a host with a constrained worker pool.
-Exclude cook-on-miss and cache writes from read-path timing.
+## 10. Delivery sequence
 
-Report time-to-MetaReady/Ready (including tail latency), throughput, outstanding IO depth,
-CPU-worker occupancy, time in open/stat/read/decode/adapter stages, pump-boundary delays,
-peak scratch/staging bytes, and cancellation/shutdown drain time. Compare with equal resource
-budgets. No claimed speedup without measurement; choosing a native backend by default requires
-evidence of benefit and no material regression for warm-cache loads.
+Part 1 (v0.8):
 
-## 10. Delivery sequence and remaining decisions
+1. Stage timing and the load benchmark (§9). This step alone needs no design sign-off.
+2. Persistent load attempts, the read contract, the fake backend and blocking readers. Prove
+   ownership and cancellation. Check the Part 1 gate.
 
-1. Add stage timing and a reproducible cooked-asset load benchmark.
-2. Implement persistent load attempts, the async contract, fake backend, and bounded compatibility
-   service. Prove ownership/cancellation before native integration.
-3. Add IOCP and its platform tests; validate ordinary scratch destinations first.
-4. Add io_uring and its platform tests, resolving the wrapper/liburing policy choice explicitly.
-5. Validate direct-to-staging opportunities, tune budgets, and compare all modes.
+Part 2 (v0.9, on hold; each step needs the Part 2 gate):
 
-No additional owner decision is required to draft this design. Before implementation, review the
-proposed service/thread ownership and pump-boundary limitation. Before enabling native mode by
-default, use measurements to choose defaults. Extending CPU dispatch, adding asynchronous file
-control, or adding GPU-specific IO remains a separately justified change.
+3. IOCP and its platform tests; ordinary scratch destinations first.
+4. io_uring and its platform tests, resolving the wrapper/liburing policy choice explicitly.
+5. Direct-to-staging where a backend and adapter pair supports it; tune budgets; compare all modes.
+
+## 11. Open points for the owner
+
+- Confirm the split: Part 1 with v0.8, Part 2 held in v0.9 behind the benchmark (R24).
+- The owner thread of the §4 contract in Part 1. With blocking readers the pump thread can submit
+  and poll, and Part 1 then adds only the reader threads. A read-service thread arrives with Part 2.
+- Keep the artifact open across the metadata and payload steps, or open it twice (§3.1). Decide
+  with the benchmark.
+- The small-asset gate in §3.5 and §9: the acceptable regression is proposed as none.
+
+Extending CPU dispatch, adding asynchronous file control, or adding GPU-specific IO remains a
+separately justified change.
 
 ## Sources
 

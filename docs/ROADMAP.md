@@ -110,7 +110,10 @@ Not goals for v1:
 - GPU conformance runs under the Vulkan validation layer (with synchronization validation): the
   examples' `--dump` and `--verify` modes. This machine has no layer yet; CI only compiles Vulkan.
 - Extracting `kiln/core` into a separate utility library.
-- Proposed notes awaiting the owner: [`design/readiness-sets.md`](design/readiness-sets.md).
+- Proposed notes awaiting the owner: [`design/readiness-sets.md`](design/readiness-sets.md) (group
+  readiness, open-questions R25) and [`design/async-read-path.md`](design/async-read-path.md)
+  (open-questions R24: it proposes load attempts and the load benchmark for v0.8, and holds the
+  native backends of v0.9 behind that benchmark).
 
 ## How the plan runs
 
