@@ -71,6 +71,10 @@ enum class SourceKind : u8 { File = 0, Memory, Array };
 
 enum class QueueId : u8 { None = 0, MetaHigh, MetaNormal, UploadHigh, UploadNormal, Await, Count };
 
+/// The lists of prepared jobs, in the order the workers take them: a High meta job goes before a
+/// Normal upload, so a late High request waits only for the jobs that already run.
+enum class ReadyId : u8 { UploadHigh = 0, MetaHigh, UploadNormal, MetaNormal, Count, None = 0xff };
+
 enum class CompletionKind : u8 { MetaReady = 0, Uploaded, Failed, BusyRetry };
 
 /// A reload post_reload() asked for.
@@ -197,6 +201,10 @@ struct Slot {
     u32 qPrev      = kInvalid;
     u32 qNext      = kInvalid;
     u64 retryAfter = 0; ///< Busy retry: not before this pump index
+    // The prepared job's place in Context::ready. Guarded by Context::readyMutex, not pump-thread only.
+    ReadyId ready = ReadyId::None;
+    u32 rPrev     = kInvalid;
+    u32 rNext     = kInvalid;
     // Profiling only (profile_now_ns): the load attempt began, the slot entered its queue, its job
     // was submitted.
     u64 loadNs   = 0;
@@ -323,6 +331,11 @@ struct Context {
 
     rt::List queues[u32(rt::QueueId::Count)];
 
+    // Prepared jobs: pump() pushes, run_jobs() pops. Guarded by readyMutex.
+    std::mutex readyMutex;
+    rt::List ready[u32(rt::ReadyId::Count)];
+    u32 runners = 0; ///< run_jobs() calls submitted and not yet returned; at most maxIoJobs
+
     // completions: workers push, pump pops
     std::mutex compMutex;
     rt::Completion* comp        = nullptr;
@@ -358,10 +371,10 @@ struct Context {
     std::thread::id pumpThread;
     bool pumpBound      = false;
     u64 pumpIndex       = 0;
-    u32 jobsOutstanding = 0; ///< pump-side count of submitted jobs whose completion was not popped
+    u32 jobsOutstanding = 0; ///< pump-side count of prepared jobs whose completion was not popped
     PumpStats cur;           ///< stats of the pump in progress
 
-    std::atomic<u32> jobsInFlight{0};    ///< decremented by the job itself (destroy() waits on it)
+    std::atomic<u32> jobsInFlight{0};    ///< run_jobs() calls; each decrements it last (destroy() waits)
     std::atomic<u64> ioBytesInFlight{0}; ///< ioInFlightBytes budget in use
 };
 
@@ -428,7 +441,16 @@ inline TextureShape shape_of(ktx2::TextureDesc const& d) {
 }
 
 // --- loader.cpp (worker side) -------------------------------------------------------
-void run_job(void* arg);
+/// A job-system job (`arg` is the Context): runs prepared jobs, the first ReadyId first, until none
+/// is left. So a finished job starts the next one without a pump.
+void run_jobs(void* arg);
+/// pump(): `s` is prepared for `stage` and a worker may take it. True: the caller submits one more
+/// run_jobs() (fewer than maxIoJobs run).
+[[nodiscard]] bool ready_push(Context* ctx, Slot& s, Stage stage);
+/// Takes the prepared job of `s` back. False: a worker has it already.
+[[nodiscard]] bool ready_remove(Context* ctx, Slot& s);
+/// `s` became High: its prepared job, if no worker has it yet, goes before the Normal ones.
+void ready_boost(Context* ctx, Slot& s);
 /// `<store>/manifest.dir`. Returns the length `format` reports (>= cap - 1 means
 /// truncated). Reads only fields fixed at create().
 usize manifest_path(Context const* ctx, char* out, usize cap);

@@ -764,9 +764,67 @@ u64 texture_layout(ktx2::TextureDesc const& d, u64 pitchAlign, u64 offsetAlign, 
     return texture_level_layout(t, c, outOffset, outPitch);
 }
 
-void run_job(void* arg) {
-    Slot& s      = *static_cast<Slot*>(arg);
-    Context* ctx = s.ctx;
+namespace {
+
+void ready_link(Context* ctx, Slot& s, ReadyId id) {
+    List& l = ctx->ready[u32(id)];
+    s.ready = id;
+    s.rNext = kInvalid;
+    s.rPrev = l.tail;
+    if (l.tail != kInvalid)
+        ctx->slots[l.tail].rNext = s.index;
+    else
+        l.head = s.index;
+    l.tail = s.index;
+    ++l.count;
+}
+
+void ready_unlink(Context* ctx, Slot& s) {
+    List& l = ctx->ready[u32(s.ready)];
+    if (s.rPrev != kInvalid)
+        ctx->slots[s.rPrev].rNext = s.rNext;
+    else
+        l.head = s.rNext;
+    if (s.rNext != kInvalid)
+        ctx->slots[s.rNext].rPrev = s.rPrev;
+    else
+        l.tail = s.rPrev;
+    --l.count;
+    s.ready = ReadyId::None;
+    s.rPrev = s.rNext = kInvalid;
+}
+
+} // namespace
+
+bool ready_push(Context* ctx, Slot& s, Stage stage) {
+    bool const high  = s.priority == Priority::High;
+    ReadyId const id = stage == Stage::Meta ? (high ? ReadyId::MetaHigh : ReadyId::MetaNormal)
+                                            : (high ? ReadyId::UploadHigh : ReadyId::UploadNormal);
+    std::lock_guard<std::mutex> const lock(ctx->readyMutex);
+    ready_link(ctx, s, id);
+    if (ctx->runners >= ctx->maxIoJobs) return false;
+    ++ctx->runners;
+    return true;
+}
+
+bool ready_remove(Context* ctx, Slot& s) {
+    std::lock_guard<std::mutex> const lock(ctx->readyMutex);
+    if (s.ready == ReadyId::None) return false;
+    ready_unlink(ctx, s);
+    return true;
+}
+
+void ready_boost(Context* ctx, Slot& s) {
+    std::lock_guard<std::mutex> const lock(ctx->readyMutex);
+    if (s.ready != ReadyId::MetaNormal && s.ready != ReadyId::UploadNormal) return;
+    ReadyId const to = s.ready == ReadyId::MetaNormal ? ReadyId::MetaHigh : ReadyId::UploadHigh;
+    ready_unlink(ctx, s);
+    ready_link(ctx, s, to);
+}
+
+namespace {
+
+void run_job(Context* ctx, Slot& s) {
     s.out.status = kOk;
     s.out.diag   = 0;
     s.out.capture.reset();
@@ -780,7 +838,28 @@ void run_job(void* arg) {
     }
     Completion const c{s.index, s.in.gen, k};
     post(ctx, c); // from here on the pump thread may reuse `s`
-    ctx->jobsInFlight.fetch_sub(1, std::memory_order_acq_rel);
+}
+
+} // namespace
+
+void run_jobs(void* arg) {
+    Context* ctx = static_cast<Context*>(arg);
+    for (;;) {
+        Slot* s = nullptr;
+        {
+            std::lock_guard<std::mutex> const lock(ctx->readyMutex);
+            for (List const& l : ctx->ready) {
+                if (l.head == kInvalid) continue;
+                s = &ctx->slots[l.head];
+                ready_unlink(ctx, *s);
+                break;
+            }
+            if (!s) --ctx->runners; // under the lock, so a push after it submits a new run_jobs()
+        }
+        if (!s) break;
+        run_job(ctx, *s);
+    }
+    ctx->jobsInFlight.fetch_sub(1, std::memory_order_acq_rel); // the last access to the context
 }
 
 } // namespace kiln::rt

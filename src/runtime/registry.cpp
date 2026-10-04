@@ -87,6 +87,8 @@ void boost(Context* ctx, Slot& s) {
     } else if (s.queue == QueueId::UploadNormal) {
         queue_remove(ctx, s);
         queue_push(ctx, QueueId::UploadHigh, s);
+    } else if (s.job_in_flight()) {
+        ready_boost(ctx, s);
     }
     s.loadNs   = loadNs; // a boost moves the slot; its waits go on
     s.queuedNs = queuedNs;
@@ -434,7 +436,12 @@ void unload(Context* ctx, Slot& s) {
     transition(s, Step::Unload);
     // Handles go stale now; the slot is reused only after the in-flight job (if any) completed.
     s.generation = s.generation + 1 == 0 ? 1 : s.generation + 1;
-    if (!s.job_in_flight()) free_slot(ctx, s); // else a zombie: its completion frees it
+    if (s.job_in_flight() && ready_remove(ctx, s)) { // prepared, and no worker took it: no job runs
+        --ctx->jobsOutstanding;
+        free_slot(ctx, s);
+    } else if (!s.job_in_flight()) {
+        free_slot(ctx, s);
+    } // else a zombie: its completion frees it
 }
 
 void release_impl(Context* ctx, u64 bits, AssetKind kind) {

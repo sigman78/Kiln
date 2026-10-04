@@ -469,7 +469,7 @@ What the numbers say:
   measured.
 - **Small assets wait in the queue.** With the defaults a small asset reaches `MetaReady` after
   2.2 s (p50), all of it queue time. With `maxIoJobs` 1024 it is 17 ms, one pump. The §3.5 gate
-  must compare against the new default, not against the old one.
+  must compare against the rule that is in now (below), not against that day's.
 - **Direct reads:** 78 of 891 uploads read straight into the target. The other 813 decode or copy.
 - **A 64-layer array** (one job) is `Ready` after 117 ms: 92 ms in the upload job, 65% of it in
   decodes. Its layers run one after another on one worker. Splitting the job would help it; reads
@@ -479,10 +479,12 @@ What the numbers say:
 
 ### The job limit and a late high-priority request (2026-10-04)
 
-"Defaults" in the table above is the old default, `maxIoJobs` = the worker count. The default is
-now 16 jobs per worker (temporary, R26). It was chosen from this measurement: the same corpus,
-warm, 60 Hz, with 16 assets (21 MiB) held back and requested with `High` priority once a quarter
-of the others had settled (`--late-high 16`). "Late" is the time from those requests to `Ready`.
+"Defaults" in the first table is the dispatch rule of that day: `pump()` started at most
+`maxIoJobs` jobs, one per worker. Two fixes were measured on the same corpus, warm, 60 Hz, with 16
+assets (21 MiB) held back and requested with `High` priority once a quarter of the others had
+settled (`--late-high 16`). "Late" is the time from those requests to `Ready`.
+
+First, a larger limit (R26 (a), in for a few hours):
 
 | Jobs per worker | 7 workers: wall | Late p50 / max | 2 workers: wall | Late p50 / max |
 |---|---|---|---|---|
@@ -497,9 +499,29 @@ of the others had settled (`--late-high 16`). "Late" is the time from those requ
 - A late `High` request waits behind the jobs already given to the pool. With a small limit it
   waits for pumps instead. Up to 16 per worker the first effect stays below the second.
 - With no real limit and few workers, a `High` request waits for the whole queue: 850 ms.
-- With the new default: warm 1.03 s, cold 1.19 s, 2 workers 1.72 s. A late `High` asset is
-  `Ready` after 117 ms (p50; cold 183 ms). Small assets reach `MetaReady` after 150 ms (p50), not
-  17 ms as with no limit: they share the queue with the large ones.
+
+Then the fix that is in now (R26 (b)): `pump()` prepares every queued job, and the workers take
+the prepared jobs by priority, so a job that ends starts the next one without a pump. `maxIoJobs`
+is the number of jobs that run at once, by default the worker count.
+
+| Run | Wall | Late `MetaReady` p50 | Late `Ready` p50 / max | Small assets: `MetaReady` p50 |
+|---|---|---|---|---|
+| Old rule, warm | 4.38 s | 83 ms | 100 / 133 ms | 2217 ms |
+| 16 per worker, warm | 1.03 s | 68 ms | 117 / 150 ms | 150 ms |
+| **Now, warm** | 0.91 s | 35 ms | 50 / 100 ms | 17 ms |
+| Now, warm, 240 Hz | 0.88 s | 11 ms | 25 / 63 ms | 5 ms |
+| Now, cold | 1.12 to 1.18 s | 33 ms | 50 / 100 ms | 250 to 417 ms |
+| Old rule, 2 workers, warm | 15.30 s | 183 ms | 200 / 317 ms | 7717 ms |
+| **Now, 2 workers, warm** | 1.47 s | 33 ms | 83 / 100 ms | 17 ms |
+| Now, 2 workers, cold | 1.87 s | 33 ms | 67 / 83 ms | 1017 ms |
+
+- The load is as fast as with no limit, and a late `High` asset has its metadata after 2 pumps
+  and is `Ready` in half the time of the old rule.
+- The workers are 62% busy with 7 workers and 99% with 2. What is left of the wall time on 7
+  workers is the pump between the meta job and the upload job, and the largest assets.
+- On a cold cache the small assets wait longer for `MetaReady`: uploads go before meta jobs of
+  the same priority, and the cold meta reads take longer than one pump.
+- The array case does not change: one job, 117 ms.
 
 Consequence for this note: the benchmark gives no reason for Part 2 on this machine. Part 1 stays
 justified by v0.8 (range reads and `State::Partial` need a persistent attempt), not by throughput.

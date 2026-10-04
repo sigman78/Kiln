@@ -73,11 +73,20 @@ surface.
 
 ### Worker stages
 
-One job runs one stage of one asset. `pump()` dispatches at most `ContextDesc::maxIoJobs` jobs at
-once (0 = 16 per worker; a host `JobSystem` counts as 4 workers), `High` queues before `Normal`
-(R5c). The limit is above the worker count on purpose: only `pump()` starts jobs, and a job takes a
-few milliseconds, so one job per worker leaves the workers idle until the next pump. The job system
-queues the rest. The factor is temporary and measured (R26).
+One job runs one stage of one asset. `pump()` prepares the job (it writes the job's inputs and
+chooses the artifact) and puts it on a ready list. The workers take jobs from the ready lists, so a
+job that ends starts the next one without a pump (R26).
+
+- At most `ContextDesc::maxIoJobs` jobs run at once (0 = worker count; a host `JobSystem` counts as
+  4 workers). kiln submits that many `run_jobs` calls to the job system at most; each call runs
+  prepared jobs until none is left.
+- The workers take a `High` upload first, then a `High` meta job, then `Normal` uploads, then
+  `Normal` meta jobs. A `High` request made later passes every prepared `Normal` job; it waits
+  only for the jobs that run.
+- A slot that becomes `High` moves its prepared job. A slot released before a worker took its job
+  takes the job back: no job runs for it.
+- The ready lists and each slot's links in them are the one part of the registry the workers
+  touch. A mutex guards them.
 
 - **Meta**: open the source (store file, registered bytes, or cook-on-miss), read and validate the
   metadata (`.mesh` CPU region or KTX2 prefix), compute the texture upload layout, close the source.

@@ -443,7 +443,7 @@ int usage() {
                  "  --repeat N       runs, each with a new context (default 3); the fastest is detailed\n"
                  "  --hz N           pumps per second, 1 to 1000 (default 60)\n"
                  "  --threads N      worker threads (default 0: automatic)\n"
-                 "  --io-jobs N      ContextDesc::maxIoJobs (default 0: 16 per worker)\n"
+                 "  --io-jobs N      ContextDesc::maxIoJobs (default 0: the worker count)\n"
                  "  --upload-mib N   PumpOptions::uploadBytes in MiB (default 64)\n"
                  "  --pitch N        the adapter's row pitch alignment (default 1: no row repacking)\n"
                  "  --high-every N   every N-th request has high priority (default 0: none)\n"

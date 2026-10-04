@@ -83,7 +83,7 @@ sequenceDiagram
 
     Host->>Ctx: pump()
     Ctx->>Ctx: look the name up in the profile's manifest entries (the artifact's build key)
-    Ctx->>Worker: dispatch meta stage (High before Normal, up to maxIoJobs)
+    Ctx->>Worker: prepare the meta job (workers take High before Normal, maxIoJobs at once)
     opt a provider is installed
         Worker->>Prov: prepare(Mesh, name)
         Prov->>Prov: find the source in its root, check the kind, case and recorded inputs

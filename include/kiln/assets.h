@@ -112,7 +112,7 @@ struct ContextDesc {
     u32 workerThreads = 0;    ///< built-in pool only; 0 = auto
     ThreadPriority workerPriority =
         ThreadPriority::Normal;      ///< built-in pool only; Low keeps loading below the host's threads
-    u32 maxIoJobs       = 0;         ///< load jobs started and not yet done; 0 = 16 per worker
+    u32 maxIoJobs       = 0;         ///< load jobs that run at once; 0 = worker count
     u64 ioInFlightBytes = 64u << 20; ///< budget for bytes being read at once
 };
 

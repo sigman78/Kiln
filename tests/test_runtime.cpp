@@ -1667,6 +1667,99 @@ KILN_TEST(Runtime, ShapePlaceholders) {
     release(rt.ctx, arr);
 }
 
+/// A host JobSystem that keeps each job until the test runs it, on the test thread.
+struct HeldJobs {
+    struct Job {
+        void (*fn)(void*);
+        void* arg;
+    };
+    Vec<Job> jobs{default_allocator(), Tag::Test};
+    u32 next = 0;
+
+    JobSystem system() { return {.submit = &submit, .user = this}; }
+    u32 held() const { return u32(jobs.size()) - next; }
+    void run_all() {
+        while (next < jobs.size()) {
+            Job const j = jobs[next++];
+            j.fn(j.arg);
+        }
+    }
+    static void submit(void* user, void (*fn)(void*), void* arg) {
+        static_cast<HeldJobs*>(user)->jobs.push_back({fn, arg});
+    }
+};
+
+// Workers take the prepared jobs by priority, and a job that ends starts the next one without a pump:
+// a High request made after the Normal jobs were prepared still runs first.
+KILN_TEST(Runtime, PreparedJobsRunByPriority) {
+    HeldJobs held;
+    JobSystem const js = held.system();
+    Rt rt;
+    ContextDesc cd;
+    cd.jobs      = &js;
+    cd.maxIoJobs = 1;
+    if (!rt.init({}, cd)) return;
+    TextureHandle const a = request_texture(rt.ctx, "ktx2/bc1_high");
+    TextureHandle const b = request_texture(rt.ctx, "ktx2/bc5_normal");
+    rt.pump_once();
+    KILN_CHECK(held.held() == 1); // maxIoJobs = 1: one job runs them all
+    TextureHandle const c = request_texture(rt.ctx, "ktx2/bc7_color_srgb", {.priority = Priority::High});
+    rt.pump_once();
+    KILN_CHECK(held.held() == 1);
+    held.run_all(); // the three meta jobs, with no pump between them
+    rt.pump_once();
+    if (KILN_CHECK(rt.events.size() == 3)) {
+        KILN_CHECK(rt.events[0].kind == EventKind::MetaReady && rt.events[0].handle == c.bits());
+        KILN_CHECK(rt.events[1].handle == a.bits());
+        KILN_CHECK(rt.events[2].handle == b.bits());
+    }
+    for (int i = 0; i < 8 && !(is_ready(rt.ctx, a) && is_ready(rt.ctx, b) && is_ready(rt.ctx, c)); ++i) {
+        held.run_all();
+        rt.pump_once();
+    }
+    KILN_CHECK(is_ready(rt.ctx, a) && is_ready(rt.ctx, b) && is_ready(rt.ctx, c));
+    // The uploads ran in the same order: the High one first.
+    u32 ready = 0;
+    for (Event const& e : rt.events) {
+        if (e.kind != EventKind::Ready) continue;
+        if (ready++ == 0) KILN_CHECK(e.handle == c.bits());
+    }
+    KILN_CHECK(ready == 3);
+    held.run_all(); // destroy() waits for every submitted job
+}
+
+// A prepared job that no worker took yet goes away with its asset: no job runs for it.
+KILN_TEST(Runtime, ReleaseDropsPreparedJob) {
+    HeldJobs held;
+    JobSystem const js = held.system();
+    Rt rt;
+    ContextDesc cd;
+    cd.jobs      = &js;
+    cd.maxIoJobs = 1;
+    if (!rt.init({}, cd)) return;
+    TextureHandle const a = request_texture(rt.ctx, "ktx2/bc1_high");
+    TextureHandle const b = request_texture(rt.ctx, "ktx2/bc5_normal");
+    rt.pump_once();
+    KILN_CHECK(stats(rt.ctx).ioJobsInFlight == 2);
+    release(rt.ctx, b);
+    KILN_CHECK(stats(rt.ctx).ioJobsInFlight == 1);
+    KILN_CHECK(stats(rt.ctx).assets == 1);
+    // The slot is free at once: a new request of the name is a new load.
+    TextureHandle const b2 = request_texture(rt.ctx, "ktx2/bc5_normal");
+    KILN_CHECK(b2 != b && state(rt.ctx, b) == State::Unloaded);
+    for (int i = 0; i < 8 && !(is_ready(rt.ctx, a) && is_ready(rt.ctx, b2)); ++i) {
+        held.run_all();
+        rt.pump_once();
+    }
+    KILN_CHECK(is_ready(rt.ctx, a) && is_ready(rt.ctx, b2));
+    u32 metas = 0;
+    for (Event const& e : rt.events)
+        metas += e.kind == EventKind::MetaReady;
+    KILN_CHECK(metas == 2);
+    KILN_CHECK(rt.diags.count == 0);
+    held.run_all();
+}
+
 // ContextDesc::profiler: zones for the pump and each job, intervals for the waits, the GPU copy and
 // the whole load, each with the asset's name; every zone closes on its own thread.
 KILN_TEST(Runtime, ProfilerHooks) {

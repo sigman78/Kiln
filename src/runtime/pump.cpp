@@ -227,8 +227,10 @@ void submit_stage(Context* ctx, Slot& s, Stage stage) {
                          s.queuedNs, s.submitNs);
     }
     ++ctx->jobsOutstanding;
-    ctx->jobsInFlight.fetch_add(1, std::memory_order_acq_rel);
-    ctx->jobs.submit(ctx->jobs.user, &run_job, &s);
+    if (ready_push(ctx, s, stage)) { // after the job's inputs are written: a worker may take it now
+        ctx->jobsInFlight.fetch_add(1, std::memory_order_acq_rel);
+        ctx->jobs.submit(ctx->jobs.user, &run_jobs, ctx);
+    }
 }
 
 void poll_placeholders(Context* ctx) {
@@ -432,7 +434,6 @@ void dispatch_uploads(Context* ctx, u64 budget) {
         for (u32 i = ctx->queues[u32(q)].head; i != kInvalid;) {
             Slot& s        = ctx->slots[i];
             u32 const next = s.qNext;
-            if (ctx->jobsOutstanding >= ctx->maxIoJobs) return;
             if (s.retryAfter > ctx->pumpIndex) {
                 i = next;
                 continue;
@@ -458,7 +459,7 @@ void dispatch_meta(Context* ctx) {
     QueueId const order[] = {QueueId::MetaHigh, QueueId::MetaNormal};
     for (QueueId q : order) {
         List& l = ctx->queues[u32(q)];
-        while (l.head != kInvalid && ctx->jobsOutstanding < ctx->maxIoJobs) {
+        while (l.head != kInvalid) {
             Slot& s = ctx->slots[l.head];
             queue_remove(ctx, s);
             if (s.preFail.failed()) {

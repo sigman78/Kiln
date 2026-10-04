@@ -185,7 +185,13 @@ void free_tables(Context* ctx) {
 
 void teardown(Context* ctx) {
     Adapter const& a = ctx->adapter;
-    // 1. Let in-flight jobs finish (they only touch their slot and the completion ring).
+    // 1. Drop the prepared jobs no worker took, and let the running ones finish (they only touch
+    //    their slot, the ready lists and the completion ring).
+    {
+        std::lock_guard<std::mutex> lock(ctx->readyMutex);
+        for (List& l : ctx->ready)
+            l = {};
+    }
     // Polled, not atomic::wait: a job's notify after its decrement could reach a freed context.
     while (ctx->jobsInFlight.load(std::memory_order_acquire) != 0)
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
@@ -391,14 +397,11 @@ Result<Context*> create(ContextDesc const& desc) {
         ctx->ownsJobs = true;
     }
     u32 const workers = ctx->ownsJobs ? thread_pool_thread_count(ctx->jobs) : 4;
-    // Temporary (open-questions R26): only pump() starts jobs, so a limit of one job per worker
-    // leaves the workers idle between pumps. 16 per worker is measured; the job system queues them.
-    constexpr u32 kIoJobsPerWorker = 16;
-    ctx->maxIoJobs                 = desc.maxIoJobs ? desc.maxIoJobs : max(workers, 1u) * kIoJobsPerWorker;
-    ctx->ioBudget                  = desc.ioInFlightBytes ? desc.ioInFlightBytes : (u64(64) << 20);
-    ctx->maxAssets                 = desc.maxAssets;
-    ctx->maxGroups                 = desc.maxGroups;
-    ctx->maxEvents                 = desc.maxEvents;
+    ctx->maxIoJobs    = desc.maxIoJobs ? desc.maxIoJobs : max(workers, 1u);
+    ctx->ioBudget     = desc.ioInFlightBytes ? desc.ioInFlightBytes : (u64(64) << 20);
+    ctx->maxAssets    = desc.maxAssets;
+    ctx->maxGroups    = desc.maxGroups;
+    ctx->maxEvents    = desc.maxEvents;
 
     ctx->storeDirLen    = desc.storeDir.size;
     ctx->storeDir       = copy_str(a, desc.storeDir);
