@@ -105,6 +105,10 @@ job that ends starts the next one without a pump (R26).
   takes the job back: no job runs for it.
 - The ready lists and each slot's links in them are the one part of the registry the workers
   touch. A mutex guards them.
+- One `run_jobs` call keeps its scratch for all the jobs it runs: a buffer for bytes as read, a
+  buffer for decoded bytes, and the Zstd context. Fresh memory costs a page fault per page (R29).
+  A buffer above 32 MiB is freed after its job, so a worker holds at most 64 MiB between jobs, and
+  nothing once no job is left.
 
 - **Meta**: open the source (store file, registered bytes, or cook-on-miss), read and validate the
   metadata (`.mesh` CPU region or KTX2 prefix), compute the texture upload layout, close the source.
@@ -145,7 +149,7 @@ One upload job per mesh (mesh-format-spec §5.9, §7):
   this decodes every `Codec` and `Filter` except `Delta` (`mesh-compression.md`); `Delta` still
   fails the asset with `Code::Unsupported` (K4015).
 - Still proposed, now that compressed codecs have landed (v0.7): split the single decode job into
-  one job per blob (or small batch of blobs), a per-worker reused scratch arena, the job owning
+  one job per blob (or small batch of blobs), the job owning
   the preceding range zero-fills each gap, and the last job to finish commits or reports the
   failure.
 

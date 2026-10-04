@@ -580,7 +580,51 @@ pump or the reads. The p50 and p95 of the earlier tables still hold; their wall 
 `pump()` itself is cheap in the two-pass loader: 0.02 to 0.04 ms on average and 0.5 ms at most,
 with 891 requests made at once.
 
-Consequence for this note: the benchmark gives no reason for Part 2 on this machine. Part 1 stays
+### Decode cost (2026-10-04, R29)
+
+After R28 the workers are the limit, and the upload jobs are their work. Where an upload job's
+time goes, warm, 7 workers (ms summed over the 891 uploads):
+
+| | Upload jobs | Decode | Copy | Read | Wall, 64 MiB budget | Wall, 1 GiB budget |
+|---|---|---|---|---|---|---|
+| Before | 3222 | 1524 | 605 | 302 | 0.51 s | |
+| Scratch reused per worker (kept) | 2496 | 1582 | 485 | 350 | 0.47 s | 0.37 to 0.40 s |
+
+- **Fresh memory was a fifth of the job.** Each upload job allocated its scratch buffers, zero-filled
+  them and freed them; large blocks come back from the system as new pages, one page fault each.
+  Now one `run_jobs` call keeps its two buffers and its Zstd context for all the jobs it runs, and
+  no buffer is zero-filled. A buffer above 32 MiB goes back after its job. Cold, 2 workers: 1.48 s
+  to 1.32 s. Peak scratch: 96 to 204 MiB, was 80 to 103 MiB.
+- **At 60 Hz the upload budget is now the limit** with 7 workers: `PumpOptions::uploadBytes`
+  defaults to 64 MiB per pump, and this corpus uploads 1616 MiB. With a 1 GiB budget the same load
+  takes 0.37 s. The budget is the host's control over GPU upload per frame, so the default stays.
+- **The copy into the upload target is not worth removing.** Decoding Zstd straight into the
+  target (plain memory in the null adapter) gave the same job time on 7 workers and 14% more on 2
+  workers. The copy's cost is mostly the first touch of the target's pages, and a decode pays the
+  same. So an adapter flag for "decode in place" has no case.
+- **Zstd earns its time.** 668 of the 737 textures are Zstd: 1389 MiB of texels stored in 571 MiB.
+  Storing plain what saves under 20% would give back 4% of the decode for 1.5% more disk; under
+  40%, a quarter of the decode for 15% more disk. No cheap trade.
+- **The compiler matters a little.** The same code built with clang-cl decodes 8% faster than with
+  MSVC (Zstd's fast paths need a GNU-style compiler).
+- What is left is the decoder itself: about 1.1 GiB of texels per second and core, 60% of an upload
+  job. It also slows under load: the same decode work takes 18% more job time on 7 workers than on
+  2, which points at memory bandwidth.
+
+On a cold cache the reads are now the largest part of a job (1710 of 3345 ms on 7 workers). More
+workers than cores stand in for reads that occupy no worker: cold with 12 workers takes 0.49 s
+against 0.57 s with 7, and 16 workers give no more. The drive is then the limit, at about 1.5 GiB/s.
+So dedicated readers (Part 1) could give about 14% on a cold load on this machine.
+
+Baseline now, two passes, 64 MiB budget:
+
+| Run | Wall | `Ready` p50 / p95 |
+|---|---|---|
+| Warm, 7 workers | 0.47 s | 301 / 433 ms |
+| Cold, 7 workers | 0.55 s | 367 / 517 ms |
+| Cold, 2 workers | 1.32 to 1.37 s | 900 / 1250 ms |
+
+Consequence for this note: the benchmark gives no reason for Part 2 on this machine, and a small one for dedicated readers. Part 1 stays
 justified by v0.8 (range reads and `State::Partial` need a persistent attempt), not by throughput.
 The first gain was R26, which needed no new design.
 

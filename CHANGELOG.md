@@ -19,6 +19,11 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
   and each runs until no load job is left, so it is longer than one stage; (3)
   `ContextStats::ioJobsInFlight` counts the prepared jobs too and can exceed `maxIoJobs`.
 
+- **Upload jobs reuse their scratch memory.** A worker keeps its read buffer, its decode buffer and
+  its Zstd context for the jobs it runs one after another, and no longer zero-fills them: a fifth
+  less time per upload job on the benchmark corpus. A worker holds at most 64 MiB between jobs and
+  nothing when no job is left (open-questions R29).
+
 ### Fixed
 - **Opening a `.mesh` with many LODs was quadratic.** The check that the blobs cover each LOD's
   streams walked the whole blob table per range; a model with 10,000 parts took 0.95 s to open

@@ -470,7 +470,30 @@ CompletionKind run_meta(Context* ctx, Slot& s) {
 // Upload stage
 // ---------------------------------------------------------------------------
 
-Status write_mesh(Context* ctx, Slot& s, Source const& src, u8* dst) {
+/// Makes `v` hold `n` bytes for the caller to overwrite. No zero fill, and the old bytes are gone.
+Span<u8> scratch_bytes(Vec<u8>& v, usize n) {
+    v.clear();
+    return v.append_uninit(n);
+}
+
+/// The buffers of the upload jobs that one run_jobs() call runs: encoded bytes as read, decoded
+/// bytes, and the Zstd context. Fresh memory costs a page fault per page, so the jobs reuse them.
+struct JobScratch {
+    explicit JobScratch(Allocator const* a) : scratch(a, Tag::Io), texels(a, Tag::Io), zstd(a) {}
+    Vec<u8> scratch;
+    Vec<u8> texels;
+    fmt::ZstdDecoder zstd;
+
+    /// After a job: a buffer that one large asset grew goes back, so a worker keeps at most
+    /// 2 * kKeepBytes between jobs.
+    void trim() {
+        if (scratch.capacity() > kKeepBytes) scratch.release();
+        if (texels.capacity() > kKeepBytes) texels.release();
+    }
+    static constexpr usize kKeepBytes = usize(32) << 20;
+};
+
+Status write_mesh(Context* ctx, Slot& s, Source const& src, u8* dst, JobScratch& sc) {
     DiagSink const sink{&capture_fn, &s.out.capture};
     StrView const name        = path_of(s);
     mesh::MeshView const& v   = s.out.next.meshView;
@@ -486,12 +509,12 @@ Status write_mesh(Context* ctx, Slot& s, Source const& src, u8* dst) {
         IoBytes budget(ctx, h.payloadDecodedSize);
         return src.read(h.gpuDataOffset, h.payloadDecodedSize, dst);
     }
-    Vec<u8> encoded(ctx->alloc, Tag::Io);
+    Vec<u8>& encoded = sc.scratch;
     Span<u8 const> gpud;
     if (src.memory) {
         gpud = src.mem.subspan(usize(h.gpuDataOffset), usize(h.gpuDataSize));
     } else {
-        encoded.resize(usize(h.gpuDataSize));
+        (void)scratch_bytes(encoded, usize(h.gpuDataSize));
         IoBytes budget(ctx, h.gpuDataSize);
         KILN_TRY(src.read(h.gpuDataOffset, h.gpuDataSize, encoded.data()));
         gpud = encoded.span();
@@ -502,8 +525,8 @@ Status write_mesh(Context* ctx, Slot& s, Source const& src, u8* dst) {
         return mesh::decode_payload(v, gpud, out, dopt, &sink, nullptr, name);
     }
     // Never straight into the adapter's memory: Zstd reads its output back (as in write_level).
-    Vec<u8> decoded(ctx->alloc, Tag::Io);
-    decoded.resize(out.size);
+    Vec<u8>& decoded = sc.texels;
+    (void)scratch_bytes(decoded, out.size);
     {
         ProfileZone const zone(ctx->prof, "kiln.decode", name);
         KILN_TRY(mesh::decode_payload(v, gpud, decoded.span(), dopt, &sink, nullptr, name));
@@ -512,14 +535,6 @@ Status write_mesh(Context* ctx, Slot& s, Source const& src, u8* dst) {
     if (out.size) std::memcpy(out.data, decoded.data(), out.size);
     return kOk;
 }
-
-/// Buffers one texture write reuses across its levels (and layers).
-struct LevelScratch {
-    explicit LevelScratch(Allocator const* a) : scratch(a, Tag::Io), texels(a, Tag::Io), zstd(a) {}
-    Vec<u8> scratch;
-    Vec<u8> texels;
-    fmt::ZstdDecoder zstd;
-};
 
 /// One stored level of one input: [sOff, sOff + sLen) in `src`, `tLen` texel bytes once decoded, written
 /// to `out` with rows of `rowBytes` padded to `pitch`.
@@ -534,7 +549,7 @@ struct LevelCopy {
     StrView input = {}; ///< for the diagnostic of a frame that does not decode
 };
 
-Status write_level(Context* ctx, Slot& s, Source const& src, LevelCopy const& c, u8* out, LevelScratch& sc) {
+Status write_level(Context* ctx, Slot& s, Source const& src, LevelCopy const& c, u8* out, JobScratch& sc) {
     u64 const rows    = c.rowBytes ? c.tLen / c.rowBytes : 0;
     bool const direct = c.pitch == c.rowBytes;
     if (direct && !c.zstd) {
@@ -546,7 +561,7 @@ Status write_level(Context* ctx, Slot& s, Source const& src, LevelCopy const& c,
         if (c.sOff > src.size || c.sLen > src.size - c.sOff) return make_status(Code::IoEof);
         from = src.mem.data + c.sOff;
     } else {
-        sc.scratch.resize(usize(c.sLen));
+        (void)scratch_bytes(sc.scratch, usize(c.sLen));
         IoBytes budget(ctx, c.sLen);
         KILN_TRY(src.read(c.sOff, c.sLen, sc.scratch.data()));
         from = sc.scratch.data();
@@ -554,7 +569,7 @@ Status write_level(Context* ctx, Slot& s, Source const& src, LevelCopy const& c,
     if (c.zstd) {
         // Never straight into the adapter's memory: staging is often write-combined, and Zstd reads
         // its output back for matches (cook-tracing.md, "First findings").
-        sc.texels.resize(usize(c.tLen));
+        (void)scratch_bytes(sc.texels, usize(c.tLen));
         ProfileZone const zone(ctx->prof, "kiln.decode", c.input);
         if (!sc.zstd.decode(Span<u8 const>(from, usize(c.sLen)), sc.texels.span())) {
             DiagSink const sink{&capture_fn, &s.out.capture};
@@ -597,10 +612,9 @@ LevelCopy level_copy(MetaSet const& m, u32 i) {
             .pitch    = m.layout[levels + i]};
 }
 
-Status write_texture(Context* ctx, Slot& s, Source const& src, u8* dst) {
+Status write_texture(Context* ctx, Slot& s, Source const& src, u8* dst, JobScratch& sc) {
     MetaSet const& m = s.out.next;
     u32 const levels = m.layoutLevels;
-    LevelScratch sc(ctx->alloc);
     zero_level_gaps(m, 1, dst);
     for (u32 i = 0; i < levels; ++i) {
         LevelCopy c = level_copy(m, i);
@@ -615,11 +629,10 @@ Status write_texture(Context* ctx, Slot& s, Source const& src, u8* dst) {
 
 /// Each layer's levels into its place in the array: layer j of level i at the level's offset plus j
 /// times one layer's padded size.
-Status write_array(Context* ctx, Slot& s, u8* dst) {
+Status write_array(Context* ctx, Slot& s, u8* dst, JobScratch& sc) {
     MetaSet const& m = s.out.next;
     ArrayDecl& d     = *s.array;
     u32 const levels = m.layoutLevels;
-    LevelScratch sc(ctx->alloc);
     zero_level_gaps(m, d.count, dst);
     for (u32 j = 0; j < d.count; ++j) {
         ArrayLayer& l  = d.layers[j];
@@ -645,7 +658,7 @@ Status write_array(Context* ctx, Slot& s, u8* dst) {
     return kOk;
 }
 
-CompletionKind run_upload(Context* ctx, Slot& s) {
+CompletionKind run_upload(Context* ctx, Slot& s, JobScratch& sc) {
     Adapter const& a = ctx->adapter;
     MetaSet const& m = s.out.next;
     UploadDesc ud;
@@ -709,7 +722,7 @@ CompletionKind run_upload(Context* ctx, Slot& s) {
         }
     }
     if (st.ok() && s.array) {
-        st = write_array(ctx, s, static_cast<u8*>(t.dst));
+        st = write_array(ctx, s, static_cast<u8*>(t.dst), sc);
         if (st.failed() && s.out.diag)
             diag = s.out.diag == kDiagStoreMiss ? kDiagAssetLoadFailed : s.out.diag;
     } else if (st.ok()) {
@@ -717,7 +730,8 @@ CompletionKind run_upload(Context* ctx, Slot& s) {
         st = open_source(ctx, s, slot_input(s), src, false);
         if (st.ok()) {
             u8* dst = static_cast<u8*>(t.dst);
-            st = s.kind == AssetKind::Mesh ? write_mesh(ctx, s, src, dst) : write_texture(ctx, s, src, dst);
+            st      = s.kind == AssetKind::Mesh ? write_mesh(ctx, s, src, dst, sc)
+                                                : write_texture(ctx, s, src, dst, sc);
             src.close();
         } else {
             diag = s.out.diag == kDiagStoreMiss ? kDiagAssetLoadFailed : s.out.diag; // vanished since meta
@@ -824,7 +838,7 @@ void ready_boost(Context* ctx, Slot& s) {
 
 namespace {
 
-void run_job(Context* ctx, Slot& s) {
+void run_job(Context* ctx, Slot& s, JobScratch& sc) {
     s.out.status = kOk;
     s.out.diag   = 0;
     s.out.capture.reset();
@@ -834,7 +848,7 @@ void run_job(Context* ctx, Slot& s) {
         if (ctx->prof)
             profile_interval(ctx->prof, "kiln.wait.pool", path_of(s), s.submitNs, profile_now_ns());
         ProfileZone const zone(ctx->prof, meta ? "kiln.meta" : "kiln.upload", path_of(s));
-        k = meta ? run_meta(ctx, s) : run_upload(ctx, s);
+        k = meta ? run_meta(ctx, s) : run_upload(ctx, s, sc);
     }
     Completion const c{s.index, s.in.gen, k};
     post(ctx, c); // from here on the pump thread may reuse `s`
@@ -844,6 +858,7 @@ void run_job(Context* ctx, Slot& s) {
 
 void run_jobs(void* arg) {
     Context* ctx = static_cast<Context*>(arg);
+    JobScratch sc(ctx->alloc); // freed when no job is left
     for (;;) {
         Slot* s = nullptr;
         {
@@ -857,7 +872,8 @@ void run_jobs(void* arg) {
             if (!s) --ctx->runners; // under the lock, so a push after it submits a new run_jobs()
         }
         if (!s) break;
-        run_job(ctx, *s);
+        run_job(ctx, *s, sc);
+        sc.trim();
     }
     ctx->jobsInFlight.fetch_sub(1, std::memory_order_acq_rel); // the last access to the context
 }
