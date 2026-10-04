@@ -42,10 +42,13 @@ void log_device_support(bool windowed) {
         !has(names, count, VK_EXT_SURFACE_MAINTENANCE_1_EXTENSION_NAME))
         KILN_ERROR("nga", "the instance lacks VK_KHR_surface_maintenance1 and VK_EXT_surface_maintenance1");
 
-    VkApplicationInfo const app{.sType      = VK_STRUCTURE_TYPE_APPLICATION_INFO,
-                                .apiVersion = VK_API_VERSION_1_4};
-    VkInstanceCreateInfo const ici{.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO, .pApplicationInfo = &app};
-    VkInstance instance = VK_NULL_HANDLE;
+    VkApplicationInfo app{};
+    app.sType      = VK_STRUCTURE_TYPE_APPLICATION_INFO;
+    app.apiVersion = VK_API_VERSION_1_4;
+    VkInstanceCreateInfo ici{};
+    ici.sType            = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
+    ici.pApplicationInfo = &app;
+    VkInstance instance  = VK_NULL_HANDLE;
     if (VkResult const r = vkCreateInstance(&ici, nullptr, &instance); r != VK_SUCCESS) {
         KILN_ERROR("nga", "vkCreateInstance for Vulkan 1.4 failed (%d)", int(r));
         return;
