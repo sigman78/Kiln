@@ -106,7 +106,7 @@ foreach(entry IN ITEMS "scene.slang meshVertex vertex" "scene.slang meshFragment
     list(APPEND _spv_files ${_spv_dir}/${_name}.spv)
 endforeach()
 
-add_executable(kiln-nga main.cpp nga_adapter.h nga_adapter.cpp nga_root.h scene.slang sky.slang ${_spv_files})
+add_executable(kiln-nga main.cpp nga_adapter.h nga_adapter.cpp nga_probe.h nga_probe.cpp nga_root.h scene.slang sky.slang ${_spv_files})
 set_source_files_properties(scene.slang sky.slang PROPERTIES HEADER_FILE_ONLY TRUE)
 kiln_apply_defaults(kiln-nga)
 target_link_libraries(kiln-nga PRIVATE kiln_runtime kiln_example_common kiln_example_adapter_support kiln_nga_lib)
@@ -123,7 +123,7 @@ if(WIN32)
 endif()
 
 # kiln-nga-array: one texture array assembled from separate tiles (runtime-texture-arrays.md)
-add_executable(kiln-nga-array main_array.cpp nga_adapter.h nga_adapter.cpp floor.slang ${_spv_files})
+add_executable(kiln-nga-array main_array.cpp nga_adapter.h nga_adapter.cpp nga_probe.h nga_probe.cpp floor.slang ${_spv_files})
 set_source_files_properties(floor.slang PROPERTIES HEADER_FILE_ONLY TRUE)
 kiln_apply_defaults(kiln-nga-array)
 target_link_libraries(kiln-nga-array PRIVATE kiln_runtime kiln_example_common kiln_example_adapter_support
