@@ -19,6 +19,16 @@
 #include <cstring>
 #include <thread>
 
+#if defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#else
+#include <fcntl.h>
+#include <unistd.h>
+#endif
+
 using namespace kiln;
 
 namespace {
@@ -131,11 +141,13 @@ struct Options {
     u32 pitch           = 1;
     u32 timeoutSec      = 120;
     bool probe          = true;
+    bool cold           = false;
 };
 
 struct Asset {
     StrView name; ///< points into the manifest bytes
-    AssetKind kind     = AssetKind::Mesh;
+    AssetKind kind = AssetKind::Mesh;
+    Hash128 key;
     u64 bytes          = 0;
     TextureShape shape = TextureShape::Tex2D;
     ktx2::TextureDesc desc; ///< textures, when probed
@@ -172,6 +184,25 @@ void probe_texture(StrView store, Hash128 const& key, Asset& a) {
         }
     }
     io->close(io->user, f);
+}
+
+/// Drops the file cache pages of every artifact, so the next run reads from the drive. Windows: an
+/// unbuffered open makes the cache manager purge the file's pages. Elsewhere: POSIX_FADV_DONTNEED.
+void purge_file_cache(StrView store, Span<Asset const> assets) {
+    for (Asset const& a : assets) {
+        char path[1200];
+        if (artifact_file_path(store, a.key, path, sizeof path) + 1 >= sizeof path) continue;
+#if defined(_WIN32)
+        HANDLE const h = CreateFileA(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                                     OPEN_EXISTING, FILE_FLAG_NO_BUFFERING, nullptr);
+        if (h != INVALID_HANDLE_VALUE) CloseHandle(h);
+#else
+        int const fd = ::open(path, O_RDONLY);
+        if (fd < 0) continue;
+        (void)::posix_fadvise(fd, 0, 0, POSIX_FADV_DONTNEED);
+        ::close(fd);
+#endif
+    }
 }
 
 bool same_layer_class(Asset const& a, Asset const& b) {
@@ -431,12 +462,35 @@ void print_run_line(u32 index, Run const& r, u64 storeBytes) {
         std::printf("     %u events dropped: the per-asset times are incomplete\n", r.eventsDropped);
 }
 
+/// Every asset of the store, for --cold (an array run gets no asset list).
+Span<Asset const> gAllAssets;
+
+/// The assets that were Ready last, with their own times: a slow one bounds the whole load.
+void print_slowest(Run const& r, Span<Asset const> assets) {
+    Vec<usize> order(default_allocator(), Tag::Test);
+    for (usize i = 0; i < assets.size; ++i)
+        if (r.t[i].done && !r.t[i].failed) order.push_back(i);
+    std::sort(order.begin(), order.end(), [&r](usize x, usize y) {
+        return r.t[x].startNs + r.t[x].readyNs > r.t[y].startNs + r.t[y].readyNs;
+    });
+    usize const n = min<usize>(order.size(), 3);
+    std::printf("\nReady last:\n");
+    for (usize k = 0; k < n; ++k) {
+        Asset const& a  = assets[order[k]];
+        Timing const& t = r.t[order[k]];
+        std::printf("  %8.1f ms (MetaReady after %.1f ms)  %8.2f MiB  %s %.*s\n", ms(t.startNs + t.readyNs),
+                    ms(t.metaNs), mib(a.bytes), a.kind == AssetKind::Mesh ? "mesh   " : "texture",
+                    KILN_SV(a.name));
+    }
+}
+
 /// Runs the scenario `repeat` times and keeps the fastest run in `best`.
 bool run_scenario(Options const& o, Span<Asset const> assets, Span<StrView const> arrayLayers, u64 storeBytes,
                   Run& best) {
     std::printf("%4s %10s %12s %13s %7s %7s\n", "run", "wall ms", "store MiB/s", "upload MiB/s", "pumps",
                 "failed");
     for (u32 i = 0; i < o.repeat; ++i) {
+        if (o.cold) purge_file_cache(StrView(o.store), gAllAssets);
         Run r;
         if (!run_once(o, assets, arrayLayers, r)) return false;
         print_run_line(i + 1, r, storeBytes);
@@ -461,6 +515,7 @@ int usage() {
                  "  --array N        also load one texture array of N layers taken from the store\n"
                  "  --no-probe       do not read texture headers first: request every texture as 2D\n"
                  "                   (cubes and arrays then fail). For cold-cache runs.\n"
+                 "  --cold           drop the store's cached file pages before each run\n"
                  "  --timeout N      seconds before a run is given up (default 120)\n");
     return 1;
 }
@@ -479,6 +534,8 @@ int main(int argc, char** argv) {
         };
         if (std::strcmp(a, "--no-probe") == 0) {
             o.probe = false;
+        } else if (std::strcmp(a, "--cold") == 0) {
+            o.cold = true;
         } else if (!val) {
             return usage();
         } else if (std::strcmp(a, "--store") == 0) {
@@ -541,6 +598,7 @@ int main(int argc, char** argv) {
         Asset a;
         a.name  = e.name;
         a.kind  = e.kind;
+        a.key   = e.key;
         a.bytes = e.bytes;
         a.high  = o.highEvery && (i + 1) % o.highEvery == 0;
         a.late  = o.lateHigh && i % max<u64>(profile.size() / o.lateHigh, 1) == 0 && lateCount++ < o.lateHigh;
@@ -558,6 +616,7 @@ int main(int argc, char** argv) {
     std::printf("pump %u Hz, upload budget %u MiB per pump, row pitch %u, %s\n\n", o.hz, o.uploadMiB, o.pitch,
                 o.probe ? "texture headers probed (they are in the file cache now)" : "no probe");
 
+    gAllAssets = assets.span();
     Run best;
     if (!run_scenario(o, assets.span(), {}, storeBytes, best)) return 1;
     std::printf("\nfastest run, ms from each asset's request: p50 / p95 / max\n");
@@ -573,6 +632,7 @@ int main(int argc, char** argv) {
     if (o.lateHigh) print_class("late high", best, assets.span(), &pick_late, 0);
     print_class("all", best, assets.span(), &pick_all, 0);
     print_stages(best);
+    print_slowest(best, assets.span());
 
     if (o.arrayLayers) {
         Vec<StrView> layers(default_allocator(), Tag::Test);

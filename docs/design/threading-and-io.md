@@ -11,6 +11,23 @@ current implementation and the compatibility interface for tools and cooking.
 **Decides:** Which threading primitives kiln uses, the job and IO interfaces, and where results
 surface.
 
+## Two modes, two goals
+
+kiln runs in two configurations with different goals (owner, 2026-10-04). One loader serves both:
+dev mode is release mode plus a cook provider and a poller, not a second code path.
+
+| | Release | Dev |
+|---|---|---|
+| Inputs | a cooked, immutable store; no provider, no poller | a cook provider before every load, cooks on a miss, hot reload |
+| What dominates a load | decode, then reads, then pump boundaries | the cook: seconds |
+| Goal | latency and throughput of the read path; a small `pump()` | time from an edit to `Changed`; never stall the frame |
+| Measured by | `kiln_bench_load`: time to `Ready`, a late `High` request, `pump()` time, memory peaks | not measured yet |
+
+The gate for a change to the read path is **no regression** in the release-mode numbers
+(`async-read-path.md` §9). Top latency in dev mode is not a goal. A format that needs conversion at
+load (a Basis-style transcode to the GPU's format) is a decode stage in the upload job, and its
+cost shows in the same numbers.
+
 ## Decision
 
 ### Threading primitives

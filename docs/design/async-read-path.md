@@ -434,10 +434,10 @@ share of job time in reads, opens, decodes and copies, the most reads in flight,
 read straight into the target, and peak scratch and payload bytes. `--array N` adds one texture
 array of N layers; `--threads` gives the constrained pool; `--pitch` makes rows repack.
 
-It does not empty the file cache. On Windows, `tests/purge_file_cache.ps1 -Dir <store>` drops the
-cached pages of a store without admin rights; on Linux, drop the page cache. Pass `--no-probe` for a
-cold run, so the benchmark reads no header first. Cancellation and shutdown drain time wait for
-step 2.
+`--cold` drops the store's cached pages before each run, without admin rights (an unbuffered open
+on Windows, `POSIX_FADV_DONTNEED` elsewhere). `tests/purge_file_cache.ps1 -Dir <store>` does the same
+from a shell. The report also gives `pump()` time per frame and the assets that were `Ready` last.
+Cancellation and shutdown drain time wait for step 2.
 
 ### Baseline (2026-10-04)
 
@@ -541,6 +541,35 @@ Every asset has its metadata within a few pumps, and the cold load on 7 workers 
 The median `Ready` on a cold cache is 15% later (35% with 2 workers); p95 and the last asset do
 not move. A late `High` request is as fast as before. A host that needs some assets `Ready` first
 requests them `High`.
+
+### One-pass texture loads, a prototype (2026-10-04, R27)
+
+With texture metadata known before the load, as a manifest could hold it, a texture needs no meta
+job: `pump()` builds the upload plan, publishes `MetaReady` and prepares the upload in one pump.
+Measured with a prototype that is not in the repo, on the same corpus (737 of 891 assets are
+textures), 60 Hz, 7 workers unless noted:
+
+| Run | Passes | Texture `MetaReady` p50 | `Ready` p50 / p95, all | Late `High` `Ready` p50 | `pump()` mean / max |
+|---|---|---|---|---|---|
+| Cold | two | 34 to 50 ms | 467 / 667 ms | 50 ms | 0.02 / 0.16 ms |
+| | one | 1.3 ms | 433 / 684 ms | 33 ms | 0.04 / 1.20 ms |
+| Warm, upload budget 1 GiB | two | 17 ms | 355 / 505 ms | | 0.03 / 0.47 ms |
+| | one | 1.2 ms | 317 / 517 ms | | 0.05 / 1.04 ms |
+| Cold, 2 workers | two | 67 to 83 ms | 1384 / 1800 ms | 67 ms | 0.01 / 0.15 ms |
+| | one | 1.5 ms | 1300 / 1850 ms | 50 ms | 0.02 / 1.33 ms |
+
+- Metadata is there at the first pump, and the median asset is `Ready` 6 to 11% earlier: one pump
+  per texture. A late `High` texture gains the same pump.
+- p95 and the whole load do not change. The workers are the limit, and decode is their main cost.
+- `pump()` costs more at its peak, because the prototype builds every plan and allocates on the
+  pump thread. A real version takes the plan from the manifest and allocates nothing.
+- Run to run, the wall time varies by about 10% on this machine. The medians are steadier.
+
+The whole load is bounded by one mesh in every run (R28): its meta job takes 0.95 s. Compare p50
+and p95, not the wall time, until that is fixed.
+
+`pump()` itself is cheap in the two-pass loader: 0.02 to 0.04 ms on average and 0.5 ms at most,
+with 891 requests made at once.
 
 Consequence for this note: the benchmark gives no reason for Part 2 on this machine. Part 1 stays
 justified by v0.8 (range reads and `State::Partial` need a persistent attempt), not by throughput.
