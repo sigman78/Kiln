@@ -105,8 +105,8 @@ Not goals for v1:
 - Pack files, and `create()` with a manifest path (open point 3 of `design/store-manifest.md`).
 - Store manifest phase C: a memory-mapped manifest, several writers (set aside 2026-09-30).
 - EXR sources; a bgfx adapter example.
-- Load-throughput and cook-time benchmarks; tracking full-rebuild time in CI (flag regressions
-  over 20%).
+- Cook-time benchmarks; tracking full-rebuild time in CI (flag regressions over 20%). The load
+  benchmark exists (`kiln_bench_load`, `design/async-read-path.md` §9).
 - GPU conformance runs under the Vulkan validation layer (with synchronization validation): the
   examples' `--dump` and `--verify` modes. This machine has no layer yet; CI only compiles Vulkan.
 - Extracting `kiln/core` into a separate utility library.

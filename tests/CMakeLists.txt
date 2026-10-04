@@ -130,6 +130,15 @@ if(TARGET kiln_cook)
     target_link_libraries(kiln_bench_image PRIVATE kiln_cook)
 endif()
 
+# kiln_bench_load: manual benchmark of the runtime's read path over a cooked store
+# (docs/design/async-read-path.md §9). Not add_test()'d, like kiln_bench_image. Reader-only, so the
+# shipping configuration builds it too.
+#   build/<preset>/tests/kiln_bench_load --store <dir> [--profile compat] [--hz 60] [--repeat 3] ...
+add_executable(kiln_bench_load bench_load.cpp)
+target_link_libraries(kiln_bench_load PRIVATE kiln_no_crash_dialogs)
+kiln_apply_defaults(kiln_bench_load)
+target_link_libraries(kiln_bench_load PRIVATE kiln_core kiln_runtime)
+
 # The goldens as a manifest store (hand_store.h) in <build>/tests/samples/golden-store, for tools
 # and examples that read a store (examples/CMakeLists.txt, example_headless).
 # kiln-cook --explain names the layer of each setting (docs/design/project-config.md §7).

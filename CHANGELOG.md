@@ -7,6 +7,13 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
 
 ## [Unreleased]
 
+### Added
+- **Load benchmark** `kiln_bench_load` (`tests/bench_load.cpp`, run by hand): loads a cooked store
+  through the null adapter and reports time and pumps to `MetaReady` and `Ready` per size class, and
+  the time per stage (`docs/design/async-read-path.md` §9).
+- **Profile zones inside the load jobs**: `kiln.open`, `kiln.read`, `kiln.decode`, `kiln.copy`
+  (`docs/design/cook-tracing.md`). A host's profiler hooks get more zones per load; nothing else changes.
+
 ### Changed
 - **Example background rendering**: the examples share the camera-ray math and draw the sky through
   a per-backend helper; the scene owns the environment and binds it.

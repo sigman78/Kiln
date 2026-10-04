@@ -421,6 +421,29 @@ Gates:
 - A native backend becomes the default only with evidence of benefit and no material regression
   for warm-cache loads. No claimed speedup without measurement.
 
+### The benchmark as built (2026-10-04)
+
+`tests/bench_load.cpp` (`kiln_bench_load`, run by hand like `kiln_bench_image`) loads every entry
+of one profile of a cooked store through the null adapter, with a new context per run and a pump
+at a fixed rate. It takes its numbers from the profile hooks; the loader gained the zones
+`kiln.open`, `kiln.read`, `kiln.decode` and `kiln.copy` for it (`cook-tracing.md`).
+
+It reports, per artifact size class and per priority: time and pump count to `MetaReady` and
+`Ready` (p50, p95, max). For the run: time per stage, the share of worker time that jobs use, the
+share of job time in reads, opens, decodes and copies, the most reads in flight, the uploads that
+read straight into the target, and peak scratch and payload bytes. `--array N` adds one texture
+array of N layers; `--threads` gives the constrained pool; `--pitch` makes rows repack.
+
+Not covered yet: it does not empty the file cache (do that outside, and pass `--no-probe` so the
+benchmark reads no header first), and cancellation and shutdown drain time wait for step 2.
+
+A first look, to show what the numbers say and not as a baseline: the examples' store (12 assets,
+6.6 MiB, release build, warm cache, 60 Hz, 7 workers). Every asset is `Ready` after 3 to 5 pumps
+(33 to 67 ms). The jobs use 7% of the worker time; reads are 5% of the job time and decodes 52%.
+The small assets wait 50 ms for `MetaReady`, all of it in the queue between pumps. On a warm cache
+the pump boundary limits this load, not the reads (§3.5). A baseline needs a large store and a
+cold cache.
+
 ### Tests
 
 First implement a deterministic fake async backend that exercises:
@@ -444,7 +467,8 @@ continue to pass, including shipping builds and the synchronous backend.
 
 Part 1 (v0.8):
 
-1. Stage timing and the load benchmark (§9). This step alone needs no design sign-off.
+1. Stage timing and the load benchmark (§9). **Done 2026-10-04** (`kiln_bench_load`); the baseline
+   runs on a large store are still to do.
 2. Persistent load attempts, the read contract, the fake backend and blocking readers. Prove
    ownership and cancellation. Check the Part 1 gate.
 

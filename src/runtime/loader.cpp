@@ -71,8 +71,10 @@ struct Source {
     IoBackend const* io = nullptr;
     IoFile file;
     Span<u8 const> mem;
-    bool memory = false;
-    u64 size    = 0;
+    bool memory              = false;
+    u64 size                 = 0;
+    ProfileHooks const* prof = nullptr; ///< a file's reads report "kiln.read" zones
+    StrView name;
 
     Source()                         = default;
     Source(Source const&)            = delete;
@@ -86,6 +88,7 @@ struct Source {
             std::memcpy(dst, mem.data + off, usize(n));
             return kOk;
         }
+        ProfileZone const zone(prof, "kiln.read", name);
         return io->read_range(io->user, file, off, n, dst);
     }
     void close() {
@@ -196,10 +199,13 @@ Status open_source(Context* ctx, Slot& s, Input const& in, Source& src, bool all
         return s.out.status = make_status(Code::InvalidArgument);
     }
     IoBackend const* io = ctx->io;
-    Status st           = io->open(io->user, StrView(file, n), &src.file);
+    ProfileZone const zone(ctx->prof, "kiln.open", in.name);
+    Status st = io->open(io->user, StrView(file, n), &src.file);
     if (st.ok()) {
-        src.io = io;
-        st     = io->size(io->user, src.file, &src.size);
+        src.io   = io;
+        src.prof = ctx->prof;
+        src.name = in.name;
+        st       = io->size(io->user, src.file, &src.size);
         if (st.failed()) {
             src.close();
             note(s.out.capture, "cannot stat '%s'", file);
@@ -491,11 +497,18 @@ Status write_mesh(Context* ctx, Slot& s, Source const& src, u8* dst) {
         gpud = encoded.span();
     }
     mesh::DecodeOptions const dopt{.alloc = ctx->alloc};
-    if (v.payload_raw()) return mesh::decode_payload(v, gpud, out, dopt, &sink, nullptr, name);
+    if (v.payload_raw()) {
+        ProfileZone const zone(ctx->prof, "kiln.copy", name);
+        return mesh::decode_payload(v, gpud, out, dopt, &sink, nullptr, name);
+    }
     // Never straight into the adapter's memory: Zstd reads its output back (as in write_level).
     Vec<u8> decoded(ctx->alloc, Tag::Io);
     decoded.resize(out.size);
-    KILN_TRY(mesh::decode_payload(v, gpud, decoded.span(), dopt, &sink, nullptr, name));
+    {
+        ProfileZone const zone(ctx->prof, "kiln.decode", name);
+        KILN_TRY(mesh::decode_payload(v, gpud, decoded.span(), dopt, &sink, nullptr, name));
+    }
+    ProfileZone const zone(ctx->prof, "kiln.copy", name);
     if (out.size) std::memcpy(out.data, decoded.data(), out.size);
     return kOk;
 }
@@ -542,6 +555,7 @@ Status write_level(Context* ctx, Slot& s, Source const& src, LevelCopy const& c,
         // Never straight into the adapter's memory: staging is often write-combined, and Zstd reads
         // its output back for matches (cook-tracing.md, "First findings").
         sc.texels.resize(usize(c.tLen));
+        ProfileZone const zone(ctx->prof, "kiln.decode", c.input);
         if (!sc.zstd.decode(Span<u8 const>(from, usize(c.sLen)), sc.texels.span())) {
             DiagSink const sink{&capture_fn, &s.out.capture};
             return diagf(&sink, make_status(Code::Corrupt), ktx2::kDiagKtxLevelDecode, Severity::Error,
@@ -549,6 +563,7 @@ Status write_level(Context* ctx, Slot& s, Source const& src, LevelCopy const& c,
         }
         from = sc.texels.data();
     }
+    ProfileZone const zone(ctx->prof, "kiln.copy", c.input);
     if (direct)
         std::memcpy(out, from, usize(c.tLen));
     else

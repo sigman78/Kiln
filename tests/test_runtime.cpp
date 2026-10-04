@@ -1693,6 +1693,8 @@ KILN_TEST(Runtime, ProfilerHooks) {
         for (char const* interval : kIntervals)
             KILN_CHECK_MSG(log.count('I', interval, asset) == 1, "%s %s", asset, interval);
         KILN_CHECK_MSG(log.count('I', "kiln.wait.pool", asset) == 2, "%s", asset);
+        KILN_CHECK_MSG(log.count('B', "kiln.open", asset) == 2, "%s", asset); // meta, then upload
+        KILN_CHECK_MSG(log.count('B', "kiln.read", asset) >= 2, "%s", asset);
     }
 
     Rt off; // no hooks: nothing to report to
