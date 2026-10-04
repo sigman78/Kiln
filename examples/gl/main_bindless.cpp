@@ -3,6 +3,7 @@
 // at the request (placeholder), on arrival and on reload. Materials store slot numbers once and
 // never look textures up per frame (docs/design/integration-examples.md).
 #include "gl_adapter.h"
+#include "gl_background.h"
 #include "gl_util.h"
 #include "no_crash_dialogs.h"
 
@@ -23,7 +24,7 @@ namespace {
 
 constexpr u32 kMaxTextures  = 32;
 constexpr u32 kMaxMaterials = 64;
-constexpr u32 kSlotsPerDraw = 6; // base color, normal, metal-rough, occlusion, emissive, sky
+constexpr u32 kSlotsPerDraw = 5; // base color, normal, metal-rough, occlusion, emissive
 
 constexpr char const* kBindlessHeader = "#extension GL_ARB_bindless_texture : require\n";
 
@@ -35,14 +36,15 @@ in vec2 vUv;
 layout(std430, binding = 0) readonly buffer Handles { uvec2 uHandles[]; }; // gl_handle_table()
 layout(location = 2) uniform vec3 uEye;
 layout(location = 4) uniform float uExposure;
-layout(location = 5) uniform uint uSlots[6]; // see kSlotsPerDraw; 0xFFFFFFFF = none
+layout(location = 5) uniform uint uSlots[5]; // see kSlotsPerDraw; 0xFFFFFFFF = none
+layout(location = 10) uniform uint uEnvironment;
 layout(location = 11) uniform vec4 uBaseColorFactor;
 layout(location = 12) uniform vec4 uEmissiveNormal; // xyz: emissive factor; w: normal scale
 layout(location = 13) uniform vec4 uMro;            // metallic, roughness, occlusion strength
 out vec4 outColor;
 bool has(int i) { return uSlots[i] != 0xFFFFFFFFu; }
 vec4 tex(int i) { return texture(sampler2D(uHandles[uSlots[i]]), vUv); }
-vec3 sky(vec3 d, float lod) { return textureLod(samplerCube(uHandles[uSlots[5]]), cube_dir(d), lod).rgb; }
+vec3 sky(vec3 d, float lod) { return textureLod(samplerCube(uHandles[uEnvironment]), cube_dir(d), lod).rgb; }
 void main() {
     vec3 base     = uBaseColorFactor.rgb * (has(0) ? tex(0).rgb : vec3(1.0));
     vec3 n        = normalize(vNormal);
@@ -53,24 +55,9 @@ void main() {
     float rough   = clamp(uMro.y * mr.g, 0.05, 1.0);
     mr.b *= uMro.x;
     vec3 v        = normalize(uEye - vWorld);
-    vec3 ambient  = has(5) ? sky(n, 6.0) : vec3(0.3);
-    vec3 env      = has(5) ? sky(reflect(-v, n), rough * 6.0) : vec3(0.3);
+    vec3 ambient  = uEnvironment != 0xFFFFFFFFu ? sky(n, 6.0) : vec3(0.3);
+    vec3 env      = uEnvironment != 0xFFFFFFFFu ? sky(reflect(-v, n), rough * 6.0) : vec3(0.3);
     outColor      = display(shade(base, n, v, rough, mr.b, ao, ambient, env) + emissive, uExposure);
-}
-)";
-
-constexpr char const* kSkyFs = R"(
-in vec2 vNdc;
-layout(std430, binding = 0) readonly buffer Handles { uvec2 uHandles[]; };
-layout(location = 0) uniform vec3 uForward;
-layout(location = 1) uniform vec3 uRight;
-layout(location = 2) uniform vec3 uUp;
-layout(location = 4) uniform float uExposure;
-layout(location = 5) uniform uint uSkySlot;
-out vec4 outColor;
-void main() {
-    vec3 dir = normalize(uForward + vNdc.x * uRight + vNdc.y * uUp);
-    outColor = display(texture(samplerCube(uHandles[uSkySlot]), cube_dir(dir)).rgb, uExposure);
 }
 )";
 
@@ -128,8 +115,8 @@ struct Scene {
     Context* ctx        = nullptr;
     StrView modelName;
     MeshHandle model;
-    TextureHandle sky;
-    u32 skySlot = kInvalid;
+    TextureHandle environment;
+    u32 environmentSlot = kInvalid;
     TextureItem textures[kMaxTextures];
     u32 textureCount = 0;
     u32 materialSlots[kMaxMaterials][kSlotsPerDraw]; ///< filled at request time, read every draw
@@ -163,7 +150,7 @@ TextureHandle texture_for(Scene& s, StrView name, mesh::TextureSlot slot) {
 void request_textures(Scene& s, mesh::MeshView const& v) {
     for (u32 m = 0; m < kMaxMaterials; ++m)
         for (u32 i = 0; i < kSlotsPerDraw; ++i)
-            s.materialSlots[m][i] = i == 5 ? s.skySlot : kInvalid;
+            s.materialSlots[m][i] = kInvalid;
     for (u32 m = 0; m < v.materials().size() && m < kMaxMaterials; ++m) {
         mesh::MaterialSlot const& mat = v.materials()[m];
         for (u32 t = 0; t < mat.textureCount && mat.textureFirst + t < v.textures().size(); ++t) {
@@ -201,7 +188,7 @@ void bind_material(void* user, u32 material) {
 
 bool scene_settled(Scene const& s) {
     if (!ex::settled(state(s.ctx, s.model))) return false;
-    if (s.sky && !ex::settled(state(s.ctx, s.sky))) return false;
+    if (s.environment && !ex::settled(state(s.ctx, s.environment))) return false;
     for (u32 i = 0; i < s.textureCount; ++i)
         if (!ex::settled(state(s.ctx, s.textures[i].handle))) return false;
     return true;
@@ -259,15 +246,15 @@ int main(int argc, char** argv) {
     s.ctx       = ctx;
     s.modelName = StrView(o.model);
     if (o.sky) {
-        s.sky     = request_texture(ctx, StrView(o.sky), RequestOptions{.textureShape = TextureShape::Cube});
-        s.skySlot = gpu_object(ctx, s.sky).slot;
+        s.environment =
+            request_texture(ctx, StrView(o.sky), RequestOptions{.textureShape = TextureShape::Cube});
+        s.environmentSlot = gpu_object(ctx, s.environment).slot;
     }
     s.model = request_mesh(ctx, s.modelName);
 
     GLuint const meshProgram = build_program(kMeshVs, kBindlessHeader, kMeshFs);
-    GLuint const skyProgram  = build_program(kSkyVs, kBindlessHeader, kSkyFs);
-    GLuint emptyVao          = 0;
-    glCreateVertexArrays(1, &emptyVao);
+    Background background;
+    background.create(true);
 
     // 5. The frame loop: pump, then draw with the slots the materials stored.
     Target target;
@@ -286,19 +273,7 @@ int main(int argc, char** argv) {
 
         Frame f;
         if (!begin_frame(window, camera, target, &f)) continue;
-        if (s.skySlot != kInvalid) {
-            glUseProgram(skyProgram);
-            glUniform3f(0, f.skyForward.x, f.skyForward.y, f.skyForward.z);
-            glUniform3f(1, f.skyRight.x, f.skyRight.y, f.skyRight.z);
-            glUniform3f(2, f.skyUp.x, f.skyUp.y, f.skyUp.z);
-            glUniform1f(4, camera.exposure);
-            glUniform1ui(5, s.skySlot);
-            glDisable(GL_DEPTH_TEST);
-            glDepthMask(GL_FALSE);
-            glBindVertexArray(emptyVao);
-            glDrawArrays(GL_TRIANGLES, 0, 3);
-            glDepthMask(GL_TRUE);
-        }
+        if (s.environmentSlot != kInvalid) background.draw(f.rays, camera.exposure, s.environmentSlot);
         glEnable(GL_DEPTH_TEST);
         glDepthFunc(GL_LEQUAL);
         mesh::MeshView const* v = mesh_view(ctx, s.model);
@@ -308,6 +283,7 @@ int main(int argc, char** argv) {
             glUniformMatrix4fv(1, 1, GL_FALSE, f.viewProj.m);
             glUniform3f(2, f.view.eye.x, f.view.eye.y, f.view.eye.z);
             glUniform1f(4, camera.exposure);
+            glUniform1ui(10, s.environmentSlot);
             draw_geometry(s.geometry, *v, buffer, &bind_material, &s);
         }
         end_frame(window, target, o.offscreen);
@@ -328,9 +304,8 @@ int main(int argc, char** argv) {
     destroy(ctx);
     ex::finish_trace();
     release_geometry(s.geometry);
-    glDeleteVertexArrays(1, &emptyVao);
+    background.release();
     glDeleteProgram(meshProgram);
-    glDeleteProgram(skyProgram);
     target.release();
     gl_adapter_destroy(*gla);
     glfwDestroyWindow(window);

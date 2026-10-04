@@ -5,7 +5,7 @@
 // Meshes are cooked with VertexProfile::Float. The steps a host takes are numbered.
 #include "example_app.h"
 #include "no_crash_dialogs.h"
-#include "vk_render.h"
+#include "vk_background.h"
 
 #include <kiln/assets.h>
 #include <kiln/log.h>
@@ -30,16 +30,15 @@ using ex::Vec3;
 
 namespace {
 
-constexpr f32 kFovY         = 50.0f * ex::kPi / 180.0f;
-constexpr u32 kMaxTextures  = 32;
-constexpr u32 kMaxMaterials = 64;
-constexpr u32 kMaxParts     = 256;
-constexpr u32 kBindings     = 6; // set 1: base color, normal, metal-rough, occlusion, emissive, sky
-constexpr u32 kSkyBinding   = 5;
-/// The placeholder kind that stands in for each binding's missing texture (black for the sky).
+constexpr f32 kFovY           = 50.0f * ex::kPi / 180.0f;
+constexpr u32 kMaxTextures    = 32;
+constexpr u32 kMaxMaterials   = 64;
+constexpr u32 kMaxParts       = 256;
+constexpr u32 kBindings       = 5; // set 1: base color, normal, metal-rough, occlusion, emissive
+constexpr u32 kEnvironmentBit = 1u << 5;
+/// The placeholder kind for each material binding's missing texture.
 constexpr TextureKind kBindingKinds[kBindings] = {TextureKind::BaseColor, TextureKind::Normal,
-                                                  TextureKind::Orm,       TextureKind::Orm,
-                                                  TextureKind::Emissive,  TextureKind::Emissive};
+                                                  TextureKind::Orm, TextureKind::Orm, TextureKind::Emissive};
 constexpr u32 kFif                             = vkx::kFramesInFlight;
 
 struct TextureItem {
@@ -57,6 +56,85 @@ struct Material {
     u32 mask[kFif]             = {}; ///< bindings each slot's set holds (the shader tests them)
 };
 
+/// The scene cube at set 2, one set per frame in flight, rewritten like a Material's sets.
+struct Environment {
+    TextureHandle texture;
+    VkDescriptorSetLayout layout = VK_NULL_HANDLE;
+    VkDescriptorPool pool        = VK_NULL_HANDLE;
+    VkSampler sampler            = VK_NULL_HANDLE;
+    VkDescriptorSet sets[kFif]   = {};
+    u64 stamp                    = 1;
+    u64 written[kFif]            = {};
+    bool present[kFif]           = {};
+
+    void create(VkDevice device) {
+        VkDescriptorSetLayoutBinding binding{};
+        binding.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        binding.descriptorCount = 1;
+        binding.stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
+        VkDescriptorSetLayoutCreateInfo lci{};
+        lci.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+        lci.bindingCount = 1;
+        lci.pBindings    = &binding;
+        VKX_CHECK(vkCreateDescriptorSetLayout(device, &lci, nullptr, &layout));
+        VkDescriptorPoolSize const size{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kFif};
+        VkDescriptorPoolCreateInfo pci{};
+        pci.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+        pci.maxSets       = kFif;
+        pci.poolSizeCount = 1;
+        pci.pPoolSizes    = &size;
+        VKX_CHECK(vkCreateDescriptorPool(device, &pci, nullptr, &pool));
+        VkDescriptorSetLayout layouts[kFif];
+        for (auto& l : layouts)
+            l = layout;
+        VkDescriptorSetAllocateInfo ai{};
+        ai.sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+        ai.descriptorPool     = pool;
+        ai.descriptorSetCount = kFif;
+        ai.pSetLayouts        = layouts;
+        VKX_CHECK(vkAllocateDescriptorSets(device, &ai, sets));
+        VkSamplerCreateInfo sci{};
+        sci.sType     = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+        sci.magFilter = sci.minFilter = VK_FILTER_LINEAR;
+        sci.mipmapMode                = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+        sci.addressModeU = sci.addressModeV = sci.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        sci.maxLod                                             = VK_LOD_CLAMP_NONE;
+        VKX_CHECK(vkCreateSampler(device, &sci, nullptr, &sampler));
+    }
+
+    /// After renderer_wait_frame(): only the completed frame slot may be rewritten. True if it was.
+    bool update(VkDevice device, vkx::VkAdapter* adapter, Context* ctx, u32 slot) {
+        if (written[slot] == stamp) return false;
+        vkx::TextureView view =
+            texture ? vkx::adapter_texture(adapter, gpu_object(ctx, texture)) : vkx::TextureView{};
+        present[slot] = view.view && view.shape == TextureShape::Cube;
+        if (!present[slot])
+            view = vkx::adapter_texture(adapter,
+                                        placeholder_object(ctx, TextureKind::Emissive, TextureShape::Cube));
+        VkDescriptorImageInfo const image{sampler, view.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        VkWriteDescriptorSet write{};
+        write.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        write.dstSet          = sets[slot];
+        write.descriptorCount = 1;
+        write.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        write.pImageInfo      = &image;
+        vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
+        written[slot] = stamp;
+        return true;
+    }
+
+    void bind(vkx::Renderer* renderer, VkCommandBuffer cmd, u32 slot) const {
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkx::renderer_pipeline_layout(renderer),
+                                2, 1, &sets[slot], 0, nullptr);
+    }
+
+    void release(VkDevice device) {
+        vkDestroyDescriptorPool(device, pool, nullptr);
+        vkDestroyDescriptorSetLayout(device, layout, nullptr);
+        vkDestroySampler(device, sampler, nullptr);
+    }
+};
+
 struct Scene {
     /// The model content version the materials and geometry were set up for. MetaReady, Changed
     /// and a Ready that follows Failed (a repaired model: reloads emit no MetaReady) carry a new one.
@@ -67,22 +145,20 @@ struct Scene {
     VkDevice device     = VK_NULL_HANDLE;
     StrView modelName;
     MeshHandle model;
-    u32 skyItem = kInvalid;
+    Environment environment;
     TextureItem textures[kMaxTextures];
     u32 textureCount = 0;
-    Material materials[kMaxMaterials + 1]; ///< the last one holds only the sky, for the sky pass
+    Material materials[kMaxMaterials];
     u32 materialCount               = 0;
     VkDescriptorSetLayout setLayout = VK_NULL_HANDLE;
     VkDescriptorPool pool           = VK_NULL_HANDLE;
-    VkSampler sampler = VK_NULL_HANDLE, skySampler = VK_NULL_HANDLE;
+    VkSampler sampler               = VK_NULL_HANDLE;
     Mat4 place;
     Mat4 world[kMaxParts];
     bool unsupported     = false;
     u64 invalidations    = 0; ///< material stamps bumped by events
     u64 descriptorWrites = 0; ///< sets rewritten
 };
-
-Material& sky_material(Scene& s) { return s.materials[kMaxMaterials]; }
 
 /// One set per frame slot from the pool.
 void alloc_sets(Scene& s, VkDescriptorSet (&out)[kFif]) {
@@ -95,15 +171,6 @@ void alloc_sets(Scene& s, VkDescriptorSet (&out)[kFif]) {
     ai.descriptorSetCount = kFif;
     ai.pSetLayouts        = layouts;
     VKX_CHECK(vkAllocateDescriptorSets(s.device, &ai, out));
-}
-
-/// The sky pass's material: only the cube.
-void reset_sky_material(Scene& s) {
-    Material& sky = sky_material(s);
-    sky           = Material{};
-    for (u32 i = 0; i < kBindings; ++i)
-        sky.textures[i] = i == kSkyBinding ? s.skyItem : kInvalid;
-    alloc_sets(s, sky.sets);
 }
 
 u32 texture_item(Scene& s, StrView name, TextureKind kind) {
@@ -132,14 +199,13 @@ void build_materials(Scene& s, mesh::MeshView const& v) {
     if (s.materialCount) {
         vkx::renderer_wait_idle(s.ren);
         VKX_CHECK(vkResetDescriptorPool(s.device, s.pool, 0));
-        reset_sky_material(s);
     }
     s.materialCount = min<u32>(max<u32>(v.materials().size(), 1), kMaxMaterials);
     for (u32 m = 0; m < s.materialCount; ++m) {
         Material& mat = s.materials[m];
         mat           = Material{};
         for (u32 i = 0; i < kBindings; ++i)
-            mat.textures[i] = i == kSkyBinding ? s.skyItem : kInvalid;
+            mat.textures[i] = kInvalid;
         if (m >= v.materials().size()) continue; // a mesh without materials draws with material 0
         mesh::MaterialSlot const& ms = v.materials()[m];
         for (u32 t = 0; t < ms.textureCount && ms.textureFirst + t < v.textures().size(); ++t) {
@@ -151,7 +217,7 @@ void build_materials(Scene& s, mesh::MeshView const& v) {
                                                  texture_kind_for_slot(mesh::TextureSlot(b.slot)));
         }
     }
-    for (u32 m = 0; m < s.materialCount; ++m) // the pool holds kMaxMaterials + 1 materials' sets
+    for (u32 m = 0; m < s.materialCount; ++m)
         alloc_sets(s, s.materials[m].sets);
     mesh::Bounds const& b = v.model().bounds;
     f32 const scale       = b.radius > 0 ? 1.0f / b.radius : 1.0f;
@@ -175,10 +241,13 @@ void build_materials(Scene& s, mesh::MeshView const& v) {
 /// material that samples it. MetaReady changes nothing: gpu_object() still returns the placeholder.
 void on_texture_event(Scene& s, Event const& e) {
     if (e.kind == EventKind::MetaReady) return;
+    if (s.environment.texture && s.environment.texture.bits() == e.handle) {
+        ++s.environment.stamp;
+        ++s.invalidations;
+    }
     for (u32 i = 0; i < s.textureCount; ++i) {
         if (s.textures[i].handle.bits() != e.handle) continue;
-        for (u32 m = 0; m <= kMaxMaterials; ++m) {
-            if (m >= s.materialCount && m != kMaxMaterials) continue;
+        for (u32 m = 0; m < s.materialCount; ++m) {
             Material& mat = s.materials[m];
             for (u32 t : mat.textures)
                 if (t == i) {
@@ -208,8 +277,8 @@ void handle_event(Scene& s, Event const& e) {
 
 /// Rewrites this frame slot's set of every material whose stamp moved since the slot was written.
 void update_sets(Scene& s, u32 slot) {
-    for (u32 m = 0; m <= kMaxMaterials; ++m) {
-        if (m >= s.materialCount && m != kMaxMaterials) continue;
+    if (s.environment.update(s.device, s.va, s.ctx, slot)) ++s.descriptorWrites;
+    for (u32 m = 0; m < s.materialCount; ++m) {
         Material& mat = s.materials[m];
         if (!mat.sets[slot] || mat.written[slot] == mat.stamp) continue;
         VkDescriptorImageInfo images[kBindings]{};
@@ -218,15 +287,14 @@ void update_sets(Scene& s, u32 slot) {
         for (u32 b = 0; b < kBindings; ++b) {
             // Pending: the placeholder of the texture's kind; Ready: the real image. Every binding is
             // written: one the material lacks gets kiln's placeholder and a clear mask bit.
-            TextureShape const want = b == kSkyBinding ? TextureShape::Cube : TextureShape::Tex2D;
+            TextureShape const want = TextureShape::Tex2D;
             vkx::TextureView tv;
             if (mat.textures[b] != kInvalid)
                 tv = vkx::adapter_texture(s.va, gpu_object(s.ctx, s.textures[mat.textures[b]].handle));
             bool const real = tv.view && tv.shape == want;
             if (!real) tv = vkx::adapter_texture(s.va, placeholder_object(s.ctx, kBindingKinds[b], want));
             if (!tv.view) continue;
-            images[count]                 = {b == kSkyBinding ? s.skySampler : s.sampler, tv.view,
-                             VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+            images[count]                 = {s.sampler, tv.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
             writes[count].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
             writes[count].dstSet          = mat.sets[slot];
             writes[count].dstBinding      = b;
@@ -280,7 +348,7 @@ void draw_model(Scene& s, VkCommandBuffer cmd, u32 slot) {
         for (u32 si = 0; si < lod.submeshCount; ++si) {
             mesh::Submesh const& sm = v->submeshes()[lod.submeshFirst + si];
             Material const& mat     = s.materials[min(sm.material, s.materialCount - 1)];
-            push.flags              = mat.mask[slot];
+            push.flags              = mat.mask[slot] | (s.environment.present[slot] ? kEnvironmentBit : 0u);
             push.material           = min(sm.material, vkx::kMaxMaterials - 1); // the last entry: defaults
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 1, 1, &mat.sets[slot], 0,
                                     nullptr);
@@ -293,6 +361,7 @@ void draw_model(Scene& s, VkCommandBuffer cmd, u32 slot) {
 
 bool scene_settled(Scene const& s) {
     if (!ex::settled(state(s.ctx, s.model))) return false;
+    if (s.environment.texture && !ex::settled(state(s.ctx, s.environment.texture))) return false;
     for (u32 i = 0; i < s.textureCount; ++i)
         if (!ex::settled(state(s.ctx, s.textures[i].handle))) return false;
     return true;
@@ -305,7 +374,7 @@ void framebuffer_size(void* user, u32* width, u32* height) {
     *height = h > 0 ? u32(h) : 0u;
 }
 
-/// The host's Vulkan objects: the material set layout, a pool, two samplers.
+/// Material descriptors and the scene environment use independent pools.
 void create_host_objects(Scene& s) {
     VkDescriptorSetLayoutBinding bindings[kBindings]{};
     for (u32 b = 0; b < kBindings; ++b) {
@@ -320,10 +389,10 @@ void create_host_objects(Scene& s) {
     lci.pBindings    = bindings;
     VKX_CHECK(vkCreateDescriptorSetLayout(s.device, &lci, nullptr, &s.setLayout));
     VkDescriptorPoolSize const size{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-                                    (kMaxMaterials + 1) * kFif * kBindings};
+                                    kMaxMaterials * kFif * kBindings};
     VkDescriptorPoolCreateInfo pci{};
     pci.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    pci.maxSets       = (kMaxMaterials + 1) * kFif;
+    pci.maxSets       = kMaxMaterials * kFif;
     pci.poolSizeCount = 1;
     pci.pPoolSizes    = &size;
     VKX_CHECK(vkCreateDescriptorPool(s.device, &pci, nullptr, &s.pool));
@@ -335,8 +404,7 @@ void create_host_objects(Scene& s) {
     sci.addressModeU = sci.addressModeV = sci.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
     sci.maxLod                                             = VK_LOD_CLAMP_NONE;
     VKX_CHECK(vkCreateSampler(s.device, &sci, nullptr, &s.sampler));
-    sci.addressModeU = sci.addressModeV = sci.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    VKX_CHECK(vkCreateSampler(s.device, &sci, nullptr, &s.skySampler));
+    s.environment.create(s.device);
 }
 
 } // namespace
@@ -391,9 +459,10 @@ int main(int argc, char** argv) {
                                                       .user              = window,
                                                       .meshVert          = k_basic_mesh_vert_spv,
                                                       .meshFrag          = k_basic_mesh_frag_spv,
-                                                      .skyVert           = k_basic_sky_vert_spv,
-                                                      .skyFrag           = k_basic_sky_frag_spv,
-                                                      .materialSetLayout = s.setLayout});
+                                                      .fullscreenVert    = k_basic_sky_vert_spv,
+                                                      .fullscreenFrag    = k_basic_sky_frag_spv,
+                                                      .materialSetLayout = s.setLayout,
+                                                      .sceneSetLayout    = s.environment.layout});
     if (rr.failed()) return 2;
     s.ren = *rr;
 
@@ -419,17 +488,11 @@ int main(int argc, char** argv) {
     }
 #endif
 
-    // 5. Requests. The sky is a texture item like the others; its set is the last material's.
+    // 5. Requests. The environment is shared by the background and mesh lighting.
     s.modelName = StrView(o.model);
     s.model     = request_mesh(s.ctx, s.modelName);
-    if (o.sky) {
-        s.textures[0] = {
-            asset_id(StrView(o.sky)),
-            request_texture(s.ctx, StrView(o.sky), RequestOptions{.textureShape = TextureShape::Cube})};
-        s.textureCount = 1;
-        s.skyItem      = 0;
-    }
-    reset_sky_material(s);
+    if (o.sky)
+        s.environment.texture = request_texture(s.ctx, StrView(o.sky), {.textureShape = TextureShape::Cube});
 
     // 6. Frames: wait for the slot, pump, apply events to the sets, draw.
     int exitCode         = 0;
@@ -473,29 +536,14 @@ int main(int argc, char** argv) {
         for (u32 i = 0; i < vkx::kMaxMaterials; ++i) // the last entry: glTF's defaults
             u->materials[i] = vkx::material_uniforms(i + 1 < vkx::kMaxMaterials ? mv : nullptr, i);
         std::memcpy(u->viewProj, viewProj.m, sizeof u->viewProj);
-        u->cameraPos[0]     = view.eye.x;
-        u->cameraPos[1]     = view.eye.y;
-        u->cameraPos[2]     = view.eye.z;
-        u->cameraPos[3]     = 1.0f;
-        u->tonemap[0]       = std::exp2(camera.exposure);
-        Material const& sky = sky_material(s);
-        if (sky.mask[slot] & (1u << kSkyBinding)) {
-            Vec3 const f    = ex::normalize(Vec3{} - view.eye);
-            Vec3 const side = ex::normalize(ex::cross(f, Vec3{0, 1, 0}));
-            f32 const tanV  = std::tan(kFovY * 0.5f);
-            Vec3 const r    = side * (tanV * aspect);
-            Vec3 const up   = ex::cross(side, f) * tanV;
-            vkx::SkyPush const push{
-                .forward  = {f.x, f.y, f.z, 0},
-                .right    = {r.x, r.y, r.z, 0},
-                .up       = {up.x, up.y, up.z, 0},
-                .cubeSlot = 0,
-                .pad      = {}
-            };
-            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                    vkx::renderer_pipeline_layout(s.ren), 1, 1, &sky.sets[slot], 0, nullptr);
-            vkx::renderer_draw_sky(s.ren, cmd, push);
-        }
+        u->cameraPos[0] = view.eye.x;
+        u->cameraPos[1] = view.eye.y;
+        u->cameraPos[2] = view.eye.z;
+        u->cameraPos[3] = 1.0f;
+        u->tonemap[0]   = std::exp2(camera.exposure);
+        s.environment.bind(s.ren, cmd, slot);
+        if (s.environment.present[slot])
+            vkx::draw_background(s.ren, cmd, ex::view_rays(view.eye, Vec3{}, kFovY, aspect), kInvalid);
         draw_model(s, cmd, slot);
         vkx::renderer_end(s.ren, last && o.dump != nullptr);
         if (last) break;
@@ -531,7 +579,7 @@ int main(int argc, char** argv) {
     vkDestroyDescriptorPool(s.device, s.pool, nullptr);
     vkDestroyDescriptorSetLayout(s.device, s.setLayout, nullptr);
     vkDestroySampler(s.device, s.sampler, nullptr);
-    vkDestroySampler(s.device, s.skySampler, nullptr);
+    s.environment.release(s.device);
     // Offscreen runs enable no surface extension: volk leaves this function null.
     if (surface) vkDestroySurfaceKHR(device.instance, surface, nullptr);
     vkx::device_destroy(device);

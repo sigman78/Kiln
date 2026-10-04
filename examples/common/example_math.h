@@ -27,6 +27,18 @@ inline Vec3 normalize(Vec3 a) {
     return l > 0 ? a * (1.0f / l) : a;
 }
 
+struct ViewRays {
+    Vec3 forward, right, up;
+};
+
+/// Rays through a perspective view: forward + ndc.x * right + ndc.y * up, with NDC +Y up.
+inline ViewRays view_rays(Vec3 eye, Vec3 target, f32 fovY, f32 aspect) {
+    Vec3 const forward = normalize(target - eye);
+    Vec3 const side    = normalize(cross(forward, Vec3{0, 1, 0}));
+    f32 const tanV     = std::tan(fovY * 0.5f);
+    return {forward, side * (tanV * aspect), cross(side, forward) * tanV};
+}
+
 struct Mat4 {
     f32 m[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
 };

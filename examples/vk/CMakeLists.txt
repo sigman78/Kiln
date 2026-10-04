@@ -64,13 +64,14 @@ endfunction()
 # ---------------------------------------------------------------------------
 kiln_vk_embed_shaders(KILN_VK_BINDLESS_HEADERS bindless "" mesh.vert mesh.frag sky.vert sky.frag)
 add_library(kiln_example_vk STATIC
-    vk_render.h vk_render.cpp
+    vk_render.h vk_render.cpp vk_background.h
     vk_device.h vk_device.cpp
     vk_adapter.h vk_adapter.cpp
     ${KILN_VK_BINDLESS_HEADERS})
 kiln_apply_defaults(kiln_example_vk)
 target_include_directories(kiln_example_vk PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR})
-target_link_libraries(kiln_example_vk PUBLIC kiln_runtime kiln_example_adapter_support volk)
+target_link_libraries(kiln_example_vk PUBLIC kiln_runtime kiln_example_common kiln_example_adapter_support
+                                             volk)
 
 function(kiln_vk_example name source)
     add_executable(${name} ${source} ${ARGN})
