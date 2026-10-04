@@ -192,10 +192,6 @@ void teardown(Context* ctx) {
     // 2. Discard pending completions; their upload objects go back to the adapter.
     {
         std::lock_guard<std::mutex> lock(ctx->compMutex);
-        for (u32 i = 0; i < ctx->compCount; ++i) {
-            Slot& s       = ctx->slots[ctx->comp[(ctx->compHead + i) % ctx->compCap].slot];
-            s.jobInFlight = false;
-        }
         ctx->compCount = 0;
     }
     // 3. Release every asset at once (the host waited for its GPU to go idle); abandoned uploads
@@ -205,14 +201,15 @@ void teardown(Context* ctx) {
     if (ctx->slots) {
         for (u32 i = 0; i < ctx->maxAssets; ++i) {
             Slot& s = ctx->slots[i];
-            if (!s.live) continue;
+            if (!s.live()) continue;
             orphan_upload(ctx, s);
             if (!s.realObj.is_null()) a.destroy(a.user, s.realObj);
             s.realObj = {};
             free_load_data(s);
             free_array_decl(ctx->alloc, s.array);
             s.array = nullptr;
-            s.live  = false;
+            if (!s.zombie()) transition(s, Step::Unload);
+            transition(s, Step::Free);
         }
     }
     for (Placeholder& p : ctx->ph) {
@@ -507,7 +504,7 @@ ContextStats stats(Context* ctx) {
     if (!ctx) return st;
     for (u32 i = 0; i < ctx->maxAssets; ++i) {
         Slot const& s = ctx->slots[i];
-        if (!s.live || s.zombie) continue;
+        if (!s.live() || s.zombie()) continue;
         ++st.assets;
         switch (s.state) {
         case State::Pending: ++st.pending; break;

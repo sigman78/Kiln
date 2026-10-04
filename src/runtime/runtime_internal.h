@@ -50,6 +50,21 @@ enum class Phase : u8 {
     Done,         ///< Ready or Failed
 };
 
+/// What moves a slot through its lifecycle (transition()).
+enum class Step : u8 {
+    Request,      ///< Free -> MetaQueued, Pending
+    Reload,       ///< Done -> MetaQueued; the state stays Ready or Failed until the reload settles
+    SubmitMeta,   ///< MetaQueued -> MetaJob
+    MetaDone,     ///< MetaJob -> UploadQueued; MetaReady on a first load
+    SubmitUpload, ///< UploadQueued -> UploadJob
+    UploadBusy,   ///< UploadJob -> UploadQueued: the adapter had no room
+    Uploaded,     ///< UploadJob -> Awaiting
+    Ready,        ///< Awaiting -> Done, Ready
+    Fail,         ///< a load in any phase -> Done; Failed, or still Ready after a failed reload
+    Unload,       ///< the last reference went: Unloaded; a job in flight keeps the slot as a zombie
+    Free,         ///< an Unloaded slot -> Free
+};
+
 enum class Stage : u8 { Meta = 0, Upload };
 /// File: a store entry; Memory: register_*() bytes; Array: request_texture_array() layers.
 enum class SourceKind : u8 { File = 0, Memory, Array };
@@ -138,22 +153,20 @@ struct Slot {
     u32 generation        = 1;
     AssetId id            = 0;
     AssetKind kind        = AssetKind::Mesh;
-    State state           = State::Unloaded;
-    Phase phase           = Phase::Free;
+    State state           = State::Unloaded; ///< written by transition() only
+    Phase phase           = Phase::Free;     ///< written by transition() only
     Priority priority     = Priority::Normal;
     TextureKind texKind   = TextureKind::BaseColor;
     TextureShape texShape = TextureShape::Tex2D; ///< requested; fixed while the slot lives
-    bool live             = false;               ///< occupied (including zombies)
-    bool zombie           = false;               ///< released while a job was in flight
-    bool jobInFlight      = false;
-    bool reloading        = false; ///< the running load is a reload: state stays Ready / Failed
-    bool reloadPending    = false; ///< reload requested while not settled; runs at settle
-    u32 refcount          = 0;
-    u32 version           = 0;
-    u32 groupIndex        = kInvalid;
-    u32 groupGen          = 0;
-    u64 groupBytes        = 0;              ///< contribution to the group's bytesTotal
-    State groupAs         = State::Pending; ///< how the group counts the slot (reloads never change it)
+    /// The running load is a reload: state stays Ready / Failed. Written by transition() only.
+    bool reloading     = false;
+    bool reloadPending = false; ///< reload requested while not settled; runs at settle
+    u32 refcount       = 0;
+    u32 version        = 0;
+    u32 groupIndex     = kInvalid;
+    u32 groupGen       = 0;
+    u64 groupBytes     = 0;              ///< contribution to the group's bytesTotal
+    State groupAs      = State::Pending; ///< how the group counts the slot (reloads never change it)
     // queue links (intrusive, over slot indices)
     QueueId queue  = QueueId::None;
     u32 qPrev      = kInvalid;
@@ -213,6 +226,12 @@ struct Slot {
     Status jobStatus = kOk;
     u32 jobDiag      = 0; ///< K5xxx for a Failed completion
     DiagCapture capture;
+
+    /// Occupied, zombies included.
+    bool live() const { return phase != Phase::Free; }
+    /// Released while its job ran: the job's completion frees it.
+    bool zombie() const { return live() && state == State::Unloaded; }
+    bool job_in_flight() const { return phase == Phase::MetaJob || phase == Phase::UploadJob; }
 };
 
 struct GroupRec {
@@ -360,6 +379,9 @@ void adopt_job_keys(Slot& s);
 void remember_failed_keys(Slot& s);
 /// Runs the reloads post_reload() queued: each loaded slot with the name, and each array with it as a layer.
 void drain_posted_reloads(Context* ctx);
+/// The only writer of Slot::state, Slot::phase and Slot::reloading. A step the slot's phase and
+/// state do not allow is a broken invariant (KILN_VERIFY).
+void transition(Slot& s, Step step);
 void free_slot(Context* ctx, Slot& s);
 /// kiln no longer uses `obj` (may be null) and bindless slot `bindSlot` (may be kInvalid):
 /// released now if the host reported no frame that may still use them, else in process_retired().

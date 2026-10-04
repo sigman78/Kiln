@@ -60,8 +60,7 @@ void settle(Context* ctx, Slot& s) {
 void fail_reload(Context* ctx, Slot& s, u32 code, Status st) {
     queue_remove(ctx, s);
     orphan_upload(ctx, s);
-    s.reloading = false;
-    s.phase     = Phase::Done;
+    transition(s, Step::Fail);
     remember_failed_keys(s);
     free_meta_set(ctx->alloc, s.next);
     s.cooked.release();
@@ -94,9 +93,7 @@ void fail_slot(Context* ctx, Slot& s, u32 code, Status st) {
         s.groupBytes = 0;
         s.groupAs    = State::Failed;
     }
-    s.reloading = false;
-    s.state     = State::Failed;
-    s.phase     = Phase::Done;
+    transition(s, Step::Fail);
     adopt_job_keys(s); // the job is done: its fields are the pump thread's again
 
     (void)diagf(&ctx->diag, st, code, Severity::Error, path_of(s),
@@ -145,11 +142,9 @@ void reload_slot(Context* ctx, Slot& s) {
         s.reloadPending = true;
         return;
     }
-    KILN_ASSERT(!s.jobInFlight && s.queue == QueueId::None);
-    KILN_ASSERT(s.state == State::Ready || s.state == State::Failed);
+    KILN_ASSERT(s.queue == QueueId::None);
     refresh_manifest(ctx);
-    s.reloading  = true;
-    s.phase      = Phase::MetaQueued;
+    transition(s, Step::Reload);
     s.retryAfter = 0;
     s.capture.reset();
     s.cooked.release(); // look the name up again (or re-cook), never the last load's cook output
@@ -167,7 +162,7 @@ void drain_posted_reloads(Context* ctx) {
     // A name posted twice in one batch (a request and its unit's output) reloads once.
     u64 const batch   = ctx->pumpIndex;
     auto const reload = [ctx, batch](Slot& s) {
-        if (!s.live || s.zombie || s.source == SourceKind::Memory || s.postedBatch == batch) return;
+        if (!s.live() || s.zombie() || s.source == SourceKind::Memory || s.postedBatch == batch) return;
         s.postedBatch = batch;
         s.recheck     = true;
         reload_slot(ctx, s);
@@ -180,7 +175,7 @@ void drain_posted_reloads(Context* ctx) {
     // A layer is not a slot of its own: find the arrays that use it.
     for (u32 i = 0; arrays && i < ctx->maxAssets; ++i) {
         Slot& s = ctx->slots[i];
-        if (!s.live || !s.array) continue;
+        if (!s.live() || !s.array) continue;
         for (u32 l = 0; l < s.array->count; ++l) {
             AssetId const id = asset_id(s.array->name(s.array->layers[l]));
             bool posted      = false;
@@ -195,11 +190,10 @@ void drain_posted_reloads(Context* ctx) {
 }
 
 void submit_stage(Context* ctx, Slot& s, Stage stage) {
-    KILN_ASSERT(!s.jobInFlight && s.queue == QueueId::None);
-    s.jobStage    = stage;
-    s.jobGen      = s.generation;
-    s.jobInFlight = true;
-    s.phase       = stage == Stage::Meta ? Phase::MetaJob : Phase::UploadJob;
+    KILN_ASSERT(s.queue == QueueId::None);
+    transition(s, stage == Stage::Meta ? Step::SubmitMeta : Step::SubmitUpload);
+    s.jobStage = stage;
+    s.jobGen   = s.generation;
     if (stage == Stage::Meta) {
         s.jobRecheck       = s.recheck;
         s.recheck          = false;
@@ -293,12 +287,11 @@ void on_meta_ready(Context* ctx, Slot& s) {
         fail_slot(ctx, s, kDiagAdapterRejected, make_status(Code::Unsupported));
         return;
     }
-    s.phase = Phase::UploadQueued;
+    transition(s, Step::MetaDone);
     if (s.reloading) { // no MetaReady event and no group accounting: straight to upload
         queue_push(ctx, upload_queue(s), s);
         return;
     }
-    s.state = State::MetaReady;
     if (GroupRec* g = group_of(ctx, s)) {
         s.groupBytes = s.next.uploadSize;
         g->bytesTotal += s.next.uploadSize;
@@ -322,10 +315,8 @@ void make_ready(Context* ctx, Slot& s) {
     s.cur  = s.next;
     s.next = {};
     adopt_job_keys(s);
-    s.reloading = false;
+    transition(s, Step::Ready);
     if (reload) ++s.version;
-    s.state = State::Ready;
-    s.phase = Phase::Done;
     bind_object(ctx, s, s.realObj);
     retire(ctx, old, kInvalid);
     ++ctx->cur.uploadsCommitted;
@@ -361,10 +352,9 @@ void make_ready(Context* ctx, Slot& s) {
 
 void process(Context* ctx, Completion const& c) {
     Slot& s = ctx->slots[c.slot];
-    KILN_ASSERT(s.jobInFlight && s.jobGen == c.generation);
-    s.jobInFlight = false;
+    KILN_ASSERT(s.job_in_flight() && s.jobGen == c.generation);
     --ctx->jobsOutstanding;
-    if (s.zombie) { // released while the job ran: discard the result
+    if (s.zombie()) { // released while the job ran: discard the result
         orphan_upload(ctx, s);
         free_slot(ctx, s);
         return;
@@ -373,12 +363,12 @@ void process(Context* ctx, Completion const& c) {
     case CompletionKind::MetaReady: on_meta_ready(ctx, s); break;
     case CompletionKind::BusyRetry:
         ++ctx->cur.busyRetries;
-        s.phase      = Phase::UploadQueued;
+        transition(s, Step::UploadBusy);
         s.retryAfter = ctx->pumpIndex + 1; // at least one pump between retries
         queue_push(ctx, upload_queue(s), s);
         break;
     case CompletionKind::Uploaded:
-        s.phase = Phase::Awaiting;
+        transition(s, Step::Uploaded);
         queue_push(ctx, QueueId::Await, s);
         break;
     case CompletionKind::Failed:

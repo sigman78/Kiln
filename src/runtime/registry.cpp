@@ -35,7 +35,7 @@ Slot* resolve(Context* ctx, u64 bits, AssetKind kind) {
     u32 const gen   = u32(bits >> 32);
     if (gen == 0 || index >= ctx->maxAssets) return nullptr;
     Slot& s = ctx->slots[index];
-    if (!s.live || s.zombie || s.generation != gen || s.kind != kind) return nullptr;
+    if (!s.live() || s.zombie() || s.generation != gen || s.kind != kind) return nullptr;
     return &s;
 }
 
@@ -239,18 +239,76 @@ void free_load_data(Slot& s) {
     if (s.array) free_array_job_data(s.ctx->alloc, *s.array);
 }
 
+void transition(Slot& s, Step step) {
+    Phase const p = s.phase;
+    switch (step) {
+    case Step::Request:
+        KILN_VERIFY(p == Phase::Free);
+        s.state     = State::Pending;
+        s.phase     = Phase::MetaQueued;
+        s.reloading = false;
+        return;
+    case Step::Reload:
+        KILN_VERIFY(p == Phase::Done && (s.state == State::Ready || s.state == State::Failed));
+        s.phase     = Phase::MetaQueued;
+        s.reloading = true;
+        return;
+    case Step::SubmitMeta:
+        KILN_VERIFY(p == Phase::MetaQueued && !s.zombie());
+        s.phase = Phase::MetaJob;
+        return;
+    case Step::MetaDone:
+        KILN_VERIFY(p == Phase::MetaJob && !s.zombie());
+        s.phase = Phase::UploadQueued;
+        if (!s.reloading) s.state = State::MetaReady;
+        return;
+    case Step::SubmitUpload:
+        KILN_VERIFY(p == Phase::UploadQueued && !s.zombie());
+        s.phase = Phase::UploadJob;
+        return;
+    case Step::UploadBusy:
+        KILN_VERIFY(p == Phase::UploadJob && !s.zombie());
+        s.phase = Phase::UploadQueued;
+        return;
+    case Step::Uploaded:
+        KILN_VERIFY(p == Phase::UploadJob && !s.zombie());
+        s.phase = Phase::Awaiting;
+        return;
+    case Step::Ready:
+        KILN_VERIFY(p == Phase::Awaiting && !s.zombie());
+        s.state     = State::Ready;
+        s.phase     = Phase::Done;
+        s.reloading = false;
+        return;
+    case Step::Fail:
+        // MetaQueued: a request-time failure (Slot::preFail) reported at dispatch.
+        KILN_VERIFY((p == Phase::MetaQueued || p == Phase::MetaJob || p == Phase::UploadJob ||
+                     p == Phase::Awaiting) &&
+                    !s.zombie());
+        if (!(s.reloading && s.state == State::Ready)) s.state = State::Failed;
+        s.phase     = Phase::Done;
+        s.reloading = false;
+        return;
+    case Step::Unload:
+        KILN_VERIFY(s.live() && !s.zombie());
+        s.state = State::Unloaded;
+        return;
+    case Step::Free:
+        KILN_VERIFY(s.zombie());
+        s.phase     = Phase::Free;
+        s.reloading = false;
+        return;
+    }
+}
+
 void free_slot(Context* ctx, Slot& s) {
-    KILN_ASSERT(!s.jobInFlight && s.queue == QueueId::None);
+    KILN_ASSERT(s.queue == QueueId::None);
     free_load_data(s);
     free_array_decl(ctx->alloc, s.array);
+    transition(s, Step::Free);
     s.array                              = nullptr;
-    s.live                               = false;
-    s.zombie                             = false;
-    s.state                              = State::Unloaded;
-    s.phase                              = Phase::Free;
     s.refcount                           = 0;
     s.hasTarget                          = false;
-    s.reloading                          = false;
     s.reloadPending                      = false;
     s.realObj                            = {};
     s.bindSlot                           = kInvalid;
@@ -303,14 +361,9 @@ Slot* request_slot(Context* ctx, AssetKind kind, StrView path, RequestOptions co
     }
 
     Slot& s = ctx->slots[ctx->freeSlots[--ctx->freeSlotCount]];
-    KILN_ASSERT(!s.live);
-    s.live          = true;
-    s.zombie        = false;
-    s.jobInFlight   = false;
+    transition(s, Step::Request);
     s.id            = id;
     s.kind          = kind;
-    s.state         = State::Pending;
-    s.phase         = Phase::MetaQueued;
     s.priority      = opt.priority;
     s.texKind       = opt.textureKind < TextureKind::Count ? opt.textureKind : TextureKind::BaseColor;
     s.texShape      = kind == AssetKind::Texture && opt.textureShape < TextureShape::Count ? opt.textureShape
@@ -327,7 +380,6 @@ Slot* request_slot(Context* ctx, AssetKind kind, StrView path, RequestOptions co
     s.bindPending   = false;
     s.hasTarget     = false;
     s.target        = {};
-    s.reloading     = false;
     s.reloadPending = false;
     s.groupAs       = State::Pending;
     s.jobStatus     = kOk;
@@ -379,13 +431,10 @@ void unload(Context* ctx, Slot& s) {
     s.bindSlot    = kInvalid;
     s.bindPending = false;
     map_for(ctx, s.kind).erase(s.id);
-    s.state = State::Unloaded;
+    transition(s, Step::Unload);
     // Handles go stale now; the slot is reused only after the in-flight job (if any) completed.
     s.generation = s.generation + 1 == 0 ? 1 : s.generation + 1;
-    if (s.jobInFlight)
-        s.zombie = true;
-    else
-        free_slot(ctx, s);
+    if (!s.job_in_flight()) free_slot(ctx, s); // else a zombie: its completion frees it
 }
 
 void release_impl(Context* ctx, u64 bits, AssetKind kind) {
@@ -717,7 +766,7 @@ void boost_group(Context* ctx, Group g) {
     if (!resolve_group(ctx, g)) return;
     for (u32 i = 0; i < ctx->maxAssets; ++i) {
         Slot& s = ctx->slots[i];
-        if (s.live && !s.zombie && s.groupIndex == g.index && s.groupGen == g.generation) boost(ctx, s);
+        if (s.live() && !s.zombie() && s.groupIndex == g.index && s.groupGen == g.generation) boost(ctx, s);
     }
 }
 } // namespace rt

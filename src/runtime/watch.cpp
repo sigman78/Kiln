@@ -104,7 +104,7 @@ void warn_if_gone(Context* ctx, Slot& s) {
 void manifest_changed(Context* ctx) {
     for (u32 i = 0; i < ctx->maxAssets; ++i) {
         Slot& s = ctx->slots[i];
-        if (!s.live || s.zombie || s.source == SourceKind::Memory) continue;
+        if (!s.live() || s.zombie() || s.source == SourceKind::Memory) continue;
         // A load in flight learns its key only when it completes (the provider may name it): compare then.
         if (s.phase != Phase::Done)
             s.manifestCheck = true;
