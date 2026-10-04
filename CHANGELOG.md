@@ -7,6 +7,13 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
 
 ## [Unreleased]
 
+### Changed
+- **`ContextDesc::maxIoJobs` defaults to 16 jobs per worker** (was one per worker). Only `pump()`
+  starts jobs, so the old default left the workers idle between pumps: 891 assets (712 MiB) at 60 Hz
+  loaded in 4.4 s, now 1.05 s. Temporary, until the dispatch rule is decided (open-questions R26).
+  Migration: none; set `maxIoJobs` to the worker count for the old behavior. A GL host that sets
+  `maxIoJobs = 1` is not affected.
+
 ### Added
 - **Load benchmark** `kiln_bench_load` (`tests/bench_load.cpp`, run by hand): loads a cooked store
   through the null adapter and reports time and pumps to `MetaReady` and `Ready` per size class, and

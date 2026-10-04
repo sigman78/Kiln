@@ -121,6 +121,7 @@ struct Options {
     u32 threads         = 0;
     u32 ioJobs          = 0;
     u32 highEvery       = 0;
+    u32 lateHigh        = 0;
     u32 arrayLayers     = 0;
     u32 uploadMiB       = 64;
     u32 pitch           = 1;
@@ -136,6 +137,7 @@ struct Asset {
     ktx2::TextureDesc desc; ///< textures, when probed
     bool probed = false;
     bool high   = false;
+    bool late   = false; ///< requested with high priority once a quarter of the others have settled
 };
 
 /// Reads the texture's KTX2 metadata for its shape: a request must name the shape (K5017).
@@ -200,8 +202,8 @@ void pick_array_layers(Span<Asset const> assets, u32 layers, Vec<StrView>& out) 
 // ---------------------------------------------------------------------------
 
 struct Timing {
-    u64 metaNs = 0, readyNs = 0; ///< from the first request
-    u32 metaPump = 0, readyPump = 0;
+    u64 startNs = 0, metaNs = 0, readyNs = 0; ///< the request, from the run's start; then from the request
+    u32 startPump = 0, metaPump = 0, readyPump = 0;
     bool done = false, failed = false;
 };
 
@@ -255,14 +257,16 @@ bool run_once(Options const& o, Span<Asset const> assets, Span<StrView const> ar
     Vec<u32> bySlot(default_allocator(), Tag::Test); // registry slot -> request
     bySlot.resize(usize(cd.maxAssets), kInvalid);
 
-    usize remaining = requests;
-    u64 const t0    = profile_now_ns();
-    for (usize i = 0; i < requests; ++i) {
+    usize remaining    = requests;
+    u64 const t0       = profile_now_ns();
+    auto const request = [&](usize i) {
+        out.t[i].startNs   = profile_now_ns() - t0;
+        out.t[i].startPump = out.pumps;
         if (!arrayLayers.empty()) {
             handles[i] = request_texture_array(ctx, {.name = "bench/array", .layers = arrayLayers}).bits();
         } else {
             Asset const& a = assets[i];
-            RequestOptions const ro{.priority     = a.high ? Priority::High : Priority::Normal,
+            RequestOptions const ro{.priority     = a.high || a.late ? Priority::High : Priority::Normal,
                                     .textureShape = a.shape};
             handles[i] = a.kind == AssetKind::Mesh ? request_mesh(ctx, a.name, ro).bits()
                                                    : request_texture(ctx, a.name, ro).bits();
@@ -274,7 +278,15 @@ bool run_once(Options const& o, Span<Asset const> assets, Span<StrView const> ar
         } else if (u32(handles[i]) < bySlot.size()) {
             bySlot[u32(handles[i])] = u32(i);
         }
+    };
+    usize lateCount = 0;
+    for (usize i = 0; i < requests; ++i) {
+        if (arrayLayers.empty() && assets[i].late)
+            ++lateCount;
+        else
+            request(i);
     }
+    usize const lateAfter = (requests - lateCount) / 4; // settled requests before the late ones start
 
     using Clock = std::chrono::steady_clock;
     Clock::duration const period =
@@ -290,11 +302,11 @@ bool run_once(Options const& o, Span<Asset const> assets, Span<StrView const> ar
             if (slot >= bySlot.size() || bySlot[slot] == kInvalid) continue;
             Timing& t = out.t[bySlot[slot]];
             if (e.kind == EventKind::MetaReady) {
-                t.metaNs   = now;
-                t.metaPump = out.pumps;
+                t.metaNs   = now - t.startNs;
+                t.metaPump = out.pumps - t.startPump;
             } else if (!t.done) {
-                t.readyNs   = now;
-                t.readyPump = out.pumps;
+                t.readyNs   = now - t.startNs;
+                t.readyPump = out.pumps - t.startPump;
                 t.done      = true;
                 t.failed    = e.kind == EventKind::Failed;
                 --remaining;
@@ -303,6 +315,11 @@ bool run_once(Options const& o, Span<Asset const> assets, Span<StrView const> ar
                         stderr, "  failed (%s): %.*s\n", code_name(e.status.code),
                         KILN_SV(arrayLayers.empty() ? assets[bySlot[slot]].name : StrView("bench/array")));
             }
+        }
+        if (lateCount && requests - remaining >= lateAfter) {
+            for (usize i = 0; i < requests; ++i)
+                if (assets[i].late) request(i);
+            lateCount = 0;
         }
         if (now > u64(o.timeoutSec) * 1'000'000'000ull) {
             std::fprintf(stderr, "  timeout: %zu requests not settled after %u s\n", remaining, o.timeoutSec);
@@ -377,6 +394,7 @@ bool pick_size(Asset const& a, u64 klass) {
     return a.bytes >= kLimits[klass] && a.bytes < kLimits[klass + 1];
 }
 bool pick_high(Asset const& a, u64 high) { return a.high == (high != 0); }
+bool pick_late(Asset const& a, u64) { return a.late; }
 bool pick_all(Asset const&, u64) { return true; }
 
 void print_stages(Run const& r) {
@@ -425,10 +443,12 @@ int usage() {
                  "  --repeat N       runs, each with a new context (default 3); the fastest is detailed\n"
                  "  --hz N           pumps per second, 1 to 1000 (default 60)\n"
                  "  --threads N      worker threads (default 0: automatic)\n"
-                 "  --io-jobs N      ContextDesc::maxIoJobs (default 0: the worker count)\n"
+                 "  --io-jobs N      ContextDesc::maxIoJobs (default 0: 16 per worker)\n"
                  "  --upload-mib N   PumpOptions::uploadBytes in MiB (default 64)\n"
                  "  --pitch N        the adapter's row pitch alignment (default 1: no row repacking)\n"
                  "  --high-every N   every N-th request has high priority (default 0: none)\n"
+                 "  --late-high N    hold N requests back and make them with high priority once a quarter\n"
+                 "                   of the others have settled; their times count from their request\n"
                  "  --array N        also load one texture array of N layers taken from the store\n"
                  "  --no-probe       do not read texture headers first: request every texture as 2D\n"
                  "                   (cubes and arrays then fail). For cold-cache runs.\n"
@@ -470,6 +490,8 @@ int main(int argc, char** argv) {
             number(o.pitch);
         } else if (std::strcmp(a, "--high-every") == 0) {
             number(o.highEvery);
+        } else if (std::strcmp(a, "--late-high") == 0) {
+            number(o.lateHigh);
         } else if (std::strcmp(a, "--array") == 0) {
             number(o.arrayLayers);
         } else if (std::strcmp(a, "--timeout") == 0) {
@@ -504,7 +526,7 @@ int main(int argc, char** argv) {
 
     Vec<Asset> assets(default_allocator(), Tag::Test);
     u64 storeBytes = 0;
-    u32 meshes     = 0;
+    u32 meshes = 0, lateCount = 0;
     for (u64 i = 0; i < profile.size(); ++i) {
         ManifestEntry const e = profile.entry(i);
         Asset a;
@@ -512,6 +534,7 @@ int main(int argc, char** argv) {
         a.kind  = e.kind;
         a.bytes = e.bytes;
         a.high  = o.highEvery && (i + 1) % o.highEvery == 0;
+        a.late  = o.lateHigh && i % max<u64>(profile.size() / o.lateHigh, 1) == 0 && lateCount++ < o.lateHigh;
         if (o.probe && e.kind == AssetKind::Texture) probe_texture(StrView(o.store), e.key, a);
         storeBytes += e.bytes;
         meshes += e.kind == AssetKind::Mesh;
@@ -528,7 +551,7 @@ int main(int argc, char** argv) {
 
     Run best;
     if (!run_scenario(o, assets.span(), {}, storeBytes, best)) return 1;
-    std::printf("\nfastest run, ms from the first request: p50 / p95 / max\n");
+    std::printf("\nfastest run, ms from each asset's request: p50 / p95 / max\n");
     std::printf("%-12s %6s %9s   %26s   %26s   %12s\n", "artifact", "count", "MiB", "to MetaReady",
                 "to Ready", "pumps avg/max");
     static constexpr char const* kClasses[] = {"< 64 KiB", "< 1 MiB", "< 16 MiB", ">= 16 MiB"};
@@ -538,6 +561,7 @@ int main(int argc, char** argv) {
         print_class("high", best, assets.span(), &pick_high, 1);
         print_class("normal", best, assets.span(), &pick_high, 0);
     }
+    if (o.lateHigh) print_class("late high", best, assets.span(), &pick_late, 0);
     print_class("all", best, assets.span(), &pick_all, 0);
     print_stages(best);
 

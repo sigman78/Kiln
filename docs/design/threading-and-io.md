@@ -74,7 +74,10 @@ surface.
 ### Worker stages
 
 One job runs one stage of one asset. `pump()` dispatches at most `ContextDesc::maxIoJobs` jobs at
-once (0 = worker count), `High` queues before `Normal` (R5c).
+once (0 = 16 per worker; a host `JobSystem` counts as 4 workers), `High` queues before `Normal`
+(R5c). The limit is above the worker count on purpose: only `pump()` starts jobs, and a job takes a
+few milliseconds, so one job per worker leaves the workers idle until the next pump. The job system
+queues the rest. The factor is temporary and measured (R26).
 
 - **Meta**: open the source (store file, registered bytes, or cook-on-miss), read and validate the
   metadata (`.mesh` CPU region or KTX2 prefix), compute the texture upload layout, close the source.

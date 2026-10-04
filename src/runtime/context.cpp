@@ -391,11 +391,14 @@ Result<Context*> create(ContextDesc const& desc) {
         ctx->ownsJobs = true;
     }
     u32 const workers = ctx->ownsJobs ? thread_pool_thread_count(ctx->jobs) : 4;
-    ctx->maxIoJobs    = desc.maxIoJobs ? desc.maxIoJobs : max(workers, 1u);
-    ctx->ioBudget     = desc.ioInFlightBytes ? desc.ioInFlightBytes : (u64(64) << 20);
-    ctx->maxAssets    = desc.maxAssets;
-    ctx->maxGroups    = desc.maxGroups;
-    ctx->maxEvents    = desc.maxEvents;
+    // Temporary (open-questions R26): only pump() starts jobs, so a limit of one job per worker
+    // leaves the workers idle between pumps. 16 per worker is measured; the job system queues them.
+    constexpr u32 kIoJobsPerWorker = 16;
+    ctx->maxIoJobs                 = desc.maxIoJobs ? desc.maxIoJobs : max(workers, 1u) * kIoJobsPerWorker;
+    ctx->ioBudget                  = desc.ioInFlightBytes ? desc.ioInFlightBytes : (u64(64) << 20);
+    ctx->maxAssets                 = desc.maxAssets;
+    ctx->maxGroups                 = desc.maxGroups;
+    ctx->maxEvents                 = desc.maxEvents;
 
     ctx->storeDirLen    = desc.storeDir.size;
     ctx->storeDir       = copy_str(a, desc.storeDir);

@@ -469,7 +469,7 @@ What the numbers say:
   measured.
 - **Small assets wait in the queue.** With the defaults a small asset reaches `MetaReady` after
   2.2 s (p50), all of it queue time. With `maxIoJobs` 1024 it is 17 ms, one pump. The §3.5 gate
-  must compare against that configuration, not against the defaults.
+  must compare against the new default, not against the old one.
 - **Direct reads:** 78 of 891 uploads read straight into the target. The other 813 decode or copy.
 - **A 64-layer array** (one job) is `Ready` after 117 ms: 92 ms in the upload job, 65% of it in
   decodes. Its layers run one after another on one worker. Splitting the job would help it; reads
@@ -477,9 +477,33 @@ What the numbers say:
 - **Memory:** scratch peaks at 79 to 103 MiB. `maxIoJobs` 1024 does not raise it, because scratch
   lives only while a job runs.
 
+### The job limit and a late high-priority request (2026-10-04)
+
+"Defaults" in the table above is the old default, `maxIoJobs` = the worker count. The default is
+now 16 jobs per worker (temporary, R26). It was chosen from this measurement: the same corpus,
+warm, 60 Hz, with 16 assets (21 MiB) held back and requested with `High` priority once a quarter
+of the others had settled (`--late-high 16`). "Late" is the time from those requests to `Ready`.
+
+| Jobs per worker | 7 workers: wall | Late p50 / max | 2 workers: wall | Late p50 / max |
+|---|---|---|---|---|
+| 1 (old default) | 4.38 s | 100 / 133 ms | 15.30 s | 200 / 317 ms |
+| 2 | 2.22 s | 67 / 83 ms | 7.68 s | 117 / 167 ms |
+| 4 | 1.43 s | 50 / 83 ms | 3.97 s | 83 / 100 ms |
+| 8 | 1.23 s | 67 / 100 ms | 2.33 s | 67 / 67 ms |
+| **16** | 1.05 s | 83 / 133 ms | 1.70 s | 83 / 100 ms |
+| 32 | 1.00 s | 147 / 197 ms | 1.55 s | 67 / 83 ms |
+| 150 | 0.93 s | 134 / 169 ms | 1.47 s | 850 / 867 ms |
+
+- A late `High` request waits behind the jobs already given to the pool. With a small limit it
+  waits for pumps instead. Up to 16 per worker the first effect stays below the second.
+- With no real limit and few workers, a `High` request waits for the whole queue: 850 ms.
+- With the new default: warm 1.03 s, cold 1.19 s, 2 workers 1.72 s. A late `High` asset is
+  `Ready` after 117 ms (p50; cold 183 ms). Small assets reach `MetaReady` after 150 ms (p50), not
+  17 ms as with no limit: they share the queue with the large ones.
+
 Consequence for this note: the benchmark gives no reason for Part 2 on this machine. Part 1 stays
 justified by v0.8 (range reads and `State::Partial` need a persistent attempt), not by throughput.
-The first gain is R26, which needs no new design.
+The first gain was R26, which needed no new design.
 
 ### Tests
 
