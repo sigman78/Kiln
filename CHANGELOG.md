@@ -10,7 +10,8 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
 ### Added
 - **Load benchmark** `kiln_bench_load` (`tests/bench_load.cpp`, run by hand): loads a cooked store
   through the null adapter and reports time and pumps to `MetaReady` and `Ready` per size class, and
-  the time per stage (`docs/design/async-read-path.md` §9).
+  the time per stage (`docs/design/async-read-path.md` §9, with a first baseline).
+  `tests/purge_file_cache.ps1` drops a store's cached pages on Windows for a cold run.
 - **Profile zones inside the load jobs**: `kiln.open`, `kiln.read`, `kiln.decode`, `kiln.copy`
   (`docs/design/cook-tracing.md`). A host's profiler hooks get more zones per load; nothing else changes.
 

@@ -434,15 +434,52 @@ share of job time in reads, opens, decodes and copies, the most reads in flight,
 read straight into the target, and peak scratch and payload bytes. `--array N` adds one texture
 array of N layers; `--threads` gives the constrained pool; `--pitch` makes rows repack.
 
-Not covered yet: it does not empty the file cache (do that outside, and pass `--no-probe` so the
-benchmark reads no header first), and cancellation and shutdown drain time wait for step 2.
+It does not empty the file cache. On Windows, `tests/purge_file_cache.ps1 -Dir <store>` drops the
+cached pages of a store without admin rights; on Linux, drop the page cache. Pass `--no-probe` for a
+cold run, so the benchmark reads no header first. Cancellation and shutdown drain time wait for
+step 2.
 
-A first look, to show what the numbers say and not as a baseline: the examples' store (12 assets,
-6.6 MiB, release build, warm cache, 60 Hz, 7 workers). Every asset is `Ready` after 3 to 5 pumps
-(33 to 67 ms). The jobs use 7% of the worker time; reads are 5% of the job time and decodes 52%.
-The small assets wait 50 ms for `MetaReady`, all of it in the queue between pumps. On a warm cache
-the pump boundary limits this load, not the reads (§3.5). A baseline needs a large store and a
-cold cache.
+### Baseline (2026-10-04)
+
+Corpus: the Khronos glTF sample models (148 of 150 cook) and `examples/assets`, cooked with the
+defaults at `--quality fast`: 891 assets (154 meshes, 737 textures), 712 MiB, profile `compat`.
+Machine: i7-9700K, 32 GB, NVMe SSD, Windows, MSVC release, 7 workers, pump at 60 Hz unless noted.
+"Cold" purges the store's cached pages before the run. Times are for all 891 assets.
+
+| Run | Wall | Pumps | `Ready` p50 | Workers busy | Job time in reads |
+|---|---|---|---|---|---|
+| Defaults, warm | 4.38 s | 264 | 2.17 s | 12% | 7% |
+| Defaults, cold | 4.40 s | 265 | 2.18 s | 14% | 27% |
+| Defaults, warm, 240 Hz | 1.49 s | 358 | 0.70 s | 33% | 7% |
+| `maxIoJobs` 1024, warm | 0.90 s | 55 | 0.33 s | 61% | 7% |
+| `maxIoJobs` 1024, upload budget 1 GiB, cold | 1.02 s | 62 | 0.45 s | 71% | 26% |
+| 2 workers, defaults, warm | 15.30 s | 919 | 7.87 s | 10% | 6% |
+| 2 workers, `maxIoJobs` 1024, upload budget 1 GiB, warm | 1.53 s | 93 | 1.10 s | 98% | 6% |
+| 2 workers, `maxIoJobs` 1024, upload budget 1 GiB, cold | 1.90 s | 115 | 1.37 s | 99% | 25% |
+
+What the numbers say:
+
+- **Today's limit is the dispatch rule, not the reads.** `pump()` starts at most `maxIoJobs` jobs,
+  and the default is the worker count. A job takes 1 to 4 ms, so the workers finish and then wait
+  for the next pump: 7 jobs per 16.7 ms. A cold and a warm cache give the same 4.4 s. A larger
+  `maxIoJobs` lets the pool queue the jobs and cuts the load to 0.9 s (R26).
+- **Reads are the smaller part of a job.** Warm: 7% of the job time. Cold, on this NVMe drive: 26%.
+  Decodes are 28 to 38% and copies 7 to 14%. Reads that occupy no worker can give back at most
+  that quarter, and only when the workers are the limit (the last two rows). No slow drive was
+  measured.
+- **Small assets wait in the queue.** With the defaults a small asset reaches `MetaReady` after
+  2.2 s (p50), all of it queue time. With `maxIoJobs` 1024 it is 17 ms, one pump. The §3.5 gate
+  must compare against that configuration, not against the defaults.
+- **Direct reads:** 78 of 891 uploads read straight into the target. The other 813 decode or copy.
+- **A 64-layer array** (one job) is `Ready` after 117 ms: 92 ms in the upload job, 65% of it in
+  decodes. Its layers run one after another on one worker. Splitting the job would help it; reads
+  that occupy no worker would not.
+- **Memory:** scratch peaks at 79 to 103 MiB. `maxIoJobs` 1024 does not raise it, because scratch
+  lives only while a job runs.
+
+Consequence for this note: the benchmark gives no reason for Part 2 on this machine. Part 1 stays
+justified by v0.8 (range reads and `State::Partial` need a persistent attempt), not by throughput.
+The first gain is R26, which needs no new design.
 
 ### Tests
 
@@ -467,8 +504,7 @@ continue to pass, including shipping builds and the synchronous backend.
 
 Part 1 (v0.8):
 
-1. Stage timing and the load benchmark (§9). **Done 2026-10-04** (`kiln_bench_load`); the baseline
-   runs on a large store are still to do.
+1. Stage timing and the load benchmark (§9). **Done 2026-10-04** (`kiln_bench_load`, baseline in §9).
 2. Persistent load attempts, the read contract, the fake backend and blocking readers. Prove
    ownership and cancellation. Check the Part 1 gate.
 
