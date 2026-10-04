@@ -117,7 +117,7 @@ rediscover them). The design and the mapping tables are in `design/integration-e
 - Each material has one descriptor set per frame in flight and a stamp. A texture event (Ready,
   Changed, Failed) bumps the stamp of every material that uses the texture; each frame rewrites
   only the current slot's sets whose stamp moved, after `renderer_wait_frame()` freed that slot.
-  WaterBottle with its sky: 6 invalidations and 15 set writes for the whole load (2 frame slots).
+  WaterBottle with its sky: 5 invalidations and 14 set writes for the whole load (2 frame slots).
 - The first write of a set happens before the texture arrives: `gpu()` gives the placeholder of the
   texture's kind (and shape: the sky's cube placeholder), which the self-submitting adapter had
   ready when `create()` returned.

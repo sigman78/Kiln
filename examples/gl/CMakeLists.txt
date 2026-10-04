@@ -4,7 +4,8 @@
 #   kiln-gl-array     a texture array from separate tiles (KILN_EXAMPLE_GL)
 # No GL loader library: gl_api.cpp loads through GLFW.
 
-add_library(kiln_example_gl STATIC gl_api.h gl_api.cpp gl_adapter.h gl_adapter.cpp gl_util.h gl_util.cpp)
+add_library(kiln_example_gl STATIC gl_api.h gl_api.cpp gl_adapter.h gl_adapter.cpp gl_util.h gl_util.cpp
+    gl_background.h gl_background.cpp)
 kiln_apply_defaults(kiln_example_gl)
 target_include_directories(kiln_example_gl PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(kiln_example_gl PUBLIC kiln_runtime kiln_example_common kiln_example_adapter_support

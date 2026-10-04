@@ -36,6 +36,8 @@ measures.
 
 ## The examples
 
+### Backend coverage
+
 | Example | API | Binding model | Self-submitting | Runs on the dev machine |
 |---|---|---|---|---|
 | `vk-bindless` | Vulkan 1.4 | bindless slots | yes | yes (the existing `kiln-viewer`) |
@@ -60,6 +62,25 @@ measures.
 `nga` is the one example where kiln writes mesh payloads straight into GPU memory, with no staging
 copy. The adapter interface allows it (`UploadTarget::dst` is "staging / ReBAR / scratch"), but
 nothing exercises it yet.
+
+### Background rendering
+
+The scene owns the environment texture, which is used by both mesh lighting and the background.
+Requests, readiness checks, and kiln events stay in each example. Backend background helpers group
+shader/pipeline creation, the fullscreen draw, and teardown. They only draw: the scene binds the
+environment and its sampler for both passes. `gl` and `vk-basic` skip the draw until the real cube
+arrives; `gl-bindless`, `sokol`, `nga` and the viewer draw kiln's cube placeholder until then. GL
+shares `gl_background.*` between its two binding models; Sokol and NGA keep their small
+`Background` helpers next to the scene code. All use `ex::view_rays` from
+`common/example_math.h`; shader packing and clip-space Y conventions remain backend-specific.
+
+Vulkan's renderer exposes a fullscreen draw with caller-supplied push data. `vk_background.h`
+packs the sky's camera rays; the array example has a separate `FloorPush` layout. Mesh and
+fullscreen pipelines share construction code. In Vulkan basic, the host's `Environment` owns a
+scene cube at set 2, with one descriptor set per frame in flight. Texture events invalidate that set
+without touching mesh materials, and resetting the material pool during a model reload leaves the
+environment intact. GL bindless likewise stores the environment slot once per scene, outside the
+material slot arrays.
 
 ## Planned minimal synchronous GL example
 

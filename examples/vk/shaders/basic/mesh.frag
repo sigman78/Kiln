@@ -20,14 +20,14 @@ layout(set = 1, binding = 1) uniform sampler2D uNormalMap;
 layout(set = 1, binding = 2) uniform sampler2D uMetalRough;
 layout(set = 1, binding = 3) uniform sampler2D uOcclusion;
 layout(set = 1, binding = 4) uniform sampler2D uEmissive;
-layout(set = 1, binding = 5) uniform samplerCube uSky;
+layout(set = 2, binding = 0) uniform samplerCube uSky;
 
 layout(push_constant) uniform Draw {
     mat4 model;
     vec4 posScale;
     vec4 posBias;
     uint unused;
-    uint textures; // bit per binding above that holds a texture; the rest are not written
+    uint textures; // bits 0..4: material textures; bit 5: scene environment
     uint material; // into frame.materials
     uint pad1;
 } draw;

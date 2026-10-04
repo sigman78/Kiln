@@ -8,6 +8,8 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
 ## [Unreleased]
 
 ### Changed
+- **Example background rendering**: the examples share the camera-ray math and draw the sky through
+  a per-backend helper; the scene owns the environment and binds it.
 - **`.mesh` mount extras are the glTF `extras` JSON as written**: `Mount.extrasStr` was a flat
   `key=value;key=value` string of scalar values only. Now the cook copies the node's `extras` byte for
   byte, nested values included, so nothing is dropped and numbers keep their precision (the old
