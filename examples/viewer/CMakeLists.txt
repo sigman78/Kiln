@@ -1,7 +1,7 @@
 # examples/viewer — kiln-viewer and kiln-vk-smoke (docs/design/viewer.md), on kiln_example_vk
 # (examples/vk: the device, the example adapter and the frame plumbing).
 
-add_executable(kiln-viewer main.cpp viewer_math.h)
+add_executable(kiln-viewer main.cpp)
 target_link_libraries(kiln-viewer PRIVATE kiln_no_crash_dialogs)
 kiln_apply_defaults(kiln-viewer)
 target_include_directories(kiln-viewer PRIVATE ${CMAKE_SOURCE_DIR}/tests)

@@ -21,7 +21,7 @@ offscreen mode.
   nothing about windows, swapchains, pipelines or drawing.
 - **The frame plumbing and the viewer:** in `examples/vk/`, `vk_device.{h,cpp}` (instance and device
   bring-up) and `vk_render.{h,cpp}` (swapchain or offscreen image, frames in flight, one pipeline per
-  vertex layout); in `examples/viewer/`, `viewer_math.h` and `main.cpp` (scene, camera, streaming,
+  vertex layout); in `examples/viewer/`, `main.cpp` (scene, camera, streaming,
   draws per spec §8), and the smoke test.
 
 The adapter, the device code and `vk_render` form the library `kiln_example_vk` in `examples/vk/`,

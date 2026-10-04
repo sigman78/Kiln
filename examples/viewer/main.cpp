@@ -12,7 +12,6 @@
 
 #include "cli.h"
 #include "png_writer.h"
-#include "viewer_math.h"
 #include "vk_adapter.h"
 #include "vk_background.h"
 #include "vk_device.h"
@@ -27,8 +26,8 @@
 #include <thread>
 
 using namespace kiln;
-using vkx::Mat4;
-using vkx::Vec3;
+using ex::Mat4;
+using ex::Vec3;
 
 namespace {
 
@@ -41,8 +40,7 @@ constexpr u32 kBootTimeoutMs   = 30000;
 constexpr f32 kFitRadius       = 1.0f; ///< bounding radius every boot model is scaled to (unless --no-fit)
 constexpr f32 kFitSpacing      = 2.5f; ///< distance between model centers in the fitted row
 constexpr double kSpikeFloorMs = 1.0;  ///< frames faster than this are never reported as spikes
-constexpr f32 kPi              = 3.14159265358979f;
-constexpr f32 kFovY            = 60.0f * kPi / 180.0f;
+constexpr f32 kFovY            = 60.0f * ex::kPi / 180.0f;
 
 using Clock = std::chrono::steady_clock;
 
@@ -283,11 +281,11 @@ void place_meshes(Scene& s, bool fit) {
         if (!v) continue;
         mesh::Bounds const& b = v->model().bounds;
         Vec3 const slot{slots[i] - mid, 0, 0};
-        m.place = vkx::translation(slot) * vkx::scaling(m.scale) *
-                  vkx::translation(Vec3{-b.center[0], -b.center[1], -b.center[2]});
+        m.place = ex::translation(slot) * ex::scaling(m.scale) *
+                  ex::translation(Vec3{-b.center[0], -b.center[1], -b.center[2]});
         m.worldCenter = slot;
         m.worldRadius = b.radius > 0 ? b.radius * m.scale : 1.0f;
-        radius        = max(radius, vkx::length(slot) + m.worldRadius);
+        radius        = max(radius, ex::length(slot) + m.worldRadius);
         KILN_INFO("viewer", "model %.*s: native radius %.4g, scale %.4g, at x %.3f", KILN_SV(m.path),
                   double(m.nativeRadius), double(m.scale), double(slot.x));
     }
@@ -347,7 +345,7 @@ void draw_scene(Scene& s, VkCommandBuffer cmd) {
 
         for (u32 p = 0; p < partCount; ++p) {
             mesh::MeshPart const& part = v->parts()[p];
-            Mat4 const local           = vkx::from_rt(part.translation, part.rotation);
+            Mat4 const local           = ex::from_rt(part.translation, part.rotation);
             // Parts are topologically ordered (parent < self), so the parent is already resolved.
             s.world[p] = part.parent < p ? s.world[part.parent] * local : place * local;
             if (part.lodCount == 0) continue;
@@ -414,8 +412,8 @@ void draw_scene(Scene& s, VkCommandBuffer cmd) {
 // --- Camera and window input --------------------------------------------------------------------
 
 struct Camera {
-    f32 azimuth   = 45.0f * kPi / 180.0f;
-    f32 elevation = 30.0f * kPi / 180.0f;
+    f32 azimuth   = 45.0f * ex::kPi / 180.0f;
+    f32 elevation = 30.0f * ex::kPi / 180.0f;
     f32 zoom      = 1.0f; ///< distance multiplier (wheel)
 };
 
@@ -430,8 +428,8 @@ struct Input {
 /// the view frustum: per sphere, its offset across the view plus r / cos(half angle), over
 /// tan(half angle), in front of the sphere's depth; the largest over both axes and all models.
 f32 framing_distance(Scene const& s, Vec3 dir, f32 aspect) {
-    Vec3 const right = vkx::normalize(vkx::cross(Vec3{0, 1, 0}, dir));
-    Vec3 const up    = vkx::cross(dir, right);
+    Vec3 const right = ex::normalize(ex::cross(Vec3{0, 1, 0}, dir));
+    Vec3 const up    = ex::cross(dir, right);
     f32 const tanV   = std::tan(kFovY * 0.5f);
     f32 const tanH   = tanV * aspect;
     f32 const secV   = std::sqrt(1.0f + tanV * tanV);
@@ -441,10 +439,10 @@ f32 framing_distance(Scene const& s, Vec3 dir, f32 aspect) {
         MeshItem const& m = s.meshes[i];
         if (m.worldRadius <= 0) continue;
         Vec3 const c  = m.worldCenter - s.center;
-        f32 const x   = std::fabs(vkx::dot(c, right));
-        f32 const y   = std::fabs(vkx::dot(c, up));
+        f32 const x   = std::fabs(ex::dot(c, right));
+        f32 const y   = std::fabs(ex::dot(c, up));
         f32 const fit = max((x + m.worldRadius * secH) / tanH, (y + m.worldRadius * secV) / tanV);
-        dist          = max(dist, vkx::dot(c, dir) + fit);
+        dist          = max(dist, ex::dot(c, dir) + fit);
     }
     return dist > 0 ? dist : s.radius / std::sin(kFovY * 0.5f);
 }
@@ -477,13 +475,14 @@ void write_uniforms(Scene const& s, Camera const& cam, VkExtent2D extent, bool a
     Vec3 const eye  = s.center + dir * dist;
     f32 const nearZ = max(dist - s.radius * 2.0f, dist * 0.01f);
     f32 const farZ  = dist + s.radius * 2.0f;
-    Mat4 const vp = vkx::perspective(kFovY, aspect, nearZ, farZ) * vkx::look_at(eye, s.center, Vec3{0, 1, 0});
+    Mat4 const vp =
+        ex::perspective_vk(kFovY, aspect, nearZ, farZ) * ex::look_at(eye, s.center, Vec3{0, 1, 0});
     std::memcpy(u->viewProj, vp.m, sizeof u->viewProj);
     u->cameraPos[0]  = eye.x;
     u->cameraPos[1]  = eye.y;
     u->cameraPos[2]  = eye.z;
     u->cameraPos[3]  = 1.0f;
-    Vec3 const light = vkx::normalize(Vec3{0.45f, 0.8f, 0.6f});
+    Vec3 const light = ex::normalize(Vec3{0.45f, 0.8f, 0.6f});
     u->lightDir[0]   = light.x;
     u->lightDir[1]   = light.y;
     u->lightDir[2]   = light.z;
@@ -508,7 +507,7 @@ void write_uniforms(Scene const& s, Camera const& cam, VkExtent2D extent, bool a
     u->tonemap[2] = 0.0f;
     u->tonemap[3] = 0.0f;
 
-    *rays = ex::view_rays({eye.x, eye.y, eye.z}, {s.center.x, s.center.y, s.center.z}, kFovY, aspect);
+    *rays = ex::view_rays(eye, s.center, kFovY, aspect);
 }
 
 Input* input_of(GLFWwindow* w) { return static_cast<Input*>(glfwGetWindowUserPointer(w)); }
