@@ -131,10 +131,15 @@ rediscover them). The design and the mapping tables are in `design/integration-e
 - Against `kiln-gl`: 19.5% of pixels differ, 0.7% by more than 4 levels (hardware sRGB encode
   against the shader's; no anisotropic filtering here, 8x there).
 
-### `kiln-nga` (NoGraphicsAPI on Vulkan; built, not yet run)
+### `kiln-nga` (NoGraphicsAPI on Vulkan)
 
-- Built on MSVC, clang-cl and the clang GNU driver on Windows (and Linux in CI); not run: the dev
-  machine's GPU lacks `VK_EXT_descriptor_heap`. It fails at `create_device` with a clear message.
+- Built on MSVC, clang-cl and the clang GNU driver on Windows (and Linux in CI). The dev machine's
+  GPU lacks `VK_EXT_descriptor_heap`, so it runs elsewhere: first on an RTX 4080 (2026-10-04, from a
+  copied tree), with the same 21 objects and 22.6 MB as the other examples; the owner judged the
+  frame by eye. `kiln-nga-array` has not run yet.
+- The driver matters as much as the GPU: driver 591.86 lacked `VK_EXT_descriptor_heap` and
+  `VK_KHR_device_address_commands`. On a failed `create_device` the example lists what each device
+  lacks (`nga_probe.cpp`).
 - Mesh payloads: `begin_upload` hands kiln CPU-visible GPU memory from a heap, so kiln writes the
   payload where the shaders read it (no staging copy), and the upload is complete at `commit_upload`.
   The first adapter to exercise that path of the contract.

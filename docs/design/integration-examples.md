@@ -2,7 +2,8 @@
 
 **Status:** Decided (owner, 2026-09-28): as proposed, all open points as proposed. All five steps
 (`gl`, `gl-bindless`, `sokol`, `vk-basic`, `nga`) are implemented, and so is `Adapter::flush`; `nga`
-is built but not yet run on a supported GPU.
+runs on an RTX 4080 (2026-10-04); it needs a driver with `VK_EXT_descriptor_heap` and
+`VK_KHR_device_address_commands`.
 **Decides:** Which small renderers show newcomers how to plug kiln in, what each one maps kiln's
 adapter onto, how their third-party code is fetched, and how the work feeds the API review.
 
@@ -51,7 +52,7 @@ places, runs on another machine as it does here.
 | `gl` | OpenGL 4.6 core, DSA | texture units bound per draw | no: `flush` | yes |
 | `gl-bindless` | OpenGL 4.6 + `ARB_bindless_texture` | resident 64-bit handles | no: `flush` | yes (not on macOS) |
 | `sokol` | sokol_gfx (D3D11 on Windows, Metal on macOS, GL on Linux) | bindings per draw | no: `flush` | yes |
-| `nga` | NoGraphicsAPI (Vulkan with descriptor heaps, or Metal 4) | descriptor heap index | yes | build only: needs RTX 30+ / RDNA 3+ |
+| `nga` | NoGraphicsAPI (Vulkan with descriptor heaps, or Metal 4) | descriptor heap index | yes | no: needs RTX 30+ / RDNA 3+ and a recent driver (run on an RTX 4080) |
 
 ### How the adapter maps
 
@@ -192,7 +193,7 @@ adds what nobody predicted.
 2. *(done)* `gl-bindless`.
 3. *(done)* `sokol`.
 4. *(done)* `vk-basic`.
-5. *(done: built, not yet run)* `nga` (built on CI, run by the owner on a supported GPU).
+5. *(done; first run 2026-10-04)* `nga` (built on CI, run by the owner on an RTX 4080).
 6. API review of the friction log; changes go to `CHANGELOG.md` with migration notes.
 
 ## Open points
