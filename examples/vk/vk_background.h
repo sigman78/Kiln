@@ -15,7 +15,6 @@ struct SkyPush {
     u32 cubeSlot;
     u32 pad[3];
 };
-static_assert(sizeof(SkyPush) <= sizeof(DrawPush)); // shares the pipeline layout's push range
 
 /// The caller checks that the cube is present. Bindless shaders read `cubeSlot`; a host whose
 /// shaders sample a cube it binds itself passes kInvalid.
@@ -27,7 +26,7 @@ inline void draw_background(Renderer* r, VkCommandBuffer cmd, ex::ViewRays const
         .cubeSlot = cubeSlot,
         .pad      = {},
     };
-    renderer_draw_fullscreen(r, cmd, {reinterpret_cast<u8 const*>(&push), sizeof push});
+    renderer_draw_fullscreen(r, cmd, push);
 }
 
 } // namespace kiln::vkx

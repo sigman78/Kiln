@@ -111,8 +111,12 @@ VkExtent2D renderer_extent(Renderer* r);
 /// This frame's uniform block, host-visible; write it between begin and end.
 FrameUniforms* renderer_uniforms(Renderer* r);
 /// Draws three generated vertices, with no vertex input or depth test/write. Call before meshes.
-/// The push data must be nonempty, a multiple of 4 bytes, and no larger than DrawPush.
-void renderer_draw_fullscreen(Renderer* r, VkCommandBuffer cmd, Span<u8 const> push);
+/// `push` is the pass's push constant block: a multiple of 4 bytes, no larger than DrawPush.
+void renderer_draw_fullscreen_bytes(Renderer* r, VkCommandBuffer cmd, void const* push, u32 size);
+template <class T> void renderer_draw_fullscreen(Renderer* r, VkCommandBuffer cmd, T const& push) {
+    static_assert(sizeof(T) <= sizeof(DrawPush) && sizeof(T) % 4 == 0);
+    renderer_draw_fullscreen_bytes(r, cmd, &push, sizeof(T));
+}
 /// Step 3: ends rendering and submits, waiting on the adapter's upload watermark; presents in
 /// window mode. `readback` (offscreen only) also copies the color image into the readback
 /// buffer for renderer_read_back().

@@ -309,8 +309,7 @@ int main(int argc, char** argv) {
         if (!opt.bindless && sets.written[slot])
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkx::renderer_pipeline_layout(ren),
                                     1, 1, &sets.sets[slot], 0, nullptr);
-        if (opt.bindless || sets.written[slot])
-            vkx::renderer_draw_fullscreen(ren, cmd, {reinterpret_cast<u8 const*>(&push), sizeof push});
+        if (opt.bindless || sets.written[slot]) vkx::renderer_draw_fullscreen(ren, cmd, push);
         vkx::renderer_end(ren, last && o.dump != nullptr);
         if (last) break;
     }
