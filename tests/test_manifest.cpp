@@ -1796,6 +1796,8 @@ KILN_TEST(StorePaths, RelativeAndAbsolute) {
     KILN_CHECK(std::strstr(out, "/../") == nullptr);
 }
 
+#if KILN_MESH // these cook glTF sources; a KILN_MESH=OFF build cannot
+
 // The record keeps an embedded image's Mask cutoff, so checking its keys again (another host
 // digest: a provider session, a project edit) does not cook it again.
 KILN_TEST(ManifestStore, RecordKeepsTheMaskCutoff) {
@@ -1841,3 +1843,5 @@ KILN_TEST(ManifestStore, EmbeddedImageInheritsTheMaskCutoff) {
     KILN_CHECK_EQ(want->alphaCutoff, 0.5f);
     KILN_CHECK_EQ(o->settingsHash, hash_settings(*want));
 }
+
+#endif // KILN_MESH
