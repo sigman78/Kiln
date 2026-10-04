@@ -39,11 +39,12 @@ enum Name : u32 {
     kCopy,
     kGpu,
     kLoad,
+    kPump,
     kNameCount
 };
 constexpr char const* kNames[kNameCount] = {
     "kiln.wait.meta", "kiln.wait.pool", "kiln.meta", "kiln.wait.upload", "kiln.upload", "kiln.open",
-    "kiln.read",      "kiln.decode",    "kiln.copy", "kiln.gpu",         "kiln.load"};
+    "kiln.read",      "kiln.decode",    "kiln.copy", "kiln.gpu",         "kiln.load",   "kiln.pump"};
 
 u32 name_index(char const* name) {
     for (u32 i = 0; i < kNameCount; ++i)
@@ -54,6 +55,7 @@ u32 name_index(char const* name) {
 struct Probe {
     std::atomic<u64> ns[kNameCount]    = {};
     std::atomic<u64> count[kNameCount] = {};
+    std::atomic<u64> pumpMaxNs{0}; ///< written on the pump thread only
     std::atomic<u32> readDepth{0}, readDepthMax{0};
     std::atomic<u32> uploads{0}, directUploads{0};
 };
@@ -91,8 +93,10 @@ void zone_end(void* user, char const* name, StrView) {
     u32 const i = name_index(name);
     if (i == kNameCount) return;
     if (z.depth < ZoneStack::kMaxDepth) {
-        p.ns[i].fetch_add(profile_now_ns() - z.t0[z.depth]);
+        u64 const ns = profile_now_ns() - z.t0[z.depth];
+        p.ns[i].fetch_add(ns);
         p.count[i].fetch_add(1);
+        if (i == kPump && ns > p.pumpMaxNs.load()) p.pumpMaxNs.store(ns);
     }
     if (i == kRead) p.readDepth.fetch_sub(1);
     if (i == kUpload) {
@@ -216,6 +220,7 @@ struct Run {
     u64 ns[kNameCount]    = {};
     u64 count[kNameCount] = {};
     u32 readDepthMax = 0, uploads = 0, directUploads = 0;
+    u64 pumpMaxNs = 0;
 };
 
 double ms(u64 ns) { return double(ns) / 1e6; }
@@ -349,6 +354,7 @@ bool run_once(Options const& o, Span<Asset const> assets, Span<StrView const> ar
         out.count[i] = probe.count[i].load();
     }
     out.readDepthMax  = probe.readDepthMax.load();
+    out.pumpMaxNs     = probe.pumpMaxNs.load();
     out.uploads       = probe.uploads.load();
     out.directUploads = probe.directUploads.load();
     return true;
@@ -404,6 +410,9 @@ void print_stages(Run const& r) {
         std::printf("%-18s %8llu %12.1f %10.3f\n", kNames[i], static_cast<unsigned long long>(r.count[i]),
                     ms(r.ns[i]), ms(r.ns[i]) / double(r.count[i]));
     }
+    if (r.count[kPump])
+        std::printf("\npump(): %.3f ms on average, %.3f ms at most (the host pays it each frame)\n",
+                    ms(r.ns[kPump]) / double(r.count[kPump]), ms(r.pumpMaxNs));
     double const jobMs = ms(r.ns[kMeta] + r.ns[kUpload]);
     if (jobMs <= 0 || r.wallMs <= 0 || r.workers == 0) return;
     std::printf("\nworkers busy: %.0f%% of %u workers over the run\n",
