@@ -115,8 +115,9 @@ jobs:
           -DKILN_BUILD_VIEWER=OFF -DKILN_EXAMPLE_GL=OFF -DKILN_EXAMPLE_GL_BINDLESS=OFF
           -DKILN_EXAMPLE_SOKOL=OFF -DKILN_EXAMPLE_VK_BASIC=OFF
 
-      - name: No mesh dependencies fetched
-        run: test ! -e build/linux-clang-debug/_deps/meshoptimizer-src
+      # meshoptimizer stays: the runtime decodes .mesh payloads with it (open-questions R22).
+      - name: No mesh cook dependencies in the build
+        run: "! ninja -C build/linux-clang-debug -t targets all | grep -iE 'cgltf|mikktspace'"
 
       - name: Build
         run: cmake --build --preset linux-clang-debug

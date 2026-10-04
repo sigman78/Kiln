@@ -8,16 +8,15 @@ from the cook side, how an adapter says it takes no meshes, and why the runtime 
 ## Summary
 
 - A new CMake option **`KILN_MESH`** (default `ON`). With `OFF`, `kiln_cook` builds without the
-  glTF importer and the mesh cooker, and the build does not fetch or compile cgltf, MikkTSpace or
-  meshoptimizer.
+  glTF importer and the mesh cooker, and the build does not compile cgltf or MikkTSpace.
+  meshoptimizer is still fetched: the runtime decodes `.mesh` payloads with it.
 - The public API does not change. `cook_mesh` stays declared and returns `Unsupported` with the
   new diagnostic **K1021** ("mesh cooking not built"; the note first proposed K2012, but
   K2xxx is the image range).
 - A new adapter capability bit, **`kMeshes`**. An adapter without it never gets a mesh upload, and
   a mesh request fails at the call.
-- The runtime has no mesh switch. Its mesh code has no third-party dependency. The question
-  returns now that `.mesh` codecs brought a decoder (meshoptimizer) into the runtime (v0.7); no
-  runtime switch exists yet (see "No runtime switch now", below).
+- The runtime has no mesh switch (owner, 2026-10-04; see "No runtime switch", below). Since v0.7
+  it links the meshoptimizer decoders for `.mesh` payloads in every build.
 
 ## What exists
 
@@ -25,20 +24,20 @@ from the cook side, how an adapter says it takes no meshes, and why the runtime 
 |---|---|---|
 | `kiln_cook` | `gltf_import.cpp`, `mesh_cook.cpp` (about 2,500 lines); the glb paths of `provider.cpp` and `cli_main.cpp` | cgltf, MikkTSpace, meshoptimizer (fetched when CMake configures) |
 | `kiln_cook` | `mesh_write.cpp` (the `.mesh` writer) | none |
-| `kiln_runtime` | `mesh_read.cpp`, and mesh branches in `loader.cpp`, `registry.cpp`, `pump.cpp` | none |
+| `kiln_runtime` | `mesh_read.cpp`, and mesh branches in `loader.cpp`, `registry.cpp`, `pump.cpp` | meshoptimizer (its vertex, index and filter decoders, since v0.7) |
 | Adapter | `UploadKind::MeshPayload`, `MeshPayloadDesc`, `CopyConstraints::bufferOffsetAlign` | — |
 
-meshoptimizer is used only by `mesh_cook.cpp`: vertex deduplication (`meshopt_generateVertexRemap`)
-and the vertex cache, overdraw and vertex fetch passes. The runtime only names meshopt codec ids when
-it validates a `.mesh` blob table; it decodes nothing.
+On the cook side meshoptimizer is used by `mesh_cook.cpp`: vertex deduplication
+(`meshopt_generateVertexRemap`), the vertex cache, overdraw and vertex fetch passes, and the payload
+encoders. The runtime uses its decoders in `mesh_read.cpp`.
 
 ## Decision
 
 ### 1. `KILN_MESH` on the cook side
 
 - `KILN_MESH=OFF` needs `KILN_BUILD_COOK=ON` to mean anything; a shipping build ignores it.
-- `third_party/CMakeLists.txt` then builds only wuffs: no `FetchContent` of meshoptimizer, no cgltf,
-  no MikkTSpace.
+- `third_party/CMakeLists.txt` then builds only wuffs: no cgltf, no MikkTSpace. meshoptimizer is
+  fetched by the top-level CMake file for the runtime, whatever `KILN_MESH` says.
 - `gltf_import.cpp` and `mesh_cook.cpp` drop out of `kiln_cook`. A small `mesh_cook_off.cpp`
   defines `cook_mesh`, which reports K1021 and returns `Unsupported`.
 - These stay in every build, because they need no dependency and keep code and data portable:
@@ -67,16 +66,18 @@ it validates a `.mesh` blob table; it decodes nothing.
 - This is independent of `KILN_MESH`: a texture-only renderer can use a full kiln build, and a
   texture-only cook can feed an adapter that takes meshes.
 
-### 4. No runtime switch now
+### 4. No runtime switch
 
-- The runtime mesh code is small and has no dependency, so removing it saves little.
-- A switch needs `#if` in `loader.cpp`, `registry.cpp` and `pump.cpp`, and a second shipping
-  configuration to build and test.
+Decided (owner, 2026-10-04; open-questions R22), after v0.7 put the meshoptimizer decoders into
+`kiln_runtime`:
+
+- The runtime mesh code is small. The decoders add about 110 KB of object files (vertex, index and
+  filter codecs) and one fetch when CMake configures.
+- A switch needs `#if` in `mesh_read.cpp`, `loader.cpp`, `registry.cpp` and `pump.cpp`, and a second
+  shipping configuration to build and test.
 - `kMeshes` already gives a texture-only host what it needs: its adapter never handles meshes.
-- Revisit now: v0.7's `.mesh` payload compression put the meshopt decoder into `kiln_runtime`
-  (zstd's decoder was already there for textures). A texture-only shipping build now carries a
-  decoder it never uses; whether that is worth an option such as `KILN_RUNTIME_MESH` (or one per
-  codec) is still undecided (see `docs/open-questions.md`).
+- Dropping only the decoder would leave a runtime that loads no default store: `Meshopt` is the
+  default `.mesh` compression.
 
 ### 5. Tests, examples, CI
 
@@ -93,7 +94,7 @@ it validates a `.mesh` blob table; it decodes nothing.
   `KILN_MESH=ON`. `kiln-viewer` and `kiln-headless` build either way: they still load `.mesh`
   files from a store.
 - CI gains one job, `texture-only`: `linux-clang-debug` with `-DKILN_MESH=OFF`, warnings as
-  errors. It also checks that the build tree has no `_deps/meshoptimizer-src`, so a stray fetch
+  errors. It also checks that the build has no cgltf or MikkTSpace target, so a stray dependency
   fails the job.
 
 ## Diagnostics

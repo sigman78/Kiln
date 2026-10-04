@@ -207,8 +207,8 @@ boundary and the `shipping` CI job form the read-only shipping contract (`shippi
 - `kiln_runtime` gained its first third-party code with Zstd textures, unconditionally: Zstd is
   the cook's default, so a runtime without the decoder could not load a default store. The
   meshoptimizer decoder landed the same way in v0.7 (`Meshopt` is the default `.mesh` compression),
-  not behind a CMake option as once proposed here; whether a texture-only build should still be
-  able to drop it is open (`open-questions.md` R22).
+  not behind a CMake option as once proposed here; a texture-only build keeps it too (owner,
+  2026-10-04, `open-questions.md` R22).
 
 ## Open points for the owner
 
