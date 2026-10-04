@@ -62,14 +62,15 @@ void fail_reload(Context* ctx, Slot& s, u32 code, Status st) {
     orphan_upload(ctx, s);
     transition(s, Step::Fail);
     remember_failed_keys(s);
-    free_meta_set(ctx->alloc, s.next);
-    s.cooked.release();
-    s.cookedValid = false;
+    free_meta_set(ctx->alloc, s.out.next);
+    s.out.cooked.release();
+    s.out.cookedValid = false;
     if (s.array) free_array_job_data(ctx->alloc, *s.array);
     (void)diagf(&ctx->diag, st, kDiagReloadFailed, Severity::Error, path_of(s),
                 s.kind == AssetKind::Mesh ? "mesh" : "texture",
                 "reload failed, keeping version %u: %s (%s)%s%s", s.version, failure_text(code),
-                code_name(st.code), s.capture.set ? ": " : "", s.capture.set ? s.capture.msg : "");
+                code_name(st.code), s.out.capture.set ? ": " : "",
+                s.out.capture.set ? s.out.capture.msg : "");
     ++ctx->cur.completed;
     settle(ctx, s);
 }
@@ -98,7 +99,8 @@ void fail_slot(Context* ctx, Slot& s, u32 code, Status st) {
 
     (void)diagf(&ctx->diag, st, code, Severity::Error, path_of(s),
                 s.kind == AssetKind::Mesh ? "mesh" : "texture", "%s (%s)%s%s", failure_text(code),
-                code_name(st.code), s.capture.set ? ": " : "", s.capture.set ? s.capture.msg : "");
+                code_name(st.code), s.out.capture.set ? ": " : "",
+                s.out.capture.set ? s.out.capture.msg : "");
 
     push_event(ctx, EventKind::Failed, s.kind, handle_bits(s), s.version, st);
     ++ctx->cur.completed;
@@ -146,9 +148,9 @@ void reload_slot(Context* ctx, Slot& s) {
     refresh_manifest(ctx);
     transition(s, Step::Reload);
     s.retryAfter = 0;
-    s.capture.reset();
-    s.cooked.release(); // look the name up again (or re-cook), never the last load's cook output
-    s.cookedValid = false;
+    s.out.capture.reset();
+    s.out.cooked.release(); // look the name up again (or re-cook), never the last load's cook output
+    s.out.cookedValid = false;
     if (s.array) free_array_job_data(ctx->alloc, *s.array);
     queue_push(ctx, s.priority == Priority::High ? QueueId::MetaHigh : QueueId::MetaNormal, s);
 }
@@ -192,20 +194,20 @@ void drain_posted_reloads(Context* ctx) {
 void submit_stage(Context* ctx, Slot& s, Stage stage) {
     KILN_ASSERT(s.queue == QueueId::None);
     transition(s, stage == Stage::Meta ? Step::SubmitMeta : Step::SubmitUpload);
-    s.jobStage = stage;
-    s.jobGen   = s.generation;
+    s.in.stage = stage;
+    s.in.gen   = s.generation;
     if (stage == Stage::Meta) {
-        s.jobRecheck       = s.recheck;
-        s.recheck          = false;
-        s.provider         = ctx->provider;
-        s.jobKeyValid      = false;
-        s.jobProviderOwned = false;
+        s.in.recheck        = s.recheck;
+        s.recheck           = false;
+        s.in.provider       = ctx->provider;
+        s.out.keyValid      = false;
+        s.out.providerOwned = false;
         // The artifact is chosen here, so a manifest swapped in later leaves this load alone.
         ManifestEntry e;
-        if (s.source == SourceKind::File && !s.cookedValid && ctx->manifestPresent &&
+        if (s.source == SourceKind::File && !s.out.cookedValid && ctx->manifestPresent &&
             ctx->manifest.find(s.kind, path_of(s), &e)) {
-            s.jobKey      = e.key;
-            s.jobKeyValid = true;
+            s.out.key      = e.key;
+            s.out.keyValid = true;
         }
         for (u32 i = 0; s.array && i < s.array->count; ++i) {
             ArrayLayer& l      = s.array->layers[i];
@@ -217,7 +219,7 @@ void submit_stage(Context* ctx, Slot& s, Stage stage) {
                 l.jobKeyValid = true;
             }
         }
-        s.jobManifestPresent = ctx->manifestPresent;
+        s.in.manifestPresent = ctx->manifestPresent;
     }
     if (ctx->prof) {
         s.submitNs = profile_now_ns();
@@ -260,22 +262,23 @@ QueueId upload_queue(Slot const& s) {
 bool formats_supported(Context* ctx, Slot& s) {
     Adapter const& a = ctx->adapter;
     if (s.kind == AssetKind::Texture) {
-        if (a.supports_format(a.user, s.next.texDesc.format, FormatUsage::SampledImage)) return true;
-        s.capture.reset();
-        format(s.capture.msg, sizeof s.capture.msg, "format %s is not supported",
-               format_name(s.next.texDesc.format));
-        s.capture.set = true;
+        if (a.supports_format(a.user, s.out.next.texDesc.format, FormatUsage::SampledImage)) return true;
+        s.out.capture.reset();
+        format(s.out.capture.msg, sizeof s.out.capture.msg, "format %s is not supported",
+               format_name(s.out.next.texDesc.format));
+        s.out.capture.set = true;
         return false;
     }
-    mesh::MeshView const& v = s.next.meshView;
+    mesh::MeshView const& v = s.out.next.meshView;
     for (u32 l = 0; l < v.layouts().size(); ++l) {
         mesh::VertexLayout const layout = v.layouts().get(l);
         for (u32 i = 0; i < layout.attribCount && i < mesh::kMaxAttribs; ++i) {
             Format const f = Format(layout.attribs[i].format);
             if (a.supports_format(a.user, f, FormatUsage::VertexBuffer)) continue;
-            s.capture.reset();
-            format(s.capture.msg, sizeof s.capture.msg, "vertex format %s is not supported", format_name(f));
-            s.capture.set = true;
+            s.out.capture.reset();
+            format(s.out.capture.msg, sizeof s.out.capture.msg, "vertex format %s is not supported",
+                   format_name(f));
+            s.out.capture.set = true;
             return false;
         }
     }
@@ -293,15 +296,15 @@ void on_meta_ready(Context* ctx, Slot& s) {
         return;
     }
     if (GroupRec* g = group_of(ctx, s)) {
-        s.groupBytes = s.next.uploadSize;
-        g->bytesTotal += s.next.uploadSize;
+        s.groupBytes = s.out.next.uploadSize;
+        g->bytesTotal += s.out.next.uploadSize;
     }
     push_event(ctx, EventKind::MetaReady, s.kind, handle_bits(s), s.version, kOk);
     ++ctx->cur.completed;
     queue_push(ctx, upload_queue(s), s);
 }
 
-/// First load and reload alike: swap `next` into `cur` and bind the new object.
+/// First load and reload alike: swap `out.next` into `cur` and bind the new object.
 /// A reload bumps the content version and emits Changed (from Ready) or Ready (from
 /// Failed); a first load and a Failed -> Ready reload count in the group.
 void make_ready(Context* ctx, Slot& s) {
@@ -309,11 +312,11 @@ void make_ready(Context* ctx, Slot& s) {
     bool const reload   = s.reloading;
     State const from    = s.state;
     GpuObject const old = s.realObj;
-    s.realObj           = s.target.object;
-    s.hasTarget         = false;
+    s.realObj           = s.out.target.object;
+    s.out.hasTarget     = false;
     free_meta_set(ctx->alloc, s.cur);
-    s.cur  = s.next;
-    s.next = {};
+    s.cur      = s.out.next;
+    s.out.next = {};
     adopt_job_keys(s);
     transition(s, Step::Ready);
     if (reload) ++s.version;
@@ -344,15 +347,15 @@ void make_ready(Context* ctx, Slot& s) {
     push_event(ctx, ev, s.kind, handle_bits(s), s.version, kOk);
     // The payload is on the GPU: source bytes are no longer needed (metadata stays).
     s.memory.release();
-    s.cooked.release();
-    s.cookedValid = false;
+    s.out.cooked.release();
+    s.out.cookedValid = false;
     if (s.array) free_array_job_data(ctx->alloc, *s.array);
     settle(ctx, s);
 }
 
 void process(Context* ctx, Completion const& c) {
     Slot& s = ctx->slots[c.slot];
-    KILN_ASSERT(s.job_in_flight() && s.jobGen == c.generation);
+    KILN_ASSERT(s.job_in_flight() && s.in.gen == c.generation);
     --ctx->jobsOutstanding;
     if (s.zombie()) { // released while the job ran: discard the result
         orphan_upload(ctx, s);
@@ -372,7 +375,7 @@ void process(Context* ctx, Completion const& c) {
         queue_push(ctx, QueueId::Await, s);
         break;
     case CompletionKind::Failed:
-        fail_slot(ctx, s, s.jobDiag ? s.jobDiag : kDiagAssetLoadFailed, s.jobStatus);
+        fail_slot(ctx, s, s.out.diag ? s.out.diag : kDiagAssetLoadFailed, s.out.status);
         break;
     }
 }
@@ -394,11 +397,11 @@ void drain_completions(Context* ctx, u32 maxCompletions) {
 
 /// The adapter failed a committed upload, for `why`. No frame has seen the object: it goes at once.
 void fail_upload(Context* ctx, Slot& s, Status why) {
-    ctx->adapter.destroy(ctx->adapter.user, s.target.object);
-    s.hasTarget = false;
-    s.capture.reset();
-    format(s.capture.msg, sizeof s.capture.msg, "the adapter failed the upload (upload_status)");
-    s.capture.set = true;
+    ctx->adapter.destroy(ctx->adapter.user, s.out.target.object);
+    s.out.hasTarget = false;
+    s.out.capture.reset();
+    format(s.out.capture.msg, sizeof s.out.capture.msg, "the adapter failed the upload (upload_status)");
+    s.out.capture.set = true;
     fail_slot(ctx, s, kDiagAdapterRejected, why);
 }
 
@@ -408,7 +411,7 @@ void poll_awaiting(Context* ctx) {
         Slot& s               = ctx->slots[i];
         u32 const next        = s.qNext;
         Status why            = make_status(Code::Unknown);
-        UploadStatus const st = a.upload_status(a.user, s.target.token, &why);
+        UploadStatus const st = a.upload_status(a.user, s.out.target.token, &why);
         if (st != UploadStatus::Pending) {
             queue_remove(ctx, s);
             if (ctx->prof) profile_interval(ctx->prof, "kiln.gpu", path_of(s), s.queuedNs, profile_now_ns());
@@ -436,7 +439,7 @@ void dispatch_uploads(Context* ctx, u64 budget) {
             }
             // At least one upload starts per pump, so a single asset larger than the
             // budget still makes progress.
-            u64 const size = s.next.uploadSize;
+            u64 const size = s.out.next.uploadSize;
             if (dispatched > 0 && started + size > budget) return;
             queue_remove(ctx, s);
             submit_stage(ctx, s, Stage::Upload);
@@ -459,11 +462,11 @@ void dispatch_meta(Context* ctx) {
             Slot& s = ctx->slots[l.head];
             queue_remove(ctx, s);
             if (s.preFail.failed()) {
-                s.capture.reset();
-                format(s.capture.msg, sizeof s.capture.msg, "%s",
+                s.out.capture.reset();
+                format(s.out.capture.msg, sizeof s.out.capture.msg, "%s",
                        caps_allow(ctx, s.kind, s.texShape) ? "all Adapter::bindlessSlots are in use"
                                                            : "the adapter's caps do not allow this asset");
-                s.capture.set = true;
+                s.out.capture.set = true;
                 fail_slot(ctx, s, kDiagAdapterRejected, s.preFail);
                 continue;
             }

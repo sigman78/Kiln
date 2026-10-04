@@ -127,7 +127,7 @@ void join_group(Context* ctx, Slot& s, Group g) {
     case State::Failed: ++r->failed; break;
     case State::MetaReady:
         ++r->pending;
-        s.groupBytes = s.next.uploadSize;
+        s.groupBytes = s.out.next.uploadSize;
         break;
     default: ++r->pending; break;
     }
@@ -165,7 +165,7 @@ void free_meta_set(Allocator const* a, MetaSet& m) {
 
 MetaSet const* shown_meta(Slot const& s) {
     if (s.state == State::Ready) return &s.cur;
-    if (s.state == State::MetaReady) return &s.next;
+    if (s.state == State::MetaReady) return &s.out.next;
     return nullptr;
 }
 
@@ -203,10 +203,10 @@ void free_array_decl(Allocator const* a, ArrayDecl* d) {
 }
 
 void adopt_job_keys(Slot& s) {
-    s.key            = s.jobKey;
-    s.keyValid       = s.jobKeyValid;
+    s.key            = s.out.key;
+    s.keyValid       = s.out.keyValid;
     s.failedKeyValid = false;
-    s.providerOwned  = s.jobProviderOwned;
+    s.providerOwned  = s.out.providerOwned;
     if (!s.array) return;
     for (u32 i = 0; i < s.array->count; ++i) {
         ArrayLayer& l    = s.array->layers[i];
@@ -218,9 +218,9 @@ void adopt_job_keys(Slot& s) {
 }
 
 void remember_failed_keys(Slot& s) {
-    s.failedKey      = s.jobKey;
-    s.failedKeyValid = s.jobKeyValid;
-    s.providerOwned |= s.jobProviderOwned;
+    s.failedKey      = s.out.key;
+    s.failedKeyValid = s.out.keyValid;
+    s.providerOwned |= s.out.providerOwned;
     if (!s.array) return;
     for (u32 i = 0; i < s.array->count; ++i) {
         ArrayLayer& l    = s.array->layers[i];
@@ -232,10 +232,10 @@ void remember_failed_keys(Slot& s) {
 
 void free_load_data(Slot& s) {
     free_meta_set(s.ctx->alloc, s.cur);
-    free_meta_set(s.ctx->alloc, s.next);
+    free_meta_set(s.ctx->alloc, s.out.next);
     s.memory.release();
-    s.cooked.release();
-    s.cookedValid = false;
+    s.out.cooked.release();
+    s.out.cookedValid = false;
     if (s.array) free_array_job_data(s.ctx->alloc, *s.array);
 }
 
@@ -308,7 +308,7 @@ void free_slot(Context* ctx, Slot& s) {
     transition(s, Step::Free);
     s.array                              = nullptr;
     s.refcount                           = 0;
-    s.hasTarget                          = false;
+    s.out.hasTarget                      = false;
     s.reloadPending                      = false;
     s.realObj                            = {};
     s.bindSlot                           = kInvalid;
@@ -378,16 +378,16 @@ Slot* request_slot(Context* ctx, AssetKind kind, StrView path, RequestOptions co
     s.preFail       = kOk;
     s.bindSlot      = kInvalid;
     s.bindPending   = false;
-    s.hasTarget     = false;
-    s.target        = {};
+    s.out.hasTarget = false;
+    s.out.target    = {};
     s.reloadPending = false;
     s.groupAs       = State::Pending;
-    s.jobStatus     = kOk;
-    s.jobKeyValid   = false;
+    s.out.status    = kOk;
+    s.out.keyValid  = false;
     s.manifestCheck = false;
     s.keyValid      = false;
-    s.jobDiag       = 0;
-    s.capture.reset();
+    s.out.diag      = 0;
+    s.out.capture.reset();
     std::memcpy(s.path, np.data, np.size);
     s.path[np.size] = '\0';
     s.pathLen       = u32(np.size);
@@ -490,9 +490,9 @@ void process_retired(Context* ctx) {
 }
 
 void orphan_upload(Context* ctx, Slot& s) {
-    if (!s.hasTarget) return;
-    ctx->orphans.push_back({s.target.token, s.target.object});
-    s.hasTarget = false;
+    if (!s.out.hasTarget) return;
+    ctx->orphans.push_back({s.out.target.token, s.out.target.object});
+    s.out.hasTarget = false;
 }
 
 void poll_orphans(Context* ctx) {

@@ -146,6 +146,31 @@ struct ArrayDecl {
 
 struct Watch; // watch.cpp: store poller state
 
+/// What the pump thread fixes when it submits a stage. The worker only reads it.
+struct JobInput {
+    Stage stage = Stage::Meta;
+    u32 gen     = 0;              ///< Slot::generation at submit
+    CookProvider provider;        ///< snapshot at dispatch
+    bool manifestPresent = false; ///< Context::manifestPresent at dispatch
+    bool recheck         = false; ///< the provider checks the sources again (PrepareMode::Recheck)
+};
+
+/// What a load attempt produces. The worker writes it while its job runs; the pump thread touches
+/// it only between jobs, except `next`, which both read during the upload stage.
+struct JobOutput {
+    Hash128 key;                ///< the artifact to load: from the manifest at dispatch, or the provider's
+    bool keyValid      = false; ///< false: the name missed the manifest
+    bool providerOwned = false; ///< the provider cooked without an artifact, or its cook failed
+    MetaSet next;               ///< the meta stage's result; make_ready() swaps it into Slot::cur
+    Vec<u8> cooked;             ///< cook provider output (memory source for both stages)
+    bool cookedValid = false;
+    UploadTarget target;
+    bool hasTarget = false; ///< begin_upload succeeded (object must be released on failure)
+    Status status  = kOk;
+    u32 diag       = 0; ///< K5xxx for a Failed completion
+    DiagCapture capture;
+};
+
 struct Slot {
     // --- identity / registry (pump thread) --------------------------------------
     Context* ctx          = nullptr;
@@ -182,22 +207,14 @@ struct Slot {
     u32 bindSlot     = kInvalid; ///< bindless slot number (textures with Adapter::bind)
     bool bindPending = false;    ///< bindSlot waits for its placeholder upload to complete
 
-    // --- job input (written by the pump thread before submit) -----------------
-    Stage jobStage    = Stage::Meta;
-    u32 jobGen        = 0;
+    // --- the asset's source: fixed while a job runs, so the worker may read it ---------
     SourceKind source = SourceKind::File;
-    Buffer memory;              ///< register_*: the copied cooked bytes
-    ArrayDecl* array = nullptr; ///< SourceKind::Array: the layers
-    CookProvider provider;      ///< snapshot at dispatch
+    Buffer memory;                    ///< register_*: the copied cooked bytes
+    ArrayDecl* array       = nullptr; ///< SourceKind::Array: the layers
     char path[kMaxPathLen] = {};
     u32 pathLen            = 0;
-    Hash128 jobKey;                  ///< the artifact to load, from the manifest at dispatch or the provider
-    bool jobKeyValid        = false; ///< false: the name missed the manifest
-    bool jobManifestPresent = false; ///< Context::manifestPresent at dispatch
-    bool jobRecheck         = false; ///< the provider checks the sources again (PrepareMode::Recheck)
-    bool jobProviderOwned   = false; ///< the provider cooked without an artifact, or its cook failed
-    bool recheck            = false; ///< pump thread: request_reload() asked for it; the next load takes it
-    u64 postedBatch         = 0;     ///< the pump whose post_reload() batch last reloaded it
+    bool recheck           = false; ///< request_reload() asked for it; the next load takes it
+    u64 postedBatch        = 0;     ///< the pump whose post_reload() batch last reloaded it
 
     // --- keys (pump thread) ---------------------------------------------------------
     bool manifestCheck = false; ///< a new manifest came during the load: compare keys when it settles
@@ -210,22 +227,12 @@ struct Slot {
     bool providerOwned = false;
     bool goneWarned = false; ///< K5022 was reported for the manifest in use; cleared when the entry is back
 
-    // --- metadata (docs/design/hot-reload.md) ----------------------------------------
-    // Queries answer from `cur` once Ready. The meta stage (worker) writes only `next`;
-    // the upload stage reads `next`; make_ready() swaps `next` into `cur` on the pump
-    // thread. While MetaReady on a first load, queries show `next`. The pump thread
-    // frees `next` only when no job is in flight.
+    // --- the load attempt (docs/design/hot-reload.md) ---------------------------------
+    // Queries answer from `cur` once Ready; while MetaReady on a first load they show `out.next`.
+    // The pump thread frees `out.next` only when no job is in flight.
     MetaSet cur;
-    MetaSet next;
-    Vec<u8> cooked; ///< cook provider output (memory source for both stages)
-    bool cookedValid = false;
-
-    // --- job output (worker) ------------------------------------------------------
-    UploadTarget target;
-    bool hasTarget   = false; ///< begin_upload succeeded (object must be released on failure)
-    Status jobStatus = kOk;
-    u32 jobDiag      = 0; ///< K5xxx for a Failed completion
-    DiagCapture capture;
+    JobInput in;
+    JobOutput out;
 
     /// Occupied, zombies included.
     bool live() const { return phase != Phase::Free; }
@@ -394,7 +401,7 @@ void bind_placeholder(Context* ctx, Slot& s);
 void bind_object(Context* ctx, Slot& s, GpuObject obj);
 void free_load_data(Slot& s);
 void free_meta_set(Allocator const* a, MetaSet& m);
-/// The metadata queries show: `cur` when Ready, `next` when MetaReady, else null.
+/// The metadata queries show: `cur` when Ready, `out.next` when MetaReady, else null.
 MetaSet const* shown_meta(Slot const& s);
 void queue_push(Context* ctx, QueueId q, Slot& s);
 void queue_remove(Context* ctx, Slot& s);

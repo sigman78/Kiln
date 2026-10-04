@@ -108,9 +108,14 @@ struct Input {
 };
 
 Input slot_input(Slot& s) {
-    return {
-        s.kind,    path_of(s),     &s.jobKey,           &s.jobKeyValid,
-        &s.cooked, &s.cookedValid, &s.jobProviderOwned, s.source == SourceKind::Memory ? &s.memory : nullptr};
+    return {s.kind,
+            path_of(s),
+            &s.out.key,
+            &s.out.keyValid,
+            &s.out.cooked,
+            &s.out.cookedValid,
+            &s.out.providerOwned,
+            s.source == SourceKind::Memory ? &s.memory : nullptr};
 }
 
 Input layer_input(Slot& s, ArrayLayer& l) {
@@ -123,22 +128,22 @@ Input layer_input(Slot& s, ArrayLayer& l) {
 Status prepare_source(Context* ctx, Slot& s, Input const& in, Source& src) {
     Vec<u8> out(ctx->alloc, Tag::Payload);
     Hash128 key;
-    DiagSink sink{&capture_fn, &s.capture};
+    DiagSink sink{&capture_fn, &s.out.capture};
     // May take seconds when it cooks; we are on a worker.
     ProfileZone const zone(ctx->prof, "kiln.prepare", in.name);
-    PrepareMode const mode = s.jobRecheck ? PrepareMode::Recheck : PrepareMode::Normal;
+    PrepareMode const mode = s.in.recheck ? PrepareMode::Recheck : PrepareMode::Normal;
     Status const st =
-        s.provider.prepare(s.provider.user, in.kind, in.name, mode, ctx->alloc, &out, &key, &sink);
+        s.in.provider.prepare(s.in.provider.user, in.kind, in.name, mode, ctx->alloc, &out, &key, &sink);
     if (st.failed()) {
         if (st.code == Code::NotFound) {
-            note(s.capture, "the cook provider found no source");
-            s.jobDiag = kDiagStoreMiss;
+            note(s.out.capture, "the cook provider found no source");
+            s.out.diag = kDiagStoreMiss;
         } else {
-            note(s.capture, "cook provider failed");
-            s.jobDiag         = kDiagCookOnMissFailed;
+            note(s.out.capture, "cook provider failed");
+            s.out.diag        = kDiagCookOnMissFailed;
             *in.providerOwned = true; // a fix reaches it through the provider
         }
-        return s.jobStatus = st;
+        return s.out.status = st;
     }
     // Neither bytes nor a key: the manifest entry chosen at dispatch stands (or the miss).
     if (!key.is_zero()) {
@@ -167,28 +172,28 @@ Status open_source(Context* ctx, Slot& s, Input const& in, Source& src, bool all
         src.size   = src.mem.size;
         return kOk;
     }
-    if (allowCook && s.provider.prepare) {
+    if (allowCook && s.in.provider.prepare) {
         KILN_TRY(prepare_source(ctx, s, in, src));
         if (src.memory) return kOk;
     }
     if (!*in.keyValid) {
         // Roots name sources, but only a cook provider reads them.
         char const* const hint =
-            ctx->rootCount && !s.provider.prepare ? "; no cook provider is installed" : "";
-        if (s.jobManifestPresent)
-            note(s.capture, "not in profile '%s' of the store's manifest%s", ctx->profile, hint);
+            ctx->rootCount && !s.in.provider.prepare ? "; no cook provider is installed" : "";
+        if (s.in.manifestPresent)
+            note(s.out.capture, "not in profile '%s' of the store's manifest%s", ctx->profile, hint);
         else
-            note(s.capture, "the store has no manifest, or no profile '%s' in it%s", ctx->profile, hint);
-        s.jobDiag          = s.jobManifestPresent ? kDiagStoreMiss : kDiagManifestMissing;
-        return s.jobStatus = make_status(Code::NotFound);
+            note(s.out.capture, "the store has no manifest, or no profile '%s' in it%s", ctx->profile, hint);
+        s.out.diag          = s.in.manifestPresent ? kDiagStoreMiss : kDiagManifestMissing;
+        return s.out.status = make_status(Code::NotFound);
     }
 
     char file[1024];
     usize const n = artifact_file_path(StrView(ctx->storeDir, ctx->storeDirLen), *in.key, file, sizeof file);
     if (n + 1 >= sizeof file) {
-        note(s.capture, "store path too long");
-        s.jobDiag          = kDiagAssetLoadFailed;
-        return s.jobStatus = make_status(Code::InvalidArgument);
+        note(s.out.capture, "store path too long");
+        s.out.diag          = kDiagAssetLoadFailed;
+        return s.out.status = make_status(Code::InvalidArgument);
     }
     IoBackend const* io = ctx->io;
     Status st           = io->open(io->user, StrView(file, n), &src.file);
@@ -197,18 +202,18 @@ Status open_source(Context* ctx, Slot& s, Input const& in, Source& src, bool all
         st     = io->size(io->user, src.file, &src.size);
         if (st.failed()) {
             src.close();
-            note(s.capture, "cannot stat '%s'", file);
-            s.jobDiag          = kDiagAssetLoadFailed;
-            return s.jobStatus = st;
+            note(s.out.capture, "cannot stat '%s'", file);
+            s.out.diag          = kDiagAssetLoadFailed;
+            return s.out.status = st;
         }
         return kOk;
     }
     if (st.code == Code::NotFound)
-        note(s.capture, "the manifest names '%s', which is missing", file);
+        note(s.out.capture, "the manifest names '%s', which is missing", file);
     else
-        note(s.capture, "cannot open '%s'", file);
-    s.jobDiag          = st.code == Code::NotFound ? kDiagStoreMiss : kDiagAssetLoadFailed;
-    return s.jobStatus = st;
+        note(s.out.capture, "cannot open '%s'", file);
+    s.out.diag          = st.code == Code::NotFound ? kDiagStoreMiss : kDiagAssetLoadFailed;
+    return s.out.status = st;
 }
 
 // ---------------------------------------------------------------------------
@@ -216,7 +221,7 @@ Status open_source(Context* ctx, Slot& s, Input const& in, Source& src, bool all
 // ---------------------------------------------------------------------------
 
 Status mesh_meta(Context* ctx, Slot& s, Source const& src) {
-    DiagSink const sink{&capture_fn, &s.capture};
+    DiagSink const sink{&capture_fn, &s.out.capture};
     StrView const name = path_of(s);
     alignas(16) u8 hb[sizeof(mesh::FileHeader)];
     u64 const hn = min<u64>(sizeof hb, src.size);
@@ -239,7 +244,7 @@ Status mesh_meta(Context* ctx, Slot& s, Source const& src) {
                      "file is %llu bytes, header needs %llu", static_cast<unsigned long long>(src.size),
                      static_cast<unsigned long long>(h.gpuDataOffset + h.gpuDataSize));
 
-    MetaSet& m = s.next;
+    MetaSet& m = s.out.next;
     m.meta.allocate(ctx->alloc, usize(h.gpuDataOffset), Tag::Payload);
     {
         IoBytes budget(ctx, h.gpuDataOffset);
@@ -271,7 +276,7 @@ struct KtxLevels {
 /// array layer being read (which must be 2D).
 Status read_ktx2_levels(Context* ctx, Slot& s, StrView name, Source const& src, TextureShape expect,
                         u32 layer, KtxLevels* out) {
-    DiagSink const sink{&capture_fn, &s.capture};
+    DiagSink const sink{&capture_fn, &s.out.capture};
     alignas(16) u8 hb[sizeof(ktx2::Header)];
     u64 const hn = min<u64>(sizeof hb, src.size);
     KILN_TRY(src.read(0, hn, hb));
@@ -301,13 +306,13 @@ Status read_ktx2_levels(Context* ctx, Slot& s, StrView name, Source const& src, 
     if (TextureShape const shape = shape_of(d); shape != expect) {
         prefix.release();
         if (layer == kInvalid) {
-            note(s.capture, "the cooked texture is %s, the request expects %s", texture_shape_name(shape),
+            note(s.out.capture, "the cooked texture is %s, the request expects %s", texture_shape_name(shape),
                  texture_shape_name(expect));
-            s.jobDiag = kDiagTextureShapeMismatch;
+            s.out.diag = kDiagTextureShapeMismatch;
         } else {
-            note(s.capture, "layer %u (%.*s) is %s; array layers must be 2D", layer, KILN_SV(name),
+            note(s.out.capture, "layer %u (%.*s) is %s; array layers must be 2D", layer, KILN_SV(name),
                  texture_shape_name(shape));
-            s.jobDiag = kDiagArrayLayerMismatch;
+            s.out.diag = kDiagArrayLayerMismatch;
         }
         return make_status(Code::ValidationFailed);
     }
@@ -347,7 +352,7 @@ Status texture_meta(Context* ctx, Slot& s, Source const& src) {
     u32 const levels = k.levels;
     u64* layout      = alloc_array<u64>(ctx->alloc, usize(levels) * kLayoutColumns, Tag::Payload);
     std::memcpy(layout + 2 * levels, k.cols, sizeof(u64) * levels * 3);
-    MetaSet& m     = s.next;
+    MetaSet& m     = s.out.next;
     m.layout       = layout;
     m.layoutLevels = levels;
     m.texZstd      = k.zstd;
@@ -376,10 +381,10 @@ Status check_layer(Slot& s, u32 layer, StrView name, ktx2::TextureDesc const& fi
     if (d.format == first.format && d.width == first.width && d.height == first.height &&
         d.levels == first.levels)
         return kOk;
-    note(s.capture, "layer %u (%.*s) is %s %ux%u with %u levels; layer 0 is %s %ux%u with %u levels", layer,
-         KILN_SV(name), format_name(d.format), d.width, d.height, d.levels, format_name(first.format),
+    note(s.out.capture, "layer %u (%.*s) is %s %ux%u with %u levels; layer 0 is %s %ux%u with %u levels",
+         layer, KILN_SV(name), format_name(d.format), d.width, d.height, d.levels, format_name(first.format),
          first.width, first.height, first.levels);
-    s.jobDiag = kDiagArrayLayerMismatch;
+    s.out.diag = kDiagArrayLayerMismatch;
     return make_status(Code::ValidationFailed);
 }
 
@@ -400,7 +405,7 @@ CompletionKind run_array_meta(Context* ctx, Slot& s) {
         if (st.ok() && i > 0) st = check_layer(s, i, in.name, first.desc, k.desc);
         if (st.failed()) {
             k.release(ctx->alloc);
-            if (s.jobDiag != kDiagArrayLayerMismatch) note_layer(s.capture, i, in.name);
+            if (s.out.diag != kDiagArrayLayerMismatch) note_layer(s.out.capture, i, in.name);
             break;
         }
         l.srcLevels = k.levels;
@@ -414,7 +419,7 @@ CompletionKind run_array_meta(Context* ctx, Slot& s) {
     }
     if (st.ok()) {
         u32 const levels  = first.levels;
-        MetaSet& m        = s.next;
+        MetaSet& m        = s.out.next;
         m.texDesc         = first.desc;
         m.texDesc.layers  = d.count;
         m.texDesc.faces   = 1;
@@ -426,16 +431,16 @@ CompletionKind run_array_meta(Context* ctx, Slot& s) {
         m.uploadSize = texture_layout(m.texDesc, ctx->cc.optimalRowPitchAlign, ctx->cc.optimalOffsetAlign,
                                       m.layout, m.layout + levels);
         if (m.uploadSize == 0) {
-            note(s.capture, "%u layers of %s %ux%u do not fit one upload", d.count,
+            note(s.out.capture, "%u layers of %s %ux%u do not fit one upload", d.count,
                  format_name(first.desc.format), first.desc.width, first.desc.height);
-            s.jobDiag = kDiagArrayDeclaration;
-            st        = make_status(Code::InvalidArgument);
+            s.out.diag = kDiagArrayDeclaration;
+            st         = make_status(Code::InvalidArgument);
         }
     }
     first.release(ctx->alloc);
     if (st.failed()) {
-        s.jobStatus = st;
-        if (s.jobDiag == 0) s.jobDiag = kDiagAssetLoadFailed;
+        s.out.status = st;
+        if (s.out.diag == 0) s.out.diag = kDiagAssetLoadFailed;
         return CompletionKind::Failed;
     }
     return CompletionKind::MetaReady;
@@ -448,8 +453,8 @@ CompletionKind run_meta(Context* ctx, Slot& s) {
     Status const st = s.kind == AssetKind::Mesh ? mesh_meta(ctx, s, src) : texture_meta(ctx, s, src);
     src.close();
     if (st.failed()) {
-        s.jobStatus = st;
-        if (s.jobDiag == 0) s.jobDiag = kDiagAssetLoadFailed;
+        s.out.status = st;
+        if (s.out.diag == 0) s.out.diag = kDiagAssetLoadFailed;
         return CompletionKind::Failed;
     }
     return CompletionKind::MetaReady;
@@ -460,9 +465,9 @@ CompletionKind run_meta(Context* ctx, Slot& s) {
 // ---------------------------------------------------------------------------
 
 Status write_mesh(Context* ctx, Slot& s, Source const& src, u8* dst) {
-    DiagSink const sink{&capture_fn, &s.capture};
+    DiagSink const sink{&capture_fn, &s.out.capture};
     StrView const name        = path_of(s);
-    mesh::MeshView const& v   = s.next.meshView;
+    mesh::MeshView const& v   = s.out.next.meshView;
     mesh::FileHeader const& h = v.header();
     Span<u8> const out(dst, usize(h.payloadDecodedSize));
     if (h.gpuDataOffset > src.size || h.gpuDataSize > src.size - h.gpuDataOffset)
@@ -538,7 +543,7 @@ Status write_level(Context* ctx, Slot& s, Source const& src, LevelCopy const& c,
         // its output back for matches (cook-tracing.md, "First findings").
         sc.texels.resize(usize(c.tLen));
         if (!sc.zstd.decode(Span<u8 const>(from, usize(c.sLen)), sc.texels.span())) {
-            DiagSink const sink{&capture_fn, &s.capture};
+            DiagSink const sink{&capture_fn, &s.out.capture};
             return diagf(&sink, make_status(Code::Corrupt), ktx2::kDiagKtxLevelDecode, Severity::Error,
                          c.input, "levelIndex", "level %u does not decode: %s", c.level, sc.zstd.error());
         }
@@ -578,7 +583,7 @@ LevelCopy level_copy(MetaSet const& m, u32 i) {
 }
 
 Status write_texture(Context* ctx, Slot& s, Source const& src, u8* dst) {
-    MetaSet const& m = s.next;
+    MetaSet const& m = s.out.next;
     u32 const levels = m.layoutLevels;
     LevelScratch sc(ctx->alloc);
     zero_level_gaps(m, 1, dst);
@@ -596,7 +601,7 @@ Status write_texture(Context* ctx, Slot& s, Source const& src, u8* dst) {
 /// Each layer's levels into its place in the array: layer j of level i at the level's offset plus j
 /// times one layer's padded size.
 Status write_array(Context* ctx, Slot& s, u8* dst) {
-    MetaSet const& m = s.next;
+    MetaSet const& m = s.out.next;
     ArrayDecl& d     = *s.array;
     u32 const levels = m.layoutLevels;
     LevelScratch sc(ctx->alloc);
@@ -618,7 +623,7 @@ Status write_array(Context* ctx, Slot& s, u8* dst) {
         }
         src.close();
         if (st.failed()) {
-            note_layer(s.capture, j, in.name);
+            note_layer(s.out.capture, j, in.name);
             return st;
         }
     }
@@ -627,7 +632,7 @@ Status write_array(Context* ctx, Slot& s, u8* dst) {
 
 CompletionKind run_upload(Context* ctx, Slot& s) {
     Adapter const& a = ctx->adapter;
-    MetaSet const& m = s.next;
+    MetaSet const& m = s.out.next;
     UploadDesc ud;
     ud.id   = s.id;
     ud.size = m.uploadSize;
@@ -663,23 +668,23 @@ CompletionKind run_upload(Context* ctx, Slot& s) {
     Status st = a.begin_upload(a.user, ud, &t);
     if (st.code == Code::Busy) return CompletionKind::BusyRetry;
     if (st.failed()) {
-        note(s.capture, "begin_upload failed (%llu bytes)", static_cast<unsigned long long>(ud.size));
-        s.jobStatus = st;
-        s.jobDiag   = kDiagAdapterRejected;
+        note(s.out.capture, "begin_upload failed (%llu bytes)", static_cast<unsigned long long>(ud.size));
+        s.out.status = st;
+        s.out.diag   = kDiagAdapterRejected;
         return CompletionKind::Failed;
     }
-    s.target    = t;
-    s.hasTarget = true;
+    s.out.target    = t;
+    s.out.hasTarget = true;
 
     u32 diag = kDiagAssetLoadFailed;
     if (!t.dst && ud.size) {
-        note(s.capture, "begin_upload returned no destination memory");
+        note(s.out.capture, "begin_upload returned no destination memory");
         st   = make_status(Code::Internal);
         diag = kDiagAdapterRejected;
     } else if (s.kind == AssetKind::Texture && t.rowPitchAlign > 1) {
         for (u32 i = 0; i < m.layoutLevels; ++i) {
             if (m.layout[m.layoutLevels + i] % t.rowPitchAlign != 0) {
-                note(s.capture, "adapter row pitch alignment %llu differs from copy_constraints (%llu)",
+                note(s.out.capture, "adapter row pitch alignment %llu differs from copy_constraints (%llu)",
                      static_cast<unsigned long long>(t.rowPitchAlign),
                      static_cast<unsigned long long>(ctx->cc.optimalRowPitchAlign));
                 st   = make_status(Code::Unsupported);
@@ -690,7 +695,8 @@ CompletionKind run_upload(Context* ctx, Slot& s) {
     }
     if (st.ok() && s.array) {
         st = write_array(ctx, s, static_cast<u8*>(t.dst));
-        if (st.failed() && s.jobDiag) diag = s.jobDiag == kDiagStoreMiss ? kDiagAssetLoadFailed : s.jobDiag;
+        if (st.failed() && s.out.diag)
+            diag = s.out.diag == kDiagStoreMiss ? kDiagAssetLoadFailed : s.out.diag;
     } else if (st.ok()) {
         Source src;
         st = open_source(ctx, s, slot_input(s), src, false);
@@ -699,18 +705,18 @@ CompletionKind run_upload(Context* ctx, Slot& s) {
             st = s.kind == AssetKind::Mesh ? write_mesh(ctx, s, src, dst) : write_texture(ctx, s, src, dst);
             src.close();
         } else {
-            diag = s.jobDiag == kDiagStoreMiss ? kDiagAssetLoadFailed : s.jobDiag; // vanished since meta
+            diag = s.out.diag == kDiagStoreMiss ? kDiagAssetLoadFailed : s.out.diag; // vanished since meta
         }
     }
     if (st.failed() && a.discard_upload) { // nothing for the GPU: the adapter frees ticket and object
         a.discard_upload(a.user, t.token);
-        s.hasTarget = false;
+        s.out.hasTarget = false;
     } else {
         a.commit_upload(a.user, t.token); // a failed load commits too; kiln destroys the result
     }
     if (st.failed()) {
-        s.jobStatus = st;
-        s.jobDiag   = diag;
+        s.out.status = st;
+        s.out.diag   = diag;
         return CompletionKind::Failed;
     }
     return CompletionKind::Uploaded;
@@ -746,10 +752,10 @@ u64 texture_layout(ktx2::TextureDesc const& d, u64 pitchAlign, u64 offsetAlign, 
 void run_job(void* arg) {
     Slot& s      = *static_cast<Slot*>(arg);
     Context* ctx = s.ctx;
-    s.jobStatus  = kOk;
-    s.jobDiag    = 0;
-    s.capture.reset();
-    bool const meta = s.jobStage == Stage::Meta;
+    s.out.status = kOk;
+    s.out.diag   = 0;
+    s.out.capture.reset();
+    bool const meta = s.in.stage == Stage::Meta;
     CompletionKind k;
     {
         if (ctx->prof)
@@ -757,7 +763,7 @@ void run_job(void* arg) {
         ProfileZone const zone(ctx->prof, meta ? "kiln.meta" : "kiln.upload", path_of(s));
         k = meta ? run_meta(ctx, s) : run_upload(ctx, s);
     }
-    Completion const c{s.index, s.jobGen, k};
+    Completion const c{s.index, s.in.gen, k};
     post(ctx, c); // from here on the pump thread may reuse `s`
     ctx->jobsInFlight.fetch_sub(1, std::memory_order_acq_rel);
 }

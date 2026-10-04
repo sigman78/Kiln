@@ -258,7 +258,7 @@ and pump machinery (`src/runtime/context.cpp`, `registry.cpp`, `loader.cpp`, `pu
 K5002 like the cooker's own K1xxx-K3xxx diagnostics (see the note below the table). Unlike the
 cook-side ranges, most of these are produced on a worker thread
 (`loader.cpp`) but only *delivered* to the host's `DiagSink` from `pump()`: a worker only fills in
-`Slot::jobDiag`/`jobStatus` and a short capture buffer (`DiagCapture`); `pump()`'s `fail_slot()` is
+`Slot::out.diag`/`out.status` and a short capture buffer (`DiagCapture`); `pump()`'s `fail_slot()` is
 what actually calls `diagf()`. All codes in this range are `Severity::Error` except K5006, K5011
 and K5012 (`Warning`); K5007 is delivered as a panic message, not a `Diagnostic` (see its row), and K5009 can
 also panic instead of reaching the `DiagSink` in one sub-case (see its row).
