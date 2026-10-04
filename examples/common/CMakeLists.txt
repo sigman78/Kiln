@@ -17,13 +17,16 @@ FetchContent_Declare(glfw
     SYSTEM)
 FetchContent_MakeAvailable(glfw)
 
-add_library(kiln_example_common STATIC example_math.h example_app.h example_app.cpp)
+add_library(kiln_example_common STATIC example_math.h example_app.h example_app.cpp example_paths.cpp)
 kiln_apply_defaults(kiln_example_common)
 target_include_directories(kiln_example_common PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
                                                PRIVATE ${CMAKE_SOURCE_DIR}/tests)
+# The examples find `examples/assets` and `example-store` upwards from their executable
+# (example_paths.cpp). The directory made here is the store they all share; the absolute assets
+# path serves a build tree outside the source tree.
 target_compile_definitions(kiln_example_common PUBLIC GLFW_INCLUDE_NONE
-    PRIVATE KILN_EXAMPLE_ASSETS_DIR="${CMAKE_SOURCE_DIR}/examples/assets"
-            KILN_EXAMPLE_STORE_DIR="${CMAKE_BINARY_DIR}/example-store")
+    PRIVATE KILN_EXAMPLE_ASSETS_DIR="${CMAKE_SOURCE_DIR}/examples/assets")
+file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/example-store)
 
 # The demo models (CC0, Khronos glTF-Sample-Assets, pinned and hash-checked) into
 # examples/assets/khronos/, which git ignores. Never part of ALL; see examples/assets/README.md.

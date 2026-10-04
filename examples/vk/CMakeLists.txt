@@ -77,9 +77,6 @@ function(kiln_vk_example name source)
     add_executable(${name} ${source} ${ARGN})
     kiln_apply_defaults(${name})
     target_link_libraries(${name} PRIVATE kiln_example_vk kiln_example_common kiln_cli)
-    target_compile_definitions(${name} PRIVATE
-        KILN_EXAMPLE_ASSETS_DIR="${CMAKE_SOURCE_DIR}/examples/assets"
-        KILN_EXAMPLE_STORE_DIR="${CMAKE_BINARY_DIR}/example-store")
     if(TARGET kiln_cook)
         target_link_libraries(${name} PRIVATE kiln_cook)
         target_compile_definitions(${name} PRIVATE KILN_VK_HAS_COOK=1)

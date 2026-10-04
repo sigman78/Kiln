@@ -109,7 +109,6 @@ endforeach()
 add_executable(kiln-nga main.cpp nga_adapter.h nga_adapter.cpp nga_root.h scene.slang sky.slang ${_spv_files})
 set_source_files_properties(scene.slang sky.slang PROPERTIES HEADER_FILE_ONLY TRUE)
 kiln_apply_defaults(kiln-nga)
-target_compile_definitions(kiln-nga PRIVATE KILN_NGA_SHADER_DIR="${_spv_dir}")
 target_link_libraries(kiln-nga PRIVATE kiln_runtime kiln_example_common kiln_example_adapter_support kiln_nga_lib)
 if(TARGET kiln_cook)
     target_link_libraries(kiln-nga PRIVATE kiln_cook)
@@ -127,9 +126,6 @@ endif()
 add_executable(kiln-nga-array main_array.cpp nga_adapter.h nga_adapter.cpp floor.slang ${_spv_files})
 set_source_files_properties(floor.slang PROPERTIES HEADER_FILE_ONLY TRUE)
 kiln_apply_defaults(kiln-nga-array)
-target_compile_definitions(kiln-nga-array PRIVATE KILN_NGA_SHADER_DIR="${_spv_dir}"
-    KILN_EXAMPLE_ASSETS_DIR="${CMAKE_SOURCE_DIR}/examples/assets"
-    KILN_EXAMPLE_STORE_DIR="${CMAKE_BINARY_DIR}/example-store")
 target_link_libraries(kiln-nga-array PRIVATE kiln_runtime kiln_example_common kiln_example_adapter_support
                                              kiln_nga_lib kiln_cli)
 if(TARGET kiln_cook)
