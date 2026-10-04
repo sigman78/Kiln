@@ -32,9 +32,6 @@ struct FloorPush {
 };
 static_assert(sizeof(FloorPush) == 32);
 
-char const kTilesDir[] = KILN_EXAMPLE_ASSETS_DIR "/tiles";
-char const kStore[]    = KILN_EXAMPLE_STORE_DIR;
-
 // The array's layers: each is an ordinary texture name, cooked and stored on its own.
 constexpr StrView kLayers[] = {"tiles:tile0.png", "tiles:tile1.png", "tiles:tile2.png",
                                "tiles:tile3.png", "tiles:tile4.png", "tiles:tile5.png"};
@@ -75,8 +72,8 @@ int parse(int argc, char** argv, Options* o) {
         cli::usage(spec, stderr);
         return 2;
     }
-    o->base.store     = kStore;
-    o->base.roots[0]  = Root{StrView("tiles"), StrView(kTilesDir)};
+    o->base.store     = ex::store_dir();
+    o->base.roots[0]  = Root{StrView("tiles"), StrView(ex::asset_dir("tiles"))};
     o->base.rootCount = 1;
     o->base.offscreen = o->base.dump != nullptr || o->verify;
     return -1;

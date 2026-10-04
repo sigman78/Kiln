@@ -25,11 +25,11 @@ ProfileHooks trace_hooks();
 void finish_trace();
 
 /// What every integration example shows: the reference scene (WaterBottle under the HDR test sky),
-/// cooked on first use into a store in the build tree, with hot reload on. Nothing to pass.
+/// cooked on first use into the example store, with hot reload on. Nothing to pass.
 struct Options {
     static constexpr u32 kMaxRoots = 2;
-    char const* store              = nullptr; ///< the build tree's example-store
-    Root roots[kMaxRoots]; ///< examples/assets/khronos (default root), examples/assets/skies (sky:)
+    char const* store              = nullptr; ///< store_dir()
+    Root roots[kMaxRoots]; ///< asset_dir("khronos") (default root), asset_dir("skies") (sky:)
     u32 rootCount     = 0;
     char const* model = "WaterBottle.glb";
     char const* sky   = "sky:hdr_cube.hdr";
@@ -44,6 +44,15 @@ struct Options {
 /// Returns -1 to run, else the exit code: 0 after --help, 2 on a usage error or when the demo model
 /// has not been downloaded yet (the message says how).
 int parse_options(char const* program, int argc, char** argv, Options* o);
+
+/// The directory of the running executable, with `/` separators; "." if the OS does not tell.
+char const* exe_dir();
+/// `<assets>/<sub>`. The assets are the nearest `examples/assets` from the executable's directory
+/// upwards, else the source tree's. The string lives until exit.
+char const* asset_dir(char const* sub);
+/// The cooked store: the nearest `example-store` from the executable's directory upwards (the
+/// build makes one at the root of the build tree), else `example-store` next to the executable.
+char const* store_dir();
 
 /// A material's PBR factors (mesh::MaterialSlot) as the three vec4s every example shader reads.
 /// A shader multiplies each texture by its factor, and uses the factor alone without the texture.

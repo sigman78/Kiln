@@ -34,6 +34,12 @@ a draw list built from `mesh_view`), and a CPU-side upload queue for the adapter
 work (below). The per-API code is what each example exists to show, and what the friction log
 measures.
 
+An example takes no paths. It looks upwards from its executable for `examples/assets` and for
+`example-store` (`example_paths.cpp`); the build makes the store directory at the root of the build
+tree, and without one the store goes next to the executable. `nga` reads `shaders/` next to its
+executable. So a copy of the executable's directory and of `examples/assets`, in the same relative
+places, runs on another machine as it does here.
+
 ## The examples
 
 ### Backend coverage

@@ -245,8 +245,10 @@ void draw_model(Scene& s, gpu::CommandBuffer* cmd, Bump& frame, Mat4 const& view
     }
 }
 
-/// A whole SPIR-V file, or an empty span.
-Span<byte> read_spirv(char const* path) {
+/// A whole SPIR-V file from shaders/ next to the executable, or an empty span.
+Span<byte> read_spirv(char const* name) {
+    char path[1024];
+    format(path, sizeof path, "%s/shaders/%s", ex::exe_dir(), name);
     std::FILE* f = std::fopen(path, "rb");
     if (!f) return {};
     std::fseek(f, 0, SEEK_END);
@@ -262,10 +264,10 @@ Span<byte> read_spirv(char const* path) {
     return {data, usize(size)};
 }
 
-gpu::PSO* make_pso(gpu::Device* device, char const* vsPath, char const* vsEntry, char const* fsPath,
+gpu::PSO* make_pso(gpu::Device* device, char const* vsFile, char const* vsEntry, char const* fsFile,
                    char const* fsEntry, gpu::Format color) {
-    Span<byte> const vs = read_spirv(vsPath);
-    Span<byte> const fs = read_spirv(fsPath);
+    Span<byte> const vs = read_spirv(vsFile);
+    Span<byte> const fs = read_spirv(fsFile);
     gpu::PSO* pso       = nullptr;
     if (!vs.empty() && !fs.empty()) {
         gpu::ColorTargetDesc const target{.format = color};
@@ -277,7 +279,7 @@ gpu::PSO* make_pso(gpu::Device* device, char const* vsPath, char const* vsEntry,
                                            .depth_format  = kDepth,
         });
     }
-    if (!pso) KILN_ERROR("nga", "pipeline %s / %s failed", vsPath, fsPath);
+    if (!pso) KILN_ERROR("nga", "pipeline %s / %s failed", vsFile, fsFile);
     kiln::free(default_allocator(), vs.data, vs.size, 4, Tag::Io);
     kiln::free(default_allocator(), fs.data, fs.size, 4, Tag::Io);
     return pso;
@@ -287,8 +289,7 @@ struct Background {
     gpu::PSO* pipeline = nullptr;
 
     void create(gpu::Device* device, gpu::Format color) {
-        pipeline = make_pso(device, KILN_NGA_SHADER_DIR "/skyVertex.spv", "skyVertex",
-                            KILN_NGA_SHADER_DIR "/skyFragment.spv", "skyFragment", color);
+        pipeline = make_pso(device, "skyVertex.spv", "skyVertex", "skyFragment.spv", "skyFragment", color);
     }
 
     /// The caller checks that the environment is present.
@@ -444,8 +445,8 @@ int main(int argc, char** argv) {
     }
 
     // 5. What the host owns: pipelines, per-frame root memory, render targets, frame sync.
-    gpu::PSO* const meshPso = make_pso(device, KILN_NGA_SHADER_DIR "/meshVertex.spv", "meshVertex",
-                                       KILN_NGA_SHADER_DIR "/meshFragment.spv", "meshFragment", colorFormat);
+    gpu::PSO* const meshPso =
+        make_pso(device, "meshVertex.spv", "meshVertex", "meshFragment.spv", "meshFragment", colorFormat);
     Background background;
     background.create(device, colorFormat);
     gpu::GpuHeap const frameHeap = gpu::create_gpu_heap(device, kFrameBytes * kFif);

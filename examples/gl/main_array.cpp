@@ -20,9 +20,6 @@ using namespace kiln::glx;
 
 namespace {
 
-char const kTilesDir[] = KILN_EXAMPLE_ASSETS_DIR "/tiles";
-char const kStore[]    = KILN_EXAMPLE_STORE_DIR;
-
 // The array's layers: each is an ordinary texture name, cooked and stored on its own.
 constexpr StrView kLayers[] = {"tiles:tile0.png", "tiles:tile1.png", "tiles:tile2.png",
                                "tiles:tile3.png", "tiles:tile4.png", "tiles:tile5.png"};
@@ -84,8 +81,8 @@ int parse(int argc, char** argv, GlOptions* o, bool* verify) {
         cli::usage(spec, stderr);
         return 2;
     }
-    o->store     = kStore;
-    o->roots[0]  = Root{StrView("tiles"), StrView(kTilesDir)};
+    o->store     = ex::store_dir();
+    o->roots[0]  = Root{StrView("tiles"), StrView(ex::asset_dir("tiles"))};
     o->rootCount = 1;
     o->offscreen = o->dump != nullptr || *verify;
     return -1;

@@ -27,9 +27,6 @@ using namespace kiln::nga;
 
 namespace {
 
-char const kTilesDir[] = KILN_EXAMPLE_ASSETS_DIR "/tiles";
-char const kStore[]    = KILN_EXAMPLE_STORE_DIR;
-
 // The array's layers: each is an ordinary texture name, cooked and stored on its own.
 constexpr StrView kLayers[] = {"tiles:tile0.png", "tiles:tile1.png", "tiles:tile2.png",
                                "tiles:tile3.png", "tiles:tile4.png", "tiles:tile5.png"};
@@ -69,8 +66,8 @@ int parse(int argc, char** argv, ex::Options* o, bool* verify) {
         cli::usage(spec, stderr);
         return 2;
     }
-    o->store     = kStore;
-    o->roots[0]  = Root{StrView("tiles"), StrView(kTilesDir)};
+    o->store     = ex::store_dir();
+    o->roots[0]  = Root{StrView("tiles"), StrView(ex::asset_dir("tiles"))};
     o->rootCount = 1;
     o->offscreen = o->dump != nullptr || *verify;
     return -1;
@@ -82,8 +79,10 @@ void log_array(Context* ctx, TextureHandle h) {
               format_name(ti.desc.format), ti.desc.width, ti.desc.height, ti.desc.levels, ti.version);
 }
 
-/// A whole SPIR-V file, or an empty span.
-Span<byte> read_spirv(char const* path) {
+/// A whole SPIR-V file from shaders/ next to the executable, or an empty span.
+Span<byte> read_spirv(char const* name) {
+    char path[1024];
+    format(path, sizeof path, "%s/shaders/%s", ex::exe_dir(), name);
     std::FILE* f = std::fopen(path, "rb");
     if (!f) return {};
     std::fseek(f, 0, SEEK_END);
@@ -100,8 +99,8 @@ Span<byte> read_spirv(char const* path) {
 }
 
 gpu::PSO* make_floor_pso(gpu::Device* device, gpu::Format color) {
-    Span<byte> const vs = read_spirv(KILN_NGA_SHADER_DIR "/floorVertex.spv");
-    Span<byte> const fs = read_spirv(KILN_NGA_SHADER_DIR "/floorFragment.spv");
+    Span<byte> const vs = read_spirv("floorVertex.spv");
+    Span<byte> const fs = read_spirv("floorFragment.spv");
     gpu::PSO* pso       = nullptr;
     if (!vs.empty() && !fs.empty()) {
         gpu::ColorTargetDesc const target{.format = color};

@@ -30,11 +30,6 @@ void diag_fn(void*, Diagnostic const& d) {
     std::fflush(stdout);
 }
 
-char const kAssets[]  = KILN_EXAMPLE_ASSETS_DIR;
-char const kKhronos[] = KILN_EXAMPLE_ASSETS_DIR "/khronos";
-char const kSkies[]   = KILN_EXAMPLE_ASSETS_DIR "/skies";
-char const kStore[]   = KILN_EXAMPLE_STORE_DIR;
-
 bool file_exists(char const* path) {
     std::FILE* f = std::fopen(path, "rb");
     if (f) std::fclose(f);
@@ -114,7 +109,7 @@ int parse_options(char const* program, int argc, char** argv, Options* o) {
         .synopsis = "[--dump <file.png>]",
         .options  = {opts, countof(opts)},
         .footer =
-            "Shows WaterBottle under the HDR test sky, cooked on first use into the build tree's\n"
+            "Shows WaterBottle under the HDR test sky, cooked on first use into the nearest\n"
             "example-store. Left-drag orbits, the wheel zooms, + and - change the exposure, Esc quits.\n"
             "Edit a source under examples/assets and the view updates (hot reload).",
     };
@@ -124,20 +119,21 @@ int parse_options(char const* program, int argc, char** argv, Options* o) {
         cli::usage(spec, stderr);
         return 2;
     }
-    o->store     = kStore;
-    o->roots[0]  = Root{{}, StrView(kKhronos)};
-    o->roots[1]  = Root{StrView("sky"), StrView(kSkies)};
-    o->rootCount = 2;
-    o->offscreen = o->dump != nullptr;
+    char const* const khronos = asset_dir("khronos");
+    o->store                  = store_dir();
+    o->roots[0]               = Root{{}, StrView(khronos)};
+    o->roots[1]               = Root{StrView("sky"), StrView(asset_dir("skies"))};
+    o->rootCount              = 2;
+    o->offscreen              = o->dump != nullptr;
     // The cook provider checks every load against its source, so the source must be there.
     char source[1024];
-    format(source, sizeof source, "%s/%s", kKhronos, o->model);
+    format(source, sizeof source, "%s/%s", khronos, o->model);
     if (!file_exists(source)) {
         std::fprintf(stderr,
                      "%s: the demo model %s is not downloaded yet (it is not in the repository).\n"
                      "Fetch it once with:  cmake --build --preset <your preset> --target viewer-assets\n"
-                     "(it lands in %s/khronos)\n",
-                     program, o->model, kAssets);
+                     "(looked in %s)\n",
+                     program, o->model, khronos);
         return 2;
     }
     return -1;

@@ -99,6 +99,3 @@ kiln_sokol_example(kiln-sokol main.cpp scene)
 # kiln-sokol-array: one texture array assembled from separate tiles (runtime-texture-arrays.md)
 kiln_sokol_example(kiln-sokol-array main_array.cpp array)
 target_link_libraries(kiln-sokol-array PRIVATE kiln_cli)
-target_compile_definitions(kiln-sokol-array PRIVATE
-    KILN_EXAMPLE_ASSETS_DIR="${CMAKE_SOURCE_DIR}/examples/assets"
-    KILN_EXAMPLE_STORE_DIR="${CMAKE_BINARY_DIR}/example-store")

@@ -28,9 +28,6 @@ if(KILN_EXAMPLE_GL)
     # kiln-gl-array: one texture array assembled from separate tiles (runtime-texture-arrays.md)
     kiln_gl_example(kiln-gl-array main_array.cpp)
     target_link_libraries(kiln-gl-array PRIVATE kiln_cli)
-    target_compile_definitions(kiln-gl-array PRIVATE
-        KILN_EXAMPLE_ASSETS_DIR="${CMAKE_SOURCE_DIR}/examples/assets"
-        KILN_EXAMPLE_STORE_DIR="${CMAKE_BINARY_DIR}/example-store")
 endif()
 if(KILN_EXAMPLE_GL_BINDLESS)
     kiln_gl_example(kiln-gl-bindless main_bindless.cpp)
