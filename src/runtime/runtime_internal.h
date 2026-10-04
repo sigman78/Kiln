@@ -71,9 +71,10 @@ enum class SourceKind : u8 { File = 0, Memory, Array };
 
 enum class QueueId : u8 { None = 0, MetaHigh, MetaNormal, UploadHigh, UploadNormal, Await, Count };
 
-/// The lists of prepared jobs, in the order the workers take them: a High meta job goes before a
-/// Normal upload, so a late High request waits only for the jobs that already run.
-enum class ReadyId : u8 { UploadHigh = 0, MetaHigh, UploadNormal, MetaNormal, Count, None = 0xff };
+/// The lists of prepared jobs, in the order the workers take them. High before Normal, so a late
+/// High request waits only for the jobs that already run. Meta before upload, so every asset has
+/// its metadata early.
+enum class ReadyId : u8 { MetaHigh = 0, UploadHigh, MetaNormal, UploadNormal, Count, None = 0xff };
 
 enum class CompletionKind : u8 { MetaReady = 0, Uploaded, Failed, BusyRetry };
 

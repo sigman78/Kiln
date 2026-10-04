@@ -13,8 +13,9 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
   4.4 s, now 0.9 s; with 2 workers 15.3 s, now 1.5 s. `pump()` now prepares every queued job and the
   workers take them by priority, so a `High` request made later passes the `Normal` jobs that did
   not start (open-questions R26). `maxIoJobs` keeps its meaning and default: the jobs that run at
-  once, the worker count. Migration: none for most hosts. What changes: (1) a `High` meta job now
-  runs before a `Normal` upload; (2) a host `JobSystem` gets at most `maxIoJobs` kiln jobs at a time,
+  once, the worker count. Migration: none for most hosts. What changes: (1) the workers take meta
+  jobs before uploads of the same priority (uploads went first), so every asset has its metadata
+  early, and a `High` meta job runs before a `Normal` upload; (2) a host `JobSystem` gets at most `maxIoJobs` kiln jobs at a time,
   and each runs until no load job is left, so it is longer than one stage; (3)
   `ContextStats::ioJobsInFlight` counts the prepared jobs too and can exceed `maxIoJobs`.
 

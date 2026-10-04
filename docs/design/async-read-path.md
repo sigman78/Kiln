@@ -519,9 +519,28 @@ is the number of jobs that run at once, by default the worker count.
   and is `Ready` in half the time of the old rule.
 - The workers are 62% busy with 7 workers and 99% with 2. What is left of the wall time on 7
   workers is the pump between the meta job and the upload job, and the largest assets.
-- On a cold cache the small assets wait longer for `MetaReady`: uploads go before meta jobs of
-  the same priority, and the cold meta reads take longer than one pump.
+- On a cold cache the small assets wait longer for `MetaReady`: in these runs uploads went
+  before meta jobs of the same priority, and the cold meta reads take longer than one pump.
 - The array case does not change: one job, 117 ms.
+
+The table above has uploads before meta jobs of the same priority, as the old rule had. The order
+is now meta jobs first (owner, 2026-10-04). All assets, same runs:
+
+| Run | Order | Wall | `MetaReady` p50 | `Ready` p50 / p95 |
+|---|---|---|---|---|
+| Warm, 7 workers | uploads first | 0.91 s | 17 ms | 331 / 489 ms |
+| | meta first | 0.92 s | 17 ms | 334 / 483 ms |
+| Cold, 7 workers | uploads first | 1.12 to 1.18 s | 234 to 317 ms | 384 to 400 / 600 to 617 ms |
+| | meta first | 0.97 to 1.02 s | 34 ms | 450 to 467 / 633 to 650 ms |
+| Warm, 2 workers | uploads first | 1.47 s | 17 ms (p95 1350 ms) | 1084 / 1400 ms |
+| | meta first | 1.48 s | 17 ms (p95 33 ms) | 1084 / 1383 ms |
+| Cold, 2 workers | uploads first | 1.87 s | 1000 ms | 1017 / 1767 to 1783 ms |
+| | meta first | 1.88 s | 67 ms | 1367 / 1767 ms |
+
+Every asset has its metadata within a few pumps, and the cold load on 7 workers is 13% faster.
+The median `Ready` on a cold cache is 15% later (35% with 2 workers); p95 and the last asset do
+not move. A late `High` request is as fast as before. A host that needs some assets `Ready` first
+requests them `High`.
 
 Consequence for this note: the benchmark gives no reason for Part 2 on this machine. Part 1 stays
 justified by v0.8 (range reads and `State::Partial` need a persistent attempt), not by throughput.

@@ -80,9 +80,10 @@ job that ends starts the next one without a pump (R26).
 - At most `ContextDesc::maxIoJobs` jobs run at once (0 = worker count; a host `JobSystem` counts as
   4 workers). kiln submits that many `run_jobs` calls to the job system at most; each call runs
   prepared jobs until none is left.
-- The workers take a `High` upload first, then a `High` meta job, then `Normal` uploads, then
-  `Normal` meta jobs. A `High` request made later passes every prepared `Normal` job; it waits
-  only for the jobs that run.
+- The workers take `High` meta jobs first, then `High` uploads, then `Normal` meta jobs, then
+  `Normal` uploads. A `High` request made later passes every prepared `Normal` job; it waits only
+  for the jobs that run. Meta jobs go first (owner, 2026-10-04) so that every asset has its
+  metadata within a few pumps; a host that needs some assets `Ready` first requests them `High`.
 - A slot that becomes `High` moves its prepared job. A slot released before a worker took its job
   takes the job back: no job runs for it.
 - The ready lists and each slot's links in them are the one part of the registry the workers
