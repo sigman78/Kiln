@@ -5,6 +5,7 @@
 #include "cli.h"
 #include "example_app.h"
 #include "nga_adapter.h"
+#include "nga_probe.h"
 #include "no_crash_dialogs.h"
 
 #include <kiln/assets.h>
@@ -195,8 +196,10 @@ int main(int argc, char** argv) {
     if (!init.device) {
         KILN_ERROR("nga",
                    "no NoGraphicsAPI device (error %d): it needs Vulkan 1.4 with VK_EXT_descriptor_heap, "
-                   "VK_KHR_device_address_commands and VK_EXT_mesh_shader (RTX 30+, RDNA 3+)",
+                   "VK_KHR_device_address_commands, VK_KHR_shader_untyped_pointers and VK_EXT_mesh_shader "
+                   "(RTX 30+, RDNA 3+, and a driver that has them)",
                    int(init.error));
+        log_device_support(window != nullptr);
         glfwTerminate(); // destroys the window; nothing when GLFW never started
         return 2;
     }
