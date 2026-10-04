@@ -22,7 +22,8 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
 ### Fixed
 - **Opening a `.mesh` with many LODs was quadratic.** The check that the blobs cover each LOD's
   streams walked the whole blob table per range; a model with 10,000 parts took 0.95 s to open
-  (runtime meta job, `kiln-info`, the cook's own check), now under 10 ms. The check is the same
+  (runtime meta job, `kiln-info`, the cook's own check). Now the meta jobs of all 891 assets of the
+  benchmark corpus take 0.06 s together. The check is the same
   (open-questions R28).
 
 ### Added
