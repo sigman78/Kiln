@@ -100,6 +100,8 @@ Not goals for v1:
 - One settings desc that `cook_cli_main` and the cook provider share, so a project's `kiln-cook`
   matches its provider (open-questions R19 b, c).
 - Asset metadata in the manifest (size, format, counts, bounds), readable before a load *(discuss)*.
+- A provider overlay mode: use the cooked entry when a source is absent, so a build server's store
+  can go to artists with only the sources in work (open-questions R23).
 - Pack files, and `create()` with a manifest path (open point 3 of `design/store-manifest.md`).
 - Store manifest phase C: a memory-mapped manifest, several writers (set aside 2026-09-30).
 - EXR sources; a bgfx adapter example.
