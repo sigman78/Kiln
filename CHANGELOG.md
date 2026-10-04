@@ -19,6 +19,12 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
   and each runs until no load job is left, so it is longer than one stage; (3)
   `ContextStats::ioJobsInFlight` counts the prepared jobs too and can exceed `maxIoJobs`.
 
+### Fixed
+- **Opening a `.mesh` with many LODs was quadratic.** The check that the blobs cover each LOD's
+  streams walked the whole blob table per range; a model with 10,000 parts took 0.95 s to open
+  (runtime meta job, `kiln-info`, the cook's own check), now under 10 ms. The check is the same
+  (open-questions R28).
+
 ### Added
 - **Load benchmark** `kiln_bench_load` (`tests/bench_load.cpp`, run by hand): loads a cooked store
   through the null adapter and reports time and pumps to `MetaReady` and `Ready` per size class, and

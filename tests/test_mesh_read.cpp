@@ -526,6 +526,24 @@ KILN_TEST(Mesh, HandBuiltCorruptionsDetected) {
         expect_open_fails(b, Code::Unsupported, kDiagBlobUnsupported, "unknown codec");
     }
     {
+        // A blob shorter than the stream it holds: no blob covers the stream's last element.
+        Vec<u8> b = good.clone();
+        patch_record<PayloadBlob>(b, kSecBlobs, 0, [](PayloadBlob& p) {
+            p.encodedSize -= p.elementSize;
+            p.decodedSize -= p.elementSize;
+        });
+        expect_open_fails(b, Code::Corrupt, kDiagLodRange, "stream not covered by blobs");
+    }
+    {
+        // The same for a blob that is not the first of the table.
+        Vec<u8> b = good.clone();
+        patch_record<PayloadBlob>(b, kSecBlobs, 1, [](PayloadBlob& p) {
+            p.encodedSize -= p.elementSize;
+            p.decodedSize -= p.elementSize;
+        });
+        expect_open_fails(b, Code::Corrupt, kDiagLodRange, "second stream not covered by blobs");
+    }
+    {
         Vec<u8> b = good.clone();
         patch_record<PayloadBlob>(b, kSecBlobs, 0, [](PayloadBlob& p) { p.filter = u8(Filter::MeshoptOct); });
         expect_open_fails(b, Code::ValidationFailed, kDiagBlobEncoding, "codec None + MeshoptOct");

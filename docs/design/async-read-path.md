@@ -565,8 +565,17 @@ textures), 60 Hz, 7 workers unless noted:
   pump thread. A real version takes the plan from the manifest and allocates nothing.
 - Run to run, the wall time varies by about 10% on this machine. The medians are steadier.
 
-The whole load is bounded by one mesh in every run (R28): its meta job takes 0.95 s. Compare p50
-and p95, not the wall time, until that is fixed.
+In every run above the whole load is bounded by one mesh with 10,000 LODs, whose meta job took
+0.95 s in a quadratic check (R28). That is fixed. The baseline after the fix, two passes:
+
+| Run | Wall | `Ready` p50 / p95 | Workers busy |
+|---|---|---|---|
+| Warm, 7 workers | 0.52 s (was 0.92 s) | 317 / 483 ms | 95% |
+| Cold, 7 workers | 0.63 s (was 1.0 s) | 400 / 584 ms | 97% |
+| Cold, 2 workers | 1.48 s (was 1.9 s) | 984 / 1400 ms | 99% |
+
+The workers are now the limit with 7 workers too: the load is bound by decode work, not by the
+pump or the reads. The p50 and p95 of the earlier tables still hold; their wall times do not.
 
 `pump()` itself is cheap in the two-pass loader: 0.02 to 0.04 ms on average and 0.5 ms at most,
 with 891 requests made at once.

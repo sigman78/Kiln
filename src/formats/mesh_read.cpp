@@ -123,12 +123,39 @@ Status bind_records(Ctx& ctx, Span<u8 const> bytes, SectionEntry const* sec, cha
 /// STRS ends with a NUL, so any in-range offset is a valid C string.
 bool str_ok(Span<u8 const> strs, u32 off) { return off == kInvalid || off < strs.size; }
 
-/// Sum of the intersection of [a, a+n) with every blob's decoded range.
-u64 covered_bytes(Records<PayloadBlob> const& blobs, u64 a, u64 n) {
-    u64 b = a + n, sum = 0;
+/// True if each blob's decoded range starts at or after the end of the one before it, as writers
+/// lay them out.
+bool decoded_ascending(Records<PayloadBlob> const& blobs) {
+    u64 prevEnd = 0;
     for (PayloadBlob const& pb : blobs) {
-        u64 s = pb.decodedOffset, e = s + pb.decodedSize;
-        u64 lo = s > a ? s : a, hi = e < b ? e : b;
+        if (pb.decodedOffset < prevEnd) return false;
+        prevEnd = u64(pb.decodedOffset) + pb.decodedSize;
+    }
+    return true;
+}
+
+/// Sum of the intersection of [a, a+n) with every blob's decoded range. With `ascending`
+/// (decoded_ascending()) it searches for the first blob that ends after `a` and stops at the first
+/// that starts at or after the end: a model with many LODs has as many blobs, and every LOD asks.
+u64 covered_bytes(Records<PayloadBlob> const& blobs, bool ascending, u64 a, u64 n) {
+    u64 const b = a + n;
+    u64 sum     = 0;
+    u32 first   = 0;
+    if (ascending) {
+        u32 hi = blobs.size();
+        while (first < hi) {
+            u32 const mid = first + (hi - first) / 2;
+            if (u64(blobs[mid].decodedOffset) + blobs[mid].decodedSize <= a)
+                first = mid + 1;
+            else
+                hi = mid;
+        }
+    }
+    for (u32 i = first; i < blobs.size(); ++i) {
+        PayloadBlob const& pb = blobs[i];
+        u64 const s = pb.decodedOffset, e = s + pb.decodedSize;
+        if (ascending && s >= b) break;
+        u64 const lo = s > a ? s : a, hi = e < b ? e : b;
         if (hi > lo) sum += hi - lo;
     }
     return sum;
@@ -272,7 +299,8 @@ Status validate_full(Ctx& ctx, MeshView const& v) {
             KILN_MESH_FAIL(ctx, Corrupt, kDiagIndexRange, "part %u: lodFirst %u out of range", i, p.lodFirst);
     }
 
-    auto const& lods = v.lods();
+    auto const& lods     = v.lods();
+    bool const ascending = decoded_ascending(v.blobs());
     for (u32 i = 0; i < lods.size(); ++i) {
         MeshLod const& l = lods[i];
         if (l.layout >= v.layouts().size())
@@ -289,7 +317,7 @@ Status validate_full(Ctx& ctx, MeshView const& v) {
                 if (u64(l.streamOffset[s]) + bytes > dec)
                     KILN_MESH_FAIL(ctx, Corrupt, kDiagLodRange, "lod %u: stream %u outside decoded payload",
                                    i, s);
-                if (covered_bytes(v.blobs(), l.streamOffset[s], bytes) != bytes)
+                if (covered_bytes(v.blobs(), ascending, l.streamOffset[s], bytes) != bytes)
                     KILN_MESH_FAIL(ctx, Corrupt, kDiagLodRange,
                                    "lod %u: stream %u not fully covered by blobs", i, s);
             } else if (l.streamOffset[s] != kInvalid) {
@@ -306,7 +334,7 @@ Status validate_full(Ctx& ctx, MeshView const& v) {
         u64 ibytes = u64(l.indexCount) * isz;
         if (u64(l.indexOffset) + ibytes > dec)
             KILN_MESH_FAIL(ctx, Corrupt, kDiagLodRange, "lod %u: index range outside decoded payload", i);
-        if (ibytes && covered_bytes(v.blobs(), l.indexOffset, ibytes) != ibytes)
+        if (ibytes && covered_bytes(v.blobs(), ascending, l.indexOffset, ibytes) != ibytes)
             KILN_MESH_FAIL(ctx, Corrupt, kDiagLodRange, "lod %u: index range not fully covered by blobs", i);
         if (u64(l.submeshFirst) + l.submeshCount > v.submeshes().size())
             KILN_MESH_FAIL(ctx, Corrupt, kDiagIndexRange, "lod %u: submeshes [%u, +%u) out of range", i,
