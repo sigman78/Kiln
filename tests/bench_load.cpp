@@ -43,6 +43,7 @@ enum Name : u32 {
     kMeta,
     kWaitUpload,
     kUpload,
+    kUploadRead,
     kOpen,
     kRead,
     kDecode,
@@ -53,8 +54,9 @@ enum Name : u32 {
     kNameCount
 };
 constexpr char const* kNames[kNameCount] = {
-    "kiln.wait.meta", "kiln.wait.pool", "kiln.meta", "kiln.wait.upload", "kiln.upload", "kiln.open",
-    "kiln.read",      "kiln.decode",    "kiln.copy", "kiln.gpu",         "kiln.load",   "kiln.pump"};
+    "kiln.wait.meta",   "kiln.wait.pool", "kiln.meta", "kiln.wait.upload", "kiln.upload",
+    "kiln.upload.read", "kiln.open",      "kiln.read", "kiln.decode",      "kiln.copy",
+    "kiln.gpu",         "kiln.load",      "kiln.pump"};
 
 u32 name_index(char const* name) {
     for (u32 i = 0; i < kNameCount; ++i)
@@ -133,6 +135,7 @@ struct Options {
     u32 repeat          = 3;
     u32 hz              = 60;
     u32 threads         = 0;
+    u32 readers         = ContextDesc{}.readerThreads;
     u32 ioJobs          = 0;
     u32 highEvery       = 0;
     u32 lateHigh        = 0;
@@ -247,7 +250,7 @@ struct Run {
     bool valid      = false;
     double wallMs   = 0;
     u64 uploadBytes = 0;
-    u32 failed = 0, pumps = 0, workers = 0, eventsDropped = 0;
+    u32 failed = 0, pumps = 0, workers = 0, readers = 0, eventsDropped = 0;
     u64 ns[kNameCount]    = {};
     u64 count[kNameCount] = {};
     u32 readDepthMax = 0, uploads = 0, directUploads = 0;
@@ -275,6 +278,7 @@ bool run_once(Options const& o, Span<Asset const> assets, Span<StrView const> ar
     cd.maxAssets = u32(requests) + 64;
     cd.maxEvents = u32(requests) * 2 + 64;
     cd.workerThreads         = o.threads;
+    cd.readerThreads         = o.readers;
     cd.maxIoJobs             = o.ioJobs;
     Result<Context*> created = create(cd);
     if (created.failed()) {
@@ -288,6 +292,7 @@ bool run_once(Options const& o, Span<Asset const> assets, Span<StrView const> ar
     out.valid = true;
     out.t.resize(requests);
     out.workers = thread_pool_thread_count(*jobs(ctx));
+    out.readers = o.readers;
     Vec<u64> handles(default_allocator(), Tag::Test);
     handles.resize(requests, u64(0));
     Vec<u32> bySlot(default_allocator(), Tag::Test); // registry slot -> request
@@ -444,10 +449,16 @@ void print_stages(Run const& r) {
     if (r.count[kPump])
         std::printf("\npump(): %.3f ms on average, %.3f ms at most (the host pays it each frame)\n",
                     ms(r.ns[kPump]) / double(r.count[kPump]), ms(r.pumpMaxNs));
-    double const jobMs = ms(r.ns[kMeta] + r.ns[kUpload]);
+    double const jobMs = ms(r.ns[kMeta] + r.ns[kUpload] + r.ns[kUploadRead]);
     if (jobMs <= 0 || r.wallMs <= 0 || r.workers == 0) return;
+    // "kiln.upload.read" runs on readers only. The workers take read steps too, so their share also
+    // holds reads, and the meta jobs run on both.
     std::printf("\nworkers busy: %.0f%% of %u workers over the run\n",
-                100.0 * jobMs / (r.wallMs * double(r.workers)), r.workers);
+                100.0 * ms(r.ns[kUpload]) / (r.wallMs * double(r.workers)), r.workers);
+    if (r.readers)
+        std::printf("readers busy with uploads' reads: %.0f%% of %u readers; meta jobs, on either: %.1f ms\n",
+                    100.0 * ms(r.ns[kUploadRead]) / (r.wallMs * double(r.readers)), r.readers,
+                    ms(r.ns[kMeta]));
     std::printf("job time: %.0f%% in reads, %.0f%% in opens, %.0f%% in decodes, %.0f%% in copies\n",
                 100.0 * ms(r.ns[kRead]) / jobMs, 100.0 * ms(r.ns[kOpen]) / jobMs,
                 100.0 * ms(r.ns[kDecode]) / jobMs, 100.0 * ms(r.ns[kCopy]) / jobMs);
@@ -500,23 +511,25 @@ bool run_scenario(Options const& o, Span<Asset const> assets, Span<StrView const
 }
 
 int usage() {
-    std::fprintf(stderr,
-                 "usage: kiln_bench_load --store DIR [options]\n"
-                 "  --profile NAME   the target profile to load (default compat)\n"
-                 "  --repeat N       runs, each with a new context (default 3); the fastest is detailed\n"
-                 "  --hz N           pumps per second, 1 to 1000 (default 60)\n"
-                 "  --threads N      worker threads (default 0: automatic)\n"
-                 "  --io-jobs N      ContextDesc::maxIoJobs (default 0: the worker count)\n"
-                 "  --upload-mib N   PumpOptions::uploadBytes in MiB (default 64)\n"
-                 "  --pitch N        the adapter's row pitch alignment (default 1: no row repacking)\n"
-                 "  --high-every N   every N-th request has high priority (default 0: none)\n"
-                 "  --late-high N    hold N requests back and make them with high priority once a quarter\n"
-                 "                   of the others have settled; their times count from their request\n"
-                 "  --array N        also load one texture array of N layers taken from the store\n"
-                 "  --no-probe       do not read texture headers first: request every texture as 2D\n"
-                 "                   (cubes and arrays then fail). For cold-cache runs.\n"
-                 "  --cold           drop the store's cached file pages before each run\n"
-                 "  --timeout N      seconds before a run is given up (default 120)\n");
+    std::fprintf(
+        stderr, "usage: kiln_bench_load --store DIR [options]\n"
+                "  --profile NAME   the target profile to load (default compat)\n"
+                "  --repeat N       runs, each with a new context (default 3); the fastest is detailed\n"
+                "  --hz N           pumps per second, 1 to 1000 (default 60)\n"
+                "  --threads N      worker threads (default 0: automatic)\n"
+                "  --readers N      ContextDesc::readerThreads: threads for the steps that wait for storage\n"
+                "                   (default: the library's; 0: only the workers read)\n"
+                "  --io-jobs N      ContextDesc::maxIoJobs (default 0: the worker count)\n"
+                "  --upload-mib N   PumpOptions::uploadBytes in MiB (default 64)\n"
+                "  --pitch N        the adapter's row pitch alignment (default 1: no row repacking)\n"
+                "  --high-every N   every N-th request has high priority (default 0: none)\n"
+                "  --late-high N    hold N requests back and make them with high priority once a quarter\n"
+                "                   of the others have settled; their times count from their request\n"
+                "  --array N        also load one texture array of N layers taken from the store\n"
+                "  --no-probe       do not read texture headers first: request every texture as 2D\n"
+                "                   (cubes and arrays then fail). For cold-cache runs.\n"
+                "  --cold           drop the store's cached file pages before each run\n"
+                "  --timeout N      seconds before a run is given up (default 120)\n");
     return 1;
 }
 
@@ -548,6 +561,8 @@ int main(int argc, char** argv) {
             number(o.hz);
         } else if (std::strcmp(a, "--threads") == 0) {
             number(o.threads);
+        } else if (std::strcmp(a, "--readers") == 0) {
+            number(o.readers);
         } else if (std::strcmp(a, "--io-jobs") == 0) {
             number(o.ioJobs);
         } else if (std::strcmp(a, "--upload-mib") == 0) {

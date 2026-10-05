@@ -46,7 +46,9 @@ cost shows in the same numbers.
 
 - Passed in `ContextDesc::jobs`. Null means the built-in pool (`create_thread_pool`), sized by
   `ContextDesc::workerThreads`; 0 means `hardware_concurrency - 1`, clamped to [1, 16]. Its queue
-  holds `queueCapacity` jobs (default 4096); `submit` blocks when it is full.
+  holds `queueCapacity` jobs (default 4096); `submit` blocks when it is full. Called from a job of the
+  same pool it does not block: the calling worker runs queued jobs until there is room, so a pool
+  whose jobs submit to it cannot stop on a full queue.
 - kiln never assumes jobs run in order or on a specific thread.
 - kiln tracks its own in-flight job count. `destroy()` waits for it to reach 0 (1 ms sleeps); it
   does not call `wait_idle`.
@@ -109,9 +111,17 @@ job that ends starts the next one without a pump (R26).
   buffer for decoded bytes, and the Zstd context. Fresh memory costs a page fault per page (R29).
   A buffer above 32 MiB is freed after its job, so a worker holds at most 64 MiB between jobs, and
   nothing once no job is left.
-- An upload job runs three steps per input: plan the reads, read them, decode into the target. The
-  read list and the buffer for bytes as read belong to the load attempt while the job runs; the
-  worker lends their storage (`async-read-path.md` §2).
+- A stage is a sequence of steps (meta: prepare, metadata; upload: read, decode), and the load
+  attempt holds the state between them: the read list and the bytes as read, in storage from a
+  pool in the context (`async-read-path.md` §2).
+- With `ContextDesc::readerThreads` (default 4; or a host's `readJobs`) the steps that read a
+  file belong to a read lane, at most `maxReadJobs` at once. The workers take them too, so the
+  readers add to the threads that read. Priority goes before the lane: a worker takes a `High` step
+  of the read lane before a `Normal` step of its own, and within one of the four lists above its
+  own steps first. A read job hands its decode to the
+  workers itself, so `JobSystem::submit` is called from job threads too. A host's `submit` must
+  then return without waiting for a job to end: a queue that blocks its own job threads when it is
+  full can stop the load.
 
 - **Meta**: open the source (store file, registered bytes, or cook-on-miss), read and validate the
   metadata (`.mesh` CPU region or KTX2 prefix), compute the texture upload layout, close the source.

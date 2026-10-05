@@ -441,7 +441,9 @@ void unload(Context* ctx, Slot& s) {
         free_slot(ctx, s);
     } else if (!s.job_in_flight()) {
         free_slot(ctx, s);
-    } // else a zombie: its completion frees it
+    } else { // a zombie: its completion frees it
+        s.in.abandoned.store(true, std::memory_order_release);
+    }
 }
 
 void release_impl(Context* ctx, u64 bits, AssetKind kind) {

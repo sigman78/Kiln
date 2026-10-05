@@ -98,6 +98,8 @@ void set_worker_thread_name(u32) {}
 void apply_worker_priority(ThreadPriority) {}
 #endif
 
+thread_local Pool const* tlsPool = nullptr; ///< the pool whose worker this thread is
+
 u32 resolve_thread_count(u32 requested) {
     if (requested != 0) return requested;
     unsigned hwc = std::thread::hardware_concurrency();
@@ -106,6 +108,7 @@ u32 resolve_thread_count(u32 requested) {
 }
 
 void worker_main(Pool* p, u32 index) {
+    tlsPool = p;
     set_worker_thread_name(index);
     apply_worker_priority(p->priority);
     for (;;) {
@@ -134,6 +137,17 @@ void pool_submit(void* user, void (*fn)(void* arg), void* arg) {
     Pool* p = static_cast<Pool*>(user);
     std::unique_lock<std::mutex> lock(p->mutex);
     KILN_VERIFY(!p->stopping && "submit() after destroy_thread_pool()");
+    // A worker that waits for room takes a thread from the queue it waits for; with every worker
+    // here, no job ends. So a worker runs queued jobs until there is room.
+    while (tlsPool == p && p->count == p->capacity) {
+        Job const job = p->ring[p->head];
+        p->head       = (p->head + 1) % p->capacity;
+        --p->count;
+        lock.unlock();
+        job.fn(job.arg);
+        lock.lock();
+        --p->inFlight; // not 0: the job that called submit() runs
+    }
     p->notFull.wait(lock, [p] { return p->count < p->capacity || p->stopping; });
     KILN_VERIFY(!p->stopping && "submit() after destroy_thread_pool()");
 

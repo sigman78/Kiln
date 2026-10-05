@@ -221,16 +221,23 @@ void submit_stage(Context* ctx, Slot& s, Stage stage) {
         }
         s.in.manifestPresent = ctx->manifestPresent;
     }
+    s.in.abandoned.store(false, std::memory_order_relaxed);
+    s.out.step       = stage == Stage::Upload                                    ? JobStep::Read
+                       : s.in.provider.prepare && s.source != SourceKind::Memory ? JobStep::Prepare
+                                                                                 : JobStep::Metadata;
+    s.out.inputFirst = s.out.inputEnd = 0;
+    s.out.status                      = kOk;
+    s.out.diag                        = 0;
+    s.out.capture.reset();
     if (ctx->prof) {
         s.submitNs = profile_now_ns();
         profile_interval(ctx->prof, stage == Stage::Meta ? "kiln.wait.meta" : "kiln.wait.upload", path_of(s),
                          s.queuedNs, s.submitNs);
     }
     ++ctx->jobsOutstanding;
-    if (ready_push(ctx, s, stage)) { // after the job's inputs are written: a worker may take it now
-        ctx->jobsInFlight.fetch_add(1, std::memory_order_acq_rel);
-        ctx->jobs.submit(ctx->jobs.user, &run_jobs, ctx);
-    }
+    // After the job's inputs are written: a job may take it now.
+    Lane const runner = ready_push(ctx, s, step_lane(ctx, s));
+    if (runner != Lane::Count) submit_runner(ctx, runner);
 }
 
 void poll_placeholders(Context* ctx) {

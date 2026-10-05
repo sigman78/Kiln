@@ -1696,8 +1696,9 @@ KILN_TEST(Runtime, PreparedJobsRunByPriority) {
     JobSystem const js = held.system();
     Rt rt;
     ContextDesc cd;
-    cd.jobs      = &js;
-    cd.maxIoJobs = 1;
+    cd.jobs          = &js;
+    cd.maxIoJobs     = 1;
+    cd.readerThreads = 0; // every step on the held job system
     if (!rt.init({}, cd)) return;
     TextureHandle const a = request_texture(rt.ctx, "ktx2/bc1_high");
     TextureHandle const b = request_texture(rt.ctx, "ktx2/bc5_normal");
@@ -1734,8 +1735,9 @@ KILN_TEST(Runtime, ReleaseDropsPreparedJob) {
     JobSystem const js = held.system();
     Rt rt;
     ContextDesc cd;
-    cd.jobs      = &js;
-    cd.maxIoJobs = 1;
+    cd.jobs          = &js;
+    cd.maxIoJobs     = 1;
+    cd.readerThreads = 0; // every step on the held job system
     if (!rt.init({}, cd)) return;
     TextureHandle const a = request_texture(rt.ctx, "ktx2/bc1_high");
     TextureHandle const b = request_texture(rt.ctx, "ktx2/bc5_normal");
@@ -1767,7 +1769,8 @@ KILN_TEST(Runtime, ProfilerHooks) {
     {
         Rt rt;
         ContextDesc cd;
-        cd.profiler = log.hooks();
+        cd.profiler      = log.hooks();
+        cd.readerThreads = 0; // one job per stage, so the zones and waits below are exact
         if (!rt.init({}, cd)) return;
         KILN_CHECK(profile_hooks(rt.ctx) != nullptr);
         TextureHandle const t = request_texture(rt.ctx, "ktx2/height16");
@@ -2691,3 +2694,397 @@ KILN_TEST(Runtime, TextureArrayMixedSupercompression) {
 }
 
 #endif // KILN_TEST_HAS_COOK
+
+// ---------------------------------------------------------------------------
+// ContextDesc::readJobs: the steps of a load that wait for storage run on a second job system.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+/// A context whose workers and read jobs are both held, so a test runs each step by hand.
+struct TwoLanes {
+    HeldJobs cpu, rd;
+    JobSystem cpuJobs, readJobs;
+    Rt rt;
+
+    ~TwoLanes() { run_all(); } // destroy() waits for every submitted job
+
+    bool init(ContextDesc cd = {}, NullAdapterDesc nd = {}) {
+        cpuJobs     = cpu.system();
+        readJobs    = rd.system();
+        cd.jobs     = &cpuJobs;
+        cd.readJobs = &readJobs;
+        return rt.init(nd, cd);
+    }
+    void run_all() {
+        while (rd.held() || cpu.held()) {
+            rd.run_all();
+            cpu.run_all();
+        }
+    }
+    /// Runs the held jobs and pumps until `done()`; false after 16 rounds.
+    template <class F> bool drive(F&& done) {
+        for (int i = 0; i < 16; ++i) {
+            run_all();
+            rt.pump_once();
+            if (done()) return true;
+        }
+        return false;
+    }
+    /// Requests `name` and runs its load up to the decode step: the read is done, the target is
+    /// begun, and the decode waits on the workers.
+    TextureHandle read_but_not_decoded(char const* name) {
+        TextureHandle const t = request_texture(rt.ctx, name);
+        rt.pump_once();
+        rd.run_all(); // the metadata step
+        rt.pump_once();
+        rd.run_all(); // the upload's read step
+        return t;
+    }
+};
+
+/// The compat backend, with reads that fail while `fail` is set.
+struct FailingIo {
+    std::atomic<bool> fail{false};
+    IoBackend backend() {
+        return {.open = &open, .size = &size, .read_range = &read_range, .close = &close, .user = this};
+    }
+    static Status open(void*, StrView path, IoFile* out) {
+        return compat_io_backend()->open(compat_io_backend()->user, path, out);
+    }
+    static Status size(void*, IoFile f, u64* out) {
+        return compat_io_backend()->size(compat_io_backend()->user, f, out);
+    }
+    static Status read_range(void* user, IoFile f, u64 offset, u64 n, void* dst) {
+        if (static_cast<FailingIo*>(user)->fail.load()) return make_status(Code::IoError);
+        return compat_io_backend()->read_range(compat_io_backend()->user, f, offset, n, dst);
+    }
+    static void close(void*, IoFile f) { compat_io_backend()->close(compat_io_backend()->user, f); }
+};
+
+} // namespace
+
+// The metadata step and the payload read run on readJobs; the decode goes to the workers when the
+// read ends, with no pump between them.
+KILN_TEST(Runtime, ReadJobsRunTheStorageSteps) {
+    Vec<u8> golden(default_allocator(), Tag::Test);
+    if (!read_golden("ktx2/color_zstd", ".ktx2", golden)) return;
+    TwoLanes l;
+    NullAdapterDesc nd;
+    nd.rowPitchAlign = 256;
+    nd.offsetAlign   = 64;
+    if (!l.init({}, nd)) return;
+    NullAdapterStats const s0 = null_adapter_stats(l.rt.na);
+    TextureHandle const t     = request_texture(l.rt.ctx, "ktx2/color_zstd");
+    l.rt.pump_once();
+    KILN_CHECK(l.rd.held() == 1 && l.cpu.held() == 0); // the metadata step
+    l.cpu.run_all();
+    l.rt.pump_once();
+    KILN_CHECK(state(l.rt.ctx, t) == State::Pending);
+    l.rd.run_all();
+    l.rt.pump_once();
+    KILN_CHECK(l.rt.find_event(EventKind::MetaReady, t.bits()) >= 0);
+    KILN_CHECK(l.rd.held() == 1 && l.cpu.held() == 0); // the upload's read step
+    l.rd.run_all();
+    KILN_CHECK(l.rd.held() == 0 && l.cpu.held() == 1); // the decode step, handed over without a pump
+    NullAdapterStats const s1 = null_adapter_stats(l.rt.na);
+    KILN_CHECK_EQ(s1.beginUploads, s0.beginUploads + 1);
+    KILN_CHECK_EQ(s1.commits, s0.commits);
+    l.rt.pump_once();
+    KILN_CHECK(!is_ready(l.rt.ctx, t));
+    l.cpu.run_all();
+    KILN_CHECK_EQ(null_adapter_stats(l.rt.na).commits, s0.commits + 1);
+    KILN_REQUIRE(l.drive([&] { return is_ready(l.rt.ctx, t); }));
+    check_uploaded(l.rt, t, golden.span(), 256, "read jobs");
+    KILN_CHECK_EQ(l.rt.diags.count, 0u);
+    release(l.rt.ctx, t);
+}
+
+// A release between the read and the decode ends the stage at its next step: the decode does not
+// run, the upload is discarded, and the slot is free once the job's completion is in.
+KILN_TEST(Runtime, ReleaseBetweenReadAndDecode) {
+    TwoLanes l;
+    if (!l.init()) return;
+    NullAdapterStats const s0 = null_adapter_stats(l.rt.na);
+    TextureHandle const t     = l.read_but_not_decoded("ktx2/color_zstd");
+    KILN_REQUIRE(l.cpu.held() == 1);
+    KILN_CHECK_EQ(null_adapter_stats(l.rt.na).beginUploads, s0.beginUploads + 1);
+    release(l.rt.ctx, t);
+    KILN_CHECK(state(l.rt.ctx, t) == State::Unloaded);
+    l.cpu.run_all();
+    NullAdapterStats const s1 = null_adapter_stats(l.rt.na);
+    KILN_CHECK_EQ(s1.discards, s0.discards + 1);
+    KILN_CHECK_EQ(s1.commits, s0.commits);
+    l.rt.pump_once();
+    KILN_CHECK_EQ(stats(l.rt.ctx).assets, 0u);
+    KILN_CHECK_EQ(stats(l.rt.ctx).ioJobsInFlight, 0u);
+    KILN_CHECK_EQ(null_adapter_stats(l.rt.na).liveObjects, s0.liveObjects);
+    // The name loads again.
+    TextureHandle const t2 = request_texture(l.rt.ctx, "ktx2/color_zstd");
+    KILN_REQUIRE(l.drive([&] { return is_ready(l.rt.ctx, t2); }));
+    KILN_CHECK_EQ(l.rt.diags.count, 0u);
+    release(l.rt.ctx, t2);
+}
+
+// A read that fails ends the stage on the read job: no decode is handed over, the begun upload is
+// discarded, and the asset recovers on reload.
+KILN_TEST(Runtime, ReadFailureEndsTheStage) {
+    FailingIo io;
+    IoBackend const backend = io.backend();
+    TwoLanes l;
+    ContextDesc cd;
+    cd.io = &backend;
+    if (!l.init(cd)) return;
+    NullAdapterStats const s0 = null_adapter_stats(l.rt.na);
+    TextureHandle const t     = request_texture(l.rt.ctx, "ktx2/color_zstd");
+    l.rt.pump_once();
+    l.rd.run_all();
+    l.rt.pump_once(); // MetaReady; the upload's read step is prepared
+    io.fail.store(true);
+    l.rd.run_all();
+    KILN_CHECK(l.cpu.held() == 0);
+    l.rt.pump_once();
+    KILN_CHECK(state(l.rt.ctx, t) == State::Failed);
+    KILN_CHECK(l.rt.diags.has(kDiagAssetLoadFailed));
+    NullAdapterStats const s1 = null_adapter_stats(l.rt.na);
+    KILN_CHECK_EQ(s1.beginUploads, s0.beginUploads + 1);
+    KILN_CHECK_EQ(s1.discards, s0.discards + 1);
+    KILN_CHECK_EQ(s1.liveObjects, s0.liveObjects);
+    io.fail.store(false);
+    request_reload(l.rt.ctx, t);
+    KILN_REQUIRE(l.drive([&] { return is_ready(l.rt.ctx, t); }));
+    release(l.rt.ctx, t);
+}
+
+// Registered bytes need no storage: every step of their load runs on the workers.
+KILN_TEST(Runtime, MemorySourceStaysOnTheWorkers) {
+    Vec<u8> golden(default_allocator(), Tag::Test);
+    if (!read_golden("ktx2/color_zstd", ".ktx2", golden)) return;
+    TwoLanes l;
+    NullAdapterDesc nd;
+    nd.offsetAlign = 64;
+    if (!l.init({}, nd)) return;
+    TextureHandle const t = register_texture(l.rt.ctx, "gen/memory", golden.span());
+    KILN_REQUIRE(!t.is_null());
+    KILN_REQUIRE(l.drive([&] { return is_ready(l.rt.ctx, t); }));
+    KILN_CHECK_EQ(l.rd.jobs.size(), usize(0));
+    check_uploaded(l.rt, t, golden.span(), 1, "memory source");
+    release(l.rt.ctx, t);
+}
+
+// Reads that wait for their decode are bounded: with one worker and one read job, two upload stages
+// hold a read buffer at most, and the others start when a decode ends.
+KILN_TEST(Runtime, ReadBuffersBoundTheReads) {
+    TwoLanes l;
+    ContextDesc cd;
+    cd.maxIoJobs   = 1;
+    cd.maxReadJobs = 1;
+    if (!l.init(cd)) return;
+    char const* const names[] = {"ktx2/color_zstd", "ktx2/color_srgb", "ktx2/normal", "ktx2/height16"};
+    TextureHandle t[4];
+    for (u32 i = 0; i < 4; ++i)
+        t[i] = request_texture(l.rt.ctx, names[i]);
+    NullAdapterStats const s0 = null_adapter_stats(l.rt.na);
+    l.rt.pump_once();
+    l.rd.run_all(); // four metadata steps
+    l.rt.pump_once();
+    KILN_CHECK_EQ(stats(l.rt.ctx).metaReady, 4u);
+    l.rd.run_all(); // two reads; the others wait for a buffer
+    KILN_CHECK_EQ(null_adapter_stats(l.rt.na).beginUploads, s0.beginUploads + 2);
+    KILN_CHECK(l.rd.held() == 0 && l.cpu.held() == 1);
+    l.cpu.run_all(); // two decodes; the first frees a buffer, so a read job is submitted again
+    KILN_CHECK(l.rd.held() == 1);
+    // The worker went on with the two uploads that waited: it takes read steps when it has no other.
+    KILN_CHECK_EQ(null_adapter_stats(l.rt.na).commits, s0.commits + 4);
+    KILN_REQUIRE(l.drive([&] {
+        return is_ready(l.rt.ctx, t[0]) && is_ready(l.rt.ctx, t[1]) && is_ready(l.rt.ctx, t[2]) &&
+               is_ready(l.rt.ctx, t[3]);
+    }));
+    KILN_CHECK_EQ(l.rt.diags.count, 0u);
+    for (TextureHandle h : t)
+        release(l.rt.ctx, h);
+}
+
+// The read jobs add to the threads that read: a worker with no step of its own takes a read step
+// and runs the stage to its end. Here the read job system never runs a job.
+KILN_TEST(Runtime, WorkersTakeReadSteps) {
+    TwoLanes l;
+    ContextDesc cd;
+    cd.maxReadJobs = 1;
+    if (!l.init(cd)) return;
+    TextureHandle const a = request_texture(l.rt.ctx, "ktx2/color_zstd");
+    TextureHandle const b = request_texture(l.rt.ctx, "ktx2/normal");
+    l.rt.pump_once();
+    KILN_CHECK(l.rd.held() == 1 && l.cpu.held() == 1); // one read job; the second step woke a worker
+    bool ready = false;
+    for (int i = 0; i < 16 && !ready; ++i) {
+        l.cpu.run_all();
+        l.rt.pump_once();
+        ready = is_ready(l.rt.ctx, a) && is_ready(l.rt.ctx, b);
+    }
+    KILN_CHECK(ready);
+    KILN_CHECK_EQ(l.rd.next, 0u); // no read job ran
+    KILN_CHECK_EQ(l.rt.diags.count, 0u);
+    release(l.rt.ctx, a);
+    release(l.rt.ctx, b);
+}
+
+// ContextDesc::readerThreads: kiln's own reader pool. Every golden loads.
+KILN_TEST(Runtime, ReaderThreads) {
+    Rt rt;
+    ContextDesc cd;
+    cd.readerThreads = 3;
+    if (!rt.init({}, cd)) return;
+    MeshHandle m[countof(kGoldenMeshes)];
+    TextureHandle t[countof(kGoldenTextures)];
+    for (usize i = 0; i < countof(kGoldenMeshes); ++i)
+        m[i] = request_mesh(rt.ctx, kGoldenMeshes[i]);
+    for (usize i = 0; i < countof(kGoldenTextures); ++i)
+        t[i] = request_texture(rt.ctx, kGoldenTextures[i]);
+    KILN_CHECK(rt.pump_until([&] {
+        ContextStats const st = stats(rt.ctx);
+        return st.ready + st.failed == st.assets;
+    }));
+    KILN_CHECK_EQ(stats(rt.ctx).failed, 0u);
+    KILN_CHECK_EQ(rt.diags.count, 0u);
+    for (MeshHandle h : m)
+        release(rt.ctx, h);
+    for (TextureHandle h : t)
+        release(rt.ctx, h);
+}
+
+// destroy() with a decode that waits: the stage ends at its next step and discards its upload.
+KILN_TEST(Runtime, DestroyEndsHeldStages) {
+    TwoLanes l;
+    if (!l.init()) return;
+    NullAdapterStats const s0 = null_adapter_stats(l.rt.na);
+    TextureHandle const t     = l.read_but_not_decoded("ktx2/color_zstd");
+    KILN_REQUIRE(!t.is_null() && l.cpu.held() == 1);
+    Context* const ctx = l.rt.ctx;
+    l.rt.ctx           = nullptr;
+    std::atomic<bool> destroyed{false};
+    std::thread th([&] {
+        destroy(ctx); // waits for the held job
+        destroyed.store(true);
+    });
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    KILN_CHECK(!destroyed.load());
+    l.run_all();
+    th.join();
+    NullAdapterStats const s1 = null_adapter_stats(l.rt.na);
+    KILN_CHECK_EQ(s1.discards, s0.discards + 1);
+    KILN_CHECK_EQ(s1.commits, s0.commits);
+    KILN_CHECK_EQ(s1.liveObjects, 0u);
+}
+
+// A texture array through the read jobs: its layers are read as one chunk, then decoded.
+KILN_TEST(Runtime, TextureArrayThroughReadJobs) {
+    ArrayStore store;
+    if (!store.init("arrays_read_jobs")) return;
+    TwoLanes l;
+    NullAdapterDesc nd;
+    nd.rowPitchAlign = 256;
+    ContextDesc cd;
+    cd.storeDir = StrView(store.hand.dir());
+    if (!l.init(cd, nd)) return;
+    TextureHandle const t = request_array(l.rt, "arr/aba", {"tex/a", "tex/b", "tex/a"});
+    KILN_REQUIRE(l.drive([&] { return settled_state(l.rt, t); }));
+    if (!KILN_CHECK_MSG(is_ready(l.rt.ctx, t), "%s", l.rt.diags.last)) return;
+    check_layer_uploaded(l.rt, t, 0, store.plain.span(), "a");
+    check_layer_uploaded(l.rt, t, 1, store.flipped.span(), "b");
+    check_layer_uploaded(l.rt, t, 2, store.plain.span(), "a again");
+    release(l.rt.ctx, t);
+}
+
+// Thread pools on both lanes: every golden loads, with reads and decodes on different threads.
+KILN_TEST(Runtime, ReadJobsOnAThreadPool) {
+    Result<JobSystem> const pool = create_thread_pool({.threads = 2});
+    KILN_REQUIRE(pool.ok());
+    {
+        Rt rt;
+        ContextDesc cd;
+        cd.readJobs    = &*pool;
+        cd.maxReadJobs = 2;
+        NullAdapterDesc nd;
+        nd.offsetAlign = 64;
+        if (rt.init(nd, cd)) {
+            MeshHandle m[countof(kGoldenMeshes)];
+            TextureHandle t[countof(kGoldenTextures)];
+            for (usize i = 0; i < countof(kGoldenMeshes); ++i)
+                m[i] = request_mesh(rt.ctx, kGoldenMeshes[i]);
+            for (usize i = 0; i < countof(kGoldenTextures); ++i)
+                t[i] = request_texture(rt.ctx, kGoldenTextures[i]);
+            KILN_CHECK(rt.pump_until([&] {
+                ContextStats const st = stats(rt.ctx);
+                return st.ready + st.failed == st.assets;
+            }));
+            KILN_CHECK_EQ(stats(rt.ctx).failed, 0u);
+            KILN_CHECK_EQ(rt.diags.count, 0u);
+            Vec<u8> golden(default_allocator(), Tag::Test);
+            if (read_golden("ktx2/color_zstd", ".ktx2", golden) && is_ready(rt.ctx, t[1]))
+                check_uploaded(rt, t[1], golden.span(), 1, "thread pools");
+            for (MeshHandle h : m)
+                release(rt.ctx, h);
+            for (TextureHandle h : t)
+                release(rt.ctx, h);
+        }
+    }
+    destroy_thread_pool(*pool);
+}
+
+// One pool for both lanes, with one thread and room for one job. The reader hands its decode over
+// while the second read job fills the queue: submit() from the pool's thread must not wait.
+KILN_TEST(Runtime, ReadJobsShareASmallPool) {
+    Result<JobSystem> const pool = create_thread_pool({.threads = 1, .queueCapacity = 1});
+    KILN_REQUIRE(pool.ok());
+    {
+        IoBackend slow  = *compat_io_backend();
+        slow.read_range = [](void* user, IoFile f, u64 offset, u64 n, void* dst) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(20)); // the queue fills meanwhile
+            return compat_io_backend()->read_range(user, f, offset, n, dst);
+        };
+        Rt rt;
+        ContextDesc cd;
+        cd.jobs        = &*pool;
+        cd.readJobs    = &*pool;
+        cd.io          = &slow;
+        cd.maxIoJobs   = 1;
+        cd.maxReadJobs = 2;
+        if (rt.init({}, cd)) {
+            TextureHandle const a = request_texture(rt.ctx, "ktx2/color_zstd");
+            TextureHandle const b = request_texture(rt.ctx, "ktx2/normal");
+            rt.pump_once();
+            pool->wait_idle(pool->user); // both meta stages ended, so one pump starts both uploads
+            KILN_CHECK(rt.pump_until([&] { return is_ready(rt.ctx, a) && is_ready(rt.ctx, b); }));
+            KILN_CHECK_EQ(rt.diags.count, 0u);
+            release(rt.ctx, a);
+            release(rt.ctx, b);
+        }
+    }
+    destroy_thread_pool(*pool);
+}
+
+// Priority goes before the lane: with the read jobs busy, a worker takes a High step of the read
+// lane before a Normal step of its own.
+KILN_TEST(Runtime, HighReadStepPassesNormalWorkerStep) {
+    Vec<u8> golden(default_allocator(), Tag::Test);
+    if (!read_golden("ktx2/color_zstd", ".ktx2", golden)) return;
+    TwoLanes l;
+    ContextDesc cd;
+    cd.maxIoJobs   = 1;
+    cd.maxReadJobs = 1;
+    if (!l.init(cd)) return;
+    TextureHandle const n = register_texture(l.rt.ctx, "gen/normal", golden.span());
+    TextureHandle const h = request_texture(l.rt.ctx, "ktx2/normal", {.priority = Priority::High});
+    KILN_REQUIRE(!n.is_null());
+    l.rt.pump_once();
+    KILN_CHECK(l.rd.held() == 1 && l.cpu.held() == 1);
+    l.cpu.run_all(); // the read job does not run
+    l.rt.pump_once();
+    int const en = l.rt.find_event(EventKind::MetaReady, n.bits());
+    int const eh = l.rt.find_event(EventKind::MetaReady, h.bits());
+    KILN_CHECK(eh >= 0 && eh < en);
+    KILN_CHECK(l.drive([&] { return is_ready(l.rt.ctx, n) && is_ready(l.rt.ctx, h); }));
+    release(l.rt.ctx, n);
+    release(l.rt.ctx, h);
+}

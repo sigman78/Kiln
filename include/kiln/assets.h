@@ -85,8 +85,12 @@ struct ContextDesc {
     LogSink log            = {};      ///< fn null = process-wide sink (log.h)
     DiagSink diag          = {};      ///< runtime diagnostics (asset failures, store misses)
     JobSystem const* jobs  = nullptr; ///< nullptr = built-in thread pool
-    IoBackend const* io    = nullptr; ///< nullptr = compat backend
-    Adapter const* adapter = nullptr; ///< required
+    /// A host's job system for the steps of a load that wait for storage (the metadata step and the
+    /// payload reads), in place of kiln's reader threads. Decodes stay on `jobs`.
+    /// nullptr = kiln's reader threads (`readerThreads`).
+    JobSystem const* readJobs = nullptr;
+    IoBackend const* io       = nullptr; ///< nullptr = compat backend
+    Adapter const* adapter    = nullptr; ///< required
 
     /// The store root (read-only for the runtime): `manifest.dir`, which lists the entries of each
     /// target profile, and the artifacts (docs/design/store-manifest.md).
@@ -111,8 +115,13 @@ struct ContextDesc {
     u32 maxEvents     = 1024; ///< events kept between pumps; overflow drops oldest with a warning
     u32 workerThreads = 0;    ///< built-in pool only; 0 = auto
     ThreadPriority workerPriority =
-        ThreadPriority::Normal;      ///< built-in pool only; Low keeps loading below the host's threads
-    u32 maxIoJobs       = 0;         ///< load jobs that run at once; 0 = worker count
+        ThreadPriority::Normal; ///< built-in pool only; Low keeps loading below the host's threads
+    u32 maxIoJobs   = 0;        ///< load jobs that run at once; 0 = worker count
+    u32 maxReadJobs = 0;        ///< jobs that run at once on `readJobs`; 0 = 4, or the reader count
+    /// Threads that kiln starts for the steps that wait for storage, when `readJobs` is null. They
+    /// add to the workers, which read too. They sleep in reads, so their number is chosen for the
+    /// drive, not for the core count. 0 = none: only the load jobs on `jobs` read.
+    u32 readerThreads   = 4;
     u64 ioInFlightBytes = 64u << 20; ///< budget for bytes being read at once
 };
 

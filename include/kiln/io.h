@@ -9,7 +9,8 @@
 namespace kiln {
 
 /// Runs jobs on worker threads. Jobs never touch host state; completion reaches the
-/// host only through pump(). `wait_idle` is optional.
+/// host only through pump(). `wait_idle` is optional. `submit` may be called from any thread,
+/// a running job included, and must then return without waiting for a job to end.
 struct JobSystem {
     void (*submit)(void* user, void (*fn)(void* arg), void* arg) = nullptr;
     void (*wait_idle)(void* user)                                = nullptr;
@@ -21,9 +22,11 @@ struct JobSystem {
 enum class ThreadPriority : u8 { Normal = 0, Low, High };
 
 struct ThreadPoolDesc {
-    Allocator const* alloc  = nullptr;                ///< nullptr = default allocator
-    u32 threads             = 0;                      ///< 0 = hardware_concurrency - 1, clamped to [1, 16]
-    u32 queueCapacity       = 4096;                   ///< max queued jobs; submit blocks when full
+    Allocator const* alloc = nullptr; ///< nullptr = default allocator
+    u32 threads            = 0;       ///< 0 = hardware_concurrency - 1, clamped to [1, 16]
+    /// Max queued jobs. `submit` blocks when the queue is full; called from a job of this pool, it
+    /// runs queued jobs on the calling thread instead.
+    u32 queueCapacity       = 4096;
     ThreadPriority priority = ThreadPriority::Normal; ///< applied on Windows and Linux; ignored elsewhere
 };
 

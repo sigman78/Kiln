@@ -167,6 +167,11 @@ void free_tables(Context* ctx) {
     free_array(a, ctx->freeGroups, ctx->maxGroups, Tag::Registry);
     free_array(a, ctx->comp, ctx->compCap, Tag::Registry);
     free_array(a, ctx->compScratch, ctx->compCap, Tag::Registry);
+    if (ctx->bufs) {
+        for (u32 i = 0; i < ctx->bufCap; ++i)
+            ctx->bufs[i].~ReadBuf();
+        free_array(a, ctx->bufs, ctx->bufCap, Tag::Registry);
+    }
     free_array(a, ctx->events, ctx->maxEvents, Tag::Registry);
     if (ctx->storeDir) free_array(a, ctx->storeDir, ctx->storeDirLen + 1, Tag::Registry);
     if (ctx->profile) free_array(a, ctx->profile, ctx->profileLen + 1, Tag::Registry);
@@ -185,13 +190,10 @@ void free_tables(Context* ctx) {
 
 void teardown(Context* ctx) {
     Adapter const& a = ctx->adapter;
-    // 1. Drop the prepared jobs no worker took, and let the running ones finish (they only touch
-    //    their slot, the ready lists and the completion ring).
-    {
-        std::lock_guard<std::mutex> lock(ctx->readyMutex);
-        for (List& l : ctx->ready)
-            l = {};
-    }
+    // 1. Drop the prepared jobs no worker took, and let the stages that started end at their next
+    //    step (they only touch their slot, the ready lists, the read buffers and the completion ring).
+    ctx->stopping.store(true, std::memory_order_release);
+    ready_drop_unstarted(ctx);
     // Polled, not atomic::wait: a job's notify after its decrement could reach a freed context.
     while (ctx->jobsInFlight.load(std::memory_order_acquire) != 0)
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
@@ -239,6 +241,8 @@ void teardown(Context* ctx) {
     ctx->orphans.clear();
     if (ctx->ownsJobs) destroy_thread_pool(ctx->jobs);
     ctx->ownsJobs = false;
+    if (ctx->ownsReadJobs) destroy_thread_pool(ctx->readJobs);
+    ctx->ownsReadJobs = false;
 }
 
 } // namespace
@@ -398,10 +402,35 @@ Result<Context*> create(ContextDesc const& desc) {
     }
     u32 const workers = ctx->ownsJobs ? thread_pool_thread_count(ctx->jobs) : 4;
     ctx->maxIoJobs    = desc.maxIoJobs ? desc.maxIoJobs : max(workers, 1u);
-    ctx->ioBudget     = desc.ioInFlightBytes ? desc.ioInFlightBytes : (u64(64) << 20);
-    ctx->maxAssets    = desc.maxAssets;
-    ctx->maxGroups    = desc.maxGroups;
-    ctx->maxEvents    = desc.maxEvents;
+    if (desc.readJobs) {
+        ctx->readJobs                    = *desc.readJobs;
+        ctx->readLane                    = true;
+        ctx->maxRunners[u32(Lane::Read)] = desc.maxReadJobs ? desc.maxReadJobs : 4;
+    } else if (desc.readerThreads) {
+        ThreadPoolDesc pd;
+        pd.alloc                     = a;
+        pd.threads                   = desc.readerThreads;
+        pd.priority                  = desc.workerPriority;
+        Result<JobSystem> const pool = create_thread_pool(pd);
+        if (pool.failed()) {
+            if (ctx->ownsJobs) destroy_thread_pool(ctx->jobs);
+            delete_object(a, ctx, Tag::Registry);
+            return diagf(&desc.diag, pool.status(), kDiagPlaceholderFailed, Severity::Error, {}, "create",
+                         "cannot start the reader threads");
+        }
+        ctx->readJobs                    = *pool;
+        ctx->ownsReadJobs                = true;
+        ctx->readLane                    = true;
+        u32 const readers                = thread_pool_thread_count(ctx->readJobs);
+        ctx->maxRunners[u32(Lane::Read)] = desc.maxReadJobs ? desc.maxReadJobs : readers;
+    }
+    ctx->maxRunners[u32(Lane::Cpu)] = ctx->maxIoJobs;
+    for (u32 lane = 0; lane < u32(Lane::Count); ++lane)
+        ctx->laneRef[lane] = {ctx, Lane(lane)};
+    ctx->ioBudget  = desc.ioInFlightBytes ? desc.ioInFlightBytes : (u64(64) << 20);
+    ctx->maxAssets = desc.maxAssets;
+    ctx->maxGroups = desc.maxGroups;
+    ctx->maxEvents = desc.maxEvents;
 
     ctx->storeDirLen    = desc.storeDir.size;
     ctx->storeDir       = copy_str(a, desc.storeDir);
@@ -442,6 +471,11 @@ Result<Context*> create(ContextDesc const& desc) {
         ctx->freeSlots[i] = ctx->maxAssets - 1 - i; // slot 0 is handed out first
     }
     ctx->freeSlotCount = ctx->maxAssets;
+    // A read buffer for each upload stage that may run or wait for its decode.
+    ctx->bufCap = ctx->maxIoJobs + ctx->maxRunners[u32(Lane::Read)];
+    ctx->bufs   = alloc_array<ReadBuf>(a, ctx->bufCap, Tag::Registry);
+    for (u32 i = 0; i < ctx->bufCap; ++i)
+        ::new (static_cast<void*>(ctx->bufs + i)) ReadBuf();
     ctx->meshMap.init(a, Tag::Registry);
     ctx->meshMap.reserve(ctx->maxAssets);
     ctx->texMap.init(a, Tag::Registry);
@@ -476,8 +510,8 @@ Result<Context*> create(ContextDesc const& desc) {
 
     watch_start(ctx, desc.hotReload);
 
-    log_info(ctx, "context created: maxAssets %u, %u worker job slot(s), store '%s'", ctx->maxAssets,
-             ctx->maxIoJobs, ctx->storeDir);
+    log_info(ctx, "context created: maxAssets %u, %u worker job slot(s), %u read job slot(s), store '%s'",
+             ctx->maxAssets, ctx->maxIoJobs, ctx->maxRunners[u32(Lane::Read)], ctx->storeDir);
     return ctx;
 }
 
