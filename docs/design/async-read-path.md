@@ -669,6 +669,12 @@ Part 2 (v0.9, on hold; each step needs the Part 2 gate):
 - Keep the artifact open across the metadata and payload steps, or open it twice (§3.1). Decide
   with the benchmark.
 - The small-asset gate in §3.5 and §9: the acceptable regression is proposed as none.
+- Who opens the file. A reader opens, reads and closes (§5), but `IoRead` (§4) names an open
+  `IoFile`. Either the request names the artifact and the backend opens it, or the contract gains
+  open and close requests. Decide before step 2: a native backend needs its own open lane (§8).
+- Where metadata validation runs. §3.5 puts it on a reader; a native backend has no reader thread,
+  and §8 puts it on a CPU worker, which adds a hop. Either validate on a CPU worker in Part 1 too,
+  or accept the hop in Part 2 and check the small-asset gate again.
 
 Extending CPU dispatch, adding asynchronous file control, or adding GPU-specific IO remains a
 separately justified change.
