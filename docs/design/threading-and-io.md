@@ -1,6 +1,6 @@
 # Threading and IO
 
-Proposed extension: [Asynchronous cooked-asset reads](async-read-path.md) describes explicit
+Extension in work (v0.8): [Asynchronous cooked-asset reads](async-read-path.md) describes explicit
 submission/completion and resumable loading. The blocking backend described here remains the
 current implementation and the compatibility interface for tools and cooking.
 
@@ -109,6 +109,9 @@ job that ends starts the next one without a pump (R26).
   buffer for decoded bytes, and the Zstd context. Fresh memory costs a page fault per page (R29).
   A buffer above 32 MiB is freed after its job, so a worker holds at most 64 MiB between jobs, and
   nothing once no job is left.
+- An upload job runs three steps per input: plan the reads, read them, decode into the target. The
+  read list and the buffer for bytes as read belong to the load attempt while the job runs; the
+  worker lends their storage (`async-read-path.md` §2).
 
 - **Meta**: open the source (store file, registered bytes, or cook-on-miss), read and validate the
   metadata (`.mesh` CPU region or KTX2 prefix), compute the texture upload layout, close the source.
@@ -170,7 +173,7 @@ One upload job per mesh (mesh-format-spec §5.9, §7):
 
 ### Path to true async IO
 
-Superseded by the proposal in [async-read-path.md](async-read-path.md) (§4): `read_range` stays
+Superseded by [async-read-path.md](async-read-path.md) (§4): `read_range` stays
 synchronous, and a separate `AsyncReadBackend` (`submit_read`, `poll`, `cancel`) sits beside
 `IoBackend`. The load pipeline changes too: it needs persistent load attempts. The plan recorded
 here before that note:

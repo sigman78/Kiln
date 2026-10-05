@@ -68,6 +68,8 @@ Not goals for v1:
 ## v0.8: streaming
 
 - Range requests; progressive mips and LODs (`State::Partial`, `TextureDesc::firstLevel`).
+- Persistent load attempts, an asynchronous read contract and dedicated blocking readers
+  ([`design/async-read-path.md`](design/async-read-path.md), Part 1).
 - An adapter contract for range uploads into an existing object, shared with texture arrays.
 - Residency, budget and eviction hooks (`Adapter::reserved`).
 
@@ -75,7 +77,8 @@ Not goals for v1:
 
 - Mobile target profiles and cross-cooking: ASTC through astcenc, ETC2 only if a target needs it.
 - Native async IO backends (Win32 overlapped / IoRing, io_uring, dispatch IO;
-  [`design/async-read-path.md`](design/async-read-path.md)).
+  [`design/async-read-path.md`](design/async-read-path.md), Part 2), only if the benchmark shows a
+  limit of the blocking readers.
 - Native file watchers; macOS preset and CI.
 - A network `IoBackend` for on-device iteration *(discuss)*.
 
@@ -110,10 +113,8 @@ Not goals for v1:
 - GPU conformance runs under the Vulkan validation layer (with synchronization validation): the
   examples' `--dump` and `--verify` modes. This machine has no layer yet; CI only compiles Vulkan.
 - Extracting `kiln/core` into a separate utility library.
-- Proposed notes awaiting the owner: [`design/readiness-sets.md`](design/readiness-sets.md) (group
-  readiness, open-questions R25) and [`design/async-read-path.md`](design/async-read-path.md)
-  (open-questions R24: it proposes load attempts and the load benchmark for v0.8, and holds the
-  native backends of v0.9 behind that benchmark).
+- A proposed note awaiting the owner: [`design/readiness-sets.md`](design/readiness-sets.md) (group
+  readiness, open-questions R25).
 
 ## How the plan runs
 
