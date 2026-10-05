@@ -9,7 +9,8 @@
 namespace kiln {
 
 /// Runs jobs on worker threads. Jobs never touch host state; completion reaches the
-/// host only through pump(). `wait_idle` is optional.
+/// host only through pump(). `wait_idle` is optional. `submit` may be called from any thread,
+/// a running job included.
 struct JobSystem {
     void (*submit)(void* user, void (*fn)(void* arg), void* arg) = nullptr;
     void (*wait_idle)(void* user)                                = nullptr;

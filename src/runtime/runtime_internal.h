@@ -78,6 +78,20 @@ enum class ReadyId : u8 { MetaHigh = 0, UploadHigh, MetaNormal, UploadNormal, Co
 
 enum class CompletionKind : u8 { MetaReady = 0, Uploaded, Failed, BusyRetry };
 
+/// Where a step of a load runs: on the workers, or on the job system for steps that wait for
+/// storage (ContextDesc::readJobs). Without that job system every step runs on the workers.
+enum class Lane : u8 { Cpu = 0, Read, Count };
+
+/// The steps of a stage. Meta: Prepare (with a cook provider), then Metadata. Upload: Read, then
+/// Decode, and both again for each further chunk of a texture array.
+enum class JobStep : u8 { Prepare = 0, Metadata, Read, Decode };
+
+/// The argument of run_jobs().
+struct LaneRef {
+    Context* ctx = nullptr;
+    Lane lane    = Lane::Cpu;
+};
+
 /// A reload post_reload() asked for.
 struct PostedReload {
     AssetId id     = 0;
@@ -158,10 +172,18 @@ struct ReadRange {
     u8* dst    = nullptr;
 };
 
+/// The storage of an upload stage's reads, kept in Context::bufs between stages.
+struct ReadBuf {
+    Vec<ReadRange> reads;
+    Vec<u8> encoded;
+};
+
 /// What the pump thread fixes when it submits a stage. The worker only reads it.
 struct JobInput {
     Stage stage = Stage::Meta;
-    u32 gen     = 0;              ///< Slot::generation at submit
+    /// The pump thread released the slot while its stage ran: the next step ends the stage.
+    std::atomic<bool> abandoned{false};
+    u32 gen = 0;                  ///< Slot::generation at submit
     CookProvider provider;        ///< snapshot at dispatch
     bool manifestPresent = false; ///< Context::manifestPresent at dispatch
     bool recheck         = false; ///< the provider checks the sources again (PrepareMode::Recheck)
@@ -178,10 +200,14 @@ struct JobOutput {
     bool cookedValid = false;
     UploadTarget target;
     bool hasTarget = false; ///< begin_upload succeeded (object must be released on failure)
-    // The upload stage, for the input it works on. The running job lends the storage; the steps
-    // pass their state through these fields only (async-read-path.md, section 2).
-    Vec<ReadRange> reads; ///< the ranges to read; empty for a memory source
-    Vec<u8> encoded;      ///< the bytes read that wait for a decode or a repack
+    // The steps pass their state through these fields only (async-read-path.md, section 2).
+    JobStep step   = JobStep::Metadata; ///< the step to run next
+    u32 inputFirst = 0;                 ///< upload: the inputs [inputFirst, inputEnd) are read and wait
+    u32 inputEnd   = 0;                 ///< for their decode; the inputs before them are in the target
+    bool hasBuf    = false;             ///< the stage counts in Context::bufOut (readyMutex)
+    bool bufTaken  = false;             ///< `reads` and `encoded` hold storage from Context::bufs
+    Vec<ReadRange> reads;               ///< the ranges of the inputs read; none for a memory source
+    Vec<u8> encoded;                    ///< the bytes read that wait for a decode or a repack
     Status status = kOk;
     u32 diag      = 0; ///< K5xxx for a Failed completion
     DiagCapture capture;
@@ -214,9 +240,12 @@ struct Slot {
     u32 qNext      = kInvalid;
     u64 retryAfter = 0; ///< Busy retry: not before this pump index
     // The prepared job's place in Context::ready. Guarded by Context::readyMutex, not pump-thread only.
-    ReadyId ready = ReadyId::None;
-    u32 rPrev     = kInvalid;
-    u32 rNext     = kInvalid;
+    ReadyId ready  = ReadyId::None;
+    Lane lane      = Lane::Cpu;
+    u32 rPrev      = kInvalid;
+    u32 rNext      = kInvalid;
+    bool started   = false; ///< a job took the stage's first step: release() cannot take it back
+    bool readyHigh = false; ///< `priority` as the ready lists see it
     // Profiling only (profile_now_ns): the load attempt began, the slot entered its queue, its job
     // was submitted.
     u64 loadNs   = 0;
@@ -343,10 +372,21 @@ struct Context {
 
     rt::List queues[u32(rt::QueueId::Count)];
 
-    // Prepared jobs: pump() pushes, run_jobs() pops. Guarded by readyMutex.
+    // Prepared jobs per lane: pump() and a job that hands a step over push, run_jobs() pops.
+    // Guarded by readyMutex.
     std::mutex readyMutex;
-    rt::List ready[u32(rt::ReadyId::Count)];
-    u32 runners = 0; ///< run_jobs() calls submitted and not yet returned; at most maxIoJobs
+    rt::List ready[u32(rt::Lane::Count)][u32(rt::ReadyId::Count)];
+    u32 runners[u32(rt::Lane::Count)]    = {}; ///< run_jobs() calls submitted and not yet returned
+    u32 maxRunners[u32(rt::Lane::Count)] = {}; ///< maxIoJobs, maxReadJobs
+    u32 bufOut                           = 0;  ///< upload stages that started and did not end; at most bufCap
+    rt::LaneRef laneRef[u32(rt::Lane::Count)];
+    JobSystem readJobs;    ///< ContextDesc::readJobs
+    bool readLane = false; ///< readJobs is set: steps that read files run there
+
+    // Read buffers no stage uses. Guarded by bufMutex.
+    std::mutex bufMutex;
+    rt::ReadBuf* bufs = nullptr;
+    u32 bufCount = 0, bufCap = 0;
 
     // completions: workers push, pump pops
     std::mutex compMutex;
@@ -387,6 +427,7 @@ struct Context {
     PumpStats cur;           ///< stats of the pump in progress
 
     std::atomic<u32> jobsInFlight{0};    ///< run_jobs() calls; each decrements it last (destroy() waits)
+    std::atomic<bool> stopping{false};   ///< destroy(): every stage ends at its next step
     std::atomic<u64> ioBytesInFlight{0}; ///< ioInFlightBytes budget in use
 };
 
@@ -453,14 +494,20 @@ inline TextureShape shape_of(ktx2::TextureDesc const& d) {
 }
 
 // --- loader.cpp (worker side) -------------------------------------------------------
-/// A job-system job (`arg` is the Context): runs prepared jobs, the first ReadyId first, until none
-/// is left. So a finished job starts the next one without a pump.
+/// A job-system job (`arg` is a LaneRef): runs the prepared jobs of its lane, the first ReadyId
+/// first, until none is left. So a finished job starts the next one without a pump.
 void run_jobs(void* arg);
-/// pump(): `s` is prepared for `stage` and a worker may take it. True: the caller submits one more
-/// run_jobs() (fewer than maxIoJobs run).
-[[nodiscard]] bool ready_push(Context* ctx, Slot& s, Stage stage);
-/// Takes the prepared job of `s` back. False: a worker has it already.
+/// The lane that runs the step `s.out.step`.
+Lane step_lane(Context const* ctx, Slot const& s);
+/// pump(): the stage of `s` is prepared and a job of `lane` may take it. True: the caller calls
+/// submit_runner() (fewer run_jobs() calls run than the lane allows).
+[[nodiscard]] bool ready_push(Context* ctx, Slot& s, Lane lane);
+/// Submits one run_jobs() call to the lane's job system.
+void submit_runner(Context* ctx, Lane lane);
+/// Takes the prepared job of `s` back. False: a job started the stage already.
 [[nodiscard]] bool ready_remove(Context* ctx, Slot& s);
+/// destroy(): drops the prepared jobs whose stage did not start.
+void ready_drop_unstarted(Context* ctx);
 /// `s` became High: its prepared job, if no worker has it yet, goes before the Normal ones.
 void ready_boost(Context* ctx, Slot& s);
 /// `<store>/manifest.dir`. Returns the length `format` reports (>= cap - 1 means

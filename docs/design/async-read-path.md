@@ -1,12 +1,13 @@
 # Asynchronous cooked-asset reads
 
 **Status:** Part 1 accepted (owner, 2026-10-04; decisions in §11). Proposed 2026-09-29, revised
-2026-10-04 after a review against the code. Built so far: the benchmark (§9). The note has two parts:
+2026-10-04 after a review against the code. Built so far: the benchmark (§9) and stages 2a and 2b
+(§10). The note has two parts:
 
-- **Part 1, load attempts** (v0.8): the load benchmark, persistent load attempts, the
-  read contract, a fake backend and dedicated blocking readers.
-- **Part 2, native backends** (v0.9, on hold): IOCP and io_uring. They wait until the Part 1
-  benchmark shows that blocking readers are not enough.
+- **Part 1, load attempts** (v0.8): the load benchmark, persistent load attempts, a second job
+  system for the steps that wait for storage, and dedicated blocking readers on it.
+- **Part 2, native backends** (v0.9, on hold): the read contract (§4), IOCP and io_uring. They wait
+  until the Part 1 benchmark shows that blocking readers are not enough.
 
 **Decides:** Explicit read submission and completion, request ownership, loader continuations, and
 what must be measured before a native backend is built.
@@ -65,19 +66,28 @@ uses blocking positional reads. `src/runtime/loader.cpp` runs two worker jobs pe
 Local `Source` objects assume a read has finished when it returns. The `IoBytes` limiter waits on
 a worker when `ioInFlightBytes` is used up.
 
-Since stage 2a (§10) both jobs are a sequence of steps that share only the attempt's state
-(`JobOutput`), still run back to back on one worker:
+Since stages 2a and 2b (§10) each stage is a sequence of steps that share only the attempt's state
+(`JobOutput`; `JobOutput::step` names the next one):
 
-- **Meta job:** `prepare_input` for every input (the provider's work), then the metadata unit: open,
-  read, validate, close.
-- **Upload job:** `begin_upload`; then for each input `plan_input` lists its reads
-  (`JobOutput::reads`: file range and destination), `read_input` opens the artifact, fills them and
-  closes it, and `decode_input` decodes or repacks `JobOutput::encoded` into the target; then commit
-  or discard. A texture's levels are one read each, in file order. The worker lends the storage of
-  `reads` and `encoded` to the attempt for the job; the decoded bytes and the Zstd context stay with
-  the worker.
-
-`read_input` is the unit a reader takes over in stage 2c.
+- **Meta stage:** `Prepare` (only with a cook provider: its work for every input), then `Metadata`:
+  open, read, validate, close.
+- **Upload stage:** `Read`, then `Decode`. `Read` calls `begin_upload` the first time, lists the
+  reads of the next inputs (`JobOutput::reads`: file range and destination), opens each artifact,
+  fills its ranges and closes it. `Decode` decodes or repacks `JobOutput::encoded` into the target,
+  then commits, or goes back to `Read` when a texture array has more layers. A chunk of layers keeps
+  `encoded` below 32 MiB. A texture's levels are one read each, in file order.
+- **Lanes.** Each step belongs to a lane. Without `ContextDesc::readJobs` there is one lane, the
+  workers, and the steps of a stage run back to back in one job, as before. With it, `Metadata` and
+  `Read` run on that job system when they read a file, and `Prepare`, `Decode` and every step of a
+  memory source run on the workers.
+- **Hand-over.** A job that ends a step of its lane puts the slot on the other lane's ready list and
+  submits a job there if none runs. No pump lies between `Read` and `Decode`.
+- **Buffers.** The storage of `reads` and `encoded` comes from a small pool in the context and goes
+  back when the stage ends. An upload stage needs one of the pool's places to start (`maxIoJobs` +
+  `maxReadJobs` of them), so the reads that wait for a decode are bounded. The decoded bytes and
+  the Zstd context stay with the worker.
+- **Abandon.** A slot released while its stage runs, and every stage once `destroy()` began, ends at
+  its next step: the upload is discarded (or committed, without `discard_upload`).
 
 Facts the first version of this note did not have:
 
@@ -188,6 +198,11 @@ from the read path. Shipping builds have no provider and skip the step.
 Today a first load crosses the pump three times: dispatch to the meta job, `MetaReady` to the
 upload job, and the adapter's completion. One job does open, read and validate.
 
+**Built otherwise (2b, owner 2026-10-04):** the job that ends a read hands the decode to the
+workers itself (§2, "Hand-over"), so no pump lies between them and the first rule below holds
+without a new contract. `JobSystem::submit` is then called from a job, which its contract now
+allows. The text below is the first plan.
+
 CPU continuations are posted to kiln's completion queue and dispatched through the existing
 `JobSystem` by `pump()`. If every hop from IO to CPU work waits for a pump, a small asset pays
 several extra frames to reach `Ready`. That makes the common case slower, which defeats the goal.
@@ -208,9 +223,12 @@ waits until the measurements ask for it. No public asset state or event is publi
 
 ## 4. Proposed backend interface
 
-This is an interface sketch; names and layout are not an ABI commitment. Decided since (§11): a
-request names the artifact, not an open `IoFile`, and the backend opens it; the sketch changes with
-stage 2b (§10). It lives alongside the
+**Moved to Part 2 (owner, 2026-10-04).** Part 1 does not use this contract: its readers run kiln's
+`Metadata` and `Read` steps through a second `JobSystem` and the existing `IoBackend` (§5, §11). A
+native backend needs the contract, so it is designed again with one. Decided for that design: a
+request names the artifact, not an open `IoFile`, and the backend opens it.
+
+This is an interface sketch; names and layout are not an ABI commitment. It lives alongside the
 synchronous interface and contains no OS types. It replaces the earlier idea of a completion token
 on `IoBackend::read_range` (`threading-and-io.md`, "Path to true async IO").
 
@@ -282,13 +300,22 @@ accepted request waiting indefinitely for another request or another pump.
 
 ## 5. Blocking readers
 
-The Part 1 backend is a small set of dedicated reader threads behind the §4 contract. They never
-use the host's CPU job workers to wait on storage. A reader opens, reads and closes, so Part 1
-needs no separate file-control executor. A reader finishes a short read itself. Cancellation only
+A reader is a thread that runs the two steps of a load that wait for storage: `Metadata` and
+`Read` (§2). Both use the host's `IoBackend` as it is: open, size, `read_range`, close. So a host
+backend (a pack file, a network share) needs no change, and Part 1 needs no read contract and no
+file-control executor. Readers never use the workers to wait on storage. Cancellation only
 suppresses work not yet started. Other platforms use this mode too.
 
-`ContextDesc::maxIoJobs` keeps its meaning for the existing path. The reader count gets its own
-setting.
+The seam is a second job system (stage 2b, built):
+
+- `ContextDesc::readJobs` (a `JobSystem`): the steps that read a file run there. Null: the workers
+  do their own reads, as before.
+- `ContextDesc::maxReadJobs`: the jobs that run at once on it (0 = 4). `maxIoJobs` keeps its
+  meaning: the jobs that run at once on the workers.
+
+Stage 2c adds kiln's own reader pool as the default and its thread count as a setting. A test passes
+a `JobSystem` that holds its jobs, and an `IoBackend` that fails or delays, in place of a fake read
+backend.
 
 ## 6. Admission and back-pressure
 
@@ -667,7 +694,37 @@ opens, 9394 reads, 7002 decodes, 7002 copies, 78 direct uploads, in both.
   buffer holds all levels of one texture, not the largest level.
 - A texture array in dev mode asks the provider for every layer before it reads the first.
 
+### Stage 2b against the loader on main (2026-10-04)
+
+Without `readJobs` (the default) the load is level with the loader before the stages, same corpus
+and machine, the two builds run in turn:
+
+| Run | Before 2a | Stage 2b |
+|---|---|---|
+| Warm, 60 Hz, 64 MiB budget | 0.47 s | 0.47 s |
+| Warm, 1000 Hz, no upload limit (18 runs each) | mean 0.353 s | mean 0.356 s |
+| Warm, 2 workers, same (12 runs each) | mean 0.871 s | mean 0.880 s |
+| Cold, 1000 Hz, no upload limit (12 runs each) | mean 0.594 s | mean 0.594 s |
+| Warm, a 64-layer array | 117 ms | 117 ms |
+
+Peak scratch is 112 to 122 MiB warm (was 94 MiB). A load with `readJobs` is not measured yet: the
+benchmark gets the option with stage 2c.
+
+Tests for the read lane (`tests/test_runtime.cpp`, both job systems held and run by hand unless
+noted): the metadata and read steps run on `readJobs` and the decode reaches the workers with no
+pump (`ReadJobsRunTheStorageSteps`); a release between read and decode discards the upload and
+frees the slot (`ReleaseBetweenReadAndDecode`); a failed read ends the stage on the read job and the
+asset recovers on reload (`ReadFailureEndsTheStage`); a memory source never uses `readJobs`
+(`MemorySourceStaysOnTheWorkers`); the buffer places bound the reads that wait
+(`ReadBuffersBoundTheReads`); `destroy()` with a waiting decode (`DestroyEndsHeldStages`); a texture
+array (`TextureArrayThroughReadJobs`); every golden on two thread pools (`ReadJobsOnAThreadPool`).
+Not covered yet: an array of more than one chunk, and a sanitizer run of the two-pool case.
+
 ### Tests
+
+The list below was written for a fake read backend. With the Part 1 design its cases apply to the
+steps on `readJobs`; those marked for the contract (Busy, cancel, short reads from the backend) wait
+for Part 2.
 
 First implement a deterministic fake async backend that exercises:
 
@@ -696,8 +753,12 @@ Part 1 (v0.8):
    - **2a.** Load attempts on today's worker jobs: the attempt holds its read list and its encoded
      bytes, and plan, read and decode are separate steps. Reads stay synchronous. The benchmark
      must match the baseline. **Done 2026-10-04** (§2; measured in §9).
-   - **2b.** The read contract and the fake backend. Prove ownership, cancellation and shutdown.
-   - **2c.** Blocking readers. Check the Part 1 gate.
+   - **2b.** The steps on two lanes: `ContextDesc::readJobs` runs the steps that wait for storage,
+     with the hand-over, the buffer bound and the abandon rule (§2, §5). Tests with held job
+     systems prove ownership, release and shutdown. **Done 2026-10-04** (measured in §9). The read
+     contract and its fake backend moved to Part 2 (§11).
+   - **2c.** Blocking readers: kiln's own pool behind `readJobs` as the default, the benchmark
+     option, and the Part 1 gate.
 
 Part 2 (v0.9, on hold; each step needs the Part 2 gate):
 
@@ -714,6 +775,12 @@ Part 2 (v0.9, on hold; each step needs the Part 2 gate):
 - **The small-asset gate** in §3.5 and §9: no regression.
 - **A read request names the artifact and the backend opens it.** A reader stays one unit of open,
   read and close (§5). A native backend owns its open lane (§8) behind the same request.
+- **Part 1 has no read contract** (owner, 2026-10-04, during stage 2b). The two decisions above make
+  a reader a thread that runs kiln's own steps, so the readers sit behind a second `JobSystem`
+  (`ContextDesc::readJobs`) and use the existing `IoBackend`. `AsyncReadBackend` (§4) is designed
+  with Part 2, when a native backend needs it.
+- **The decode follows the read with no pump.** The read job hands the step to the workers itself;
+  a pump there would make every asset with CPU work `Ready` one frame later and fail the gate.
 - **Metadata validation runs on the reader in Part 1** (§3.5). A native backend has no reader
   thread: Part 2 validates on a CPU worker, accepts that hop, and checks the small-asset gate again.
 

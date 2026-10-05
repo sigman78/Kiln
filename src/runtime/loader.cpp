@@ -1,4 +1,4 @@
-// loader.cpp — worker side: one job runs the meta or the upload stage of one asset.
+// loader.cpp — job side: the steps of the meta and upload stages, and the lanes that run them.
 // See docs/design/threading-and-io.md.
 #include "runtime_internal.h"
 
@@ -393,17 +393,40 @@ Status check_layer(Slot& s, u32 layer, StrView name, ktx2::TextureDesc const& fi
     return make_status(Code::ValidationFailed);
 }
 
-/// The provider's work for every layer first. Then each layer's metadata, checked against layer 0,
-/// and the upload layout of the whole array. Each layer keeps its level table for the upload stage.
-CompletionKind run_array_meta(Context* ctx, Slot& s) {
+u32 input_count(Slot const& s) { return s.array ? s.array->count : 1; }
+
+Input input_of(Slot& s, u32 j) { return s.array ? layer_input(s, s.array->layers[j]) : slot_input(s); }
+
+/// What a step leaves: the stage's result, or the next step in s.out.step.
+struct StepOut {
+    bool done           = false;
+    CompletionKind kind = CompletionKind::Failed;
+};
+
+StepOut done(CompletionKind kind) { return {true, kind}; }
+
+StepOut next(Slot& s, JobStep step) {
+    s.out.step = step;
+    return {};
+}
+
+/// The provider's work for every input.
+StepOut prepare_step(Context* ctx, Slot& s) {
+    for (u32 i = 0; i < input_count(s); ++i) {
+        Input const in = input_of(s, i);
+        if (prepare_input(ctx, s, in).ok()) continue;
+        if (s.array) note_layer(s.out.capture, i, in.name);
+        return done(CompletionKind::Failed);
+    }
+    return next(s, JobStep::Metadata);
+}
+
+/// Each layer's metadata, checked against layer 0, then the upload layout of the whole array. Each
+/// layer keeps its level table for the upload stage.
+Status array_metadata(Context* ctx, Slot& s) {
     ArrayDecl& d = *s.array;
     KtxLevels first;
     Status st = kOk;
-    for (u32 i = 0; i < d.count && st.ok(); ++i) {
-        Input const in = layer_input(s, d.layers[i]);
-        st             = prepare_input(ctx, s, in);
-        if (st.failed()) note_layer(s.out.capture, i, in.name);
-    }
     for (u32 i = 0; i < d.count && st.ok(); ++i) {
         ArrayLayer& l  = d.layers[i];
         Input const in = layer_input(s, l);
@@ -448,29 +471,25 @@ CompletionKind run_array_meta(Context* ctx, Slot& s) {
         }
     }
     first.release(ctx->alloc);
-    if (st.failed()) {
-        s.out.status = st;
-        if (s.out.diag == 0) s.out.diag = kDiagAssetLoadFailed;
-        return CompletionKind::Failed;
-    }
-    return CompletionKind::MetaReady;
+    return st;
 }
 
-/// Two steps: the provider's work, then the metadata unit, which opens, reads and validates.
-CompletionKind run_meta(Context* ctx, Slot& s) {
-    if (s.array) return run_array_meta(ctx, s);
-    Input const in = slot_input(s);
-    if (prepare_input(ctx, s, in).failed()) return CompletionKind::Failed;
-    Source src;
-    if (open_source(ctx, s, in, src).failed()) return CompletionKind::Failed;
-    Status const st = s.kind == AssetKind::Mesh ? mesh_meta(ctx, s, src) : texture_meta(ctx, s, src);
-    src.close();
+/// The metadata unit: opens each input, reads and validates its metadata, and closes it.
+StepOut metadata_step(Context* ctx, Slot& s) {
+    Status st = kOk;
+    if (s.array) {
+        st = array_metadata(ctx, s);
+    } else {
+        Source src;
+        st = open_source(ctx, s, slot_input(s), src);
+        if (st.ok()) st = s.kind == AssetKind::Mesh ? mesh_meta(ctx, s, src) : texture_meta(ctx, s, src);
+    }
     if (st.failed()) {
         s.out.status = st;
         if (s.out.diag == 0) s.out.diag = kDiagAssetLoadFailed;
-        return CompletionKind::Failed;
+        return done(CompletionKind::Failed);
     }
-    return CompletionKind::MetaReady;
+    return done(CompletionKind::MetaReady);
 }
 
 // ---------------------------------------------------------------------------
@@ -483,39 +502,76 @@ Span<u8> scratch_bytes(Vec<u8>& v, usize n) {
     return v.append_uninit(n);
 }
 
-/// The buffers of the upload jobs that one run_jobs() call runs. Fresh memory costs a page fault per
-/// page, so the jobs reuse them. `reads` and `encoded` are lent to the attempt while its job runs
-/// (JobOutput); the decoded bytes and the Zstd context stay with the worker.
+/// A buffer above this size goes back to the allocator after its stage, and a chunk of array layers
+/// is planned to stay below it.
+constexpr usize kKeepBytes = usize(32) << 20;
+
+/// What one run_jobs() call keeps for the decodes it runs: the decoded bytes and the Zstd context.
+/// Fresh memory costs a page fault per page, so the jobs reuse them.
 struct JobScratch {
-    explicit JobScratch(Allocator const* a)
-        : reads(a, Tag::Io), encoded(a, Tag::Io), texels(a, Tag::Io), zstd(a) {}
-    Vec<ReadRange> reads;
-    Vec<u8> encoded;
+    explicit JobScratch(Allocator const* a) : texels(a, Tag::Io), zstd(a) {}
     Vec<u8> texels;
     fmt::ZstdDecoder zstd;
 
-    void lend(JobOutput& out) {
-        std::swap(reads, out.reads);
-        std::swap(encoded, out.encoded);
-    }
-    /// After a job: takes the lent storage back. A buffer that one large asset grew goes to the
-    /// allocator, so a worker keeps at most 2 * kKeepBytes between jobs.
-    void take_back(JobOutput& out) {
-        lend(out);
-        if (encoded.capacity() > kKeepBytes) encoded.release();
+    void trim() {
         if (texels.capacity() > kKeepBytes) texels.release();
     }
-    static constexpr usize kKeepBytes = usize(32) << 20;
 };
 
-// The upload stage handles one input at a time: the slot's own asset, or one layer of an array.
-// plan_input() lists the input's reads, read_input() fills them, decode_input() turns the bytes into
-// the upload target. Only s.out carries state from one step to the next.
+/// Gives the stage its read storage: a buffer an earlier stage used, when one is left.
+void buf_take(Context* ctx, JobOutput& out) {
+    out.bufTaken = true;
+    {
+        std::lock_guard<std::mutex> const lock(ctx->bufMutex);
+        if (ctx->bufCount) {
+            ReadBuf& b  = ctx->bufs[--ctx->bufCount];
+            out.reads   = std::move(b.reads);
+            out.encoded = std::move(b.encoded);
+            return;
+        }
+    }
+    out.reads   = Vec<ReadRange>(ctx->alloc, Tag::Io);
+    out.encoded = Vec<u8>(ctx->alloc, Tag::Io);
+}
 
-Status plan_mesh(Slot& s, bool memory, u8* dst) {
+void buf_give(Context* ctx, JobOutput& out) {
+    out.bufTaken = false;
+    if (out.encoded.capacity() <= kKeepBytes) {
+        std::lock_guard<std::mutex> const lock(ctx->bufMutex);
+        if (ctx->bufCount < ctx->bufCap) {
+            ReadBuf& b = ctx->bufs[ctx->bufCount++];
+            b.reads    = std::move(out.reads);
+            b.encoded  = std::move(out.encoded);
+            return;
+        }
+    }
+    out.reads.release();
+    out.encoded.release();
+}
+
+/// No job is left: the buffers go back to the allocator.
+void bufs_free(Context* ctx) {
+    std::lock_guard<std::mutex> const lock(ctx->bufMutex);
+    for (u32 i = 0; i < ctx->bufCount; ++i) {
+        ctx->bufs[i].reads.release();
+        ctx->bufs[i].encoded.release();
+    }
+    ctx->bufCount = 0;
+}
+
+// The upload stage reads a chunk of inputs, then decodes it: the slot's own asset, or some layers of
+// an array. read_step() lists the reads and fills them, decode_step() turns the bytes into the upload
+// target. Only s.out carries state from one step to the next.
+
+/// The bytes of `encoded` that the reads of a mesh need.
+u64 mesh_encoded_size(Slot const& s) {
+    mesh::MeshView const& v = s.out.next.meshView;
+    return v.payload_raw() ? 0 : v.header().gpuDataSize;
+}
+
+Status plan_mesh(Slot& s, u8* dst, u8*& enc) {
     mesh::MeshView const& v   = s.out.next.meshView;
     mesh::FileHeader const& h = v.header();
-    if (memory) return kOk;
     if (v.payload_raw()) {
         // Identity layout: one read of GPUD straight into the adapter's memory.
         if (h.payloadDecodedSize > h.gpuDataSize) {
@@ -526,20 +582,23 @@ Status plan_mesh(Slot& s, bool memory, u8* dst) {
         s.out.reads.push_back({h.gpuDataOffset, h.payloadDecodedSize, dst});
         return kOk;
     }
-    u8* const enc = scratch_bytes(s.out.encoded, usize(h.gpuDataSize)).data;
     s.out.reads.push_back({h.gpuDataOffset, h.gpuDataSize, enc});
+    enc += h.gpuDataSize;
     return kOk;
 }
 
-Status decode_mesh(Context* ctx, Slot& s, Source const& mem, u8* dst, JobScratch& sc) {
+/// `read` is the mesh's one read; a memory source has none.
+Status decode_mesh(Context* ctx, Slot& s, Source const& mem, ReadRange const* read, u8* dst, JobScratch& sc) {
     DiagSink const sink{&capture_fn, &s.out.capture};
     StrView const name        = path_of(s);
     mesh::MeshView const& v   = s.out.next.meshView;
     mesh::FileHeader const& h = v.header();
     Span<u8> const out(dst, usize(h.payloadDecodedSize));
-    if (!mem.memory && v.payload_raw()) return kOk; // read in place
-    Span<u8 const> gpud = s.out.encoded.span();
-    if (mem.memory) {
+    if (read && v.payload_raw()) return kOk; // read in place
+    Span<u8 const> gpud;
+    if (read) {
+        gpud = Span<u8 const>(read->dst, usize(read->size));
+    } else {
         if (h.gpuDataOffset > mem.size || h.gpuDataSize > mem.size - h.gpuDataOffset)
             return make_status(Code::IoEof);
         gpud = mem.mem.subspan(usize(h.gpuDataOffset), usize(h.gpuDataSize));
@@ -578,7 +637,7 @@ struct LevelCopy {
 
 /// Level `i` of texture input `j` (0 for a texture of its own, else the array layer). Layer j of a
 /// level lies at the level's offset plus j times one layer's padded size.
-LevelCopy level_copy(Slot& s, u32 j, u32 i, u8* dst) {
+LevelCopy level_copy(Slot const& s, u32 j, u32 i) {
     MetaSet const& m = s.out.next;
     u32 const levels = m.layoutLevels;
     LevelCopy c{.level    = i,
@@ -595,35 +654,45 @@ LevelCopy level_copy(Slot& s, u32 j, u32 i, u8* dst) {
         c.sLen = m.layout[3 * levels + i];
         c.zstd = m.texZstd;
     }
-    u64 const rows = c.rowBytes ? c.tLen / c.rowBytes : 0;
-    c.out          = dst + m.layout[i] + j * c.pitch * rows;
     return c;
 }
 
+/// level_copy() with the level's place in the target at `dst`.
+LevelCopy level_at(Slot const& s, u32 j, u32 i, u8* dst) {
+    LevelCopy c    = level_copy(s, j, i);
+    u64 const rows = c.rowBytes ? c.tLen / c.rowBytes : 0;
+    c.out          = dst + s.out.next.layout[i] + j * c.pitch * rows;
+    return c;
+}
+
+/// The bytes of `encoded` that the reads of texture input `j` need.
+u64 texture_encoded_size(Slot const& s, u32 j) {
+    u64 total = 0;
+    for (u32 i = 0; i < s.out.next.layoutLevels; ++i)
+        if (LevelCopy const c = level_copy(s, j, i); !c.direct()) total += c.sLen;
+    return total;
+}
+
 /// One read per level, in level order: straight to the target where the level allows it, else into
-/// `encoded`, the levels back to back.
-void plan_texture(Slot& s, u32 j, u8* dst) {
-    u32 const levels = s.out.next.layoutLevels;
-    u64 total        = 0;
-    for (u32 i = 0; i < levels; ++i)
-        if (LevelCopy const c = level_copy(s, j, i, dst); !c.direct()) total += c.sLen;
-    u8* enc = scratch_bytes(s.out.encoded, usize(total)).data;
-    for (u32 i = 0; i < levels; ++i) {
-        LevelCopy const c = level_copy(s, j, i, dst);
+/// `encoded` at `enc`, the levels back to back.
+void plan_texture(Slot& s, u32 j, u8* dst, u8*& enc) {
+    for (u32 i = 0; i < s.out.next.layoutLevels; ++i) {
+        LevelCopy const c = level_at(s, j, i, dst);
         s.out.reads.push_back({c.sOff, c.sLen, c.direct() ? c.out : enc});
         if (!c.direct()) enc += c.sLen;
     }
 }
 
-Status decode_level(Context* ctx, Slot& s, StrView input, Source const& mem, LevelCopy const& c,
-                    JobScratch& sc) {
+/// `read` is the level's read; a memory source has none.
+Status decode_level(Context* ctx, Slot& s, StrView input, Source const& mem, ReadRange const* read,
+                    LevelCopy const& c, JobScratch& sc) {
     u8 const* from = nullptr;
-    if (mem.memory) {
+    if (read) {
+        from = read->dst;
+        if (from == c.out) return kOk; // read in place
+    } else {
         if (c.sOff > mem.size || c.sLen > mem.size - c.sOff) return make_status(Code::IoEof);
         from = mem.mem.data + c.sOff;
-    } else {
-        from = s.out.reads[c.level].dst;
-        if (from == c.out) return kOk; // read in place
     }
     if (c.zstd) {
         // Never straight into the adapter's memory: staging is often write-combined, and Zstd reads
@@ -665,46 +734,44 @@ void zero_level_gaps(MetaSet const& m, u32 layers, u8* dst) {
     if (cursor < m.uploadSize) std::memset(dst + cursor, 0, usize(m.uploadSize - cursor));
 }
 
-/// Lists the reads of input `j` in s.out.reads and sizes s.out.encoded for them. A memory source
-/// needs none.
-Status plan_input(Slot& s, Input const& in, u32 j, u8* dst) {
-    s.out.reads.clear();
-    s.out.encoded.clear();
-    Source mem;
-    bool const memory = memory_source(in, mem);
-    if (s.kind == AssetKind::Mesh) return plan_mesh(s, memory, dst);
-    if (!memory) plan_texture(s, j, dst);
-    return kOk;
-}
-
-/// Opens the input's artifact, reads the planned ranges and closes it. This is the part of a load
-/// that waits for storage.
-Status read_input(Context* ctx, Slot& s, Input const& in) {
-    if (s.out.reads.empty()) return kOk;
+/// Opens the input's artifact, reads its planned ranges (s.out.reads from `first` on) and closes it.
+/// This is the part of a load that waits for storage.
+Status read_input(Context* ctx, Slot& s, Input const& in, usize first) {
+    usize const n = s.out.reads.size() - first;
+    if (n == 0) return kOk;
+    ReadRange const* const reads = s.out.reads.data() + first;
     Source src;
     KILN_TRY(open_source(ctx, s, in, src));
     // In file order, which helps the system's read-ahead: KTX2 stores the smallest level first.
-    usize const n      = s.out.reads.size();
-    bool const reverse = s.out.reads[n - 1].offset < s.out.reads[0].offset;
+    bool const reverse = reads[n - 1].offset < reads[0].offset;
     for (usize i = 0; i < n; ++i) {
-        ReadRange const& r = s.out.reads[reverse ? n - 1 - i : i];
+        ReadRange const& r = reads[reverse ? n - 1 - i : i];
         IoBytes budget(ctx, r.size);
         KILN_TRY(src.read(r.offset, r.size, r.dst));
     }
     return kOk;
 }
 
-/// Decodes or repacks what read_input() left in s.out.encoded, or the memory source, into the target.
-Status decode_input(Context* ctx, Slot& s, Input const& in, u32 j, u8* dst, JobScratch& sc) {
-    Source mem;
-    (void)memory_source(in, mem);
-    if (s.kind == AssetKind::Mesh) return decode_mesh(ctx, s, mem, dst, sc);
-    for (u32 i = 0; i < s.out.next.layoutLevels; ++i)
-        KILN_TRY(decode_level(ctx, s, in.name, mem, level_copy(s, j, i, dst), sc));
-    return kOk;
+/// Ends the upload stage: the target is committed, or discarded after a failure.
+CompletionKind end_upload(Context* ctx, Slot& s, Status st, u32 diag = kDiagAssetLoadFailed) {
+    Adapter const& a = ctx->adapter;
+    if (s.out.hasTarget && st.failed() && a.discard_upload) {
+        a.discard_upload(a.user,
+                         s.out.target.token); // nothing for the GPU: the adapter frees ticket and object
+        s.out.hasTarget = false;
+    } else if (s.out.hasTarget) {
+        a.commit_upload(a.user, s.out.target.token); // a failed load commits too; kiln destroys the result
+    }
+    if (st.ok()) return CompletionKind::Uploaded;
+    // An artifact that vanished since the meta stage is a failed load, not a miss.
+    if (s.out.diag) diag = s.out.diag == kDiagStoreMiss ? kDiagAssetLoadFailed : s.out.diag;
+    s.out.status = st;
+    s.out.diag   = diag;
+    return CompletionKind::Failed;
 }
 
-CompletionKind run_upload(Context* ctx, Slot& s, JobScratch& sc) {
+/// Asks the adapter for the upload target. Not done: the target is in s.out.target.
+StepOut begin_target(Context* ctx, Slot& s) {
     Adapter const& a = ctx->adapter;
     MetaSet const& m = s.out.next;
     UploadDesc ud;
@@ -739,65 +806,117 @@ CompletionKind run_upload(Context* ctx, Slot& s, JobScratch& sc) {
     }
 
     UploadTarget t;
-    Status st = a.begin_upload(a.user, ud, &t);
-    if (st.code == Code::Busy) return CompletionKind::BusyRetry;
+    Status const st = a.begin_upload(a.user, ud, &t);
+    if (st.code == Code::Busy) return done(CompletionKind::BusyRetry);
     if (st.failed()) {
         note(s.out.capture, "begin_upload failed (%llu bytes)", static_cast<unsigned long long>(ud.size));
         s.out.status = st;
         s.out.diag   = kDiagAdapterRejected;
-        return CompletionKind::Failed;
+        return done(CompletionKind::Failed);
     }
     s.out.target    = t;
     s.out.hasTarget = true;
 
-    u32 diag = kDiagAssetLoadFailed;
     if (!t.dst && ud.size) {
         note(s.out.capture, "begin_upload returned no destination memory");
-        st   = make_status(Code::Internal);
-        diag = kDiagAdapterRejected;
-    } else if (s.kind == AssetKind::Texture && t.rowPitchAlign > 1) {
-        for (u32 i = 0; i < m.layoutLevels; ++i) {
-            if (m.layout[m.layoutLevels + i] % t.rowPitchAlign != 0) {
-                note(s.out.capture, "adapter row pitch alignment %llu differs from copy_constraints (%llu)",
-                     static_cast<unsigned long long>(t.rowPitchAlign),
-                     static_cast<unsigned long long>(ctx->cc.optimalRowPitchAlign));
-                st   = make_status(Code::Unsupported);
-                diag = kDiagAdapterRejected;
-                break;
-            }
-        }
+        return done(end_upload(ctx, s, make_status(Code::Internal), kDiagAdapterRejected));
     }
-    u8* const dst    = static_cast<u8*>(t.dst);
-    u32 const inputs = s.array ? s.array->count : 1;
-    if (st.ok() && s.kind == AssetKind::Texture) zero_level_gaps(m, inputs, dst);
-    for (u32 j = 0; j < inputs && st.ok(); ++j) {
-        Input const in = s.array ? layer_input(s, s.array->layers[j]) : slot_input(s);
-        st             = plan_input(s, in, j, dst);
-        if (st.ok()) st = read_input(ctx, s, in);
-        if (st.ok()) st = decode_input(ctx, s, in, j, dst, sc);
-        if (st.failed() && s.array) note_layer(s.out.capture, j, in.name);
+    for (u32 i = 0; s.kind == AssetKind::Texture && t.rowPitchAlign > 1 && i < m.layoutLevels; ++i) {
+        if (m.layout[m.layoutLevels + i] % t.rowPitchAlign == 0) continue;
+        note(s.out.capture, "adapter row pitch alignment %llu differs from copy_constraints (%llu)",
+             static_cast<unsigned long long>(t.rowPitchAlign),
+             static_cast<unsigned long long>(ctx->cc.optimalRowPitchAlign));
+        return done(end_upload(ctx, s, make_status(Code::Unsupported), kDiagAdapterRejected));
     }
-    // An artifact that vanished since the meta stage is a failed load, not a miss.
-    if (st.failed() && s.out.diag) diag = s.out.diag == kDiagStoreMiss ? kDiagAssetLoadFailed : s.out.diag;
-    if (st.failed() && a.discard_upload) { // nothing for the GPU: the adapter frees ticket and object
-        a.discard_upload(a.user, t.token);
-        s.out.hasTarget = false;
-    } else {
-        a.commit_upload(a.user, t.token); // a failed load commits too; kiln destroys the result
-    }
-    if (st.failed()) {
-        s.out.status = st;
-        s.out.diag   = diag;
-        return CompletionKind::Failed;
-    }
-    return CompletionKind::Uploaded;
+    if (s.kind == AssetKind::Texture) zero_level_gaps(m, input_count(s), static_cast<u8*>(t.dst));
+    return {};
 }
 
-void post(Context* ctx, Completion const& c) {
-    std::lock_guard<std::mutex> lock(ctx->compMutex);
-    KILN_VERIFY(ctx->compCount < ctx->compCap); // one job per slot: never full
-    ctx->comp[(ctx->compHead + ctx->compCount) % ctx->compCap] = c;
-    ++ctx->compCount;
+/// Begins the upload on the stage's first call. Then takes the next inputs, as many as keep `encoded`
+/// below kKeepBytes and at least one, and reads them.
+StepOut read_step(Context* ctx, Slot& s) {
+    if (!s.out.hasTarget)
+        if (StepOut const o = begin_target(ctx, s); o.done) return o;
+    u8* const dst   = static_cast<u8*>(s.out.target.dst);
+    u32 const first = s.out.inputEnd;
+    u32 end         = first;
+    u64 total       = 0;
+    for (; end < input_count(s); ++end) {
+        Source mem;
+        u64 const size = memory_source(input_of(s, end), mem) ? 0
+                         : s.kind == AssetKind::Mesh          ? mesh_encoded_size(s)
+                                                              : texture_encoded_size(s, end);
+        if (end > first && total + size > kKeepBytes) break;
+        total += size;
+    }
+    s.out.inputFirst = first;
+    s.out.inputEnd   = end;
+    s.out.reads.clear();
+    u8* enc = scratch_bytes(s.out.encoded, usize(total)).data;
+    for (u32 j = first; j < end; ++j) {
+        Input const in = input_of(s, j);
+        usize const at = s.out.reads.size();
+        Source mem;
+        Status st = kOk;
+        if (!memory_source(in, mem)) {
+            if (s.kind == AssetKind::Mesh)
+                st = plan_mesh(s, dst, enc);
+            else
+                plan_texture(s, j, dst, enc);
+        }
+        if (st.ok()) st = read_input(ctx, s, in, at);
+        if (st.failed()) {
+            if (s.array) note_layer(s.out.capture, j, in.name);
+            return done(end_upload(ctx, s, st));
+        }
+    }
+    return next(s, JobStep::Decode);
+}
+
+/// Decodes or repacks the chunk that read_step() left, or its memory sources, into the target. Then
+/// the next chunk is read, or the upload is committed.
+StepOut decode_step(Context* ctx, Slot& s, JobScratch& sc) {
+    u8* const dst         = static_cast<u8*>(s.out.target.dst);
+    ReadRange const* read = s.out.reads.data();
+    u32 const levels      = s.out.next.layoutLevels;
+    for (u32 j = s.out.inputFirst; j < s.out.inputEnd; ++j) {
+        Input const in = input_of(s, j);
+        Source mem;
+        bool const file = !memory_source(in, mem);
+        Status st       = kOk;
+        if (s.kind == AssetKind::Mesh) {
+            st = decode_mesh(ctx, s, mem, file ? read : nullptr, dst, sc);
+            if (file) ++read;
+        } else {
+            for (u32 i = 0; i < levels && st.ok(); ++i)
+                st =
+                    decode_level(ctx, s, in.name, mem, file ? read + i : nullptr, level_at(s, j, i, dst), sc);
+            if (file) read += levels;
+        }
+        if (st.failed()) {
+            if (s.array) note_layer(s.out.capture, j, in.name);
+            return done(end_upload(ctx, s, st));
+        }
+    }
+    if (s.out.inputEnd < input_count(s)) return next(s, JobStep::Read);
+    return done(end_upload(ctx, s, kOk));
+}
+
+StepOut run_step(Context* ctx, Slot& s, JobScratch& sc) {
+    switch (s.out.step) {
+    case JobStep::Prepare: return prepare_step(ctx, s);
+    case JobStep::Metadata: return metadata_step(ctx, s);
+    case JobStep::Read: return read_step(ctx, s);
+    case JobStep::Decode: return decode_step(ctx, s, sc);
+    }
+    return done(CompletionKind::Failed);
+}
+
+/// The slot was released, or the context stops: the stage ends without its remaining steps.
+CompletionKind abandon(Context* ctx, Slot& s) {
+    if (s.in.stage == Stage::Upload) return end_upload(ctx, s, make_status(Code::Cancelled));
+    s.out.status = make_status(Code::Cancelled);
+    return CompletionKind::Failed;
 }
 
 } // namespace
@@ -822,21 +941,24 @@ u64 texture_layout(ktx2::TextureDesc const& d, u64 pitchAlign, u64 offsetAlign, 
 
 namespace {
 
-void ready_link(Context* ctx, Slot& s, ReadyId id) {
-    List& l = ctx->ready[u32(id)];
+List& ready_list(Context* ctx, Lane lane, ReadyId id) { return ctx->ready[u32(lane)][u32(id)]; }
+
+/// A stage that goes on (`front`) passes the stages that did not start.
+void ready_link(Context* ctx, Slot& s, Lane lane, ReadyId id, bool front) {
+    List& l = ready_list(ctx, lane, id);
     s.ready = id;
-    s.rNext = kInvalid;
-    s.rPrev = l.tail;
-    if (l.tail != kInvalid)
-        ctx->slots[l.tail].rNext = s.index;
-    else
-        l.head = s.index;
-    l.tail = s.index;
+    s.lane  = lane;
+    s.rPrev = front ? kInvalid : l.tail;
+    s.rNext = front ? l.head : kInvalid;
+    if (s.rPrev != kInvalid) ctx->slots[s.rPrev].rNext = s.index;
+    if (s.rNext != kInvalid) ctx->slots[s.rNext].rPrev = s.index;
+    if (front || l.head == kInvalid) l.head = s.index;
+    if (!front || l.tail == kInvalid) l.tail = s.index;
     ++l.count;
 }
 
 void ready_unlink(Context* ctx, Slot& s) {
-    List& l = ctx->ready[u32(s.ready)];
+    List& l = ready_list(ctx, s.lane, s.ready);
     if (s.rPrev != kInvalid)
         ctx->slots[s.rPrev].rNext = s.rNext;
     else
@@ -850,53 +972,104 @@ void ready_unlink(Context* ctx, Slot& s) {
     s.rPrev = s.rNext = kInvalid;
 }
 
-} // namespace
+ReadyId ready_id(Slot const& s) {
+    return s.in.stage == Stage::Meta ? (s.readyHigh ? ReadyId::MetaHigh : ReadyId::MetaNormal)
+                                     : (s.readyHigh ? ReadyId::UploadHigh : ReadyId::UploadNormal);
+}
 
-bool ready_push(Context* ctx, Slot& s, Stage stage) {
-    bool const high  = s.priority == Priority::High;
-    ReadyId const id = stage == Stage::Meta ? (high ? ReadyId::MetaHigh : ReadyId::MetaNormal)
-                                            : (high ? ReadyId::UploadHigh : ReadyId::UploadNormal);
+/// Links `s` for its next step. True: the lane runs fewer run_jobs() calls than it may, and the
+/// caller submits one. `fresh`: the stage starts; else a job hands the stage over.
+bool ready_add(Context* ctx, Slot& s, Lane lane, bool fresh) {
     std::lock_guard<std::mutex> const lock(ctx->readyMutex);
-    ready_link(ctx, s, id);
-    if (ctx->runners >= ctx->maxIoJobs) return false;
-    ++ctx->runners;
+    if (fresh) {
+        s.started   = false;
+        s.readyHigh = s.priority == Priority::High;
+    }
+    ready_link(ctx, s, lane, ready_id(s), !fresh);
+    if (ctx->runners[u32(lane)] >= ctx->maxRunners[u32(lane)]) return false;
+    ++ctx->runners[u32(lane)];
     return true;
 }
 
-bool ready_remove(Context* ctx, Slot& s) {
+/// The lane's next job, the first ReadyId first. An upload stage that starts needs one of the bufCap
+/// places; without one the stages of its list wait, and an upload that ends calls kick(). Null: no
+/// job, and the caller's run_jobs() call ends; `idle` then says that no lane runs one.
+Slot* ready_pop(Context* ctx, Lane lane, bool& idle) {
     std::lock_guard<std::mutex> const lock(ctx->readyMutex);
-    if (s.ready == ReadyId::None) return false;
-    ready_unlink(ctx, s);
-    return true;
+    for (List const& l : ctx->ready[u32(lane)]) {
+        if (l.head == kInvalid) continue;
+        Slot& s = ctx->slots[l.head];
+        if (s.in.stage == Stage::Upload && !s.out.hasBuf) {
+            if (ctx->bufOut >= ctx->bufCap) continue;
+            ++ctx->bufOut;
+            s.out.hasBuf = true;
+        }
+        ready_unlink(ctx, s);
+        s.started = true;
+        return &s;
+    }
+    --ctx->runners[u32(lane)]; // under the lock, so a push after it submits a new run_jobs()
+    idle = ctx->runners[u32(Lane::Cpu)] + ctx->runners[u32(Lane::Read)] == 0;
+    return nullptr;
 }
 
-void ready_boost(Context* ctx, Slot& s) {
-    std::lock_guard<std::mutex> const lock(ctx->readyMutex);
-    if (s.ready != ReadyId::MetaNormal && s.ready != ReadyId::UploadNormal) return;
-    ReadyId const to = s.ready == ReadyId::MetaNormal ? ReadyId::MetaHigh : ReadyId::UploadHigh;
-    ready_unlink(ctx, s);
-    ready_link(ctx, s, to);
+/// An upload stage ended and its place is free: a lane with waiting jobs and no run_jobs() call gets one.
+void kick(Context* ctx) {
+    bool submit[u32(Lane::Count)] = {};
+    {
+        std::lock_guard<std::mutex> const lock(ctx->readyMutex);
+        --ctx->bufOut;
+        for (u32 lane = 0; lane < u32(Lane::Count); ++lane) {
+            if (ctx->runners[lane] != 0) continue;
+            for (List const& l : ctx->ready[lane])
+                submit[lane] |= l.head != kInvalid;
+            if (submit[lane]) ++ctx->runners[lane];
+        }
+    }
+    for (u32 lane = 0; lane < u32(Lane::Count); ++lane)
+        if (submit[lane]) submit_runner(ctx, Lane(lane));
 }
 
-namespace {
+void post(Context* ctx, Completion const& c) {
+    std::lock_guard<std::mutex> lock(ctx->compMutex);
+    KILN_VERIFY(ctx->compCount < ctx->compCap); // one job per slot: never full
+    ctx->comp[(ctx->compHead + ctx->compCount) % ctx->compCap] = c;
+    ++ctx->compCount;
+}
 
-void run_job(Context* ctx, Slot& s, JobScratch& sc) {
-    s.out.status = kOk;
-    s.out.diag   = 0;
-    s.out.capture.reset();
+/// Runs the steps of `s` that belong to `lane`, one after another. A step of the other lane goes to
+/// that lane's ready list, with no pump between; the stage's last step posts its completion.
+void run_job(Context* ctx, Slot& s, Lane lane, JobScratch& sc) {
     bool const meta = s.in.stage == Stage::Meta;
-    CompletionKind k;
+    if (!meta && !s.out.bufTaken) buf_take(ctx, s.out);
+    bool ended       = false;
+    CompletionKind k = CompletionKind::Failed;
     {
         if (ctx->prof)
             profile_interval(ctx->prof, "kiln.wait.pool", path_of(s), s.submitNs, profile_now_ns());
         ProfileZone const zone(ctx->prof, meta ? "kiln.meta" : "kiln.upload", path_of(s));
-        if (meta) {
-            k = run_meta(ctx, s);
-        } else {
-            sc.lend(s.out);
-            k = run_upload(ctx, s, sc);
-            sc.take_back(s.out);
-        }
+        do {
+            if (s.in.abandoned.load(std::memory_order_acquire) ||
+                ctx->stopping.load(std::memory_order_acquire)) {
+                k     = abandon(ctx, s);
+                ended = true;
+                break;
+            }
+            StepOut const o = run_step(ctx, s, sc);
+            k               = o.kind;
+            ended           = o.done;
+        } while (!ended && step_lane(ctx, s) == lane);
+    }
+    if (!ended) {
+        Lane const to = step_lane(ctx, s);
+        if (ctx->prof) s.submitNs = profile_now_ns();
+        if (ready_add(ctx, s, to, false)) submit_runner(ctx, to); // from here on another job may run `s`
+        return;
+    }
+    if (!meta) {
+        buf_give(ctx, s.out);
+        s.out.hasBuf = false;
+        kick(ctx);
     }
     Completion const c{s.index, s.in.gen, k};
     post(ctx, c); // from here on the pump thread may reuse `s`
@@ -904,24 +1077,62 @@ void run_job(Context* ctx, Slot& s, JobScratch& sc) {
 
 } // namespace
 
-void run_jobs(void* arg) {
-    Context* ctx = static_cast<Context*>(arg);
-    JobScratch sc(ctx->alloc); // freed when no job is left
-    for (;;) {
-        Slot* s = nullptr;
-        {
-            std::lock_guard<std::mutex> const lock(ctx->readyMutex);
-            for (List const& l : ctx->ready) {
-                if (l.head == kInvalid) continue;
-                s = &ctx->slots[l.head];
-                ready_unlink(ctx, *s);
-                break;
+Lane step_lane(Context const* ctx, Slot const& s) {
+    if (!ctx->readLane || s.out.step == JobStep::Prepare || s.out.step == JobStep::Decode) return Lane::Cpu;
+    // A step that reads no file does not wait for storage.
+    if (s.source == SourceKind::Memory) return Lane::Cpu;
+    if (!s.array) return s.out.cookedValid ? Lane::Cpu : Lane::Read;
+    for (u32 i = 0; i < s.array->count; ++i)
+        if (!s.array->layers[i].cookedValid) return Lane::Read;
+    return Lane::Cpu;
+}
+
+bool ready_push(Context* ctx, Slot& s, Lane lane) { return ready_add(ctx, s, lane, true); }
+
+void submit_runner(Context* ctx, Lane lane) {
+    JobSystem const& js = lane == Lane::Read ? ctx->readJobs : ctx->jobs;
+    ctx->jobsInFlight.fetch_add(1, std::memory_order_acq_rel);
+    js.submit(js.user, &run_jobs, &ctx->laneRef[u32(lane)]);
+}
+
+bool ready_remove(Context* ctx, Slot& s) {
+    std::lock_guard<std::mutex> const lock(ctx->readyMutex);
+    if (s.ready == ReadyId::None || s.started) return false;
+    ready_unlink(ctx, s);
+    return true;
+}
+
+void ready_drop_unstarted(Context* ctx) {
+    std::lock_guard<std::mutex> const lock(ctx->readyMutex);
+    for (auto& lane : ctx->ready)
+        for (List const& l : lane)
+            for (u32 i = l.head; i != kInvalid;) {
+                Slot& s        = ctx->slots[i];
+                u32 const next = s.rNext;
+                if (!s.started) ready_unlink(ctx, s);
+                i = next;
             }
-            if (!s) --ctx->runners; // under the lock, so a push after it submits a new run_jobs()
-        }
-        if (!s) break;
-        run_job(ctx, *s, sc);
+}
+
+void ready_boost(Context* ctx, Slot& s) {
+    std::lock_guard<std::mutex> const lock(ctx->readyMutex);
+    s.readyHigh = true;
+    if (s.ready != ReadyId::MetaNormal && s.ready != ReadyId::UploadNormal) return;
+    Lane const lane = s.lane;
+    ready_unlink(ctx, s);
+    ready_link(ctx, s, lane, ready_id(s), s.started);
+}
+
+void run_jobs(void* arg) {
+    LaneRef const& ref = *static_cast<LaneRef const*>(arg);
+    Context* ctx       = ref.ctx;
+    JobScratch sc(ctx->alloc); // freed when no job is left
+    bool idle = false;
+    while (Slot* s = ready_pop(ctx, ref.lane, idle)) {
+        run_job(ctx, *s, ref.lane, sc);
+        sc.trim();
     }
+    if (idle) bufs_free(ctx);
     ctx->jobsInFlight.fetch_sub(1, std::memory_order_acq_rel); // the last access to the context
 }
 

@@ -167,6 +167,11 @@ void free_tables(Context* ctx) {
     free_array(a, ctx->freeGroups, ctx->maxGroups, Tag::Registry);
     free_array(a, ctx->comp, ctx->compCap, Tag::Registry);
     free_array(a, ctx->compScratch, ctx->compCap, Tag::Registry);
+    if (ctx->bufs) {
+        for (u32 i = 0; i < ctx->bufCap; ++i)
+            ctx->bufs[i].~ReadBuf();
+        free_array(a, ctx->bufs, ctx->bufCap, Tag::Registry);
+    }
     free_array(a, ctx->events, ctx->maxEvents, Tag::Registry);
     if (ctx->storeDir) free_array(a, ctx->storeDir, ctx->storeDirLen + 1, Tag::Registry);
     if (ctx->profile) free_array(a, ctx->profile, ctx->profileLen + 1, Tag::Registry);
@@ -185,13 +190,10 @@ void free_tables(Context* ctx) {
 
 void teardown(Context* ctx) {
     Adapter const& a = ctx->adapter;
-    // 1. Drop the prepared jobs no worker took, and let the running ones finish (they only touch
-    //    their slot, the ready lists and the completion ring).
-    {
-        std::lock_guard<std::mutex> lock(ctx->readyMutex);
-        for (List& l : ctx->ready)
-            l = {};
-    }
+    // 1. Drop the prepared jobs no worker took, and let the stages that started end at their next
+    //    step (they only touch their slot, the ready lists, the read buffers and the completion ring).
+    ctx->stopping.store(true, std::memory_order_release);
+    ready_drop_unstarted(ctx);
     // Polled, not atomic::wait: a job's notify after its decrement could reach a freed context.
     while (ctx->jobsInFlight.load(std::memory_order_acquire) != 0)
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
@@ -398,10 +400,18 @@ Result<Context*> create(ContextDesc const& desc) {
     }
     u32 const workers = ctx->ownsJobs ? thread_pool_thread_count(ctx->jobs) : 4;
     ctx->maxIoJobs    = desc.maxIoJobs ? desc.maxIoJobs : max(workers, 1u);
-    ctx->ioBudget     = desc.ioInFlightBytes ? desc.ioInFlightBytes : (u64(64) << 20);
-    ctx->maxAssets    = desc.maxAssets;
-    ctx->maxGroups    = desc.maxGroups;
-    ctx->maxEvents    = desc.maxEvents;
+    if (desc.readJobs) {
+        ctx->readJobs                    = *desc.readJobs;
+        ctx->readLane                    = true;
+        ctx->maxRunners[u32(Lane::Read)] = desc.maxReadJobs ? desc.maxReadJobs : 4;
+    }
+    ctx->maxRunners[u32(Lane::Cpu)] = ctx->maxIoJobs;
+    for (u32 lane = 0; lane < u32(Lane::Count); ++lane)
+        ctx->laneRef[lane] = {ctx, Lane(lane)};
+    ctx->ioBudget  = desc.ioInFlightBytes ? desc.ioInFlightBytes : (u64(64) << 20);
+    ctx->maxAssets = desc.maxAssets;
+    ctx->maxGroups = desc.maxGroups;
+    ctx->maxEvents = desc.maxEvents;
 
     ctx->storeDirLen    = desc.storeDir.size;
     ctx->storeDir       = copy_str(a, desc.storeDir);
@@ -442,6 +452,11 @@ Result<Context*> create(ContextDesc const& desc) {
         ctx->freeSlots[i] = ctx->maxAssets - 1 - i; // slot 0 is handed out first
     }
     ctx->freeSlotCount = ctx->maxAssets;
+    // A read buffer for each upload stage that may run or wait for its decode.
+    ctx->bufCap = ctx->maxIoJobs + ctx->maxRunners[u32(Lane::Read)];
+    ctx->bufs   = alloc_array<ReadBuf>(a, ctx->bufCap, Tag::Registry);
+    for (u32 i = 0; i < ctx->bufCap; ++i)
+        ::new (static_cast<void*>(ctx->bufs + i)) ReadBuf();
     ctx->meshMap.init(a, Tag::Registry);
     ctx->meshMap.reserve(ctx->maxAssets);
     ctx->texMap.init(a, Tag::Registry);

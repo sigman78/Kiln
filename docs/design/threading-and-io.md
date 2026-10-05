@@ -109,9 +109,12 @@ job that ends starts the next one without a pump (R26).
   buffer for decoded bytes, and the Zstd context. Fresh memory costs a page fault per page (R29).
   A buffer above 32 MiB is freed after its job, so a worker holds at most 64 MiB between jobs, and
   nothing once no job is left.
-- An upload job runs three steps per input: plan the reads, read them, decode into the target. The
-  read list and the buffer for bytes as read belong to the load attempt while the job runs; the
-  worker lends their storage (`async-read-path.md` §2).
+- A stage is a sequence of steps (meta: prepare, metadata; upload: read, decode), and the load
+  attempt holds the state between them: the read list and the bytes as read, in storage from a
+  pool in the context (`async-read-path.md` §2).
+- With `ContextDesc::readJobs` (experimental) the steps that read a file run on that job system, at
+  most `maxReadJobs` at once, and the others on the workers. A job hands the next step to the other
+  lane itself, so `JobSystem::submit` is called from job threads too.
 
 - **Meta**: open the source (store file, registered bytes, or cook-on-miss), read and validate the
   metadata (`.mesh` CPU region or KTX2 prefix), compute the texture upload layout, close the source.

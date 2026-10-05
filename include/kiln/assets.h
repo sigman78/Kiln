@@ -85,8 +85,12 @@ struct ContextDesc {
     LogSink log            = {};      ///< fn null = process-wide sink (log.h)
     DiagSink diag          = {};      ///< runtime diagnostics (asset failures, store misses)
     JobSystem const* jobs  = nullptr; ///< nullptr = built-in thread pool
-    IoBackend const* io    = nullptr; ///< nullptr = compat backend
-    Adapter const* adapter = nullptr; ///< required
+    /// Experimental (docs/design/async-read-path.md). The job system for the steps of a load that
+    /// wait for storage: the metadata step and the payload reads. Decodes stay on `jobs`.
+    /// nullptr = the load jobs on `jobs` do their own reads.
+    JobSystem const* readJobs = nullptr;
+    IoBackend const* io       = nullptr; ///< nullptr = compat backend
+    Adapter const* adapter    = nullptr; ///< required
 
     /// The store root (read-only for the runtime): `manifest.dir`, which lists the entries of each
     /// target profile, and the artifacts (docs/design/store-manifest.md).
@@ -113,6 +117,7 @@ struct ContextDesc {
     ThreadPriority workerPriority =
         ThreadPriority::Normal;      ///< built-in pool only; Low keeps loading below the host's threads
     u32 maxIoJobs       = 0;         ///< load jobs that run at once; 0 = worker count
+    u32 maxReadJobs     = 0;         ///< jobs that run at once on `readJobs`; 0 = 4
     u64 ioInFlightBytes = 64u << 20; ///< budget for bytes being read at once
 };
 

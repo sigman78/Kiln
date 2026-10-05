@@ -24,6 +24,13 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
   less time per upload job on the benchmark corpus. A worker holds at most 64 MiB between jobs and
   nothing when no job is left (open-questions R29).
 
+- **`ContextDesc::readJobs` and `maxReadJobs` (experimental).** A second job system for the steps of
+  a load that wait for storage: the metadata step and the payload reads run there, the decodes stay
+  on `jobs`, and a read hands its decode over with no pump between (`design/async-read-path.md` §5,
+  stage 2b). Null, the default, keeps the load jobs as they are. Reads that wait for a decode are
+  bounded by `maxIoJobs + maxReadJobs` buffers. A slot released while its stage runs now ends the
+  stage at its next step. Migration: none. A host `JobSystem` must accept `submit` from any thread,
+  a running job included; kiln calls it from its jobs when `readJobs` is set.
 - **A load attempt holds its reads.** The upload job plans an input's reads, reads them, then
   decodes, as three steps that share only the attempt's state; the provider's `prepare` runs before
   the metadata step. This is the first stage of the v0.8 load attempts (`design/async-read-path.md`
