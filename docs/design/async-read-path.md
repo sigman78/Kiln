@@ -718,7 +718,8 @@ asset recovers on reload (`ReadFailureEndsTheStage`); a memory source never uses
 (`MemorySourceStaysOnTheWorkers`); the buffer places bound the reads that wait
 (`ReadBuffersBoundTheReads`); `destroy()` with a waiting decode (`DestroyEndsHeldStages`); a texture
 array (`TextureArrayThroughReadJobs`); every golden on two thread pools (`ReadJobsOnAThreadPool`).
-Not covered yet: an array of more than one chunk, and a sanitizer run of the two-pool case.
+The suite passes under ASan and UBSan on Linux clang (`extended.yml`, run by hand on the branch).
+Not covered yet: an array of more than one chunk, a thread sanitizer run, and gcc.
 
 ### Tests
 
