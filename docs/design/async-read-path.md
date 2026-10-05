@@ -1,8 +1,9 @@
 # Asynchronous cooked-asset reads
 
 **Status:** Part 1 accepted (owner, 2026-10-04; decisions in §11). Proposed 2026-09-29, revised
-2026-10-04 after a review against the code. Built so far: the benchmark (§9) and stages 2a and 2b
-(§10). The note has two parts:
+2026-10-04 after a review against the code. Built: the benchmark (§9) and stages 2a to 2c (§10).
+The Part 1 gate passes with reader threads on; they are off by default until the owner sets the
+default (§11). The note has two parts:
 
 - **Part 1, load attempts** (v0.8): the load benchmark, persistent load attempts, a second job
   system for the steps that wait for storage, and dedicated blocking readers on it.
@@ -76,12 +77,15 @@ Since stages 2a and 2b (§10) each stage is a sequence of steps that share only 
   fills its ranges and closes it. `Decode` decodes or repacks `JobOutput::encoded` into the target,
   then commits, or goes back to `Read` when a texture array has more layers. A chunk of layers keeps
   `encoded` below 32 MiB. A texture's levels are one read each, in file order.
-- **Lanes.** Each step belongs to a lane. Without `ContextDesc::readJobs` there is one lane, the
-  workers, and the steps of a stage run back to back in one job, as before. With it, `Metadata` and
-  `Read` run on that job system when they read a file, and `Prepare`, `Decode` and every step of a
-  memory source run on the workers.
-- **Hand-over.** A job that ends a step of its lane puts the slot on the other lane's ready list and
-  submits a job there if none runs. No pump lies between `Read` and `Decode`.
+- **Lanes.** Each step belongs to a lane. Without readers (`ContextDesc::readerThreads` or
+  `readJobs`) there is one lane, the workers, and the steps of a stage run back to back in one job,
+  as before. With them, `Metadata` and `Read` belong to the read lane when they read a file, and
+  `Prepare`, `Decode` and every step of a memory source to the workers.
+- **The readers add to the threads that read.** A worker with no step of its own takes a step of
+  the read lane and then runs the stage to its end. Readers that replaced the workers' reads were
+  measured first and were slower (§9).
+- **Hand-over.** A read job that ends its step puts the slot on the workers' ready list and submits
+  a job there if fewer run than may. No pump lies between `Read` and `Decode`.
 - **Buffers.** The storage of `reads` and `encoded` comes from a small pool in the context and goes
   back when the stage ends. An upload stage needs one of the pool's places to start (`maxIoJobs` +
   `maxReadJobs` of them), so the reads that wait for a decode are bounded. The decoded bytes and
@@ -306,16 +310,19 @@ backend (a pack file, a network share) needs no change, and Part 1 needs no read
 file-control executor. Readers never use the workers to wait on storage. Cancellation only
 suppresses work not yet started. Other platforms use this mode too.
 
-The seam is a second job system (stage 2b, built):
+The seam is a second job system (stages 2b and 2c, built):
 
-- `ContextDesc::readJobs` (a `JobSystem`): the steps that read a file run there. Null: the workers
-  do their own reads, as before.
-- `ContextDesc::maxReadJobs`: the jobs that run at once on it (0 = 4). `maxIoJobs` keeps its
-  meaning: the jobs that run at once on the workers.
+- `ContextDesc::readerThreads`: kiln starts that many reader threads (0 = none, the default for
+  now). They have the workers' priority.
+- `ContextDesc::readJobs` (a `JobSystem`): a host's own job system for the read lane, in place of
+  kiln's readers.
+- `ContextDesc::maxReadJobs`: the jobs that run at once on the read lane (0 = the reader count, or 4
+  for `readJobs`). `maxIoJobs` keeps its meaning: the jobs that run at once on the workers.
 
-Stage 2c adds kiln's own reader pool as the default and its thread count as a setting. A test passes
-a `JobSystem` that holds its jobs, and an `IoBackend` that fails or delays, in place of a fake read
-backend.
+The workers read too (§2), so with R readers up to `maxIoJobs` + R reads are in flight. A reader
+that waits in a read costs no CPU; on a warm cache a read is a copy, and the readers then use CPU
+beyond the worker count. A test passes a `JobSystem` that holds its jobs, and an `IoBackend` that
+fails or delays, in place of a fake read backend.
 
 ## 6. Admission and back-pressure
 
@@ -721,6 +728,41 @@ array (`TextureArrayThroughReadJobs`); every golden on two thread pools (`ReadJo
 The suite passes under ASan and UBSan on Linux clang (`extended.yml`, run by hand on the branch).
 Not covered yet: an array of more than one chunk, a thread sanitizer run, and gcc.
 
+### Stage 2c: reader threads measured (2026-10-04)
+
+`kiln_bench_load --readers N` sets `ContextDesc::readerThreads`. Same corpus and machine; wall time
+for all 891 assets, mean of 8 runs; "no limits" is a 1000 Hz pump and no upload budget.
+
+| Run | No readers | 2 | 4 | 8 | 16 |
+|---|---|---|---|---|---|
+| 7 workers, warm, 60 Hz, 64 MiB budget | 0.467 s | 0.467 s | 0.469 s | 0.467 s | 0.467 s |
+| 7 workers, warm, no limits | 0.359 s | 0.352 s | 0.349 s | 0.354 s | 0.354 s |
+| 7 workers, cold, no limits | 0.585 s | 0.563 s | 0.558 s | 0.547 s | 0.529 s |
+| 7 workers, cold, 60 Hz, 64 MiB budget | 0.588 s | 0.561 s | 0.550 s | 0.527 s | |
+| 4 workers, warm, no limits | 0.501 s | 0.463 s | 0.450 s | 0.454 s | |
+| 4 workers, cold, no limits | 0.802 s | 0.697 s | 0.659 s | 0.650 s | |
+| 2 workers, warm, no limits | 0.896 s | 0.813 s | 0.774 s | 0.785 s | |
+| 2 workers, cold, no limits | 1.394 s | 1.064 s | 0.972 s | 0.920 s | |
+
+- **The gate passes.** No run is slower with readers. Small assets (under 64 KiB) reach `MetaReady`
+  and `Ready` as early or earlier in every run: cold on 7 workers, `MetaReady` p50 is 32 ms with no
+  readers and 28 ms with 4; at 60 Hz it is 50 ms and 34 ms. The pump count per asset does not rise.
+- **The gain grows as the workers get fewer.** With 4 readers: 5% on a cold load with 7 workers, 18%
+  with 4 workers, 30% with 2. The estimate from the stand-in was 14% on 7 workers; 16 readers give
+  10%.
+- **Warm, the gain with few workers is extra CPU.** A warm read is a copy, and the readers run it on
+  threads beyond the worker count: 14% with 2 workers and 4 readers, 2% with 7 workers. A host that
+  set 2 workers to leave the other cores alone gets more CPU use with readers than without.
+- **Peak scratch rises** with the reads that wait for a decode: cold on 7 workers 198 MiB with no
+  readers, 238 MiB with 4, 266 MiB with 16. The buffer places bound it (`maxIoJobs` + readers).
+- **4 readers is the proposed default**: most of the gain at 2 and 4 workers, and 8 adds little.
+
+The first build of 2c let only the readers read, as the note first described them. It was slower in
+every run: cold on 7 workers 0.585 s became 1.02 s with 2 readers, 0.93 s with 4, 0.86 s with 8 and
+0.72 s with 16; warm 0.371 s became 0.430 s with 2. The reads in flight were then at most the reader
+count, where 7 workers had read before, and on a warm cache the copies of all assets went through
+the few readers. So the workers keep reading, and the readers add to them.
+
 ### Tests
 
 The list below was written for a fake read backend. With the Part 1 design its cases apply to the
@@ -758,8 +800,9 @@ Part 1 (v0.8):
      with the hand-over, the buffer bound and the abandon rule (§2, §5). Tests with held job
      systems prove ownership, release and shutdown. **Done 2026-10-04** (measured in §9). The read
      contract and its fake backend moved to Part 2 (§11).
-   - **2c.** Blocking readers: kiln's own pool behind `readJobs` as the default, the benchmark
-     option, and the Part 1 gate.
+   - **2c.** Blocking readers: kiln's own pool (`ContextDesc::readerThreads`), the benchmark option
+     (`--readers`), and the Part 1 gate. **Done 2026-10-04**: the gate passes (§9). The readers are
+     off by default until the owner sets the default.
 
 Part 2 (v0.9, on hold; each step needs the Part 2 gate):
 
@@ -782,6 +825,9 @@ Part 2 (v0.9, on hold; each step needs the Part 2 gate):
   with Part 2, when a native backend needs it.
 - **The decode follows the read with no pump.** The read job hands the step to the workers itself;
   a pump there would make every asset with CPU work `Ready` one frame later and fail the gate.
+- **Open, for the owner (after 2c):** the default of `readerThreads`. Proposed: 4. It is 0 now, so
+  nothing changes for a host until this is decided. Also open: whether `readJobs` stays public
+  beside `readerThreads`, and a byte budget for the reads that wait for a decode.
 - **Metadata validation runs on the reader in Part 1** (§3.5). A native backend has no reader
   thread: Part 2 validates on a CPU worker, accepts that hop, and checks the small-asset gate again.
 

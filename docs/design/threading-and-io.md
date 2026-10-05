@@ -112,9 +112,10 @@ job that ends starts the next one without a pump (R26).
 - A stage is a sequence of steps (meta: prepare, metadata; upload: read, decode), and the load
   attempt holds the state between them: the read list and the bytes as read, in storage from a
   pool in the context (`async-read-path.md` §2).
-- With `ContextDesc::readJobs` (experimental) the steps that read a file run on that job system, at
-  most `maxReadJobs` at once, and the others on the workers. A job hands the next step to the other
-  lane itself, so `JobSystem::submit` is called from job threads too.
+- With `ContextDesc::readerThreads` (experimental; or a host's `readJobs`) the steps that read a
+  file belong to a read lane, at most `maxReadJobs` at once. A worker with no step of its own takes
+  one of them, so the readers add to the threads that read. A read job hands its decode to the
+  workers itself, so `JobSystem::submit` is called from job threads too.
 
 - **Meta**: open the source (store file, registered bytes, or cook-on-miss), read and validate the
   metadata (`.mesh` CPU region or KTX2 prefix), compute the texture upload layout, close the source.

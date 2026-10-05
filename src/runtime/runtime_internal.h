@@ -380,8 +380,9 @@ struct Context {
     u32 maxRunners[u32(rt::Lane::Count)] = {}; ///< maxIoJobs, maxReadJobs
     u32 bufOut                           = 0;  ///< upload stages that started and did not end; at most bufCap
     rt::LaneRef laneRef[u32(rt::Lane::Count)];
-    JobSystem readJobs;    ///< ContextDesc::readJobs
-    bool readLane = false; ///< readJobs is set: steps that read files run there
+    JobSystem readJobs;        ///< ContextDesc::readJobs, or kiln's reader threads
+    bool ownsReadJobs = false; ///< readJobs is the pool of ContextDesc::readerThreads
+    bool readLane     = false; ///< readJobs is set: steps that read files run there
 
     // Read buffers no stage uses. Guarded by bufMutex.
     std::mutex bufMutex;
@@ -499,9 +500,9 @@ inline TextureShape shape_of(ktx2::TextureDesc const& d) {
 void run_jobs(void* arg);
 /// The lane that runs the step `s.out.step`.
 Lane step_lane(Context const* ctx, Slot const& s);
-/// pump(): the stage of `s` is prepared and a job of `lane` may take it. True: the caller calls
-/// submit_runner() (fewer run_jobs() calls run than the lane allows).
-[[nodiscard]] bool ready_push(Context* ctx, Slot& s, Lane lane);
+/// pump(): the stage of `s` is prepared and a job may take it. Returns the lane the caller calls
+/// submit_runner() for, or Lane::Count for none.
+[[nodiscard]] Lane ready_push(Context* ctx, Slot& s, Lane lane);
 /// Submits one run_jobs() call to the lane's job system.
 void submit_runner(Context* ctx, Lane lane);
 /// Takes the prepared job of `s` back. False: a job started the stage already.

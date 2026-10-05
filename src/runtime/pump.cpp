@@ -235,9 +235,9 @@ void submit_stage(Context* ctx, Slot& s, Stage stage) {
                          s.queuedNs, s.submitNs);
     }
     ++ctx->jobsOutstanding;
-    Lane const lane = step_lane(ctx, s);
-    // After the job's inputs are written: a worker may take it now.
-    if (ready_push(ctx, s, lane)) submit_runner(ctx, lane);
+    // After the job's inputs are written: a job may take it now.
+    Lane const runner = ready_push(ctx, s, step_lane(ctx, s));
+    if (runner != Lane::Count) submit_runner(ctx, runner);
 }
 
 void poll_placeholders(Context* ctx) {

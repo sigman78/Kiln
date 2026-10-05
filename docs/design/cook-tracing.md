@@ -34,6 +34,7 @@ only calls hooks (`kiln/profile.h`); writing a trace is a tool's job.
 | `kiln.wait.meta`, `kiln.wait.upload` | interval | — | in kiln's queue, from queueing to the pump that prepares the job (the next pump; for uploads also the upload budget) |
 | `kiln.wait.pool` | interval | — | prepared by `pump()`, not taken by a worker yet (the ready list and the job system) |
 | `kiln.meta`, `kiln.upload` | zone | worker | the meta job (read the header, or cook on a miss) and the upload job (read, Zstd decode, write staging) |
+| `kiln.upload.read` | zone | reader | with reader threads: an upload's reads on a reader. `kiln.upload` on a worker is then the decode alone, and `kiln.meta` runs on either |
 | `kiln.open`, `kiln.read` | zones | worker | inside a job: open the artifact and get its size; one positional read. Files only, not memory sources |
 | `kiln.decode`, `kiln.copy` | zones | worker | inside `kiln.upload`: a Zstd or `.mesh` payload decode into scratch; the copy or row repack into the upload target. An upload with neither read straight into the target |
 | `kiln.prepare` | zone | worker | the cook provider's `prepare` inside a meta job: a store check, or a cook on a miss |

@@ -977,36 +977,44 @@ ReadyId ready_id(Slot const& s) {
                                      : (s.readyHigh ? ReadyId::UploadHigh : ReadyId::UploadNormal);
 }
 
-/// Links `s` for its next step. True: the lane runs fewer run_jobs() calls than it may, and the
-/// caller submits one. `fresh`: the stage starts; else a job hands the stage over.
-bool ready_add(Context* ctx, Slot& s, Lane lane, bool fresh) {
+/// Links `s` for its next step. Returns the lane that the caller submits one more run_jobs() call
+/// to, or Lane::Count for none: `lane` when it runs fewer calls than it may, else the workers for a
+/// read step, because they take those too. `fresh`: the stage starts; else a job hands it over.
+Lane ready_add(Context* ctx, Slot& s, Lane lane, bool fresh) {
     std::lock_guard<std::mutex> const lock(ctx->readyMutex);
     if (fresh) {
         s.started   = false;
         s.readyHigh = s.priority == Priority::High;
     }
     ready_link(ctx, s, lane, ready_id(s), !fresh);
-    if (ctx->runners[u32(lane)] >= ctx->maxRunners[u32(lane)]) return false;
-    ++ctx->runners[u32(lane)];
-    return true;
+    for (Lane const to : {lane, Lane::Cpu}) {
+        if (ctx->runners[u32(to)] >= ctx->maxRunners[u32(to)]) continue;
+        ++ctx->runners[u32(to)];
+        return to;
+    }
+    return Lane::Count;
 }
 
-/// The lane's next job, the first ReadyId first. An upload stage that starts needs one of the bufCap
-/// places; without one the stages of its list wait, and an upload that ends calls kick(). Null: no
-/// job, and the caller's run_jobs() call ends; `idle` then says that no lane runs one.
+/// The next job for a run_jobs() call of `lane`, the first ReadyId first. A worker with no step of
+/// its own takes a read step: the readers add to the threads that read, they do not replace them.
+/// An upload stage that starts needs one of the bufCap places; without one the stages of its list
+/// wait, and an upload that ends calls kick(). Null: no job, and the caller's run_jobs() call ends;
+/// `idle` then says that no lane runs one.
 Slot* ready_pop(Context* ctx, Lane lane, bool& idle) {
     std::lock_guard<std::mutex> const lock(ctx->readyMutex);
-    for (List const& l : ctx->ready[u32(lane)]) {
-        if (l.head == kInvalid) continue;
-        Slot& s = ctx->slots[l.head];
-        if (s.in.stage == Stage::Upload && !s.out.hasBuf) {
-            if (ctx->bufOut >= ctx->bufCap) continue;
-            ++ctx->bufOut;
-            s.out.hasBuf = true;
+    for (u32 from = u32(lane); from < u32(Lane::Count); ++from) {
+        for (List const& l : ctx->ready[from]) {
+            if (l.head == kInvalid) continue;
+            Slot& s = ctx->slots[l.head];
+            if (s.in.stage == Stage::Upload && !s.out.hasBuf) {
+                if (ctx->bufOut >= ctx->bufCap) continue;
+                ++ctx->bufOut;
+                s.out.hasBuf = true;
+            }
+            ready_unlink(ctx, s);
+            s.started = true;
+            return &s;
         }
-        ready_unlink(ctx, s);
-        s.started = true;
-        return &s;
     }
     --ctx->runners[u32(lane)]; // under the lock, so a push after it submits a new run_jobs()
     idle = ctx->runners[u32(Lane::Cpu)] + ctx->runners[u32(Lane::Read)] == 0;
@@ -1020,7 +1028,7 @@ void kick(Context* ctx) {
         std::lock_guard<std::mutex> const lock(ctx->readyMutex);
         --ctx->bufOut;
         for (u32 lane = 0; lane < u32(Lane::Count); ++lane) {
-            if (ctx->runners[lane] != 0) continue;
+            if (ctx->runners[lane] != 0 || ctx->maxRunners[lane] == 0) continue;
             for (List const& l : ctx->ready[lane])
                 submit[lane] |= l.head != kInvalid;
             if (submit[lane]) ++ctx->runners[lane];
@@ -1037,8 +1045,9 @@ void post(Context* ctx, Completion const& c) {
     ++ctx->compCount;
 }
 
-/// Runs the steps of `s` that belong to `lane`, one after another. A step of the other lane goes to
-/// that lane's ready list, with no pump between; the stage's last step posts its completion.
+/// Runs the steps of `s` one after another: a worker all of them, a read job those of its lane. A
+/// read job's next step for the workers goes to their ready list, with no pump between; the stage's
+/// last step posts its completion.
 void run_job(Context* ctx, Slot& s, Lane lane, JobScratch& sc) {
     bool const meta = s.in.stage == Stage::Meta;
     if (!meta && !s.out.bufTaken) buf_take(ctx, s.out);
@@ -1047,7 +1056,9 @@ void run_job(Context* ctx, Slot& s, Lane lane, JobScratch& sc) {
     {
         if (ctx->prof)
             profile_interval(ctx->prof, "kiln.wait.pool", path_of(s), s.submitNs, profile_now_ns());
-        ProfileZone const zone(ctx->prof, meta ? "kiln.meta" : "kiln.upload", path_of(s));
+        // An upload's steps on the read lane have a zone of their own; "kiln.upload" is then the decode.
+        char const* const name = meta ? "kiln.meta" : lane == Lane::Read ? "kiln.upload.read" : "kiln.upload";
+        ProfileZone const zone(ctx->prof, name, path_of(s));
         do {
             if (s.in.abandoned.load(std::memory_order_acquire) ||
                 ctx->stopping.load(std::memory_order_acquire)) {
@@ -1058,12 +1069,13 @@ void run_job(Context* ctx, Slot& s, Lane lane, JobScratch& sc) {
             StepOut const o = run_step(ctx, s, sc);
             k               = o.kind;
             ended           = o.done;
-        } while (!ended && step_lane(ctx, s) == lane);
+        } while (!ended && (lane == Lane::Cpu || step_lane(ctx, s) == lane));
     }
     if (!ended) {
-        Lane const to = step_lane(ctx, s);
         if (ctx->prof) s.submitNs = profile_now_ns();
-        if (ready_add(ctx, s, to, false)) submit_runner(ctx, to); // from here on another job may run `s`
+        Lane const runner =
+            ready_add(ctx, s, step_lane(ctx, s), false); // from here on another job may run `s`
+        if (runner != Lane::Count) submit_runner(ctx, runner);
         return;
     }
     if (!meta) {
@@ -1087,7 +1099,7 @@ Lane step_lane(Context const* ctx, Slot const& s) {
     return Lane::Cpu;
 }
 
-bool ready_push(Context* ctx, Slot& s, Lane lane) { return ready_add(ctx, s, lane, true); }
+Lane ready_push(Context* ctx, Slot& s, Lane lane) { return ready_add(ctx, s, lane, true); }
 
 void submit_runner(Context* ctx, Lane lane) {
     JobSystem const& js = lane == Lane::Read ? ctx->readJobs : ctx->jobs;

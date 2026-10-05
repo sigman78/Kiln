@@ -2870,7 +2870,7 @@ KILN_TEST(Runtime, MemorySourceStaysOnTheWorkers) {
 }
 
 // Reads that wait for their decode are bounded: with one worker and one read job, two upload stages
-// hold a read buffer at most, and the third starts when a decode ends.
+// hold a read buffer at most, and the others start when a decode ends.
 KILN_TEST(Runtime, ReadBuffersBoundTheReads) {
     TwoLanes l;
     ContextDesc cd;
@@ -2889,9 +2889,10 @@ KILN_TEST(Runtime, ReadBuffersBoundTheReads) {
     l.rd.run_all(); // two reads; the others wait for a buffer
     KILN_CHECK_EQ(null_adapter_stats(l.rt.na).beginUploads, s0.beginUploads + 2);
     KILN_CHECK(l.rd.held() == 0 && l.cpu.held() == 1);
-    l.cpu.run_all(); // two decodes, and the read job starts again
-    KILN_CHECK_EQ(null_adapter_stats(l.rt.na).commits, s0.commits + 2);
+    l.cpu.run_all(); // two decodes; the first frees a buffer, so a read job is submitted again
     KILN_CHECK(l.rd.held() == 1);
+    // The worker went on with the two uploads that waited: it takes read steps when it has no other.
+    KILN_CHECK_EQ(null_adapter_stats(l.rt.na).commits, s0.commits + 4);
     KILN_REQUIRE(l.drive([&] {
         return is_ready(l.rt.ctx, t[0]) && is_ready(l.rt.ctx, t[1]) && is_ready(l.rt.ctx, t[2]) &&
                is_ready(l.rt.ctx, t[3]);
@@ -2899,6 +2900,54 @@ KILN_TEST(Runtime, ReadBuffersBoundTheReads) {
     KILN_CHECK_EQ(l.rt.diags.count, 0u);
     for (TextureHandle h : t)
         release(l.rt.ctx, h);
+}
+
+// The read jobs add to the threads that read: a worker with no step of its own takes a read step
+// and runs the stage to its end. Here the read job system never runs a job.
+KILN_TEST(Runtime, WorkersTakeReadSteps) {
+    TwoLanes l;
+    ContextDesc cd;
+    cd.maxReadJobs = 1;
+    if (!l.init(cd)) return;
+    TextureHandle const a = request_texture(l.rt.ctx, "ktx2/color_zstd");
+    TextureHandle const b = request_texture(l.rt.ctx, "ktx2/normal");
+    l.rt.pump_once();
+    KILN_CHECK(l.rd.held() == 1 && l.cpu.held() == 1); // one read job; the second step woke a worker
+    bool ready = false;
+    for (int i = 0; i < 16 && !ready; ++i) {
+        l.cpu.run_all();
+        l.rt.pump_once();
+        ready = is_ready(l.rt.ctx, a) && is_ready(l.rt.ctx, b);
+    }
+    KILN_CHECK(ready);
+    KILN_CHECK_EQ(l.rd.next, 0u); // no read job ran
+    KILN_CHECK_EQ(l.rt.diags.count, 0u);
+    release(l.rt.ctx, a);
+    release(l.rt.ctx, b);
+}
+
+// ContextDesc::readerThreads: kiln's own reader pool. Every golden loads.
+KILN_TEST(Runtime, ReaderThreads) {
+    Rt rt;
+    ContextDesc cd;
+    cd.readerThreads = 3;
+    if (!rt.init({}, cd)) return;
+    MeshHandle m[countof(kGoldenMeshes)];
+    TextureHandle t[countof(kGoldenTextures)];
+    for (usize i = 0; i < countof(kGoldenMeshes); ++i)
+        m[i] = request_mesh(rt.ctx, kGoldenMeshes[i]);
+    for (usize i = 0; i < countof(kGoldenTextures); ++i)
+        t[i] = request_texture(rt.ctx, kGoldenTextures[i]);
+    KILN_CHECK(rt.pump_until([&] {
+        ContextStats const st = stats(rt.ctx);
+        return st.ready + st.failed == st.assets;
+    }));
+    KILN_CHECK_EQ(stats(rt.ctx).failed, 0u);
+    KILN_CHECK_EQ(rt.diags.count, 0u);
+    for (MeshHandle h : m)
+        release(rt.ctx, h);
+    for (TextureHandle h : t)
+        release(rt.ctx, h);
 }
 
 // destroy() with a decode that waits: the stage ends at its next step and discards its upload.

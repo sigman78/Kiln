@@ -241,6 +241,8 @@ void teardown(Context* ctx) {
     ctx->orphans.clear();
     if (ctx->ownsJobs) destroy_thread_pool(ctx->jobs);
     ctx->ownsJobs = false;
+    if (ctx->ownsReadJobs) destroy_thread_pool(ctx->readJobs);
+    ctx->ownsReadJobs = false;
 }
 
 } // namespace
@@ -404,6 +406,23 @@ Result<Context*> create(ContextDesc const& desc) {
         ctx->readJobs                    = *desc.readJobs;
         ctx->readLane                    = true;
         ctx->maxRunners[u32(Lane::Read)] = desc.maxReadJobs ? desc.maxReadJobs : 4;
+    } else if (desc.readerThreads) {
+        ThreadPoolDesc pd;
+        pd.alloc                     = a;
+        pd.threads                   = desc.readerThreads;
+        pd.priority                  = desc.workerPriority;
+        Result<JobSystem> const pool = create_thread_pool(pd);
+        if (pool.failed()) {
+            if (ctx->ownsJobs) destroy_thread_pool(ctx->jobs);
+            delete_object(a, ctx, Tag::Registry);
+            return diagf(&desc.diag, pool.status(), kDiagPlaceholderFailed, Severity::Error, {}, "create",
+                         "cannot start the reader threads");
+        }
+        ctx->readJobs                    = *pool;
+        ctx->ownsReadJobs                = true;
+        ctx->readLane                    = true;
+        u32 const readers                = thread_pool_thread_count(ctx->readJobs);
+        ctx->maxRunners[u32(Lane::Read)] = desc.maxReadJobs ? desc.maxReadJobs : readers;
     }
     ctx->maxRunners[u32(Lane::Cpu)] = ctx->maxIoJobs;
     for (u32 lane = 0; lane < u32(Lane::Count); ++lane)
@@ -491,8 +510,8 @@ Result<Context*> create(ContextDesc const& desc) {
 
     watch_start(ctx, desc.hotReload);
 
-    log_info(ctx, "context created: maxAssets %u, %u worker job slot(s), store '%s'", ctx->maxAssets,
-             ctx->maxIoJobs, ctx->storeDir);
+    log_info(ctx, "context created: maxAssets %u, %u worker job slot(s), %u read job slot(s), store '%s'",
+             ctx->maxAssets, ctx->maxIoJobs, ctx->maxRunners[u32(Lane::Read)], ctx->storeDir);
     return ctx;
 }
 
