@@ -36,7 +36,7 @@ Not goals for v1:
 - **Runtime texture arrays** ([`design/runtime-texture-arrays.md`](design/runtime-texture-arrays.md);
   runtime and the examples `kiln-gl-array`, `kiln-vk-array` done 2026-09-30). Independently cooked 2D assets assembled into one GPU array at load time. First
   version (owner, 2026-09-30): one aggregate upload within today's adapter contract, file-backed 2D
-  members, whole-array reload. Range uploads wait for v0.8. `kiln-sokol-array` and `kiln-nga-array`
+  members, whole-array reload. Range uploads are unscheduled. `kiln-sokol-array` and `kiln-nga-array`
   (2026-10-01) complete the examples; the NGA one awaits hardware with `VK_EXT_descriptor_heap`.
 - **Faster BC encoding** (done 2026-09-30: Basis `bc7f` for BC7 Fast and Normal, the provider at
   Fast; open-questions R14). Was: decide from the direct-encoder benchmark in
@@ -67,11 +67,23 @@ Not goals for v1:
 
 ## v0.8: streaming
 
-- Range requests; progressive mips and LODs (`State::Partial`, `TextureDesc::firstLevel`).
-- Persistent load attempts, an asynchronous read contract and dedicated blocking readers
-  ([`design/async-read-path.md`](design/async-read-path.md), Part 1).
-- An adapter contract for range uploads into an existing object, shared with texture arrays.
-- Residency, budget and eviction hooks (`Adapter::reserved`).
+Direction (owner, 2026-10-05): an object loads whole or not at all, and the goal is latency at the
+level of the runtime library. The design is [`design/streaming.md`](design/streaming.md) (proposed,
+open-questions R30).
+
+- **Level-limited texture loads:** a request gives a largest extent, and kiln loads the mip levels
+  that fit as a complete, smaller texture (`RequestOptions::maxExtent`, `TextureDesc::firstLevel`).
+  No change to the adapter contract.
+- **A size change is a swap:** `set_texture_extent` loads a new object and swaps it in, as a reload
+  does. The host decides what is resident; kiln reports resident bytes and enforces no budget.
+- **Latency:** one-pass texture loads from manifest metadata (open-questions R27); group readiness
+  ([`design/readiness-sets.md`](design/readiness-sets.md), R25). Each awaits the owner.
+- **Persistent load attempts** ([`design/async-read-path.md`](design/async-read-path.md), Part 1,
+  stage 2a): done 2026-10-04. The second job lane and the reader threads of Part 1 are built on the
+  branch `experimental/load-attempts` and stay there until the owner approves them for main.
+
+Dropped from v0.8 by this direction: progressive fill of one object (`State::Partial`), residency
+hooks in the adapter, and progressive mesh LODs. Range uploads are under Unscheduled.
 
 ## v0.9: platforms
 
@@ -100,6 +112,10 @@ Not goals for v1:
 - `EXT_meshopt_compression` input (the importer's buffer-view resolution leaves room for a decode
   step).
 - GPU decompression of chunked blobs.
+- Range uploads into an existing object, for texture arrays: bounded staging, and a reload of the
+  changed layers only (open-questions R12). Moved from v0.8 (owner, 2026-10-05).
+- Progressive mesh LODs and split blobs (spec B16). They need LOD generation first. Moved from v0.8
+  (owner, 2026-10-05).
 - One settings desc that `cook_cli_main` and the cook provider share, so a project's `kiln-cook`
   matches its provider (open-questions R19 b, c).
 - Asset metadata in the manifest (size, format, counts, bounds), readable before a load *(discuss)*.
