@@ -5,7 +5,6 @@
 #include "../formats/formats_internal.h"
 
 #include <cstdarg>
-#include <utility>
 
 namespace kiln::rt {
 namespace {
@@ -127,19 +126,9 @@ Input layer_input(Slot& s, ArrayLayer& l) {
             &l.cooked,          &l.cookedValid,   &l.jobProviderOwned, nullptr};
 }
 
-/// Registered bytes or cook output serve as the input: `src` reads them, and no file is opened.
-[[nodiscard]] bool memory_source(Input const& in, Source& src) {
-    if (!*in.cookedValid && !in.registered) return false;
-    src.memory = true;
-    src.mem    = *in.cookedValid ? in.cooked->span() : in.registered->span();
-    src.size   = src.mem.size;
-    return true;
-}
-
 /// The provider checks the asset and names its artifact, or cooks it into `*in.cooked`, which then
-/// serves both stages. Without a provider, and for a memory source, it does nothing.
-Status prepare_input(Context* ctx, Slot& s, Input const& in) {
-    if (!s.in.provider.prepare || *in.cookedValid || in.registered) return kOk;
+/// serves both stages.
+Status prepare_source(Context* ctx, Slot& s, Input const& in, Source& src) {
     Vec<u8> out(ctx->alloc, Tag::Payload);
     Hash128 key;
     DiagSink sink{&capture_fn, &s.out.capture};
@@ -171,13 +160,25 @@ Status prepare_input(Context* ctx, Slot& s, Input const& in) {
     }
     *in.cooked      = std::move(out);
     *in.cookedValid = true;
+    src.memory      = true;
+    src.mem         = in.cooked->span();
+    src.size        = src.mem.size;
     return kOk;
 }
 
-/// Opens an input for reading: its memory, or the artifact that the manifest named at dispatch or
-/// that the cook provider named since.
-Status open_source(Context* ctx, Slot& s, Input const& in, Source& src) {
-    if (memory_source(in, src)) return kOk;
+/// Resolve an input: the artifact the manifest named at dispatch, or the one the cook provider
+/// names (the meta stage asks it first when one is installed).
+Status open_source(Context* ctx, Slot& s, Input const& in, Source& src, bool allowCook) {
+    if (*in.cookedValid || in.registered) {
+        src.memory = true;
+        src.mem    = *in.cookedValid ? in.cooked->span() : in.registered->span();
+        src.size   = src.mem.size;
+        return kOk;
+    }
+    if (allowCook && s.in.provider.prepare) {
+        KILN_TRY(prepare_source(ctx, s, in, src));
+        if (src.memory) return kOk;
+    }
     if (!*in.keyValid) {
         // Roots name sources, but only a cook provider reads them.
         char const* const hint =
@@ -393,23 +394,18 @@ Status check_layer(Slot& s, u32 layer, StrView name, ktx2::TextureDesc const& fi
     return make_status(Code::ValidationFailed);
 }
 
-/// The provider's work for every layer first. Then each layer's metadata, checked against layer 0,
-/// and the upload layout of the whole array. Each layer keeps its level table for the upload stage.
+/// Each layer's metadata, checked against layer 0, then the upload layout of the whole array. Each
+/// layer keeps its level table for the upload stage.
 CompletionKind run_array_meta(Context* ctx, Slot& s) {
     ArrayDecl& d = *s.array;
     KtxLevels first;
     Status st = kOk;
     for (u32 i = 0; i < d.count && st.ok(); ++i) {
-        Input const in = layer_input(s, d.layers[i]);
-        st             = prepare_input(ctx, s, in);
-        if (st.failed()) note_layer(s.out.capture, i, in.name);
-    }
-    for (u32 i = 0; i < d.count && st.ok(); ++i) {
         ArrayLayer& l  = d.layers[i];
         Input const in = layer_input(s, l);
         Source src;
         KtxLevels k;
-        st = open_source(ctx, s, in, src);
+        st = open_source(ctx, s, in, src, true);
         if (st.ok()) st = read_ktx2_levels(ctx, s, in.name, src, TextureShape::Tex2D, i, &k);
         src.close();
         if (st.ok() && i > 0) st = check_layer(s, i, in.name, first.desc, k.desc);
@@ -456,13 +452,10 @@ CompletionKind run_array_meta(Context* ctx, Slot& s) {
     return CompletionKind::MetaReady;
 }
 
-/// Two steps: the provider's work, then the metadata unit, which opens, reads and validates.
 CompletionKind run_meta(Context* ctx, Slot& s) {
     if (s.array) return run_array_meta(ctx, s);
-    Input const in = slot_input(s);
-    if (prepare_input(ctx, s, in).failed()) return CompletionKind::Failed;
     Source src;
-    if (open_source(ctx, s, in, src).failed()) return CompletionKind::Failed;
+    if (open_source(ctx, s, slot_input(s), src, true).failed()) return CompletionKind::Failed;
     Status const st = s.kind == AssetKind::Mesh ? mesh_meta(ctx, s, src) : texture_meta(ctx, s, src);
     src.close();
     if (st.failed()) {
@@ -483,73 +476,55 @@ Span<u8> scratch_bytes(Vec<u8>& v, usize n) {
     return v.append_uninit(n);
 }
 
-/// The buffers of the upload jobs that one run_jobs() call runs. Fresh memory costs a page fault per
-/// page, so the jobs reuse them. `reads` and `encoded` are lent to the attempt while its job runs
-/// (JobOutput); the decoded bytes and the Zstd context stay with the worker.
+/// The buffers of the upload jobs that one run_jobs() call runs: encoded bytes as read, decoded
+/// bytes, and the Zstd context. Fresh memory costs a page fault per page, so the jobs reuse them.
 struct JobScratch {
-    explicit JobScratch(Allocator const* a)
-        : reads(a, Tag::Io), encoded(a, Tag::Io), texels(a, Tag::Io), zstd(a) {}
-    Vec<ReadRange> reads;
-    Vec<u8> encoded;
+    explicit JobScratch(Allocator const* a) : scratch(a, Tag::Io), texels(a, Tag::Io), zstd(a) {}
+    Vec<u8> scratch;
     Vec<u8> texels;
     fmt::ZstdDecoder zstd;
 
-    void lend(JobOutput& out) {
-        std::swap(reads, out.reads);
-        std::swap(encoded, out.encoded);
-    }
-    /// After a job: takes the lent storage back. A buffer that one large asset grew goes to the
-    /// allocator, so a worker keeps at most 2 * kKeepBytes between jobs.
-    void take_back(JobOutput& out) {
-        lend(out);
-        if (encoded.capacity() > kKeepBytes) encoded.release();
+    /// After a job: a buffer that one large asset grew goes back, so a worker keeps at most
+    /// 2 * kKeepBytes between jobs.
+    void trim() {
+        if (scratch.capacity() > kKeepBytes) scratch.release();
         if (texels.capacity() > kKeepBytes) texels.release();
     }
     static constexpr usize kKeepBytes = usize(32) << 20;
 };
 
-// The upload stage handles one input at a time: the slot's own asset, or one layer of an array.
-// plan_input() lists the input's reads, read_input() fills them, decode_input() turns the bytes into
-// the upload target. Only s.out carries state from one step to the next.
-
-Status plan_mesh(Slot& s, bool memory, u8* dst) {
-    mesh::MeshView const& v   = s.out.next.meshView;
-    mesh::FileHeader const& h = v.header();
-    if (memory) return kOk;
-    if (v.payload_raw()) {
-        // Identity layout: one read of GPUD straight into the adapter's memory.
-        if (h.payloadDecodedSize > h.gpuDataSize) {
-            DiagSink const sink{&capture_fn, &s.out.capture};
-            return diagf(&sink, make_status(Code::Corrupt), mesh::kDiagPayloadRaw, Severity::Error,
-                         path_of(s), "header", "raw payload larger than GPUD");
-        }
-        s.out.reads.push_back({h.gpuDataOffset, h.payloadDecodedSize, dst});
-        return kOk;
-    }
-    u8* const enc = scratch_bytes(s.out.encoded, usize(h.gpuDataSize)).data;
-    s.out.reads.push_back({h.gpuDataOffset, h.gpuDataSize, enc});
-    return kOk;
-}
-
-Status decode_mesh(Context* ctx, Slot& s, Source const& mem, u8* dst, JobScratch& sc) {
+Status write_mesh(Context* ctx, Slot& s, Source const& src, u8* dst, JobScratch& sc) {
     DiagSink const sink{&capture_fn, &s.out.capture};
     StrView const name        = path_of(s);
     mesh::MeshView const& v   = s.out.next.meshView;
     mesh::FileHeader const& h = v.header();
     Span<u8> const out(dst, usize(h.payloadDecodedSize));
-    if (!mem.memory && v.payload_raw()) return kOk; // read in place
-    Span<u8 const> gpud = s.out.encoded.span();
-    if (mem.memory) {
-        if (h.gpuDataOffset > mem.size || h.gpuDataSize > mem.size - h.gpuDataOffset)
-            return make_status(Code::IoEof);
-        gpud = mem.mem.subspan(usize(h.gpuDataOffset), usize(h.gpuDataSize));
+    if (h.gpuDataOffset > src.size || h.gpuDataSize > src.size - h.gpuDataOffset)
+        return make_status(Code::IoEof);
+    if (v.payload_raw() && !src.memory) {
+        // Identity layout: one read of GPUD straight into the adapter's memory.
+        if (h.payloadDecodedSize > h.gpuDataSize)
+            return diagf(&sink, make_status(Code::Corrupt), mesh::kDiagPayloadRaw, Severity::Error, name,
+                         "header", "raw payload larger than GPUD");
+        IoBytes budget(ctx, h.payloadDecodedSize);
+        return src.read(h.gpuDataOffset, h.payloadDecodedSize, dst);
+    }
+    Vec<u8>& encoded = sc.scratch;
+    Span<u8 const> gpud;
+    if (src.memory) {
+        gpud = src.mem.subspan(usize(h.gpuDataOffset), usize(h.gpuDataSize));
+    } else {
+        (void)scratch_bytes(encoded, usize(h.gpuDataSize));
+        IoBytes budget(ctx, h.gpuDataSize);
+        KILN_TRY(src.read(h.gpuDataOffset, h.gpuDataSize, encoded.data()));
+        gpud = encoded.span();
     }
     mesh::DecodeOptions const dopt{.alloc = ctx->alloc};
     if (v.payload_raw()) {
         ProfileZone const zone(ctx->prof, "kiln.copy", name);
         return mesh::decode_payload(v, gpud, out, dopt, &sink, nullptr, name);
     }
-    // Never straight into the adapter's memory: Zstd reads its output back (as in decode_level).
+    // Never straight into the adapter's memory: Zstd reads its output back (as in write_level).
     Vec<u8>& decoded = sc.texels;
     (void)scratch_bytes(decoded, out.size);
     {
@@ -561,93 +536,57 @@ Status decode_mesh(Context* ctx, Slot& s, Source const& mem, u8* dst, JobScratch
     return kOk;
 }
 
-/// One stored level of one input: [sOff, sOff + sLen) in its file, `tLen` texel bytes once decoded,
-/// written to `out` with rows of `rowBytes` padded to `pitch`.
+/// One stored level of one input: [sOff, sOff + sLen) in `src`, `tLen` texel bytes once decoded, written
+/// to `out` with rows of `rowBytes` padded to `pitch`.
 struct LevelCopy {
-    u32 level    = 0;
-    u64 sOff     = 0;
-    u64 sLen     = 0;
-    u64 tLen     = 0;
-    u64 rowBytes = 0;
-    u64 pitch    = 0;
-    bool zstd    = false;
-    u8* out      = nullptr;
-    /// The stored bytes are the level as the target holds it: a read can go straight to `out`.
-    bool direct() const { return pitch == rowBytes && !zstd; }
+    u32 level     = 0;
+    u64 sOff      = 0;
+    u64 sLen      = 0;
+    u64 tLen      = 0;
+    u64 rowBytes  = 0;
+    u64 pitch     = 0;
+    bool zstd     = false;
+    StrView input = {}; ///< for the diagnostic of a frame that does not decode
 };
 
-/// Level `i` of texture input `j` (0 for a texture of its own, else the array layer). Layer j of a
-/// level lies at the level's offset plus j times one layer's padded size.
-LevelCopy level_copy(Slot& s, u32 j, u32 i, u8* dst) {
-    MetaSet const& m = s.out.next;
-    u32 const levels = m.layoutLevels;
-    LevelCopy c{.level    = i,
-                .tLen     = m.layout[4 * levels + i],
-                .rowBytes = format_row_bytes(m.texDesc.format, max(m.texDesc.width >> i, 1u)),
-                .pitch    = m.layout[levels + i]};
-    if (s.array) {
-        ArrayLayer const& l = s.array->layers[j];
-        c.sOff              = l.src[i];
-        c.sLen              = l.src[l.srcLevels + i];
-        c.zstd              = l.zstd;
-    } else {
-        c.sOff = m.layout[2 * levels + i];
-        c.sLen = m.layout[3 * levels + i];
-        c.zstd = m.texZstd;
+Status write_level(Context* ctx, Slot& s, Source const& src, LevelCopy const& c, u8* out, JobScratch& sc) {
+    u64 const rows    = c.rowBytes ? c.tLen / c.rowBytes : 0;
+    bool const direct = c.pitch == c.rowBytes;
+    if (direct && !c.zstd) {
+        IoBytes budget(ctx, c.sLen);
+        return src.read(c.sOff, c.sLen, out);
     }
-    u64 const rows = c.rowBytes ? c.tLen / c.rowBytes : 0;
-    c.out          = dst + m.layout[i] + j * c.pitch * rows;
-    return c;
-}
-
-/// One read per level, in level order: straight to the target where the level allows it, else into
-/// `encoded`, the levels back to back.
-void plan_texture(Slot& s, u32 j, u8* dst) {
-    u32 const levels = s.out.next.layoutLevels;
-    u64 total        = 0;
-    for (u32 i = 0; i < levels; ++i)
-        if (LevelCopy const c = level_copy(s, j, i, dst); !c.direct()) total += c.sLen;
-    u8* enc = scratch_bytes(s.out.encoded, usize(total)).data;
-    for (u32 i = 0; i < levels; ++i) {
-        LevelCopy const c = level_copy(s, j, i, dst);
-        s.out.reads.push_back({c.sOff, c.sLen, c.direct() ? c.out : enc});
-        if (!c.direct()) enc += c.sLen;
-    }
-}
-
-Status decode_level(Context* ctx, Slot& s, StrView input, Source const& mem, LevelCopy const& c,
-                    JobScratch& sc) {
     u8 const* from = nullptr;
-    if (mem.memory) {
-        if (c.sOff > mem.size || c.sLen > mem.size - c.sOff) return make_status(Code::IoEof);
-        from = mem.mem.data + c.sOff;
+    if (src.memory) {
+        if (c.sOff > src.size || c.sLen > src.size - c.sOff) return make_status(Code::IoEof);
+        from = src.mem.data + c.sOff;
     } else {
-        from = s.out.reads[c.level].dst;
-        if (from == c.out) return kOk; // read in place
+        (void)scratch_bytes(sc.scratch, usize(c.sLen));
+        IoBytes budget(ctx, c.sLen);
+        KILN_TRY(src.read(c.sOff, c.sLen, sc.scratch.data()));
+        from = sc.scratch.data();
     }
     if (c.zstd) {
         // Never straight into the adapter's memory: staging is often write-combined, and Zstd reads
         // its output back for matches (cook-tracing.md, "First findings").
         (void)scratch_bytes(sc.texels, usize(c.tLen));
-        ProfileZone const zone(ctx->prof, "kiln.decode", input);
+        ProfileZone const zone(ctx->prof, "kiln.decode", c.input);
         if (!sc.zstd.decode(Span<u8 const>(from, usize(c.sLen)), sc.texels.span())) {
             DiagSink const sink{&capture_fn, &s.out.capture};
-            return diagf(&sink, make_status(Code::Corrupt), ktx2::kDiagKtxLevelDecode, Severity::Error, input,
-                         "levelIndex", "level %u does not decode: %s", c.level, sc.zstd.error());
+            return diagf(&sink, make_status(Code::Corrupt), ktx2::kDiagKtxLevelDecode, Severity::Error,
+                         c.input, "levelIndex", "level %u does not decode: %s", c.level, sc.zstd.error());
         }
         from = sc.texels.data();
     }
-    ProfileZone const zone(ctx->prof, "kiln.copy", input);
-    if (c.pitch == c.rowBytes) {
-        std::memcpy(c.out, from, usize(c.tLen));
-        return kOk;
-    }
-    u64 const rows = c.rowBytes ? c.tLen / c.rowBytes : 0;
-    for (u64 r = 0; r < rows; ++r) {
-        u8* row = c.out + r * c.pitch;
-        std::memcpy(row, from + r * c.rowBytes, usize(c.rowBytes));
-        std::memset(row + c.rowBytes, 0, usize(c.pitch - c.rowBytes));
-    }
+    ProfileZone const zone(ctx->prof, "kiln.copy", c.input);
+    if (direct)
+        std::memcpy(out, from, usize(c.tLen));
+    else
+        for (u64 r = 0; r < rows; ++r) {
+            u8* row = out + r * c.pitch;
+            std::memcpy(row, from + r * c.rowBytes, usize(c.rowBytes));
+            std::memset(row + c.rowBytes, 0, usize(c.pitch - c.rowBytes));
+        }
     return kOk;
 }
 
@@ -665,42 +604,57 @@ void zero_level_gaps(MetaSet const& m, u32 layers, u8* dst) {
     if (cursor < m.uploadSize) std::memset(dst + cursor, 0, usize(m.uploadSize - cursor));
 }
 
-/// Lists the reads of input `j` in s.out.reads and sizes s.out.encoded for them. A memory source
-/// needs none.
-Status plan_input(Slot& s, Input const& in, u32 j, u8* dst) {
-    s.out.reads.clear();
-    s.out.encoded.clear();
-    Source mem;
-    bool const memory = memory_source(in, mem);
-    if (s.kind == AssetKind::Mesh) return plan_mesh(s, memory, dst);
-    if (!memory) plan_texture(s, j, dst);
-    return kOk;
+LevelCopy level_copy(MetaSet const& m, u32 i) {
+    u32 const levels = m.layoutLevels;
+    return {.level    = i,
+            .tLen     = m.layout[4 * levels + i],
+            .rowBytes = format_row_bytes(m.texDesc.format, max(m.texDesc.width >> i, 1u)),
+            .pitch    = m.layout[levels + i]};
 }
 
-/// Opens the input's artifact, reads the planned ranges and closes it. This is the part of a load
-/// that waits for storage.
-Status read_input(Context* ctx, Slot& s, Input const& in) {
-    if (s.out.reads.empty()) return kOk;
-    Source src;
-    KILN_TRY(open_source(ctx, s, in, src));
-    // In file order, which helps the system's read-ahead: KTX2 stores the smallest level first.
-    usize const n      = s.out.reads.size();
-    bool const reverse = s.out.reads[n - 1].offset < s.out.reads[0].offset;
-    for (usize i = 0; i < n; ++i) {
-        ReadRange const& r = s.out.reads[reverse ? n - 1 - i : i];
-        IoBytes budget(ctx, r.size);
-        KILN_TRY(src.read(r.offset, r.size, r.dst));
+Status write_texture(Context* ctx, Slot& s, Source const& src, u8* dst, JobScratch& sc) {
+    MetaSet const& m = s.out.next;
+    u32 const levels = m.layoutLevels;
+    zero_level_gaps(m, 1, dst);
+    for (u32 i = 0; i < levels; ++i) {
+        LevelCopy c = level_copy(m, i);
+        c.sOff      = m.layout[2 * levels + i];
+        c.sLen      = m.layout[3 * levels + i];
+        c.zstd      = m.texZstd;
+        c.input     = path_of(s);
+        KILN_TRY(write_level(ctx, s, src, c, dst + m.layout[i], sc));
     }
     return kOk;
 }
 
-/// Decodes or repacks what read_input() left in s.out.encoded, or the memory source, into the target.
-Status decode_input(Context* ctx, Slot& s, Input const& in, u32 j, u8* dst, JobScratch& sc) {
-    Source mem;
-    (void)memory_source(in, mem);
-    if (s.kind == AssetKind::Mesh) return decode_mesh(ctx, s, mem, dst, sc);
-    for (u32 i = 0; i < s.out.next.layoutLevels; ++i)
-        KILN_TRY(decode_level(ctx, s, in.name, mem, level_copy(s, j, i, dst), sc));
+/// Each layer's levels into its place in the array: layer j of level i at the level's offset plus j
+/// times one layer's padded size.
+Status write_array(Context* ctx, Slot& s, u8* dst, JobScratch& sc) {
+    MetaSet const& m = s.out.next;
+    ArrayDecl& d     = *s.array;
+    u32 const levels = m.layoutLevels;
+    zero_level_gaps(m, d.count, dst);
+    for (u32 j = 0; j < d.count; ++j) {
+        ArrayLayer& l  = d.layers[j];
+        Input const in = layer_input(s, l);
+        Source src;
+        Status st = open_source(ctx, s, in, src, false);
+        for (u32 i = 0; i < levels && st.ok(); ++i) {
+            LevelCopy c      = level_copy(m, i);
+            c.sOff           = l.src[i];
+            c.sLen           = l.src[l.srcLevels + i];
+            c.zstd           = l.zstd;
+            c.input          = in.name;
+            u64 const rows   = c.rowBytes ? c.tLen / c.rowBytes : 0;
+            u64 const stride = c.pitch * rows;
+            st               = write_level(ctx, s, src, c, dst + m.layout[i] + j * stride, sc);
+        }
+        src.close();
+        if (st.failed()) {
+            note_layer(s.out.capture, j, in.name);
+            return st;
+        }
+    }
     return kOk;
 }
 
@@ -767,18 +721,22 @@ CompletionKind run_upload(Context* ctx, Slot& s, JobScratch& sc) {
             }
         }
     }
-    u8* const dst    = static_cast<u8*>(t.dst);
-    u32 const inputs = s.array ? s.array->count : 1;
-    if (st.ok() && s.kind == AssetKind::Texture) zero_level_gaps(m, inputs, dst);
-    for (u32 j = 0; j < inputs && st.ok(); ++j) {
-        Input const in = s.array ? layer_input(s, s.array->layers[j]) : slot_input(s);
-        st             = plan_input(s, in, j, dst);
-        if (st.ok()) st = read_input(ctx, s, in);
-        if (st.ok()) st = decode_input(ctx, s, in, j, dst, sc);
-        if (st.failed() && s.array) note_layer(s.out.capture, j, in.name);
+    if (st.ok() && s.array) {
+        st = write_array(ctx, s, static_cast<u8*>(t.dst), sc);
+        if (st.failed() && s.out.diag)
+            diag = s.out.diag == kDiagStoreMiss ? kDiagAssetLoadFailed : s.out.diag;
+    } else if (st.ok()) {
+        Source src;
+        st = open_source(ctx, s, slot_input(s), src, false);
+        if (st.ok()) {
+            u8* dst = static_cast<u8*>(t.dst);
+            st      = s.kind == AssetKind::Mesh ? write_mesh(ctx, s, src, dst, sc)
+                                                : write_texture(ctx, s, src, dst, sc);
+            src.close();
+        } else {
+            diag = s.out.diag == kDiagStoreMiss ? kDiagAssetLoadFailed : s.out.diag; // vanished since meta
+        }
     }
-    // An artifact that vanished since the meta stage is a failed load, not a miss.
-    if (st.failed() && s.out.diag) diag = s.out.diag == kDiagStoreMiss ? kDiagAssetLoadFailed : s.out.diag;
     if (st.failed() && a.discard_upload) { // nothing for the GPU: the adapter frees ticket and object
         a.discard_upload(a.user, t.token);
         s.out.hasTarget = false;
@@ -890,13 +848,7 @@ void run_job(Context* ctx, Slot& s, JobScratch& sc) {
         if (ctx->prof)
             profile_interval(ctx->prof, "kiln.wait.pool", path_of(s), s.submitNs, profile_now_ns());
         ProfileZone const zone(ctx->prof, meta ? "kiln.meta" : "kiln.upload", path_of(s));
-        if (meta) {
-            k = run_meta(ctx, s);
-        } else {
-            sc.lend(s.out);
-            k = run_upload(ctx, s, sc);
-            sc.take_back(s.out);
-        }
+        k = meta ? run_meta(ctx, s) : run_upload(ctx, s, sc);
     }
     Completion const c{s.index, s.in.gen, k};
     post(ctx, c); // from here on the pump thread may reuse `s`
@@ -921,6 +873,7 @@ void run_jobs(void* arg) {
         }
         if (!s) break;
         run_job(ctx, *s, sc);
+        sc.trim();
     }
     ctx->jobsInFlight.fetch_sub(1, std::memory_order_acq_rel); // the last access to the context
 }

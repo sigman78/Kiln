@@ -1,9 +1,9 @@
 # Asynchronous cooked-asset reads
 
-**Status:** Part 1 accepted (owner, 2026-10-04; decisions in §11). Proposed 2026-09-29, revised
-2026-10-04 after a review against the code. Built so far: the benchmark (§9). The note has two parts:
+**Status:** Proposed (2026-09-29), revised 2026-10-04 after a review against the code. Nothing here
+is implemented. The note is now two parts with separate sign-off:
 
-- **Part 1, load attempts** (v0.8): the load benchmark, persistent load attempts, the
+- **Part 1, load attempts** (proposed for v0.8): the load benchmark, persistent load attempts, the
   read contract, a fake backend and dedicated blocking readers.
 - **Part 2, native backends** (v0.9, on hold): IOCP and io_uring. They wait until the Part 1
   benchmark shows that blocking readers are not enough.
@@ -62,22 +62,8 @@ uses blocking positional reads. `src/runtime/loader.cpp` runs two worker jobs pe
 - **Upload job:** `begin_upload`, open the artifact again, read, decode, then `commit_upload`, or
   `discard_upload` if a read or decode failed.
 
-Local `Source` objects assume a read has finished when it returns. The `IoBytes` limiter waits on
-a worker when `ioInFlightBytes` is used up.
-
-Since stage 2a (§10) both jobs are a sequence of steps that share only the attempt's state
-(`JobOutput`), still run back to back on one worker:
-
-- **Meta job:** `prepare_input` for every input (the provider's work), then the metadata unit: open,
-  read, validate, close.
-- **Upload job:** `begin_upload`; then for each input `plan_input` lists its reads
-  (`JobOutput::reads`: file range and destination), `read_input` opens the artifact, fills them and
-  closes it, and `decode_input` decodes or repacks `JobOutput::encoded` into the target; then commit
-  or discard. A texture's levels are one read each, in file order. The worker lends the storage of
-  `reads` and `encoded` to the attempt for the job; the decoded bytes and the Zstd context stay with
-  the worker.
-
-`read_input` is the unit a reader takes over in stage 2c.
+Local `Source` and scratch objects assume a read has finished when it returns. The `IoBytes`
+limiter waits on a worker when `ioInFlightBytes` is used up.
 
 Facts the first version of this note did not have:
 
@@ -100,7 +86,7 @@ Request storage, scratch buffers, and upload reservations outlive individual job
 The existing synchronous interface remains available to tools, cook code, and existing hosts.
 The async path is additive. It must not silently change synchronous callback semantics.
 
-# Part 1: load attempts (v0.8)
+# Part 1: load attempts (proposed for v0.8)
 
 v0.8 needs this part for its own reasons: `State::Partial` and range reads load one asset in
 several steps, so the attempt must outlive a job.
@@ -208,9 +194,7 @@ waits until the measurements ask for it. No public asset state or event is publi
 
 ## 4. Proposed backend interface
 
-This is an interface sketch; names and layout are not an ABI commitment. Decided since (§11): a
-request names the artifact, not an open `IoFile`, and the backend opens it; the sketch changes with
-stage 2b (§10). It lives alongside the
+This is an interface sketch; names and layout are not an ABI commitment. It lives alongside the
 synchronous interface and contains no OS types. It replaces the earlier idea of a completion token
 on `IoBackend::read_range` (`threading-and-io.md`, "Path to true async IO").
 
@@ -644,29 +628,6 @@ Consequence for this note: the benchmark gives no reason for Part 2 on this mach
 justified by v0.8 (range reads and `State::Partial` need a persistent attempt), not by throughput.
 The first gain was R26, which needed no new design.
 
-### Stage 2a against the loader before it (2026-10-04)
-
-Same corpus and machine, MSVC release, the two builds run in turn. Each job does the same work: 1782
-opens, 9394 reads, 7002 decodes, 7002 copies, 78 direct uploads, in both.
-
-| Run | Before | Stage 2a |
-|---|---|---|
-| Warm, 60 Hz, 64 MiB budget | 0.47 s | 0.47 s |
-| Warm, 1000 Hz, no upload limit (18 runs each) | 0.34 to 0.39 s, mean 0.361 s | 0.34 to 0.39 s, mean 0.369 s |
-| Warm, 2 workers, 1000 Hz, no upload limit (12 runs each) | 0.88 to 1.00 s, mean 0.917 s | 0.90 to 0.94 s, mean 0.913 s |
-| Cold, 1000 Hz, no upload limit (12 runs each) | 0.57 to 0.62 s, mean 0.589 s | 0.55 to 0.59 s, mean 0.578 s |
-| Cold, 2 workers, 60 Hz | 1.38 to 1.48 s | 1.38 to 1.43 s |
-| Warm, a 64-layer array | 117 ms | 117 ms |
-
-- An input's levels are now all read before the first is decoded. With the reads in level order
-  (largest first, which is backwards in a KTX2 file) a cold load was 2% slower: the reads took 8%
-  longer. In file order they take 5% less than before, and the cold load is level or better.
-- Warm, with no frame or upload limit, the upload jobs on 7 workers take about 2% longer (0 to 3%
-  over the rounds, near the noise). At 60 Hz and with 2 workers nothing changes.
-- Peak scratch is 10 to 20 MiB higher (104 to 226 MiB over the runs, was 90 to 206 MiB): the encoded
-  buffer holds all levels of one texture, not the largest level.
-- A texture array in dev mode asks the provider for every layer before it reads the first.
-
 ### Tests
 
 First implement a deterministic fake async backend that exercises:
@@ -691,13 +652,8 @@ continue to pass, including shipping builds and the synchronous backend.
 Part 1 (v0.8):
 
 1. Stage timing and the load benchmark (§9). **Done 2026-10-04** (`kiln_bench_load`, baseline in §9).
-2. Persistent load attempts, the read contract, the fake backend and blocking readers, in three
-   stages. Each one builds and passes the tests and the benchmark on its own.
-   - **2a.** Load attempts on today's worker jobs: the attempt holds its read list and its encoded
-     bytes, and plan, read and decode are separate steps. Reads stay synchronous. The benchmark
-     must match the baseline. **Done 2026-10-04** (§2; measured in §9).
-   - **2b.** The read contract and the fake backend. Prove ownership, cancellation and shutdown.
-   - **2c.** Blocking readers. Check the Part 1 gate.
+2. Persistent load attempts, the read contract, the fake backend and blocking readers. Prove
+   ownership and cancellation. Check the Part 1 gate.
 
 Part 2 (v0.9, on hold; each step needs the Part 2 gate):
 
@@ -705,17 +661,20 @@ Part 2 (v0.9, on hold; each step needs the Part 2 gate):
 4. io_uring and its platform tests, resolving the wrapper/liburing policy choice explicitly.
 5. Direct-to-staging where a backend and adapter pair supports it; tune budgets; compare all modes.
 
-## 11. Decisions (owner, 2026-10-04; R24)
+## 11. Open points for the owner
 
-- **The split:** Part 1 is v0.8 work. Part 2 stays held in v0.9 behind the benchmark.
-- **The owner thread of the §4 contract in Part 1 is the pump thread.** It submits and polls, so
-  Part 1 adds only the reader threads. A read-service thread arrives with Part 2.
-- **The artifact is opened twice** (§3.1), once per step, as today. The benchmark may reopen this.
-- **The small-asset gate** in §3.5 and §9: no regression.
-- **A read request names the artifact and the backend opens it.** A reader stays one unit of open,
-  read and close (§5). A native backend owns its open lane (§8) behind the same request.
-- **Metadata validation runs on the reader in Part 1** (§3.5). A native backend has no reader
-  thread: Part 2 validates on a CPU worker, accepts that hop, and checks the small-asset gate again.
+- Confirm the split: Part 1 with v0.8, Part 2 held in v0.9 behind the benchmark (R24).
+- The owner thread of the §4 contract in Part 1. With blocking readers the pump thread can submit
+  and poll, and Part 1 then adds only the reader threads. A read-service thread arrives with Part 2.
+- Keep the artifact open across the metadata and payload steps, or open it twice (§3.1). Decide
+  with the benchmark.
+- The small-asset gate in §3.5 and §9: the acceptable regression is proposed as none.
+- Who opens the file. A reader opens, reads and closes (§5), but `IoRead` (§4) names an open
+  `IoFile`. Either the request names the artifact and the backend opens it, or the contract gains
+  open and close requests. Decide before step 2: a native backend needs its own open lane (§8).
+- Where metadata validation runs. §3.5 puts it on a reader; a native backend has no reader thread,
+  and §8 puts it on a CPU worker, which adds a hop. Either validate on a CPU worker in Part 1 too,
+  or accept the hop in Part 2 and check the small-asset gate again.
 
 Extending CPU dispatch, adding asynchronous file control, or adding GPU-specific IO remains a
 separately justified change.

@@ -24,14 +24,6 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
   less time per upload job on the benchmark corpus. A worker holds at most 64 MiB between jobs and
   nothing when no job is left (open-questions R29).
 
-- **A load attempt holds its reads.** The upload job plans an input's reads, reads them, then
-  decodes, as three steps that share only the attempt's state; the provider's `prepare` runs before
-  the metadata step. This is the first stage of the v0.8 load attempts (`design/async-read-path.md`
-  §10, 2a). No API change, and the benchmark is within 2% of the loader before it. What changes: a
-  texture's levels are read in file order and all before the first decode, so a worker's read
-  buffer holds one whole texture (10 to 20 MiB more peak scratch on the benchmark corpus); a texture
-  array asks the cook provider for every layer before it reads the first.
-
 ### Fixed
 - **Opening a `.mesh` with many LODs was quadratic.** The check that the blobs cover each LOD's
   streams walked the whole blob table per range; a model with 10,000 parts took 0.95 s to open

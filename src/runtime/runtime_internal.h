@@ -151,13 +151,6 @@ struct ArrayDecl {
 
 struct Watch; // watch.cpp: store poller state
 
-/// One range of an input's file and the memory its bytes go to.
-struct ReadRange {
-    u64 offset = 0;
-    u64 size   = 0;
-    u8* dst    = nullptr;
-};
-
 /// What the pump thread fixes when it submits a stage. The worker only reads it.
 struct JobInput {
     Stage stage = Stage::Meta;
@@ -178,12 +171,8 @@ struct JobOutput {
     bool cookedValid = false;
     UploadTarget target;
     bool hasTarget = false; ///< begin_upload succeeded (object must be released on failure)
-    // The upload stage, for the input it works on. The running job lends the storage; the steps
-    // pass their state through these fields only (async-read-path.md, section 2).
-    Vec<ReadRange> reads; ///< the ranges to read; empty for a memory source
-    Vec<u8> encoded;      ///< the bytes read that wait for a decode or a repack
-    Status status = kOk;
-    u32 diag      = 0; ///< K5xxx for a Failed completion
+    Status status  = kOk;
+    u32 diag       = 0; ///< K5xxx for a Failed completion
     DiagCapture capture;
 };
 
