@@ -3031,3 +3031,60 @@ KILN_TEST(Runtime, ReadJobsOnAThreadPool) {
     }
     destroy_thread_pool(*pool);
 }
+
+// One pool for both lanes, with one thread and room for one job. The reader hands its decode over
+// while the second read job fills the queue: submit() from the pool's thread must not wait.
+KILN_TEST(Runtime, ReadJobsShareASmallPool) {
+    Result<JobSystem> const pool = create_thread_pool({.threads = 1, .queueCapacity = 1});
+    KILN_REQUIRE(pool.ok());
+    {
+        IoBackend slow  = *compat_io_backend();
+        slow.read_range = [](void* user, IoFile f, u64 offset, u64 n, void* dst) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(20)); // the queue fills meanwhile
+            return compat_io_backend()->read_range(user, f, offset, n, dst);
+        };
+        Rt rt;
+        ContextDesc cd;
+        cd.jobs        = &*pool;
+        cd.readJobs    = &*pool;
+        cd.io          = &slow;
+        cd.maxIoJobs   = 1;
+        cd.maxReadJobs = 2;
+        if (rt.init({}, cd)) {
+            TextureHandle const a = request_texture(rt.ctx, "ktx2/color_zstd");
+            TextureHandle const b = request_texture(rt.ctx, "ktx2/normal");
+            rt.pump_once();
+            pool->wait_idle(pool->user); // both meta stages ended, so one pump starts both uploads
+            KILN_CHECK(rt.pump_until([&] { return is_ready(rt.ctx, a) && is_ready(rt.ctx, b); }));
+            KILN_CHECK_EQ(rt.diags.count, 0u);
+            release(rt.ctx, a);
+            release(rt.ctx, b);
+        }
+    }
+    destroy_thread_pool(*pool);
+}
+
+// Priority goes before the lane: with the read jobs busy, a worker takes a High step of the read
+// lane before a Normal step of its own.
+KILN_TEST(Runtime, HighReadStepPassesNormalWorkerStep) {
+    Vec<u8> golden(default_allocator(), Tag::Test);
+    if (!read_golden("ktx2/color_zstd", ".ktx2", golden)) return;
+    TwoLanes l;
+    ContextDesc cd;
+    cd.maxIoJobs   = 1;
+    cd.maxReadJobs = 1;
+    if (!l.init(cd)) return;
+    TextureHandle const n = register_texture(l.rt.ctx, "gen/normal", golden.span());
+    TextureHandle const h = request_texture(l.rt.ctx, "ktx2/normal", {.priority = Priority::High});
+    KILN_REQUIRE(!n.is_null());
+    l.rt.pump_once();
+    KILN_CHECK(l.rd.held() == 1 && l.cpu.held() == 1);
+    l.cpu.run_all(); // the read job does not run
+    l.rt.pump_once();
+    int const en = l.rt.find_event(EventKind::MetaReady, n.bits());
+    int const eh = l.rt.find_event(EventKind::MetaReady, h.bits());
+    KILN_CHECK(eh >= 0 && eh < en);
+    KILN_CHECK(l.drive([&] { return is_ready(l.rt.ctx, n) && is_ready(l.rt.ctx, h); }));
+    release(l.rt.ctx, n);
+    release(l.rt.ctx, h);
+}

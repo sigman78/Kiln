@@ -124,6 +124,30 @@ KILN_TEST(IoThreadPool, QueueFullBackpressureStillCompletes) {
     destroy_thread_pool(jobs);
 }
 
+namespace {
+struct NestedSubmit {
+    JobSystem jobs;
+    std::atomic<int> counter{0};
+    static void run(void* arg) {
+        auto* n = static_cast<NestedSubmit*>(arg);
+        submit_n(n->jobs, &increment_job, &n->counter, 8);
+    }
+};
+} // namespace
+
+KILN_TEST(IoThreadPool, SubmitFromAJobWithAFullQueue) {
+    // One worker, room for one job: the job's submit() calls find the queue full, and the worker
+    // that would drain it is the caller.
+    Result<JobSystem> r = create_thread_pool(ThreadPoolDesc{.threads = 1, .queueCapacity = 1});
+    KILN_REQUIRE(r.ok());
+    NestedSubmit n;
+    n.jobs = r.value();
+    n.jobs.submit(n.jobs.user, &NestedSubmit::run, &n);
+    n.jobs.wait_idle(n.jobs.user);
+    KILN_CHECK_EQ(n.counter.load(), 8);
+    destroy_thread_pool(n.jobs);
+}
+
 KILN_TEST(IoThreadPool, ThreadCountRespectsExplicitRequest) {
     Result<JobSystem> r = create_thread_pool(ThreadPoolDesc{.threads = 3});
     KILN_REQUIRE(r.ok());

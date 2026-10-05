@@ -37,6 +37,14 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
   bounded by `maxIoJobs + maxReadJobs` buffers. A slot released while its stage runs now ends the
   stage at its next step. Migration: none. A host `JobSystem` must accept `submit` from any thread,
   a running job included; kiln calls it from its jobs when `readJobs` is set.
+- **The built-in pool's `submit` does not block a job of the same pool.** With a full queue the
+  calling worker runs queued jobs until there is room. One small pool as both `jobs` and `readJobs`
+  could stop: its only free thread waited in `submit` for room in the queue. Migration: none. A
+  host `JobSystem` needs the same property: `submit` from a running job returns without waiting
+  for a job to end.
+- **A worker takes a `High` step of the read lane before a `Normal` step of its own.** The workers
+  looked at all their own lists first, so with the readers busy a `High` file load waited for the
+  `Normal` memory loads and cook preparations. Migration: none.
 - **A load attempt holds its reads.** The upload job plans an input's reads, reads them, then
   decodes, as three steps that share only the attempt's state; the provider's `prepare` runs before
   the metadata step. This is the first stage of the v0.8 load attempts (`design/async-read-path.md`

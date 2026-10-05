@@ -995,15 +995,17 @@ Lane ready_add(Context* ctx, Slot& s, Lane lane, bool fresh) {
     return Lane::Count;
 }
 
-/// The next job for a run_jobs() call of `lane`, the first ReadyId first. A worker with no step of
-/// its own takes a read step: the readers add to the threads that read, they do not replace them.
+/// The next job for a run_jobs() call of `lane`, the first ReadyId first. A worker takes read steps
+/// too, after its own steps of the same ReadyId: the readers add to the threads that read, they do
+/// not replace them.
 /// An upload stage that starts needs one of the bufCap places; without one the stages of its list
 /// wait, and an upload that ends calls kick(). Null: no job, and the caller's run_jobs() call ends;
 /// `idle` then says that no lane runs one.
 Slot* ready_pop(Context* ctx, Lane lane, bool& idle) {
     std::lock_guard<std::mutex> const lock(ctx->readyMutex);
-    for (u32 from = u32(lane); from < u32(Lane::Count); ++from) {
-        for (List const& l : ctx->ready[from]) {
+    for (u32 id = 0; id < u32(ReadyId::Count); ++id) {
+        for (u32 from = u32(lane); from < u32(Lane::Count); ++from) {
+            List const& l = ctx->ready[from][id];
             if (l.head == kInvalid) continue;
             Slot& s = ctx->slots[l.head];
             if (s.in.stage == Stage::Upload && !s.out.hasBuf) {

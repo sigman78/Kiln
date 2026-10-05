@@ -81,8 +81,9 @@ Since stages 2a and 2b (§10) each stage is a sequence of steps that share only 
   `readJobs`) there is one lane, the workers, and the steps of a stage run back to back in one job,
   as before. With them, `Metadata` and `Read` belong to the read lane when they read a file, and
   `Prepare`, `Decode` and every step of a memory source to the workers.
-- **The readers add to the threads that read.** A worker with no step of its own takes a step of
-  the read lane and then runs the stage to its end. Readers that replaced the workers' reads were
+- **The readers add to the threads that read.** A worker takes a step of the read lane when it
+  has no step of its own in the same or an earlier ready list (priority goes before the lane), and
+  then runs the stage to its end. Readers that replaced the workers' reads were
   measured first and were slower (§9).
 - **Hand-over.** A read job that ends its step puts the slot on the workers' ready list and submits
   a job there if fewer run than may. No pump lies between `Read` and `Decode`.
