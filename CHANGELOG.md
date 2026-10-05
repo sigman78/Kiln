@@ -24,13 +24,15 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
   less time per upload job on the benchmark corpus. A worker holds at most 64 MiB between jobs and
   nothing when no job is left (open-questions R29).
 
-- **`ContextDesc::readerThreads`, `readJobs` and `maxReadJobs` (experimental).** Reader threads for
+- **`ContextDesc::readerThreads`, `readJobs` and `maxReadJobs`.** Reader threads for
   the steps of a load that wait for storage: the metadata step and the payload reads. They add to
   the workers, which still read when they have no decode, and a read hands its decode to the workers
   with no pump between (`design/async-read-path.md` §5, stages 2b and 2c). On the benchmark corpus 4
-  readers make a cold load 5% faster with 7 workers, 18% with 4 and 30% with 2. `readerThreads` is 0
-  by default, which keeps the load jobs as they are; `readJobs` takes a host's job system in place
-  of kiln's readers. With readers an upload's reads on a reader have the profiler zone
+  readers make a cold load 5% faster with 7 workers, 18% with 4 and 30% with 2. `readerThreads` is 4
+  by default; `readJobs` takes a host's job system in place of kiln's readers. Migration: a context
+  now starts 4 more threads, which use CPU beyond the worker count when the file cache is warm, and
+  peak scratch memory is higher (about 40 MiB on the benchmark corpus). `readerThreads = 0` gives
+  the loads as they were. A host `JobSystem` in `jobs` must accept `submit` from any thread. With readers an upload's reads on a reader have the profiler zone
   `kiln.upload.read`, and `kiln.upload` on a worker is then the decode. Reads that wait for a decode are
   bounded by `maxIoJobs + maxReadJobs` buffers. A slot released while its stage runs now ends the
   stage at its next step. Migration: none. A host `JobSystem` must accept `submit` from any thread,

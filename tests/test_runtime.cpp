@@ -1696,8 +1696,9 @@ KILN_TEST(Runtime, PreparedJobsRunByPriority) {
     JobSystem const js = held.system();
     Rt rt;
     ContextDesc cd;
-    cd.jobs      = &js;
-    cd.maxIoJobs = 1;
+    cd.jobs          = &js;
+    cd.maxIoJobs     = 1;
+    cd.readerThreads = 0; // every step on the held job system
     if (!rt.init({}, cd)) return;
     TextureHandle const a = request_texture(rt.ctx, "ktx2/bc1_high");
     TextureHandle const b = request_texture(rt.ctx, "ktx2/bc5_normal");
@@ -1734,8 +1735,9 @@ KILN_TEST(Runtime, ReleaseDropsPreparedJob) {
     JobSystem const js = held.system();
     Rt rt;
     ContextDesc cd;
-    cd.jobs      = &js;
-    cd.maxIoJobs = 1;
+    cd.jobs          = &js;
+    cd.maxIoJobs     = 1;
+    cd.readerThreads = 0; // every step on the held job system
     if (!rt.init({}, cd)) return;
     TextureHandle const a = request_texture(rt.ctx, "ktx2/bc1_high");
     TextureHandle const b = request_texture(rt.ctx, "ktx2/bc5_normal");
@@ -1767,7 +1769,8 @@ KILN_TEST(Runtime, ProfilerHooks) {
     {
         Rt rt;
         ContextDesc cd;
-        cd.profiler = log.hooks();
+        cd.profiler      = log.hooks();
+        cd.readerThreads = 0; // one job per stage, so the zones and waits below are exact
         if (!rt.init({}, cd)) return;
         KILN_CHECK(profile_hooks(rt.ctx) != nullptr);
         TextureHandle const t = request_texture(rt.ctx, "ktx2/height16");

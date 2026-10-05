@@ -135,7 +135,7 @@ struct Options {
     u32 repeat          = 3;
     u32 hz              = 60;
     u32 threads         = 0;
-    u32 readers         = 0;
+    u32 readers         = ContextDesc{}.readerThreads;
     u32 ioJobs          = 0;
     u32 highEvery       = 0;
     u32 lateHigh        = 0;
@@ -518,7 +518,7 @@ int usage() {
                 "  --hz N           pumps per second, 1 to 1000 (default 60)\n"
                 "  --threads N      worker threads (default 0: automatic)\n"
                 "  --readers N      ContextDesc::readerThreads: threads for the steps that wait for storage\n"
-                "                   (default 0: the workers do their own reads)\n"
+                "                   (default: the library's; 0: only the workers read)\n"
                 "  --io-jobs N      ContextDesc::maxIoJobs (default 0: the worker count)\n"
                 "  --upload-mib N   PumpOptions::uploadBytes in MiB (default 64)\n"
                 "  --pitch N        the adapter's row pitch alignment (default 1: no row repacking)\n"

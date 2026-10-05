@@ -2,8 +2,8 @@
 
 **Status:** Part 1 accepted (owner, 2026-10-04; decisions in §11). Proposed 2026-09-29, revised
 2026-10-04 after a review against the code. Built: the benchmark (§9) and stages 2a to 2c (§10).
-The Part 1 gate passes with reader threads on; they are off by default until the owner sets the
-default (§11). The note has two parts:
+The Part 1 gate passes, and 4 reader threads are the default (owner, 2026-10-04; §11). The note has
+two parts:
 
 - **Part 1, load attempts** (v0.8): the load benchmark, persistent load attempts, a second job
   system for the steps that wait for storage, and dedicated blocking readers on it.
@@ -312,8 +312,8 @@ suppresses work not yet started. Other platforms use this mode too.
 
 The seam is a second job system (stages 2b and 2c, built):
 
-- `ContextDesc::readerThreads`: kiln starts that many reader threads (0 = none, the default for
-  now). They have the workers' priority.
+- `ContextDesc::readerThreads`: kiln starts that many reader threads (default 4; 0 = none). They
+  have the workers' priority.
 - `ContextDesc::readJobs` (a `JobSystem`): a host's own job system for the read lane, in place of
   kiln's readers.
 - `ContextDesc::maxReadJobs`: the jobs that run at once on the read lane (0 = the reader count, or 4
@@ -755,7 +755,8 @@ for all 891 assets, mean of 8 runs; "no limits" is a 1000 Hz pump and no upload 
   set 2 workers to leave the other cores alone gets more CPU use with readers than without.
 - **Peak scratch rises** with the reads that wait for a decode: cold on 7 workers 198 MiB with no
   readers, 238 MiB with 4, 266 MiB with 16. The buffer places bound it (`maxIoJobs` + readers).
-- **4 readers is the proposed default**: most of the gain at 2 and 4 workers, and 8 adds little.
+- **4 readers is the default** (owner, 2026-10-04): most of the gain at 2 and 4 workers, and 8 adds
+  little.
 
 The first build of 2c let only the readers read, as the note first described them. It was slower in
 every run: cold on 7 workers 0.585 s became 1.02 s with 2 readers, 0.93 s with 4, 0.86 s with 8 and
@@ -801,8 +802,8 @@ Part 1 (v0.8):
      systems prove ownership, release and shutdown. **Done 2026-10-04** (measured in §9). The read
      contract and its fake backend moved to Part 2 (§11).
    - **2c.** Blocking readers: kiln's own pool (`ContextDesc::readerThreads`), the benchmark option
-     (`--readers`), and the Part 1 gate. **Done 2026-10-04**: the gate passes (§9). The readers are
-     off by default until the owner sets the default.
+     (`--readers`), and the Part 1 gate. **Done 2026-10-04**: the gate passes (§9), and 4 readers are
+     the default.
 
 Part 2 (v0.9, on hold; each step needs the Part 2 gate):
 
@@ -825,9 +826,10 @@ Part 2 (v0.9, on hold; each step needs the Part 2 gate):
   with Part 2, when a native backend needs it.
 - **The decode follows the read with no pump.** The read job hands the step to the workers itself;
   a pump there would make every asset with CPU work `Ready` one frame later and fail the gate.
-- **Open, for the owner (after 2c):** the default of `readerThreads`. Proposed: 4. It is 0 now, so
-  nothing changes for a host until this is decided. Also open: whether `readJobs` stays public
-  beside `readerThreads`, and a byte budget for the reads that wait for a decode.
+- **After 2c (owner, 2026-10-04):** `readerThreads` is 4 by default. `readJobs` stays public beside
+  it: a host can send blocked reads to its own IO threads, and the tests step the lanes with it.
+  No byte budget for the reads that wait for a decode until a workload asks for one; their number
+  is bounded.
 - **Metadata validation runs on the reader in Part 1** (§3.5). A native backend has no reader
   thread: Part 2 validates on a CPU worker, accepts that hop, and checks the small-asset gate again.
 

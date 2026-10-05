@@ -112,7 +112,7 @@ job that ends starts the next one without a pump (R26).
 - A stage is a sequence of steps (meta: prepare, metadata; upload: read, decode), and the load
   attempt holds the state between them: the read list and the bytes as read, in storage from a
   pool in the context (`async-read-path.md` §2).
-- With `ContextDesc::readerThreads` (experimental; or a host's `readJobs`) the steps that read a
+- With `ContextDesc::readerThreads` (default 4; or a host's `readJobs`) the steps that read a
   file belong to a read lane, at most `maxReadJobs` at once. A worker with no step of its own takes
   one of them, so the readers add to the threads that read. A read job hands its decode to the
   workers itself, so `JobSystem::submit` is called from job threads too.
