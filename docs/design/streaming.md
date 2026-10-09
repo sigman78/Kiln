@@ -8,7 +8,7 @@ and adapter surface for a texture that is resident at a smaller size, and how it
 **Related:** [handles-and-states.md](handles-and-states.md), [adapter.md](adapter.md),
 [hot-reload.md](hot-reload.md), [async-read-path.md](async-read-path.md),
 [readiness-sets.md](readiness-sets.md), [runtime-texture-arrays.md](runtime-texture-arrays.md).
-Open points: `../open-questions.md` R30.
+Open points: `../open-questions.md` R30. Figures: "Measure first" (2026-10-09).
 
 ## Summary
 
@@ -180,9 +180,69 @@ corpus:
 The first figure can be computed from the level tables today. No gate is set yet; the figures
 decide whether the coarse-first pattern is worth documenting for hosts.
 
+### Measured (2026-10-09)
+
+Corpus and machine as in `async-read-path.md` §9: 891 assets (154 meshes, 90 MiB; 737 textures,
+622 MiB), i7-9700K, NVMe, MSVC release. `kiln_bench_load --max-extent N` computes the first figure
+from the probed level tables (`tests/bench_load.cpp`, in the repo). The other two come from a
+prototype of the level limit in the loader: one extent per context, the metadata step drops the
+levels above the first that fits, and the upload plan starts there. The patch is kept outside the
+repo (`C:\tmp\kiln-bench\level-limited-prototype.patch`, with the runs under `ll\`); it is not the
+API of this note.
+
+**Bytes.** "Read" is the stored bytes of the levels loaded; "Zstd" the bytes that come out of the
+decoder; "upload" the texel bytes handed to the adapter; "store" adds the meshes, which do not
+change.
+
+| Extent | Textures limited | Read | Zstd out | Upload | Store read |
+|---|---|---|---|---|---|
+| full | 0 of 737 | 622 MiB | 1389 MiB | 1440 MiB | 712 MiB |
+| 1024 | 248 | 261 MiB (42%) | 486 MiB (35%) | 531 MiB (37%) | 350 MiB (49%) |
+| 256 | 519 | 25 MiB (4%) | 42 MiB (3%) | 46 MiB (3%) | 115 MiB (16%) |
+| 64 | 709 | 2.3 MiB (0.4%) | 3.1 MiB (0.2%) | 3.4 MiB (0.2%) | 92 MiB (13%) |
+
+**Time to `Ready` of the textures,** p50 / max in ms from the request, every asset requested at once,
+pump at 60 Hz with the default 64 MiB upload budget, the fastest of 3 runs. The meshes load whole in
+every row, so at 64 and 256 they bound the wall time (89.6 MiB of payload; warm, 7 workers: meshes
+`Ready` max 84 ms at extent 64).
+
+| Extent | Warm, 7 workers | Cold, 7 workers | Warm, 2 workers | Cold, 2 workers |
+|---|---|---|---|---|
+| full | 300 / 467 | 367 / 567 | 617 / 933 | 950 / 1400 |
+| 1024 | 135 / 217 | 267 / 400 | 250 / 417 | 517 / 817 |
+| 256 | 70 / 86 | 134 / 167 | 117 / 167 | 334 / 400 |
+| 64 | 51 / 67 | 117 / 150 | 84 / 117 | 234 / 283 |
+
+At 1000 Hz with no upload limit (warm, 7 workers): full 225 / 376, 1024 86 / 152, 256 33 / 60,
+64 28 / 45 ms. The 60 Hz figures above hold a pump's granularity (16.7 ms) per step.
+
+**A change from 64 to full,** measured as two whole loads in two contexts, which is an upper bound (a
+swap keeps the handle, and the metadata step and the coarse levels are 0.4% of the bytes): warm, 7
+workers, 60 Hz: 84 + 467 = 551 ms against 467 ms for one full load (+18%); at 1000 Hz 61 + 377 = 438
+against 377 ms (+16%).
+
+What the numbers say:
+
+- **The bytes follow the level geometry.** Half the extent is a quarter of the bytes: 1024 reads 42%
+  of the texture bytes, 256 reads 4%. On this corpus 248 textures exceed 1024 and 709 exceed 64.
+- **Time follows the bytes while the workers are the limit.** Warm with 7 workers, 1024 is 2.2x
+  faster to the last texture and 64 is 7x; with 2 workers 2.2x and 8x. Cold, the per-file costs
+  stay: at 64 a load still opens every file twice and reads 737 prefixes (the meta job is 0.56 ms per
+  asset cold against 0.06 ms warm), so 64 is 3.8x faster, not 7x. One-pass loads (R27) would take
+  that cost out.
+- **Below 256 the textures stop being the limit.** At 64 the upload jobs take 314 ms of worker time
+  for 891 assets, the meshes are the last `Ready`, and the pump rate sets the floor: 61 ms at
+  1000 Hz against 84 ms at 60 Hz.
+- **The coarse-first pattern costs about a sixth more work** than one full load, for a first frame
+  at 51 ms instead of 300 ms (p50, warm). Worth documenting for hosts; whether the second load
+  should skip the metadata step is R27's question.
+- **Memory.** At 64 the payload and staging peak falls from 1616 MiB to 180 MiB (the meshes, and
+  the null adapter holds every object).
+
 ## Delivery sequence
 
-1. The benchmark option and the figures above.
+1. The benchmark option and the figures above. **Done 2026-10-09** (`--max-extent`; the timings
+   from a prototype kept outside the repo, see "Measured").
 2. A level-limited first load: `RequestOptions::maxExtent`, the upload plan from level `N`,
    `TextureDesc::firstLevel`, `TextureInfo`, the null adapter, texture arrays. Tests compare the
    upload with the golden file's levels byte for byte.

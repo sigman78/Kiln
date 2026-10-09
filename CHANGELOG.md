@@ -46,6 +46,9 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
   `tests/purge_file_cache.ps1` drops a store's cached pages on Windows for a cold run.
   It also reports `pump()` time per frame and the assets that were `Ready` last; `--cold` drops the
   store's cached pages before each run, and `--late-high N` measures a late high-priority request.
+  `--max-extent N` reports the level-limited plan of `docs/design/streaming.md`: the bytes a texture
+  load at a largest extent would read, decode and upload, at N and at 64, 256 and 1024; the report
+  also has a row for the meshes and one for the textures.
 - **Profile zones inside the load jobs**: `kiln.open`, `kiln.read`, `kiln.decode`, `kiln.copy`
   (`docs/design/cook-tracing.md`). A host's profiler hooks get more zones per load; nothing else changes.
 

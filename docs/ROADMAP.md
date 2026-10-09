@@ -73,7 +73,8 @@ open-questions R30).
 
 - **Level-limited texture loads:** a request gives a largest extent, and kiln loads the mip levels
   that fit as a complete, smaller texture (`RequestOptions::maxExtent`, `TextureDesc::firstLevel`).
-  No change to the adapter contract.
+  No change to the adapter contract. Measured first (2026-10-09, `kiln_bench_load --max-extent`):
+  extent 1024 reads 42% of the texture bytes and is 2.2x faster to the last texture, 256 reads 4%.
 - **A size change is a swap:** `set_texture_extent` loads a new object and swaps it in, as a reload
   does. The host decides what is resident; kiln reports resident bytes and enforces no budget.
 - **Latency:** one-pass texture loads from manifest metadata (open-questions R27); group readiness
