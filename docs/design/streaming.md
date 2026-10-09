@@ -3,7 +3,7 @@
 **Status:** Decided (owner, 2026-10-09): open points (a), (c) to (g) as recorded below; (b) stays
 proposed. The direction is the owner's (2026-10-05): an object is loaded whole or not at all, and
 the goal is latency at the level of the runtime library. Steps 1 (measure), 2 (the level-limited
-first load), 3 (the size change) and 4 (resident bytes) are done; step 5 is not implemented.
+first load), 3 (the size change), 4 (resident bytes) and 5 (the viewer example) are done.
 **Decides:** What "streaming" means in kiln v0.8, what it drops from the earlier plan, the request
 and adapter surface for a texture that is resident at a smaller size, and how its size changes.
 **Related:** [handles-and-states.md](handles-and-states.md), [adapter.md](adapter.md),
@@ -139,7 +139,9 @@ every adapter. Not in v0.8.
 For latency, a host requests textures with a small `maxExtent` (64, say), draws when they are
 `Ready`, then calls `set_texture_extent(h, 0)`. Each step is a whole load. Coarse loads are small,
 so many run per pump. kiln does not do this by itself: which textures deserve a second load, and
-when, is the host's knowledge.
+when, is the host's knowledge. `kiln-viewer --coarse <px>` does it for its mesh textures
+(`examples/viewer/main.cpp`, `handle_event`). A size change that keeps the same levels, as for a
+texture already smaller than the coarse extent, loads nothing and emits nothing.
 
 ## Residency, budget and eviction
 
@@ -270,7 +272,7 @@ What the numbers say:
 3. A size change as a swap: `set_texture_extent`, `Resized`, the rules for calls that overlap a
    load or a reload. Tests with a held job system. **Done 2026-10-09.**
 4. `residentBytes` and the `ContextStats` sums. **Done 2026-10-09.**
-5. One example: `kiln-viewer` loads coarse first, then full.
+5. One example: `kiln-viewer` loads coarse first, then full. **Done 2026-10-09** (`--coarse <px>`).
 
 Beside it, as their own decisions: one-pass texture loads from manifest metadata (R27) and group
 readiness (R25).

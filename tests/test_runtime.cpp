@@ -1891,6 +1891,13 @@ KILN_TEST(Runtime, SetTextureExtent) {
     KILN_CHECK_EQ(stats(rt.ctx).residentTextureBytes, texture_info(rt.ctx, t).residentBytes);
     KILN_CHECK_EQ(rt.events[usize(rt.find_event(EventKind::Resized, t.bits(), ev0))].version, 2u);
 
+    u32 const uploadsFull = null_adapter_stats(rt.na).beginUploads;
+    set_texture_extent(rt.ctx, t, 16); // 16x16 at 16: the same levels, nothing to load
+    rt.pump_once();
+    rt.pump_once();
+    KILN_CHECK_EQ(null_adapter_stats(rt.na).beginUploads, uploadsFull);
+    KILN_CHECK_EQ(count_events(rt, EventKind::Resized, t.bits(), ev0), 1u);
+
     usize const ev1 = rt.events.size();
     set_texture_extent(rt.ctx, t, 1);
     KILN_REQUIRE(rt.pump_until([&] { return rt.find_event(EventKind::Resized, t.bits(), ev1) >= 0; }));

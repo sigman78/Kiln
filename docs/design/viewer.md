@@ -78,8 +78,11 @@ The library never sees a Vulkan header.
   the emissive factor of a material without an emissive map (it binds no emissive map).
 - **Streaming.** The meshes named on the command line form a boot group, waited on with `wait()`
   before the first frame. Their textures are requested afterwards and stream in under a per-pump
-  `uploadBytes` budget (`--budget-mib`), so the first frames show placeholders. The viewer logs
-  per-frame CPU time and warns on frames over twice the running average.
+  `uploadBytes` budget (`--budget-mib`), so the first frames show placeholders. `--coarse <px>`
+  requests each texture at that extent first and asks for the whole texture once it is `Ready`
+  (`set_texture_extent`; `streaming.md`, the coarse-first pattern), so textured frames come
+  sooner; the scene counts as settled once the full loads are in. The viewer logs per-frame CPU
+  time and warns on frames over twice the running average.
 - **Offscreen.** `--offscreen` renders into an image instead of a swapchain, and `--dump out.png`
   reads back the last frame and writes a PNG (the encoder is the test helper `tests/png_writer.h`).
   Offscreen frames are not paced: they follow each other as fast as the GPU allows, and a pump

@@ -19,9 +19,11 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
   loads at the new size while the current one stays in use, then `pump()` swaps it in and emits
   **`EventKind::Resized`** with a new version (a reload that is due at the same time makes it one
   load and `Changed`). A failed change keeps the object and drops the want, with one K5010. The last
-  call wins; a call while a load runs starts one more load after it. A texture registered in memory
-  takes no size change (K5012). Hosts that `switch` over `EventKind` get a new value: handle
+  call wins; a call while a load runs starts one more load after it; a change that keeps the same
+  levels does nothing. A texture registered in memory takes no size change (K5012). Hosts that `switch` over `EventKind` get a new value: handle
   `Resized` like `Changed` unless they care about the difference.
+- **`kiln-viewer --coarse <px>`** loads each mesh texture at that extent first and asks for the whole
+  texture once it is Ready: the coarse-first pattern of `docs/design/streaming.md`.
 - **Resident bytes for a host's budget:** `TextureInfo::residentBytes` is the upload that made a
   Ready texture's object, and `ContextStats::residentTextureBytes` and `residentMeshBytes` sum the
   Ready objects. kiln enforces no budget: the host lowers an extent or releases the asset.

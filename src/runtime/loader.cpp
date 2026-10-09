@@ -351,14 +351,16 @@ Status read_ktx2_levels(Context* ctx, Slot& s, StrView name, Source const& src, 
     return st;
 }
 
-/// The lowest level whose width and height both fit `extent`; the last level when none does. 0 = the
-/// first level (docs/design/streaming.md).
+} // namespace
+
 u32 first_level(ktx2::TextureDesc const& d, u32 extent) {
     if (extent == 0 || d.levels == 0) return 0;
     for (u32 i = 0; i < d.levels; ++i)
         if (max(d.width >> i, 1u) <= extent && max(d.height >> i, 1u) <= extent) return i;
     return d.levels - 1;
 }
+
+namespace {
 
 /// `d` at levels `first` to the last, as the GPU object holds them.
 ktx2::TextureDesc resident_desc(ktx2::TextureDesc d, u32 first) {

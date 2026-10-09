@@ -98,8 +98,9 @@ struct MeshItem {
 struct TextureItem {
     u64 textureId = 0;
     TextureHandle handle;
-    State last = State::Unloaded;
-    char path[160]{}; ///< copied: the mesh view that named it may be reloaded
+    State last       = State::Unloaded;
+    bool fullPending = false; ///< --coarse: the full-size load after the coarse one is in flight
+    char path[160]{};         ///< copied: the mesh view that named it may be reloaded
 };
 
 constexpr u32 kMaxRoots = 8;
@@ -121,6 +122,7 @@ struct Options {
     u32 width           = 1280;
     u32 height          = 720;
     u32 budgetMiB       = 8;
+    u32 coarse          = 0; ///< --coarse: textures load at this extent first, then whole
     u32 frames          = 0; ///< 0 = 60 offscreen, until closed in a window
     u32 threads         = 0;
     MeshItem meshes[kMaxMeshes];
@@ -167,14 +169,17 @@ struct Scene {
     HashMap<u64, u32> textureIndex; ///< textureId -> index in `textures`
     Vec<Mat4> world;                ///< per-part scratch, sized once for the largest mesh
     Vec3 center;                    ///< union of the placed models' bounds
-    f32 radius    = 1.0f;
-    bool fit      = true; ///< place_meshes argument, kept for re-placing a changed mesh
-    bool warnedU8 = false;
-    u32 frame     = 0; ///< the frame being prepared, for the event log
+    f32 radius       = 1.0f;
+    bool fit         = true; ///< place_meshes argument, kept for re-placing a changed mesh
+    bool warnedU8    = false;
+    u32 coarseExtent = 0; ///< --coarse
+    u32 frame        = 0; ///< the frame being prepared, for the event log
 };
 
 /// Requests every BaseColor texture the mesh's materials name, once per texture. They are
-/// not waited on: they stream in under the per-frame budget while frames render.
+/// not waited on: they stream in under the per-frame budget while frames render. With --coarse
+/// each loads at that extent first; handle_event() asks for the full size once it is Ready
+/// (docs/design/streaming.md, the coarse-first pattern).
 void request_textures(Scene& s, MeshItem const& m) {
     mesh::MeshView const* v = mesh_view(s.ctx, m.handle);
     if (!v) return;
@@ -193,8 +198,10 @@ void request_textures(Scene& s, MeshItem const& m) {
         if (s.textureIndex.find(id)) continue;
         TextureItem t;
         t.textureId = id;
-        t.handle = request_texture(s.ctx, path, RequestOptions{.textureKind = texture_kind_for_slot(slot)});
-        t.last   = state(s.ctx, t.handle);
+        t.handle    = request_texture(
+            s.ctx, path,
+            RequestOptions{.textureKind = texture_kind_for_slot(slot), .maxExtent = s.coarseExtent});
+        t.last = state(s.ctx, t.handle);
         format(t.path, sizeof t.path, "%.*s", KILN_SV(path));
         s.textureIndex.insert(id, u32(s.textures.size()));
         s.textures.push_back(t);
@@ -244,6 +251,11 @@ void handle_event(Scene& s, Event const& e) {
                       g.slot == kInvalid ? -1 : int(g.slot));
             t.last = now;
             if (e.kind == EventKind::Failed) KILN_WARN("viewer", "  failed: %s", code_name(e.status.code));
+            if (e.kind == EventKind::Ready && s.coarseExtent) { // coarse first: now the whole texture
+                set_texture_extent(s.ctx, t.handle, 0);
+                t.fullPending = texture_info(s.ctx, t.handle).firstLevel > 0;
+            }
+            if (e.kind == EventKind::Resized) t.fullPending = false;
             return;
         }
     }
@@ -447,13 +459,13 @@ f32 framing_distance(Scene const& s, Vec3 dir, f32 aspect) {
     return dist > 0 ? dist : s.radius / std::sin(kFovY * 0.5f);
 }
 
-/// Every mesh and texture of the scene is Ready or Failed.
+/// Every mesh and texture of the scene is Ready or Failed, and no full-size load is in flight.
 bool scene_settled(Scene const& s) {
     auto const done = [](State st) { return st == State::Ready || st == State::Failed; };
     for (u32 i = 0; i < s.meshCount; ++i)
         if (!done(state(s.ctx, s.meshes[i].handle))) return false;
     for (TextureItem const& t : s.textures)
-        if (!done(state(s.ctx, t.handle))) return false;
+        if (!done(state(s.ctx, t.handle)) || t.fullPending) return false;
     return true;
 }
 
@@ -621,6 +633,11 @@ int main(int argc, char** argv) {
          .help   = "upload bytes committed per frame, in MiB (default: 8)",
          .number = &o.budgetMiB,
          .max    = 4096},
+        {.name   = "--coarse",
+         .arg    = "<px>",
+         .help   = "load each texture at a largest extent of <px> first, then whole once it is Ready",
+         .number = &o.coarse,
+         .max    = 16384},
         {.name = "--offscreen", .help = "render into an image with no window", .flag = &o.offscreen},
         {.name = "--watch",
          .help = "hot reload: reload store files that change; with --source, also re-cook changed sources",
@@ -784,12 +801,13 @@ int main(int argc, char** argv) {
 
     // 3. The boot group: every mesh on the command line, waited on before the first frame.
     Scene scene;
-    scene.ctx       = app.ctx;
-    scene.vka       = app.vka;
-    scene.ren       = app.ren;
-    scene.meshes    = o.meshes;
-    scene.meshCount = o.meshCount;
-    scene.fit       = !o.noFit;
+    scene.ctx          = app.ctx;
+    scene.vka          = app.vka;
+    scene.ren          = app.ren;
+    scene.meshes       = o.meshes;
+    scene.meshCount    = o.meshCount;
+    scene.fit          = !o.noFit;
+    scene.coarseExtent = o.coarse;
     scene.textures.init(default_allocator(), Tag::General);
     scene.textures.reserve(64);
     scene.textureIndex.init(default_allocator(), Tag::General);
@@ -839,6 +857,7 @@ int main(int argc, char** argv) {
               "scene: %u mesh(es)%s, row radius %.3f, %u texture(s) streaming, budget %u MiB per frame",
               o.meshCount, o.noFit ? " at native size" : " fitted to radius 1", double(scene.radius),
               u32(scene.textures.size()), o.budgetMiB);
+    if (o.coarse) KILN_INFO("viewer", "textures load at %u px first, then whole (--coarse)", o.coarse);
 
     // 4. Frames.
     PumpOptions pumpOpt{.uploadBytes = u64(o.budgetMiB) << 20};

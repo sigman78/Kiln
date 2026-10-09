@@ -172,7 +172,11 @@ void reload_slot(Context* ctx, Slot& s) {
 }
 
 void resize_slot(Context* ctx, Slot& s) {
-    if (s.phase != Phase::Done || s.state != State::Ready) return; // settle() starts it once Ready
+    if (s.phase != Phase::Done || s.state != State::Ready) return;        // settle() starts it once Ready
+    if (first_level(s.cur.texDesc, s.maxExtent) == s.cur.texFirstLevel) { // the same levels: nothing to load
+        s.cur.texExtent = s.maxExtent;
+        return;
+    }
     if (s.source == SourceKind::Memory) { // the bytes went with the first upload (R30 h)
         s.maxExtent = s.cur.texExtent;
         (void)diagf(&ctx->diag, make_status(Code::Unsupported), kDiagReloadMemorySource, Severity::Warning,

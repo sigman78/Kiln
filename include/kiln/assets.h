@@ -334,8 +334,9 @@ KILN_API void request_reload(Context* ctx, TextureHandle h);
 /// Changes the wanted extent of a live texture (RequestOptions::maxExtent; the last call wins). A
 /// Ready texture keeps its object until the new one is uploaded, then emits Resized with a new
 /// version; a failed change keeps the object and drops the want, with one K5010. A texture that is
-/// loading takes the extent for the load after it. The same extent again does nothing. A texture
-/// registered in memory takes no size change (K5012): its bytes went to the GPU.
+/// loading takes the extent for the load after it. An extent that keeps the same levels, the same
+/// one again included, does nothing. A texture registered in memory takes no size change (K5012):
+/// its bytes went to the GPU.
 KILN_API void set_texture_extent(Context* ctx, TextureHandle h, u32 maxExtent);
 /// request_reload() by name, from any thread: the next pump() reloads the asset `name` of `kind`, and
 /// every texture array with `name` as a layer. A name nothing uses is ignored. For watchers that run

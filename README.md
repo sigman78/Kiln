@@ -114,7 +114,8 @@ All programs print their options with `--help`.
   `--slow` and `--latency` simulate slow IO and cooking; `--watch` keeps it running to log hot reloads.
 - `kiln-viewer` (`examples/viewer`) draws cooked meshes through the example Vulkan 1.4 adapter:
   boot meshes are waited on as a group, textures stream in under a per-frame budget, so the first
-  frames show placeholders. `--offscreen --frames N --dump out.png` renders without a window.
+  frames show placeholders; `--coarse <px>` loads them small first, then whole.
+  `--offscreen --frames N --dump out.png` renders without a window.
   `--watch` hot-reloads changed store files and, with `--source`, re-cooks changed sources.
   `kiln-vk-smoke` exercises the adapter alone. Both need a Vulkan 1.4 driver to run.
 

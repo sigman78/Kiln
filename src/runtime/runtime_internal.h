@@ -493,6 +493,9 @@ PumpStats pump_impl(Context* ctx, PumpOptions const& opt, bool keepEvents);
 void reload_slot(Context* ctx, Slot& s);
 /// A size change: a reload of a Ready texture that emits Resized (set_texture_extent).
 void resize_slot(Context* ctx, Slot& s);
+/// The lowest level whose width and height both fit `extent`; the last level when none does. 0 = the
+/// first level (docs/design/streaming.md).
+u32 first_level(ktx2::TextureDesc const& d, u32 extent);
 /// True if the manifest in use has an entry for the settled file-source `s` that names another
 /// artifact than the one it loaded or tried (or it had none).
 [[nodiscard]] bool manifest_names_other(Context const* ctx, Slot const& s);
