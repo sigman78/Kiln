@@ -22,6 +22,9 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
   call wins; a call while a load runs starts one more load after it. A texture registered in memory
   takes no size change (K5012). Hosts that `switch` over `EventKind` get a new value: handle
   `Resized` like `Changed` unless they care about the difference.
+- **Resident bytes for a host's budget:** `TextureInfo::residentBytes` is the upload that made a
+  Ready texture's object, and `ContextStats::residentTextureBytes` and `residentMeshBytes` sum the
+  Ready objects. kiln enforces no budget: the host lowers an extent or releases the asset.
 
 ### Changed
 - **`State::Partial` is removed** (API break; open-questions R30 e): an object loads whole or not at

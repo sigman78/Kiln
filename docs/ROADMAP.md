@@ -79,7 +79,8 @@ level of the runtime library. The design is [`design/streaming.md`](design/strea
   faster to the last texture, 256 reads 4%.
 - **A size change is a swap** (done 2026-10-09, step 3): `set_texture_extent` loads a new object and
   swaps it in, as a reload does, and emits `Resized`. The host decides what is resident; kiln
-  reports resident bytes (step 4, open) and enforces no budget.
+  reports resident bytes (`TextureInfo::residentBytes`, `ContextStats`; step 4, done) and enforces
+  no budget.
 - **Latency:** one-pass texture loads from manifest metadata (open-questions R27); group readiness
   ([`design/readiness-sets.md`](design/readiness-sets.md), R25). Each awaits the owner.
 - **Persistent load attempts** ([`design/async-read-path.md`](design/async-read-path.md), Part 1,

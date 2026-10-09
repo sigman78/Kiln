@@ -515,7 +515,10 @@ ContextStats stats(Context* ctx) {
         switch (s.state) {
         case State::Pending: ++st.pending; break;
         case State::MetaReady: ++st.metaReady; break;
-        case State::Ready: ++st.ready; break;
+        case State::Ready:
+            ++st.ready;
+            (s.kind == AssetKind::Mesh ? st.residentMeshBytes : st.residentTextureBytes) += s.cur.uploadSize;
+            break;
         case State::Failed: ++st.failed; break;
         default: break;
         }

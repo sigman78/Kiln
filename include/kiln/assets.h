@@ -248,6 +248,7 @@ struct TextureInfo {
     u32 firstLevel                  = 0;
     Span<u64 const> levelOffsets    = {}; ///< byte offset of each resident level inside the upload, ascending
     Span<u64 const> levelRowPitches = {}; ///< row pitch used for each resident level
+    u64 residentBytes               = 0;  ///< bytes of the upload that made the object (Ready); 0 otherwise
     GpuObject gpu;
     u32 version        = 0;
     bool isPlaceholder = true;
@@ -393,6 +394,10 @@ struct ContextStats {
     u32 ioJobsInFlight  = 0;
     u64 ioBytesInFlight = 0;
     u32 uploadsInFlight = 0;
+    /// The uploads that made the Ready objects, summed (TextureInfo::residentBytes; a mesh's decoded
+    /// payload). What the host's budget sees; kiln enforces none (docs/design/streaming.md).
+    u64 residentTextureBytes = 0;
+    u64 residentMeshBytes    = 0;
 };
 KILN_API ContextStats stats(Context* ctx);
 KILN_API StrView store_dir(Context* ctx);

@@ -351,6 +351,8 @@ KILN_TEST(Runtime, LoadMesh) {
         Span<u8 const> got = null_adapter_payload(rt.na, obj);
         KILN_CHECK_EQ(got.size, decoded.size());
         KILN_CHECK(got.size == decoded.size() && bytes_equal(got.data, decoded.data(), got.size));
+        KILN_CHECK_EQ(stats(rt.ctx).residentMeshBytes, u64(decoded.size()));
+        KILN_CHECK_EQ(stats(rt.ctx).residentTextureBytes, u64(0));
     }
 
     // Refcount: same handle; one release keeps it loaded, the second unloads.
@@ -363,6 +365,7 @@ KILN_TEST(Runtime, LoadMesh) {
     u32 const destroysBefore = null_adapter_stats(rt.na).destroys;
     release(rt.ctx, m2);
     KILN_CHECK_EQ(state(rt.ctx, m), State::Unloaded);
+    KILN_CHECK_EQ(stats(rt.ctx).residentMeshBytes, u64(0));
     KILN_CHECK(mesh_view(rt.ctx, m) == nullptr);
     KILN_CHECK(find_mesh(rt.ctx, "mesh/cube_basic"_h).is_null());
     KILN_CHECK_EQ(null_adapter_stats(rt.na).destroys, destroysBefore + 1); // no frames reported: at once
@@ -435,6 +438,7 @@ void check_uploaded(Rt& rt, TextureHandle t, Span<u8 const> file, u64 pitchAlign
     CopyConstraints c{};
     rt.adapter.copy_constraints(rt.adapter.user, &c);
     KILN_CHECK_EQ(payload.size, usize(texture_level_layout(d, c, nullptr, nullptr)));
+    KILN_CHECK_EQ(ti.residentBytes, u64(payload.size));
 }
 
 } // namespace
@@ -1871,13 +1875,20 @@ KILN_TEST(Runtime, SetTextureExtent) {
     KILN_CHECK_EQ(null_adapter_stats(rt.na).beginUploads, uploads);
     KILN_CHECK_EQ(rt.events.size(), ev0);
 
+    u64 const smallBytes = texture_info(rt.ctx, t).residentBytes;
+    KILN_CHECK(smallBytes > 0);
+    KILN_CHECK_EQ(stats(rt.ctx).residentTextureBytes, smallBytes);
+    KILN_CHECK_EQ(stats(rt.ctx).residentMeshBytes, u64(0));
     set_texture_extent(rt.ctx, t, 0);
     KILN_CHECK(is_ready(rt.ctx, t));
     KILN_CHECK_EQ(texture_info(rt.ctx, t).firstLevel, 2u); // the old object serves until the swap
+    KILN_CHECK_EQ(stats(rt.ctx).residentTextureBytes, smallBytes);
     KILN_REQUIRE(rt.pump_until([&] { return rt.find_event(EventKind::Resized, t.bits(), ev0) >= 0; }));
     KILN_CHECK_EQ(count_events(rt, EventKind::Changed, t.bits(), ev0), 0u);
     KILN_CHECK_EQ(count_events(rt, EventKind::MetaReady, t.bits(), ev0), 0u);
     check_uploaded(rt, t, store.plain.span(), 1, "at full", 0, 2);
+    KILN_CHECK(texture_info(rt.ctx, t).residentBytes > smallBytes);
+    KILN_CHECK_EQ(stats(rt.ctx).residentTextureBytes, texture_info(rt.ctx, t).residentBytes);
     KILN_CHECK_EQ(rt.events[usize(rt.find_event(EventKind::Resized, t.bits(), ev0))].version, 2u);
 
     usize const ev1 = rt.events.size();

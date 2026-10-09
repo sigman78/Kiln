@@ -728,6 +728,7 @@ TextureInfo texture_info(Context* ctx, TextureHandle h) {
         info.levelRowPitches = {m->layout + m->layoutLevels, m->layoutLevels};
         info.version         = s->version;
         info.isPlaceholder   = s->state != State::Ready;
+        info.residentBytes   = s->state == State::Ready ? m->uploadSize : 0;
         return info;
     }
     Placeholder const& p = texture_placeholder(ctx, s);

@@ -3,7 +3,7 @@
 **Status:** Decided (owner, 2026-10-09): open points (a), (c) to (g) as recorded below; (b) stays
 proposed. The direction is the owner's (2026-10-05): an object is loaded whole or not at all, and
 the goal is latency at the level of the runtime library. Steps 1 (measure), 2 (the level-limited
-first load) and 3 (the size change) are done; steps 4 and 5 are not implemented.
+first load), 3 (the size change) and 4 (resident bytes) are done; step 5 is not implemented.
 **Decides:** What "streaming" means in kiln v0.8, what it drops from the earlier plan, the request
 and adapter surface for a texture that is resident at a smaller size, and how its size changes.
 **Related:** [handles-and-states.md](handles-and-states.md), [adapter.md](adapter.md),
@@ -73,8 +73,9 @@ and a hot reload load at the slot's extent. Step 3 (2026-10-09): `set_texture_ex
 `EventKind::Resized` (`include/kiln/assets.h`); the size change is a reload that starts in
 `resize_slot` and is told apart by `Slot::resizing` (`src/runtime/pump.cpp`); the job reads the
 extent fixed at its submit (`JobInput::maxExtent`), and `settle()` starts one more load when the
-wanted extent differs from the one the current object has (`MetaSet::texExtent`). `residentBytes`
-waits for step 4.
+wanted extent differs from the one the current object has (`MetaSet::texExtent`). Step 4
+(2026-10-09): `TextureInfo::residentBytes` and `ContextStats::residentTextureBytes` /
+`residentMeshBytes`, summed over the Ready objects in `stats()` (`src/runtime/context.cpp`).
 
 ```cpp
 struct RequestOptions {
@@ -268,7 +269,7 @@ What the numbers say:
    "Measured" hold).
 3. A size change as a swap: `set_texture_extent`, `Resized`, the rules for calls that overlap a
    load or a reload. Tests with a held job system. **Done 2026-10-09.**
-4. `residentBytes` and the `ContextStats` sums.
+4. `residentBytes` and the `ContextStats` sums. **Done 2026-10-09.**
 5. One example: `kiln-viewer` loads coarse first, then full.
 
 Beside it, as their own decisions: one-pass texture loads from manifest metadata (R27) and group
