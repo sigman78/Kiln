@@ -55,7 +55,8 @@ struct TextureDesc {
     u32 layers         = 1; ///< array layers, or 6 for a cube
     u32 levels         = 1;
     TextureShape shape = TextureShape::Tex2D;
-    u32 firstLevel     = 0; ///< reserved for partial loads (v0.8); 0 in v0.5
+    u32 firstLevel =
+        0; ///< the file level that is level 0 of this object (a level-limited load); information only
 };
 
 /// What kiln is about to place for a mesh payload (.mesh header values).

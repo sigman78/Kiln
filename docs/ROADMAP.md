@@ -69,12 +69,14 @@ Not goals for v1:
 
 Direction (owner, 2026-10-05): an object loads whole or not at all, and the goal is latency at the
 level of the runtime library. The design is [`design/streaming.md`](design/streaming.md) (decided
-2026-10-09, open-questions R30; a size change emits `Resized`; `State::Partial` goes with step 2).
+2026-10-09, open-questions R30; a size change emits `Resized`; `State::Partial` went with step 2).
 
-- **Level-limited texture loads:** a request gives a largest extent, and kiln loads the mip levels
-  that fit as a complete, smaller texture (`RequestOptions::maxExtent`, `TextureDesc::firstLevel`).
-  No change to the adapter contract. Measured first (2026-10-09, `kiln_bench_load --max-extent`):
-  extent 1024 reads 42% of the texture bytes and is 2.2x faster to the last texture, 256 reads 4%.
+- **Level-limited texture loads** (done 2026-10-09, step 2 of the note): a request gives a largest
+  extent, and kiln loads the mip levels that fit as a complete, smaller texture
+  (`RequestOptions::maxExtent`, `TextureArrayDesc::maxExtent`, `TextureDesc::firstLevel`,
+  `TextureInfo::firstLevel`). No change to the adapter contract; `State::Partial` is gone. Measured
+  first (`kiln_bench_load --max-extent`): extent 1024 reads 42% of the texture bytes and is 2.2x
+  faster to the last texture, 256 reads 4%.
 - **A size change is a swap:** `set_texture_extent` loads a new object and swaps it in, as a reload
   does. The host decides what is resident; kiln reports resident bytes and enforces no budget.
 - **Latency:** one-pass texture loads from manifest metadata (open-questions R27); group readiness

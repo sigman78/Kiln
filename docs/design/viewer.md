@@ -143,8 +143,8 @@ Vulkan-Headers (`vulkan-sdk-1.4.357.0`), volk (1.4.364), GLFW 3.5.1.
 
 - Hot reload (M5) needs nothing new at the adapter: `bind` on the same slot and `destroy` of the
   old object after its frames cover it.
-- Progressive mips (v0.8) arrive as further `bind` calls on a slot; the adapter would then keep
-  per-level views.
+- A texture size change (`streaming.md`, v0.8) is a new object and a `bind` on the same slot, as a
+  reload is; the adapter keeps no per-level views.
 - `vk_adapter.cpp` is the reference for the external project's adapter; keep it readable over
   clever.
 

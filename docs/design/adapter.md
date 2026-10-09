@@ -280,8 +280,9 @@ per-frame lookup only: all rejected for the reasons above.
 - Encoders for BC/ASTC need no enum or layout change; their values and table rows exist.
 - `reserved[4]` must be null and is the only place residency hooks may go (v0.8) without breaking
   the struct layout. `caps` bits 1..31 are for new capability flags.
-- `TextureDesc.firstLevel` is the hook for partial mip loads (v0.8). Progressive mips then arrive
-  through further `bind` calls on the same slot.
+- `TextureDesc.firstLevel` tells which file level is level 0 of the object (a level-limited load,
+  `streaming.md`); the adapter sees a complete, smaller texture and needs nothing else. There are
+  no progressive mips: a size change is a new object and a `bind`, as a reload is.
 - Adapter implementations need thread-safe staging, because uploads come from workers.
 - A `.mesh` codec changes nothing at the adapter: it always receives decoded bytes.
 

@@ -109,14 +109,15 @@ inline constexpr usize kLayoutColumns = 5;
 struct MetaSet {
     Buffer meta;               ///< mesh CPU region [0, gpuDataOffset)
     mesh::MeshView meshView;   ///< points into `meta`
-    ktx2::TextureDesc texDesc; ///< textures
-    /// Textures: kLayoutColumns arrays of layoutLevels values:
-    /// [dstOffset | rowPitch | srcOffset | srcLength | texelLength]. srcLength is the stored
-    /// size, which is smaller than texelLength when the levels are Zstd frames (texZstd).
-    u64* layout      = nullptr;
-    u32 layoutLevels = 0;
-    bool texZstd     = false;
-    u64 uploadSize   = 0; ///< bytes handed to begin_upload
+    ktx2::TextureDesc texDesc; ///< textures: the file's description, full extents and level count
+    /// Textures: kLayoutColumns arrays of layoutLevels values, one per resident level (file level
+    /// texFirstLevel + i): [dstOffset | rowPitch | srcOffset | srcLength | texelLength]. srcLength
+    /// is the stored size, which is smaller than texelLength when the levels are Zstd frames (texZstd).
+    u64* layout       = nullptr;
+    u32 layoutLevels  = 0;
+    u32 texFirstLevel = 0;
+    bool texZstd      = false;
+    u64 uploadSize    = 0; ///< bytes handed to begin_upload
 };
 
 /// One layer of a texture array. `key` belongs to the pump thread; the job fields are written at
@@ -199,6 +200,7 @@ struct Slot {
     Priority priority     = Priority::Normal;
     TextureKind texKind   = TextureKind::BaseColor;
     TextureShape texShape = TextureShape::Tex2D; ///< requested; fixed while the slot lives
+    u32 maxExtent         = 0;                   ///< RequestOptions::maxExtent; fixed while the slot lives
     /// The running load is a reload: state stays Ready / Failed. Written by transition() only.
     bool reloading     = false;
     bool reloadPending = false; ///< reload requested while not settled; runs at settle

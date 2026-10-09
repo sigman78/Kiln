@@ -102,8 +102,9 @@ The async path is additive. It must not silently change synchronous callback sem
 
 # Part 1: load attempts (v0.8)
 
-v0.8 needs this part for its own reasons: `State::Partial` and range reads load one asset in
-several steps, so the attempt must outlive a job.
+v0.8 needed this part for its own reasons when it was written: progressive loads would have loaded
+one asset in several steps, so the attempt had to outlive a job. `streaming.md` (R30) dropped
+progressive loads; the attempt stays as the unit the readers and the lanes work on.
 
 ## 3. Load attempts
 
@@ -641,7 +642,8 @@ Baseline now, two passes, 64 MiB budget:
 | Cold, 2 workers | 1.32 to 1.37 s | 900 / 1250 ms |
 
 Consequence for this note: the benchmark gives no reason for Part 2 on this machine, and a small one for dedicated readers. Part 1 stays
-justified by v0.8 (range reads and `State::Partial` need a persistent attempt), not by throughput.
+justified by the lanes and readers of stages 2b and 2c, which need a persistent attempt, not by
+throughput (R30 dropped the progressive loads that first asked for it).
 The first gain was R26, which needed no new design.
 
 ### Stage 2a against the loader before it (2026-10-04)

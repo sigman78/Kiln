@@ -2,8 +2,8 @@
 
 **Status:** Decided (owner, 2026-10-09): open points (a), (c) to (g) as recorded below; (b) stays
 proposed. The direction is the owner's (2026-10-05): an object is loaded whole or not at all, and
-the goal is latency at the level of the runtime library. Step 1 (measure) is done; steps 2 to 5 are
-not implemented.
+the goal is latency at the level of the runtime library. Steps 1 (measure) and 2 (the level-limited
+first load) are done; steps 3 to 5 are not implemented.
 **Decides:** What "streaming" means in kiln v0.8, what it drops from the earlier plan, the request
 and adapter surface for a texture that is resident at a smaller size, and how its size changes.
 **Related:** [handles-and-states.md](handles-and-states.md), [adapter.md](adapter.md),
@@ -63,7 +63,14 @@ on its own (`zstd-supercompression.md`), so levels `N` to the last are one byte 
 of the level data. Level 0 is about 75% of a 2D chain, so a texture at half its extent reads and
 decodes a quarter of the bytes.
 
-### Surface (sketch; names are open)
+### Surface
+
+Step 2 is implemented (2026-10-09): `RequestOptions::maxExtent` and `TextureArrayDesc::maxExtent`
+(`include/kiln/assets.h`), the first level and the resident layout in the metadata step
+(`first_level`, `resident_desc`, `texture_meta` and `run_array_meta` in `src/runtime/loader.cpp`),
+`TextureDesc::firstLevel` at the adapter, `TextureInfo::firstLevel`. A memory-registered texture
+and a hot reload load at the slot's extent. `set_texture_extent`, `Resized` and `residentBytes`
+wait for steps 3 and 4.
 
 ```cpp
 struct RequestOptions {
@@ -251,7 +258,9 @@ What the numbers say:
    from a prototype kept outside the repo, see "Measured").
 2. A level-limited first load: `RequestOptions::maxExtent`, the upload plan from level `N`,
    `TextureDesc::firstLevel`, `TextureInfo`, the null adapter, texture arrays. Tests compare the
-   upload with the golden file's levels byte for byte.
+   upload with the golden file's levels byte for byte. **Done 2026-10-09** (`State::Partial`
+   removed with it; `kiln_bench_load --max-extent` now loads at the extent, and the figures under
+   "Measured" hold).
 3. A size change as a swap: `set_texture_extent`, `Changed`, the rules for calls that overlap a
    load or a reload. Tests with a held job system.
 4. `residentBytes` and the `ContextStats` sums.

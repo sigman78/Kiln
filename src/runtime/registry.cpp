@@ -370,6 +370,7 @@ Slot* request_slot(Context* ctx, AssetKind kind, StrView path, RequestOptions co
     s.texKind       = opt.textureKind < TextureKind::Count ? opt.textureKind : TextureKind::BaseColor;
     s.texShape      = kind == AssetKind::Texture && opt.textureShape < TextureShape::Count ? opt.textureShape
                                                                                            : TextureShape::Tex2D;
+    s.maxExtent     = kind == AssetKind::Texture ? opt.maxExtent : 0;
     s.refcount      = 1;
     s.version       = 1;
     s.groupIndex    = kInvalid;
@@ -596,7 +597,8 @@ Slot* request_array_slot(Context* ctx, TextureArrayDesc const& desc) {
     RequestOptions const opt{.priority     = desc.priority,
                              .group        = desc.group,
                              .textureKind  = desc.textureKind,
-                             .textureShape = TextureShape::Array};
+                             .textureShape = TextureShape::Array,
+                             .maxExtent    = desc.maxExtent};
     if (u32 const* found = ctx->texMap.find(fnv1a64(name))) {
         Slot& s = ctx->slots[*found];
         if (StrView(s.path, s.pathLen) != name)
@@ -718,6 +720,7 @@ TextureInfo texture_info(Context* ctx, TextureHandle h) {
     info.gpu      = gpu_object(ctx, h);
     if (MetaSet const* m = s ? shown_meta(*s) : nullptr) {
         info.desc            = m->texDesc;
+        info.firstLevel      = m->texFirstLevel;
         info.levelOffsets    = {m->layout, m->layoutLevels};
         info.levelRowPitches = {m->layout + m->layoutLevels, m->layoutLevels};
         info.version         = s->version;

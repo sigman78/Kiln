@@ -314,7 +314,8 @@ bool run_once(Options const& o, Span<Asset const> assets, Span<StrView const> ar
         } else {
             Asset const& a = assets[i];
             RequestOptions const ro{.priority     = a.high || a.late ? Priority::High : Priority::Normal,
-                                    .textureShape = a.shape};
+                                    .textureShape = a.shape,
+                                    .maxExtent    = o.maxExtent};
             handles[i] = a.kind == AssetKind::Mesh ? request_mesh(ctx, a.name, ro).bits()
                                                    : request_texture(ctx, a.name, ro).bits();
         }
@@ -576,25 +577,25 @@ bool run_scenario(Options const& o, Span<Asset const> assets, Span<StrView const
 }
 
 int usage() {
-    std::fprintf(stderr,
-                 "usage: kiln_bench_load --store DIR [options]\n"
-                 "  --profile NAME   the target profile to load (default compat)\n"
-                 "  --repeat N       runs, each with a new context (default 3); the fastest is detailed\n"
-                 "  --hz N           pumps per second, 1 to 1000 (default 60)\n"
-                 "  --threads N      worker threads (default 0: automatic)\n"
-                 "  --io-jobs N      ContextDesc::maxIoJobs (default 0: the worker count)\n"
-                 "  --upload-mib N   PumpOptions::uploadBytes in MiB (default 64)\n"
-                 "  --pitch N        the adapter's row pitch alignment (default 1: no row repacking)\n"
-                 "  --high-every N   every N-th request has high priority (default 0: none)\n"
-                 "  --late-high N    hold N requests back and make them with high priority once a quarter\n"
-                 "                   of the others have settled; their times count from their request\n"
-                 "  --array N        also load one texture array of N layers taken from the store\n"
-                 "  --no-probe       do not read texture headers first: request every texture as 2D\n"
-                 "                   (cubes and arrays then fail). For cold-cache runs.\n"
-                 "  --cold           drop the store's cached file pages before each run\n"
-                 "  --max-extent N   report the level-limited plan at a largest extent of N pixels\n"
-                 "                   (docs/design/streaming.md) beside the fixed extents 64, 256, 1024\n"
-                 "  --timeout N      seconds before a run is given up (default 120)\n");
+    std::fprintf(
+        stderr, "usage: kiln_bench_load --store DIR [options]\n"
+                "  --profile NAME   the target profile to load (default compat)\n"
+                "  --repeat N       runs, each with a new context (default 3); the fastest is detailed\n"
+                "  --hz N           pumps per second, 1 to 1000 (default 60)\n"
+                "  --threads N      worker threads (default 0: automatic)\n"
+                "  --io-jobs N      ContextDesc::maxIoJobs (default 0: the worker count)\n"
+                "  --upload-mib N   PumpOptions::uploadBytes in MiB (default 64)\n"
+                "  --pitch N        the adapter's row pitch alignment (default 1: no row repacking)\n"
+                "  --high-every N   every N-th request has high priority (default 0: none)\n"
+                "  --late-high N    hold N requests back and make them with high priority once a quarter\n"
+                "                   of the others have settled; their times count from their request\n"
+                "  --array N        also load one texture array of N layers taken from the store\n"
+                "  --no-probe       do not read texture headers first: request every texture as 2D\n"
+                "                   (cubes and arrays then fail). For cold-cache runs.\n"
+                "  --cold           drop the store's cached file pages before each run\n"
+                "  --max-extent N   load every texture at a largest extent of N pixels and report the\n"
+                "                   level-limited plan at N and at 64, 256, 1024 (docs/design/streaming.md)\n"
+                "  --timeout N      seconds before a run is given up (default 120)\n");
     return 1;
 }
 
@@ -716,7 +717,6 @@ int main(int argc, char** argv) {
     print_stages(best);
     print_slowest(best, assets.span());
     if (o.maxExtent) {
-        // The loads above ran at the full size: the loader has no level limit yet (streaming.md, step 2).
         u64 meshBytes = 0;
         for (Asset const& a : assets)
             if (a.kind == AssetKind::Mesh) meshBytes += a.bytes;

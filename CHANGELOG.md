@@ -7,7 +7,20 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
 
 ## [Unreleased]
 
+### Added
+- **Level-limited texture loads** (`docs/design/streaming.md`, step 2): `RequestOptions::maxExtent`
+  and `TextureArrayDesc::maxExtent` give the largest width or height to load, and kiln loads the
+  levels from the first one that fits as a complete, smaller texture: the adapter sees a smaller
+  `TextureDesc` with `firstLevel` set, `TextureInfo::firstLevel` tells which file level is level 0
+  of the object, and `TextureInfo::desc` keeps the file's full description. The extent applies when
+  the request makes the asset live and stays for its reloads. Every face and layer of a cube or an
+  array starts at the same level. `kiln_bench_load --max-extent N` loads at N.
+
 ### Changed
+- **`State::Partial` is removed** (API break; open-questions R30 e): an object loads whole or not at
+  all, so the value was never produced. Migration: delete the `case State::Partial:` of a `switch`.
+  The reserved `range` comment of `RequestOptions` is `maxExtent` now, and the `TextureDesc::firstLevel`
+  of the adapter, reserved before, is in use.
 - **A load job that ends starts the next one without a pump.** `pump()` used to start at most
   `maxIoJobs` jobs, so the workers were idle between pumps: 891 assets (712 MiB) at 60 Hz loaded in
   4.4 s, now 0.9 s; with 2 workers 15.3 s, now 1.5 s. `pump()` now prepares every queued job and the

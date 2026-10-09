@@ -351,19 +351,40 @@ Status read_ktx2_levels(Context* ctx, Slot& s, StrView name, Source const& src, 
     return st;
 }
 
+/// The lowest level whose width and height both fit `extent`; the last level when none does. 0 = the
+/// first level (docs/design/streaming.md).
+u32 first_level(ktx2::TextureDesc const& d, u32 extent) {
+    if (extent == 0 || d.levels == 0) return 0;
+    for (u32 i = 0; i < d.levels; ++i)
+        if (max(d.width >> i, 1u) <= extent && max(d.height >> i, 1u) <= extent) return i;
+    return d.levels - 1;
+}
+
+/// `d` at levels `first` to the last, as the GPU object holds them.
+ktx2::TextureDesc resident_desc(ktx2::TextureDesc d, u32 first) {
+    d.width  = max(d.width >> first, 1u);
+    d.height = max(d.height >> first, 1u);
+    d.depth  = max(d.depth >> first, 1u);
+    d.levels = d.levels - first;
+    return d;
+}
+
 Status texture_meta(Context* ctx, Slot& s, Source const& src) {
     KtxLevels k;
     KILN_TRY(read_ktx2_levels(ctx, s, path_of(s), src, s.texShape, kInvalid, &k));
-    u32 const levels = k.levels;
+    u32 const first  = first_level(k.desc, s.maxExtent);
+    u32 const levels = k.levels - first;
     u64* layout      = alloc_array<u64>(ctx->alloc, usize(levels) * kLayoutColumns, Tag::Payload);
-    std::memcpy(layout + 2 * levels, k.cols, sizeof(u64) * levels * 3);
-    MetaSet& m     = s.out.next;
-    m.layout       = layout;
-    m.layoutLevels = levels;
-    m.texZstd      = k.zstd;
-    m.texDesc      = k.desc;
-    m.uploadSize   = texture_layout(k.desc, ctx->cc.optimalRowPitchAlign, ctx->cc.optimalOffsetAlign, layout,
-                                    layout + levels);
+    for (u32 c = 0; c < 3; ++c)
+        std::memcpy(layout + (2 + c) * levels, k.cols + c * k.levels + first, sizeof(u64) * levels);
+    MetaSet& m      = s.out.next;
+    m.layout        = layout;
+    m.layoutLevels  = levels;
+    m.texFirstLevel = first;
+    m.texZstd       = k.zstd;
+    m.texDesc       = k.desc;
+    m.uploadSize    = texture_layout(resident_desc(k.desc, first), ctx->cc.optimalRowPitchAlign,
+                                     ctx->cc.optimalOffsetAlign, layout, layout + levels);
     k.release(ctx->alloc);
     return kOk;
 }
@@ -398,7 +419,8 @@ Status check_layer(Slot& s, u32 layer, StrView name, ktx2::TextureDesc const& fi
 CompletionKind run_array_meta(Context* ctx, Slot& s) {
     ArrayDecl& d = *s.array;
     KtxLevels first;
-    Status st = kOk;
+    u32 firstLevel = 0; // of layer 0; every layer has the same levels (check_layer)
+    Status st      = kOk;
     for (u32 i = 0; i < d.count && st.ok(); ++i) {
         Input const in = layer_input(s, d.layers[i]);
         st             = prepare_input(ctx, s, in);
@@ -418,9 +440,11 @@ CompletionKind run_array_meta(Context* ctx, Slot& s) {
             if (s.out.diag != kDiagArrayLayerMismatch) note_layer(s.out.capture, i, in.name);
             break;
         }
-        l.srcLevels = k.levels;
-        l.src       = alloc_array<u64>(ctx->alloc, usize(k.levels) * 2, Tag::Payload);
-        std::memcpy(l.src, k.cols, sizeof(u64) * k.levels * 2);
+        if (i == 0) firstLevel = first_level(k.desc, s.maxExtent);
+        l.srcLevels = k.levels - firstLevel;
+        l.src       = alloc_array<u64>(ctx->alloc, usize(l.srcLevels) * 2, Tag::Payload);
+        std::memcpy(l.src, k.cols + firstLevel, sizeof(u64) * l.srcLevels);
+        std::memcpy(l.src + l.srcLevels, k.cols + k.levels + firstLevel, sizeof(u64) * l.srcLevels);
         l.zstd = k.zstd;
         if (i == 0)
             first = k; // its texel lengths go into the layout
@@ -428,7 +452,7 @@ CompletionKind run_array_meta(Context* ctx, Slot& s) {
             k.release(ctx->alloc);
     }
     if (st.ok()) {
-        u32 const levels  = first.levels;
+        u32 const levels  = first.levels - firstLevel;
         MetaSet& m        = s.out.next;
         m.texDesc         = first.desc;
         m.texDesc.layers  = d.count;
@@ -436,10 +460,11 @@ CompletionKind run_array_meta(Context* ctx, Slot& s) {
         m.texDesc.isArray = true;
         m.layout          = alloc_array<u64>(ctx->alloc, usize(levels) * kLayoutColumns, Tag::Payload);
         m.layoutLevels    = levels;
+        m.texFirstLevel   = firstLevel;
         std::memset(m.layout + 2 * levels, 0, sizeof(u64) * levels * 2); // per layer: ArrayLayer::src
-        std::memcpy(m.layout + 4 * levels, first.cols + 2 * levels, sizeof(u64) * levels);
-        m.uploadSize = texture_layout(m.texDesc, ctx->cc.optimalRowPitchAlign, ctx->cc.optimalOffsetAlign,
-                                      m.layout, m.layout + levels);
+        std::memcpy(m.layout + 4 * levels, first.cols + 2 * first.levels + firstLevel, sizeof(u64) * levels);
+        m.uploadSize = texture_layout(resident_desc(m.texDesc, firstLevel), ctx->cc.optimalRowPitchAlign,
+                                      ctx->cc.optimalOffsetAlign, m.layout, m.layout + levels);
         if (m.uploadSize == 0) {
             note(s.out.capture, "%u layers of %s %ux%u do not fit one upload", d.count,
                  format_name(first.desc.format), first.desc.width, first.desc.height);
@@ -581,10 +606,11 @@ struct LevelCopy {
 LevelCopy level_copy(Slot& s, u32 j, u32 i, u8* dst) {
     MetaSet const& m = s.out.next;
     u32 const levels = m.layoutLevels;
-    LevelCopy c{.level    = i,
-                .tLen     = m.layout[4 * levels + i],
-                .rowBytes = format_row_bytes(m.texDesc.format, max(m.texDesc.width >> i, 1u)),
-                .pitch    = m.layout[levels + i]};
+    LevelCopy c{.level = i,
+                .tLen  = m.layout[4 * levels + i],
+                .rowBytes =
+                    format_row_bytes(m.texDesc.format, max(m.texDesc.width >> (m.texFirstLevel + i), 1u)),
+                .pitch = m.layout[levels + i]};
     if (s.array) {
         ArrayLayer const& l = s.array->layers[j];
         c.sOff              = l.src[i];
@@ -656,9 +682,10 @@ void zero_level_gaps(MetaSet const& m, u32 layers, u8* dst) {
     u32 const levels = m.layoutLevels;
     u64 cursor       = 0;
     for (u32 i = 0; i < levels; ++i) {
-        u64 const dOff     = m.layout[i];
-        u64 const rowBytes = format_row_bytes(m.texDesc.format, max(m.texDesc.width >> i, 1u));
-        u64 const rows     = rowBytes ? m.layout[4 * levels + i] / rowBytes : 0;
+        u64 const dOff = m.layout[i];
+        u64 const rowBytes =
+            format_row_bytes(m.texDesc.format, max(m.texDesc.width >> (m.texFirstLevel + i), 1u));
+        u64 const rows = rowBytes ? m.layout[4 * levels + i] / rowBytes : 0;
         if (dOff > cursor) std::memset(dst + cursor, 0, usize(dOff - cursor));
         cursor = dOff + m.layout[levels + i] * rows * layers;
     }
@@ -724,18 +751,18 @@ CompletionKind run_upload(Context* ctx, Slot& s, JobScratch& sc) {
         ud.alignment = u32(max<u64>(h.payloadAlignment, ctx->cc.bufferOffsetAlign));
         ud.mesh      = &md;
     } else {
-        ktx2::TextureDesc const& d = m.texDesc;
-        td.format                  = d.format;
-        td.width                   = d.width;
-        td.height                  = d.height;
-        td.depth                   = d.depth;
-        td.layers                  = d.layers * d.faces; // cube faces are layers at the boundary
-        td.shape                   = s.texShape;
-        td.levels                  = d.levels;
-        td.firstLevel              = 0;
-        ud.kind                    = UploadKind::TextureLevels;
-        ud.alignment               = u32(max<u64>(ctx->cc.optimalOffsetAlign, 16));
-        ud.texture                 = &td;
+        ktx2::TextureDesc const d = resident_desc(m.texDesc, m.texFirstLevel);
+        td.format                 = d.format;
+        td.width                  = d.width;
+        td.height                 = d.height;
+        td.depth                  = d.depth;
+        td.layers                 = d.layers * d.faces; // cube faces are layers at the boundary
+        td.shape                  = s.texShape;
+        td.levels                 = d.levels;
+        td.firstLevel             = m.texFirstLevel;
+        ud.kind                   = UploadKind::TextureLevels;
+        ud.alignment              = u32(max<u64>(ctx->cc.optimalOffsetAlign, 16));
+        ud.texture                = &td;
     }
 
     UploadTarget t;

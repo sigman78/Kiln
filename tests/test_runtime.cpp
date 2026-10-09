@@ -377,44 +377,64 @@ KILN_TEST(Runtime, LoadMesh) {
 
 namespace {
 
-/// The uploaded texture `t` holds the texels of `file`, rows padded to the adapter's pitch.
-void check_uploaded(Rt& rt, TextureHandle t, Span<u8 const> file, u64 pitchAlign, char const* what) {
+/// The uploaded texture `t` holds the texels of `file` from level `first` on, rows padded to the
+/// adapter's pitch.
+void check_uploaded(Rt& rt, TextureHandle t, Span<u8 const> file, u64 pitchAlign, char const* what,
+                    u32 first = 0, u32 version = 1) {
     Result<ktx2::Ktx2View> kv = ktx2::Ktx2View::open(file);
     KILN_REQUIRE(kv.ok());
     ktx2::TextureDesc const want = kv->desc();
 
     TextureInfo const ti = texture_info(rt.ctx, t);
     KILN_CHECK(!ti.isPlaceholder);
-    KILN_CHECK_EQ(ti.version, 1u);
+    KILN_CHECK_EQ(ti.version, version);
     KILN_CHECK_EQ(ti.desc.format, want.format);
     KILN_CHECK_EQ(ti.desc.width, want.width);
     KILN_CHECK_EQ(ti.desc.height, want.height);
     KILN_CHECK_EQ(ti.desc.levels, want.levels);
-    KILN_REQUIRE_EQ(ti.levelOffsets.size, usize(want.levels));
-    KILN_REQUIRE_EQ(ti.levelRowPitches.size, usize(want.levels));
+    KILN_CHECK_EQ(ti.firstLevel, first);
+    KILN_REQUIRE(first < want.levels);
+    u32 const resident = want.levels - first;
+    KILN_REQUIRE_EQ(ti.levelOffsets.size, usize(resident));
+    KILN_REQUIRE_EQ(ti.levelRowPitches.size, usize(resident));
     KILN_CHECK(want.levels > 1);
 
     Span<u8 const> payload = null_adapter_payload(rt.na, ti.gpu);
     KILN_REQUIRE(!payload.empty());
-    for (u32 i = 0; i < want.levels; ++i) {
+    for (u32 i = 0; i < resident; ++i) {
+        u32 const level = first + i;
         u64 const off   = ti.levelOffsets[i];
         u64 const pitch = ti.levelRowPitches[i];
         KILN_CHECK_EQ(off % 64, u64(0));
         if (i > 0) KILN_CHECK(off > ti.levelOffsets[i - 1]);
         KILN_CHECK_EQ(pitch % pitchAlign, u64(0));
-        u64 const rowBytes     = format_row_bytes(want.format, kv->level_width(i));
-        u32 const rows         = kv->level_height(i);
-        Vec<u8> const texels   = test::corpus::texels(*kv, i);
+        u64 const rowBytes     = format_row_bytes(want.format, kv->level_width(level));
+        u32 const rows         = kv->level_height(level);
+        u32 const images       = want.layers * want.faces; // each at a stride of pitch * rows
+        Vec<u8> const texels   = test::corpus::texels(*kv, level);
         Span<u8 const> const L = texels.span();
-        KILN_REQUIRE_EQ(L.size, usize(rowBytes * rows));
-        KILN_REQUIRE(off + pitch * rows <= payload.size);
+        KILN_REQUIRE_EQ(L.size, usize(rowBytes * rows * images));
+        KILN_REQUIRE(off + pitch * rows * images <= payload.size);
         bool same = true;
-        for (u32 r = 0; r < rows; ++r)
-            same =
-                same && bytes_equal(payload.data + off + r * pitch, L.data + r * rowBytes, usize(rowBytes));
-        KILN_CHECK_MSG(same, "%s: level %u rows differ (pitch align %llu)", what, i,
+        for (u32 j = 0; j < images; ++j)
+            for (u32 r = 0; r < rows; ++r)
+                same = same && bytes_equal(payload.data + off + (j * rows + r) * pitch,
+                                           L.data + (j * rows + r) * rowBytes, usize(rowBytes));
+        KILN_CHECK_MSG(same, "%s: level %u rows differ (pitch align %llu)", what, level,
                        static_cast<unsigned long long>(pitchAlign));
     }
+    // The adapter saw the smaller texture: its object is the resident levels' layout.
+    TextureDesc const d{.format     = want.format,
+                        .width      = max(want.width >> first, 1u),
+                        .height     = max(want.height >> first, 1u),
+                        .depth      = max(want.depth >> first, 1u),
+                        .layers     = want.layers * want.faces,
+                        .levels     = resident,
+                        .shape      = want.isCube ? TextureShape::Cube : TextureShape::Tex2D,
+                        .firstLevel = first};
+    CopyConstraints c{};
+    rt.adapter.copy_constraints(rt.adapter.user, &c);
+    KILN_CHECK_EQ(payload.size, usize(texture_level_layout(d, c, nullptr, nullptr)));
 }
 
 } // namespace
@@ -476,6 +496,81 @@ KILN_TEST(Runtime, LoadTextureBadZstdFrame) {
     KILN_CHECK(rt.diags.has(kDiagAssetLoadFailed));
     KILN_CHECK_MSG(std::strstr(rt.diags.last, "does not decode") != nullptr, "%s", rt.diags.last);
     release(rt.ctx, t);
+}
+
+// RequestOptions::maxExtent loads the levels from the first one that fits, as a complete, smaller
+// texture (docs/design/streaming.md): from the store and from memory, Zstd and plain, a cube; an
+// extent above the texture's size and one below its last level; a second request of the live path
+// keeps the extent; a reload loads at it.
+KILN_TEST(Runtime, LoadTextureLevelLimited) {
+    Vec<u8> golden(default_allocator(), Tag::Test), plain(default_allocator(), Tag::Test),
+        flipped(default_allocator(), Tag::Test);
+    if (!read_golden("ktx2/color_zstd", ".ktx2", golden)) return; // 64x64, 7 Zstd levels
+    char path[1024];
+    format(path, sizeof path, "%s/generated/rgba8_unorm_mip.ktx2", test::corpus_dir()); // 16x16, 5 levels
+    KILN_REQUIRE(test::corpus::read_file(path, plain));
+    flipped.resize(plain.size());
+    std::memcpy(flipped.data(), plain.data(), plain.size());
+    {
+        Result<ktx2::Ktx2View> const v = ktx2::Ktx2View::open(plain.span());
+        KILN_REQUIRE(v.ok());
+        for (ktx2::LevelIndex const& li : v->levels())
+            for (u64 b = 0; b < li.byteLength; ++b)
+                flipped[usize(li.byteOffset + b)] ^= u8(0x5A + b);
+    }
+    test::HandStore hand;
+    if (!hand.init("level_limited")) return;
+    format(path, sizeof path, "%s/generated/cube_rgba8_srgb_mip.ktx2", test::corpus_dir()); // 8x8, 4 levels
+    KILN_REQUIRE(hand.put_file("tex/cube", AssetKind::Texture, path));
+    KILN_REQUIRE(hand.put("tex/a", AssetKind::Texture, plain.span()));
+    Vec<u8> cube(default_allocator(), Tag::Test);
+    KILN_REQUIRE(test::corpus::read_file(path, cube));
+
+    for (u64 pitchAlign : {u64(1), u64(256)}) {
+        Rt rt;
+        NullAdapterDesc nd;
+        nd.rowPitchAlign = pitchAlign;
+        nd.offsetAlign   = 64;
+        ContextDesc cd;
+        cd.storeDir = StrView(hand.dir());
+        if (!rt.init(nd, cd)) return;
+        TextureHandle const t  = request_texture(rt.ctx, "tex/a", {.maxExtent = 4});
+        TextureHandle const tz = register_texture(rt.ctx, "gen/zstd", golden.span(), {.maxExtent = 16});
+        TextureHandle const tb = register_texture(rt.ctx, "gen/big", plain.span(), {.maxExtent = 1000});
+        TextureHandle const tl = register_texture(rt.ctx, "gen/last", plain.span(), {.maxExtent = 1});
+        TextureHandle const tc =
+            request_texture(rt.ctx, "tex/cube", {.textureShape = TextureShape::Cube, .maxExtent = 2});
+        KILN_REQUIRE(!t.is_null() && !tz.is_null() && !tb.is_null() && !tl.is_null() && !tc.is_null());
+        KILN_REQUIRE(rt.pump_until([&] {
+            return is_ready(rt.ctx, t) && is_ready(rt.ctx, tz) && is_ready(rt.ctx, tb) &&
+                   is_ready(rt.ctx, tl) && is_ready(rt.ctx, tc);
+        }));
+        KILN_CHECK_MSG(rt.diags.count == 0, "%s", rt.diags.last);
+        check_uploaded(rt, t, plain.span(), pitchAlign, "store at 4", 2);
+        check_uploaded(rt, tz, golden.span(), pitchAlign, "zstd from memory at 16", 2);
+        check_uploaded(rt, tb, plain.span(), pitchAlign, "plain at 1000", 0);
+        check_uploaded(rt, tl, plain.span(), pitchAlign, "plain at 1: the last level", 4);
+        check_uploaded(rt, tc, cube.span(), pitchAlign, "cube at 2", 2);
+        KILN_CHECK(texture_info(rt.ctx, tc).desc.isCube);
+
+        TextureHandle const again = request_texture(rt.ctx, "tex/a", {.maxExtent = 0});
+        KILN_CHECK_EQ(again.bits(), t.bits());
+        KILN_CHECK_EQ(texture_info(rt.ctx, t).firstLevel, 2u);
+        release(rt.ctx, again);
+
+        usize const ev0 = rt.events.size();
+        KILN_REQUIRE(hand.put("tex/a", AssetKind::Texture, flipped.span()));
+        request_reload(rt.ctx, t);
+        KILN_REQUIRE(rt.pump_until([&] { return rt.find_event(EventKind::Changed, t.bits(), ev0) >= 0; }));
+        check_uploaded(rt, t, flipped.span(), pitchAlign, "store at 4 after reload", 2, 2);
+        KILN_REQUIRE(hand.put("tex/a", AssetKind::Texture, plain.span()));
+
+        release(rt.ctx, t);
+        release(rt.ctx, tz);
+        release(rt.ctx, tb);
+        release(rt.ctx, tl);
+        release(rt.ctx, tc);
+    }
 }
 
 KILN_TEST(Runtime, GoldenFolderGroupWait) {
@@ -2177,27 +2272,31 @@ bool settled_state(Rt& rt, TextureHandle t) {
 
 /// Layer `layer` of the array `t` holds the texels of `file`, level by level. Rows and the layer
 /// stride are counted in block rows for a compressed format, so a level under one block rounds up.
-void check_layer_uploaded(Rt& rt, TextureHandle t, u32 layer, Span<u8 const> file, char const* what) {
+void check_layer_uploaded(Rt& rt, TextureHandle t, u32 layer, Span<u8 const> file, char const* what,
+                          u32 first = 0) {
     Result<ktx2::Ktx2View> kv = ktx2::Ktx2View::open(file);
     KILN_REQUIRE(kv.ok());
     TextureInfo const ti   = texture_info(rt.ctx, t);
     Span<u8 const> payload = null_adapter_payload(rt.na, ti.gpu);
     KILN_REQUIRE(!payload.empty());
-    KILN_REQUIRE_EQ(ti.levelOffsets.size, usize(kv->desc().levels));
+    KILN_CHECK_EQ(ti.firstLevel, first);
+    KILN_REQUIRE(first < kv->desc().levels);
+    KILN_REQUIRE_EQ(ti.levelOffsets.size, usize(kv->desc().levels - first));
     FormatInfo const* fi = format_info(kv->desc().format);
     KILN_REQUIRE(fi != nullptr);
-    for (u32 i = 0; i < kv->desc().levels; ++i) {
+    for (u32 i = 0; i + first < kv->desc().levels; ++i) {
+        u32 const level      = first + i;
         u64 const pitch      = ti.levelRowPitches[i];
-        u64 const rowBytes   = format_row_bytes(kv->desc().format, kv->level_width(i));
-        u32 const rows       = (kv->level_height(i) + fi->blockHeight - 1) / fi->blockHeight;
+        u64 const rowBytes   = format_row_bytes(kv->desc().format, kv->level_width(level));
+        u32 const rows       = (kv->level_height(level) + fi->blockHeight - 1) / fi->blockHeight;
         u64 const off        = ti.levelOffsets[i] + layer * pitch * rows;
-        Vec<u8> const texels = test::corpus::texels(*kv, i);
+        Vec<u8> const texels = test::corpus::texels(*kv, level);
         KILN_REQUIRE(off + pitch * rows <= payload.size);
         bool same = true;
         for (u32 r = 0; r < rows; ++r)
             same = same &&
                    bytes_equal(payload.data + off + r * pitch, texels.data() + r * rowBytes, usize(rowBytes));
-        KILN_CHECK_MSG(same, "%s: layer %u level %u differs", what, layer, i);
+        KILN_CHECK_MSG(same, "%s: layer %u level %u differs", what, layer, level);
     }
 }
 
@@ -2250,6 +2349,49 @@ KILN_TEST(Runtime, TextureArrayZstdLayers) {
     if (!KILN_CHECK_MSG(is_ready(rt.ctx, t), "%s", rt.diags.last)) return;
     check_layer_uploaded(rt, t, 0, store.zstd.span(), "z0");
     check_layer_uploaded(rt, t, 1, store.zstd.span(), "z1");
+    release(rt.ctx, t);
+}
+
+// TextureArrayDesc::maxExtent: every layer starts at the same level, and the object is the smaller
+// array. The same declaration with another extent is the same handle and keeps its extent.
+KILN_TEST(Runtime, TextureArrayLevelLimited) {
+    ArrayStore store;
+    if (!store.init("arrays_limited")) return;
+    Rt rt;
+    ContextDesc cd;
+    cd.storeDir = StrView(store.hand.dir());
+    if (!rt.init({.rowPitchAlign = 256, .offsetAlign = 64}, cd)) return;
+    StrView const layers[] = {"tex/a", "tex/b", "tex/a"};
+    TextureHandle const t  = request_texture_array(
+        rt.ctx, {.name = "arr/small", .layers = Span<StrView const>(layers), .maxExtent = 4});
+    KILN_REQUIRE(!t.is_null());
+    KILN_REQUIRE(rt.pump_until([&] { return settled_state(rt, t); }));
+    if (!KILN_CHECK_MSG(is_ready(rt.ctx, t), "%s", rt.diags.last)) return;
+    TextureInfo const ti = texture_info(rt.ctx, t);
+    KILN_CHECK(ti.desc.isArray && ti.desc.layers == 3 && ti.desc.levels == 5 && ti.desc.width == 16);
+    KILN_CHECK_EQ(ti.firstLevel, 2u);
+    KILN_CHECK_EQ(ti.levelOffsets.size, usize(3));
+    check_layer_uploaded(rt, t, 0, store.plain.span(), "a", 2);
+    check_layer_uploaded(rt, t, 1, store.flipped.span(), "b", 2);
+    check_layer_uploaded(rt, t, 2, store.plain.span(), "a again", 2);
+    TextureDesc const d{.format     = ti.desc.format,
+                        .width      = 4,
+                        .height     = 4,
+                        .depth      = 1,
+                        .layers     = 3,
+                        .levels     = 3,
+                        .shape      = TextureShape::Array,
+                        .firstLevel = 2};
+    CopyConstraints c{};
+    rt.adapter.copy_constraints(rt.adapter.user, &c);
+    KILN_CHECK_EQ(null_adapter_payload(rt.na, ti.gpu).size,
+                  usize(texture_level_layout(d, c, nullptr, nullptr)));
+
+    TextureHandle const again = request_texture_array(
+        rt.ctx, {.name = "arr/small", .layers = Span<StrView const>(layers), .maxExtent = 0});
+    KILN_CHECK_EQ(again.bits(), t.bits());
+    KILN_CHECK_EQ(texture_info(rt.ctx, t).firstLevel, 2u);
+    release(rt.ctx, again);
     release(rt.ctx, t);
 }
 

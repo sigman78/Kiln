@@ -29,7 +29,6 @@ enum class State : u8 {
     MetaReady,    ///< metadata readable (mesh_view / texture_info); GPU payload in flight
     Ready,        ///< payload uploaded; gpu_object() returns the real object
     Failed,       ///< recoverable error; placeholder served; one diagnostic emitted
-    Partial,      ///< reserved (progressive loads, v0.8)
 };
 
 enum class Priority : u8 { Normal = 0, High };
@@ -56,7 +55,10 @@ struct RequestOptions {
     /// Textures: the shape the host expects; selects the placeholder (first request wins). A
     /// cooked file of another shape fails the load (K5017).
     TextureShape textureShape = TextureShape::Tex2D;
-    // reserved: range (partial loads, v0.8)
+    /// Textures: the largest width or height to load; 0 = the full texture. kiln loads the levels
+    /// from the first one that fits as a complete, smaller texture (docs/design/streaming.md). It
+    /// applies when the request makes the asset live; a request for a live path keeps its extent.
+    u32 maxExtent = 0;
 };
 
 /// Host-supplied placeholder pixels for one texture kind (RGBA8, tightly packed).
@@ -149,6 +151,7 @@ struct TextureArrayDesc {
     TextureKind textureKind    = TextureKind::BaseColor; ///< selects the placeholder
     Priority priority          = Priority::Normal;
     Group group                = {};
+    u32 maxExtent              = 0; ///< as RequestOptions::maxExtent; every layer starts at the same level
 };
 /// Requests the array `desc` declares: a TextureShape::Array texture with the usual states and events.
 /// kiln copies the name and the list. The same declaration again returns the same (refcounted) handle;
@@ -235,9 +238,13 @@ KILN_API GpuObject placeholder_object(Context* ctx, TextureKind kind,
 KILN_API mesh::MeshView const* mesh_view(Context* ctx, MeshHandle h);
 
 struct TextureInfo {
-    ktx2::TextureDesc desc;            ///< of the real texture (has_meta) or the placeholder
-    Span<u64 const> levelOffsets = {}; ///< byte offset of each level inside the upload, ascending level order
-    Span<u64 const> levelRowPitches = {}; ///< row pitch used for each level
+    ktx2::TextureDesc
+        desc; ///< of the cooked file (has_meta), full extents and level count, or the placeholder
+    /// The file level that is level 0 of the GPU object (RequestOptions::maxExtent); the object has
+    /// desc.levels - firstLevel levels, and the spans below cover those.
+    u32 firstLevel                  = 0;
+    Span<u64 const> levelOffsets    = {}; ///< byte offset of each resident level inside the upload, ascending
+    Span<u64 const> levelRowPitches = {}; ///< row pitch used for each resident level
     GpuObject gpu;
     u32 version        = 0;
     bool isPlaceholder = true;

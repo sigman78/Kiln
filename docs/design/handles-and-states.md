@@ -53,7 +53,7 @@ generation" wording but keeps its intent.
 
 ### States
 
-`enum class State : u8 { Unloaded, Pending, MetaReady, Ready, Failed, Partial }`. `MetaReady`
+`enum class State : u8 { Unloaded, Pending, MetaReady, Ready, Failed }`. `MetaReady`
 applies to **both meshes and textures** (owner decision, open-questions A10).
 
 | State | Meaning | `mesh_view()` | `texture_info()` |
@@ -63,7 +63,6 @@ applies to **both meshes and textures** (owner decision, open-questions A10).
 | `MetaReady` | metadata loaded and validated; payload in flight | parts, LODs, submeshes, mounts, bounds, materials | extent, format, levels, layers; still samples as the placeholder |
 | `Ready` | payload uploaded and in use | full view | full info, `isPlaceholder = false` |
 | `Failed` | recoverable error; one diagnostic emitted | nullptr | placeholder |
-| `Partial` | reserved for progressive loads (v0.8) | never produced | |
 
 `gpu_object()` per state is in `adapter.md`. `Failed` holds no metadata.
 
@@ -114,8 +113,8 @@ and emits one `Severity::Error` diagnostic, no `Failed` event.
 live asset. There is no request by id and no find by path. `register_mesh` / `register_texture`
 add in-memory cooked bytes under a path.
 
-`RequestOptions { priority = Normal; group = {}; textureKind = BaseColor; textureShape = Tex2D; }`; a `range` field is
-reserved for partial loads (v0.8).
+`RequestOptions { priority = Normal; group = {}; textureKind = BaseColor; textureShape = Tex2D; maxExtent = 0; }`.
+`maxExtent` loads a texture at a largest extent, as a complete, smaller texture (`streaming.md`).
 
 - A request increments a refcount. Requesting a live path returns **the same handle**.
 - The first request of a texture with a bindless adapter takes a slot number and binds it to the
@@ -170,8 +169,8 @@ so a partially loaded scene still looks plausibly lit.
 - Placeholder readiness depends on `kSelfSubmitting` (`adapter.md`). Without it, hosts must
   tolerate a null texture object for the first frame or two.
 
-**Meshes have no placeholder.** `is_ready(ctx, mesh)` gates the draw. Coarsest-LOD-first comes
-with progressive loading (`Partial`).
+**Meshes have no placeholder.** `is_ready(ctx, mesh)` gates the draw. Meshes load whole; a
+coarse-first texture is two whole loads (`streaming.md`).
 
 ### Load groups
 
@@ -237,7 +236,8 @@ rejected for the reasons above.
 
 - Metadata queries carry `version` and `isPlaceholder` from v0.5 on.
 - Hot reload briefly needs memory for two payloads of the same asset.
-- `Partial` must fit between `MetaReady` and `Ready` without changing existing transitions.
+- No state between `MetaReady` and `Ready`: an object is loaded whole or not at all (`streaming.md`,
+  owner 2026-10-05; `Partial` was removed 2026-10-09).
 - `AssetId` = path hash, so renaming a cooked path changes the id. Hosts that want rename
   tolerance store paths, not ids.
 - Ids 0..15 are unusable for assets.

@@ -67,7 +67,6 @@ char const* state_name(State s) {
     case State::MetaReady: return "MetaReady";
     case State::Ready: return "Ready";
     case State::Failed: return "Failed";
-    case State::Partial: return "Partial";
     }
     return "?";
 }

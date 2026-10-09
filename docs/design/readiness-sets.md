@@ -199,17 +199,19 @@ The proposal promises that every member is usable, not that all members come fro
 Ordering a mesh reload after its re-keyed embedded textures (left to this note by R21) needs
 version pinning. This note does not provide it; R25 (b) holds the question.
 
-## v0.8: partial payloads and eviction
+## v0.8: level-limited textures and eviction
 
-`State::Partial` and eviction are not designed yet. The proposed rule for a group:
+`streaming.md` (R30, decided 2026-10-09) settles the first: there is no `State::Partial`, a
+level-limited texture is `Ready`, and a size change keeps it `Ready`. Eviction is not designed. The
+rule for a group:
 
-- A member counts as ready only in `State::Ready`. A `Partial` member counts as `pending`.
+- A member counts as ready only in `State::Ready`.
 - A member that loses its payload (eviction) leaves `ready`, so a sealed group can go from `Ready`
   back to `Pending`. The `GroupPending` event exists for this case and for a join after `seal()`.
-- A host that draws with a partial payload (coarse mips, coarse LOD) leaves that asset out of the
-  group, as the Need section says for LODs.
+- A host that draws a coarse-first texture before its full load keeps it in the group: it is
+  `Ready` at its extent. A coarse LOD it draws early it leaves out, as the Need section says.
 
-The v0.8 design must confirm or replace this rule (R25 (c)).
+R30 (c) in `streaming.md` confirms this rule (R25 (c)).
 
 ## Validation
 

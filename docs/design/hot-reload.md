@@ -120,7 +120,8 @@ are created the same way. `kiln-headless --watch` does the same without a GPU.
   every manifest change, R13); the runtime side is unchanged.
 - Staleness at first load (source edited while the app was closed) is a provider check before
   load, not part of M5.
-- Progressive loads (v0.8) reuse the `next` set for partial swaps.
+- A texture size change (`streaming.md`, v0.8) reuses the `next` set and the swap: it is a reload
+  at another extent.
 
 ## Open points for the owner
 
