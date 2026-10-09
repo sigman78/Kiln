@@ -1,8 +1,9 @@
 # Streaming: level-limited texture loads (v0.8)
 
-**Status:** Proposed (2026-10-05). The direction is the owner's (2026-10-05): an object is loaded
-whole or not at all, and the goal is latency at the level of the runtime library. The details and
-the open points await sign-off. Nothing here is implemented.
+**Status:** Decided (owner, 2026-10-09): open points (a), (c) to (g) as recorded below; (b) stays
+proposed. The direction is the owner's (2026-10-05): an object is loaded whole or not at all, and
+the goal is latency at the level of the runtime library. Step 1 (measure) is done; steps 2 to 5 are
+not implemented.
 **Decides:** What "streaming" means in kiln v0.8, what it drops from the earlier plan, the request
 and adapter surface for a texture that is resident at a smaller size, and how its size changes.
 **Related:** [handles-and-states.md](handles-and-states.md), [adapter.md](adapter.md),
@@ -71,8 +72,12 @@ struct RequestOptions {
 };
 
 /// Changes the wanted extent of a live texture. The current object stays in use until the new one
-/// is uploaded; then the texture emits Changed with a new version.
+/// is uploaded; then the texture emits Resized with a new version.
 KILN_API void set_texture_extent(Context* ctx, TextureHandle h, u32 maxExtent);
+
+/// Resized: the same artifact at other resident levels. A host that does not tell them apart
+/// rebinds on every event with a new version, as for Changed.
+enum class EventKind : u8 { MetaReady = 0, Ready, Changed, Failed, Resized };
 
 struct TextureInfo {
     // desc: the cooked file's description, full extents and level count, as today.
@@ -97,13 +102,14 @@ of one texture combines their needs itself. This is an open point (R30 a).
 target object, and `pump()` swaps it in.
 
 - The texture stays `Ready` and keeps its object while the new one loads.
-- The swap increments the content version and emits `Changed`. The old object goes to `destroy`
-  after the frames that used it.
+- The swap increments the content version and emits `Resized` (R30 c): the same swap as a reload,
+  with its own event kind, so a host can tell "same pixels, other levels" from a content change.
+  The old object goes to `destroy` after the frames that used it.
 - A failed change keeps the current object and emits one diagnostic, as a failed reload does.
 - A new call before the load starts replaces the wanted extent. A call while a load runs starts
   one more load after it, as a second reload request does today.
 - A hot reload loads at the wanted extent. A reload and a size change that are both due are one
-  load.
+  load, and it emits `Changed`: the pixels may differ. A swap emits one event.
 - A memory-registered texture takes a size change (unlike a reload, which it cannot do): its bytes
   are in memory.
 
@@ -149,7 +155,7 @@ out of v0.8.
 
 | Item | Was | Now |
 |---|---|---|
-| `State::Partial` | reserved for progressive loads | Removed from the enum when this note is accepted (an API break for the changelog) |
+| `State::Partial` | reserved for progressive loads | Removed from the enum with step 2 (owner, 2026-10-09; an API break for the changelog). Texture arrays never used it: an array is one upload and `Ready` as one object |
 | `RequestOptions` range field | reserved for partial loads | Becomes `maxExtent` |
 | `TextureDesc::firstLevel` | reserved for partial mip uploads | Used: the first resident level of a complete, smaller texture |
 | Range uploads into an existing object | v0.8, shared with texture arrays | Unscheduled; only texture arrays want them (bounded staging, a reload of one layer, R12) |
@@ -254,16 +260,23 @@ What the numbers say:
 Beside it, as their own decisions: one-pass texture loads from manifest metadata (R27) and group
 readiness (R25).
 
-## Open points for the owner (R30)
+## Open points (R30; owner, 2026-10-09)
 
-- **(a) One wanted extent per asset, last call wins.** The alternative keeps a want per request and
-  loads the largest, which needs a token per request.
-- **(b) An extent in pixels at the API, a level at the adapter.** The alternative is a level index
-  at both, which a host cannot choose before `MetaReady`.
-- **(c) A size change increments the content version and emits `Changed`,** the same event as a
-  content change. The alternative is a new event kind.
+- **(a) One wanted extent per asset, last call wins.** Decided as proposed. The alternative keeps a
+  want per request and loads the largest, which needs a token per request.
+- **(b) An extent in pixels at the API, a level at the adapter.** Stays proposed (owner: a tricky
+  question; keep the proposed shape for now). The alternative is a level index at both, which a
+  host cannot choose before `MetaReady`.
+- **(c) A size change emits its own event kind, `Resized`,** on the same swap path as a reload:
+  the content version increments, one event per swap, and a reload that coincides with a size
+  change emits `Changed`. Decided (owner asked for the hybrid): a host that does not care rebinds
+  on both; a host that cares can tell them apart.
 - **(d) `TextureInfo::desc` stays the file's description** and `firstLevel` tells what is resident.
-  The alternative: `desc` describes the resident object.
-- **(e) Remove `State::Partial`** now, or keep it reserved.
-- **(f) Range uploads for texture arrays move to Unscheduled.**
-- **(g) No budget enforcement and no eviction policy in kiln.**
+  Decided as proposed.
+- **(e) Remove `State::Partial`** with step 2. Decided: a value that is never produced invites a
+  case for it in every host, and progressive fill is no longer planned. Texture arrays are not
+  affected: an array is one upload and `Ready` as one object, and every layer starts at level `N`.
+- **(f) Range uploads for texture arrays move to Unscheduled.** Decided. Arrays stay as in R12: one
+  aggregate upload, a whole-array reload on any layer change (117 ms for 64 layers on the
+  benchmark).
+- **(g) No budget enforcement and no eviction policy in kiln.** Decided as proposed.
