@@ -249,6 +249,7 @@ void transition(Slot& s, Step step) {
         s.state     = State::Pending;
         s.phase     = Phase::MetaQueued;
         s.reloading = false;
+        s.resizing  = false;
         return;
     case Step::Reload:
         KILN_VERIFY(p == Phase::Done && (s.state == State::Ready || s.state == State::Failed));
@@ -281,6 +282,7 @@ void transition(Slot& s, Step step) {
         s.state     = State::Ready;
         s.phase     = Phase::Done;
         s.reloading = false;
+        s.resizing  = false;
         return;
     case Step::Fail:
         // MetaQueued: a request-time failure (Slot::preFail) reported at dispatch.
@@ -290,6 +292,7 @@ void transition(Slot& s, Step step) {
         if (!(s.reloading && s.state == State::Ready)) s.state = State::Failed;
         s.phase     = Phase::Done;
         s.reloading = false;
+        s.resizing  = false;
         return;
     case Step::Unload:
         KILN_VERIFY(s.live() && !s.zombie());

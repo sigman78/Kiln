@@ -372,7 +372,7 @@ ktx2::TextureDesc resident_desc(ktx2::TextureDesc d, u32 first) {
 Status texture_meta(Context* ctx, Slot& s, Source const& src) {
     KtxLevels k;
     KILN_TRY(read_ktx2_levels(ctx, s, path_of(s), src, s.texShape, kInvalid, &k));
-    u32 const first  = first_level(k.desc, s.maxExtent);
+    u32 const first  = first_level(k.desc, s.in.maxExtent);
     u32 const levels = k.levels - first;
     u64* layout      = alloc_array<u64>(ctx->alloc, usize(levels) * kLayoutColumns, Tag::Payload);
     for (u32 c = 0; c < 3; ++c)
@@ -381,6 +381,7 @@ Status texture_meta(Context* ctx, Slot& s, Source const& src) {
     m.layout        = layout;
     m.layoutLevels  = levels;
     m.texFirstLevel = first;
+    m.texExtent     = s.in.maxExtent;
     m.texZstd       = k.zstd;
     m.texDesc       = k.desc;
     m.uploadSize    = texture_layout(resident_desc(k.desc, first), ctx->cc.optimalRowPitchAlign,
@@ -440,7 +441,7 @@ CompletionKind run_array_meta(Context* ctx, Slot& s) {
             if (s.out.diag != kDiagArrayLayerMismatch) note_layer(s.out.capture, i, in.name);
             break;
         }
-        if (i == 0) firstLevel = first_level(k.desc, s.maxExtent);
+        if (i == 0) firstLevel = first_level(k.desc, s.in.maxExtent);
         l.srcLevels = k.levels - firstLevel;
         l.src       = alloc_array<u64>(ctx->alloc, usize(l.srcLevels) * 2, Tag::Payload);
         std::memcpy(l.src, k.cols + firstLevel, sizeof(u64) * l.srcLevels);
@@ -461,6 +462,7 @@ CompletionKind run_array_meta(Context* ctx, Slot& s) {
         m.layout          = alloc_array<u64>(ctx->alloc, usize(levels) * kLayoutColumns, Tag::Payload);
         m.layoutLevels    = levels;
         m.texFirstLevel   = firstLevel;
+        m.texExtent       = s.in.maxExtent;
         std::memset(m.layout + 2 * levels, 0, sizeof(u64) * levels * 2); // per layer: ArrayLayer::src
         std::memcpy(m.layout + 4 * levels, first.cols + 2 * first.levels + firstLevel, sizeof(u64) * levels);
         m.uploadSize = texture_layout(resident_desc(m.texDesc, firstLevel), ctx->cc.optimalRowPitchAlign,

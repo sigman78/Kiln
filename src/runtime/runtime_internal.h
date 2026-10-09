@@ -116,6 +116,7 @@ struct MetaSet {
     u64* layout       = nullptr;
     u32 layoutLevels  = 0;
     u32 texFirstLevel = 0;
+    u32 texExtent     = 0; ///< the maxExtent the load used; settle() compares it with the wanted one
     bool texZstd      = false;
     u64 uploadSize    = 0; ///< bytes handed to begin_upload
 };
@@ -166,6 +167,7 @@ struct JobInput {
     CookProvider provider;        ///< snapshot at dispatch
     bool manifestPresent = false; ///< Context::manifestPresent at dispatch
     bool recheck         = false; ///< the provider checks the sources again (PrepareMode::Recheck)
+    u32 maxExtent        = 0;     ///< Slot::maxExtent at submit: the extent this load uses
 };
 
 /// What a load attempt produces. The worker writes it while its job runs; the pump thread touches
@@ -200,9 +202,10 @@ struct Slot {
     Priority priority     = Priority::Normal;
     TextureKind texKind   = TextureKind::BaseColor;
     TextureShape texShape = TextureShape::Tex2D; ///< requested; fixed while the slot lives
-    u32 maxExtent         = 0;                   ///< RequestOptions::maxExtent; fixed while the slot lives
+    u32 maxExtent         = 0; ///< the wanted extent (set_texture_extent); the job reads in.maxExtent
     /// The running load is a reload: state stays Ready / Failed. Written by transition() only.
     bool reloading     = false;
+    bool resizing      = false; ///< the running reload is a size change only: it emits Resized
     bool reloadPending = false; ///< reload requested while not settled; runs at settle
     u32 refcount       = 0;
     u32 version        = 0;
@@ -488,6 +491,8 @@ PumpStats pump_impl(Context* ctx, PumpOptions const& opt, bool keepEvents);
 /// request_reload(): start a reload of a settled file-source slot, or remember it
 /// (reloadPending) until the slot settles. Memory sources: K5012.
 void reload_slot(Context* ctx, Slot& s);
+/// A size change: a reload of a Ready texture that emits Resized (set_texture_extent).
+void resize_slot(Context* ctx, Slot& s);
 /// True if the manifest in use has an entry for the settled file-source `s` that names another
 /// artifact than the one it loaded or tried (or it had none).
 [[nodiscard]] bool manifest_names_other(Context const* ctx, Slot const& s);

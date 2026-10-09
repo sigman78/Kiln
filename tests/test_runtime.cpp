@@ -1823,6 +1823,186 @@ KILN_TEST(Runtime, PreparedJobsRunByPriority) {
     held.run_all(); // destroy() waits for every submitted job
 }
 
+namespace {
+
+/// A hand store with "tex/a" = the 16x16, 5-level plain texture, for the size-change tests.
+struct ExtentStore {
+    test::HandStore hand;
+    Vec<u8> plain{default_allocator(), Tag::Test};
+    Vec<u8> flipped{default_allocator(), Tag::Test}; ///< `plain` with other texels
+
+    bool init(char const* name) {
+        if (!hand.init(name)) return false;
+        char path[1024];
+        format(path, sizeof path, "%s/generated/rgba8_unorm_mip.ktx2", test::corpus_dir());
+        if (!KILN_CHECK(test::corpus::read_file(path, plain))) return false;
+        flipped.resize(plain.size());
+        std::memcpy(flipped.data(), plain.data(), plain.size());
+        Result<ktx2::Ktx2View> const v = ktx2::Ktx2View::open(plain.span());
+        if (!KILN_CHECK(v.ok())) return false;
+        for (ktx2::LevelIndex const& li : v->levels())
+            for (u64 b = 0; b < li.byteLength; ++b)
+                flipped[usize(li.byteOffset + b)] ^= u8(0x5A + b);
+        return hand.put("tex/a", AssetKind::Texture, plain.span());
+    }
+};
+
+} // namespace
+
+// set_texture_extent() loads the texture again at the new extent and swaps it in, as a reload does:
+// the texture stays Ready with its object meanwhile, then emits Resized with a new version. The same
+// extent again does nothing.
+KILN_TEST(Runtime, SetTextureExtent) {
+    ExtentStore store;
+    if (!store.init("set_extent")) return;
+    Rt rt;
+    ContextDesc cd;
+    cd.storeDir = StrView(store.hand.dir());
+    if (!rt.init({.offsetAlign = 64}, cd)) return;
+    TextureHandle const t = request_texture(rt.ctx, "tex/a", {.maxExtent = 4});
+    KILN_REQUIRE(rt.pump_until([&] { return is_ready(rt.ctx, t); }));
+    check_uploaded(rt, t, store.plain.span(), 1, "at 4", 2);
+
+    u32 const uploads = null_adapter_stats(rt.na).beginUploads;
+    usize const ev0   = rt.events.size();
+    set_texture_extent(rt.ctx, t, 4);
+    rt.pump_once();
+    rt.pump_once();
+    KILN_CHECK_EQ(null_adapter_stats(rt.na).beginUploads, uploads);
+    KILN_CHECK_EQ(rt.events.size(), ev0);
+
+    set_texture_extent(rt.ctx, t, 0);
+    KILN_CHECK(is_ready(rt.ctx, t));
+    KILN_CHECK_EQ(texture_info(rt.ctx, t).firstLevel, 2u); // the old object serves until the swap
+    KILN_REQUIRE(rt.pump_until([&] { return rt.find_event(EventKind::Resized, t.bits(), ev0) >= 0; }));
+    KILN_CHECK_EQ(count_events(rt, EventKind::Changed, t.bits(), ev0), 0u);
+    KILN_CHECK_EQ(count_events(rt, EventKind::MetaReady, t.bits(), ev0), 0u);
+    check_uploaded(rt, t, store.plain.span(), 1, "at full", 0, 2);
+    KILN_CHECK_EQ(rt.events[usize(rt.find_event(EventKind::Resized, t.bits(), ev0))].version, 2u);
+
+    usize const ev1 = rt.events.size();
+    set_texture_extent(rt.ctx, t, 1);
+    KILN_REQUIRE(rt.pump_until([&] { return rt.find_event(EventKind::Resized, t.bits(), ev1) >= 0; }));
+    check_uploaded(rt, t, store.plain.span(), 1, "at 1: the last level", 4, 3);
+    KILN_CHECK_EQ(rt.diags.count, 0u);
+    release(rt.ctx, t);
+}
+
+// A reload and a size change that are both due are one load, and it emits Changed.
+KILN_TEST(Runtime, SetTextureExtentWithReload) {
+    ExtentStore store;
+    if (!store.init("set_extent_reload")) return;
+    Rt rt;
+    ContextDesc cd;
+    cd.storeDir = StrView(store.hand.dir());
+    if (!rt.init({.offsetAlign = 64}, cd)) return;
+    TextureHandle const t = request_texture(rt.ctx, "tex/a", {.maxExtent = 4});
+    KILN_REQUIRE(rt.pump_until([&] { return is_ready(rt.ctx, t); }));
+    u32 const uploads = null_adapter_stats(rt.na).beginUploads;
+    usize const ev0   = rt.events.size();
+    KILN_REQUIRE(store.hand.put("tex/a", AssetKind::Texture, store.flipped.span()));
+    request_reload(rt.ctx, t);
+    set_texture_extent(rt.ctx, t, 0);
+    KILN_REQUIRE(rt.pump_until([&] { return rt.find_event(EventKind::Changed, t.bits(), ev0) >= 0; }));
+    KILN_CHECK_EQ(count_events(rt, EventKind::Resized, t.bits(), ev0), 0u);
+    KILN_CHECK_EQ(null_adapter_stats(rt.na).beginUploads - uploads, 1u);
+    check_uploaded(rt, t, store.flipped.span(), 1, "reloaded at full", 0, 2);
+    rt.pump_once();
+    rt.pump_once();
+    KILN_CHECK_EQ(null_adapter_stats(rt.na).beginUploads - uploads, 1u); // nothing more is due
+    release(rt.ctx, t);
+}
+
+// A call while a load runs starts one more load after it, at the extent wanted last: the first
+// load's Ready, then one Resized.
+KILN_TEST(Runtime, SetTextureExtentWhileLoading) {
+    ExtentStore store;
+    if (!store.init("set_extent_loading")) return;
+    HeldJobs held;
+    JobSystem const js = held.system();
+    Rt rt;
+    ContextDesc cd;
+    cd.storeDir  = StrView(store.hand.dir());
+    cd.jobs      = &js;
+    cd.maxIoJobs = 1;
+    if (!rt.init({.offsetAlign = 64}, cd)) return;
+    TextureHandle const t = request_texture(rt.ctx, "tex/a", {.maxExtent = 4});
+    rt.pump_once(); // the meta job is held: the load runs at 4
+    KILN_CHECK_EQ(held.held(), 1u);
+    set_texture_extent(rt.ctx, t, 8);
+    set_texture_extent(rt.ctx, t, 0); // the last call wins
+    for (int i = 0; i < 8 && rt.find_event(EventKind::Ready, t.bits()) < 0; ++i) {
+        held.run_all();
+        rt.pump_once();
+    }
+    int const ready = rt.find_event(EventKind::Ready, t.bits());
+    KILN_REQUIRE(ready >= 0);
+    for (int i = 0; i < 8 && rt.find_event(EventKind::Resized, t.bits()) < 0; ++i) {
+        held.run_all();
+        rt.pump_once();
+    }
+    int const resized = rt.find_event(EventKind::Resized, t.bits());
+    KILN_REQUIRE(resized > ready);
+    KILN_CHECK_EQ(rt.events[usize(resized)].version, 2u);
+    check_uploaded(rt, t, store.plain.span(), 1, "at full after the first load", 0, 2);
+    for (int i = 0; i < 3; ++i) {
+        held.run_all();
+        rt.pump_once();
+    }
+    KILN_CHECK_EQ(count_events(rt, EventKind::Resized, t.bits()), 1u); // one load for the two calls
+    KILN_CHECK_EQ(rt.diags.count, 0u);
+    release(rt.ctx, t);
+    held.run_all(); // destroy() waits for every submitted job
+}
+
+// A size change that fails keeps the current object and version and drops the want: one K5010, no
+// event, and no load until the host asks again.
+KILN_TEST(Runtime, SetTextureExtentFails) {
+    ExtentStore store;
+    if (!store.init("set_extent_fails")) return;
+    Rt rt;
+    ContextDesc cd;
+    cd.storeDir = StrView(store.hand.dir());
+    if (!rt.init({.offsetAlign = 64}, cd)) return;
+    TextureHandle const t = request_texture(rt.ctx, "tex/a", {.maxExtent = 4});
+    KILN_REQUIRE(rt.pump_until([&] { return is_ready(rt.ctx, t); }));
+    usize const ev0 = rt.events.size();
+    null_adapter_fail_uploads(rt.na, true);
+    set_texture_extent(rt.ctx, t, 0);
+    KILN_REQUIRE(rt.pump_until([&] { return rt.diags.has(kDiagReloadFailed); }));
+    KILN_CHECK_MSG(std::strstr(rt.diags.last, "size change failed") != nullptr, "%s", rt.diags.last);
+    null_adapter_fail_uploads(rt.na, false);
+    u32 const uploads = null_adapter_stats(rt.na).beginUploads;
+    for (int i = 0; i < 5; ++i)
+        rt.pump_once();
+    KILN_CHECK_EQ(null_adapter_stats(rt.na).beginUploads, uploads); // the want is dropped
+    KILN_CHECK_EQ(rt.events.size(), ev0);
+    check_uploaded(rt, t, store.plain.span(), 1, "still at 4", 2);
+
+    set_texture_extent(rt.ctx, t, 0);
+    KILN_REQUIRE(rt.pump_until([&] { return rt.find_event(EventKind::Resized, t.bits(), ev0) >= 0; }));
+    check_uploaded(rt, t, store.plain.span(), 1, "at full on the second ask", 0, 2);
+    release(rt.ctx, t);
+}
+
+// A texture registered in memory takes no size change: its bytes went to the GPU (K5012).
+KILN_TEST(Runtime, SetTextureExtentMemorySource) {
+    ExtentStore store;
+    if (!store.init("set_extent_memory")) return;
+    Rt rt;
+    if (!rt.init({.offsetAlign = 64})) return;
+    TextureHandle const t = register_texture(rt.ctx, "gen/plain", store.plain.span(), {.maxExtent = 4});
+    KILN_REQUIRE(rt.pump_until([&] { return is_ready(rt.ctx, t); }));
+    usize const ev0 = rt.events.size();
+    set_texture_extent(rt.ctx, t, 0);
+    for (int i = 0; i < 3; ++i)
+        rt.pump_once();
+    KILN_CHECK(rt.diags.has(kDiagReloadMemorySource));
+    KILN_CHECK_EQ(rt.events.size(), ev0);
+    check_uploaded(rt, t, store.plain.span(), 1, "still at 4", 2);
+    release(rt.ctx, t);
+}
+
 // A prepared job that no worker took yet goes away with its asset: no job runs for it.
 KILN_TEST(Runtime, ReleaseDropsPreparedJob) {
     HeldJobs held;
@@ -2349,6 +2529,29 @@ KILN_TEST(Runtime, TextureArrayZstdLayers) {
     if (!KILN_CHECK_MSG(is_ready(rt.ctx, t), "%s", rt.diags.last)) return;
     check_layer_uploaded(rt, t, 0, store.zstd.span(), "z0");
     check_layer_uploaded(rt, t, 1, store.zstd.span(), "z1");
+    release(rt.ctx, t);
+}
+
+// An array takes a size change as a whole: every layer at the new level, one Resized.
+KILN_TEST(Runtime, TextureArraySetExtent) {
+    ArrayStore store;
+    if (!store.init("arrays_set_extent")) return;
+    Rt rt;
+    ContextDesc cd;
+    cd.storeDir = StrView(store.hand.dir());
+    if (!rt.init({.rowPitchAlign = 256, .offsetAlign = 64}, cd)) return;
+    StrView const layers[] = {"tex/a", "tex/b"};
+    TextureHandle const t  = request_texture_array(
+        rt.ctx, {.name = "arr/ab", .layers = Span<StrView const>(layers), .maxExtent = 4});
+    KILN_REQUIRE(rt.pump_until([&] { return settled_state(rt, t); }));
+    if (!KILN_CHECK_MSG(is_ready(rt.ctx, t), "%s", rt.diags.last)) return;
+    usize const ev0 = rt.events.size();
+    set_texture_extent(rt.ctx, t, 0);
+    KILN_REQUIRE(rt.pump_until([&] { return rt.find_event(EventKind::Resized, t.bits(), ev0) >= 0; }));
+    KILN_CHECK_EQ(version(rt.ctx, t), 2u);
+    check_layer_uploaded(rt, t, 0, store.plain.span(), "a at full", 0);
+    check_layer_uploaded(rt, t, 1, store.flipped.span(), "b at full", 0);
+    KILN_CHECK_EQ(rt.diags.count, 0u);
     release(rt.ctx, t);
 }
 

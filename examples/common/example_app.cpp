@@ -172,6 +172,7 @@ char const* event_name(EventKind k) {
     case EventKind::MetaReady: return "MetaReady";
     case EventKind::Ready: return "Ready";
     case EventKind::Changed: return "Changed";
+    case EventKind::Resized: return "Resized";
     case EventKind::Failed: return "Failed";
     }
     return "?";

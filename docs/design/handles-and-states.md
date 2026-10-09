@@ -89,6 +89,8 @@ All transitions become visible **only in `pump()`**, on the pump thread.
 | any live state | refcount reaches 0 | `Unloaded` | none |
 | `Ready` | source changed, new version cooks and uploads | `Ready` (version + 1) | `Changed` |
 | `Ready` | source changed, new version fails | `Ready` (old version kept) | none; one Error diagnostic |
+| `Ready` | `set_texture_extent`, the texture uploads at the new extent | `Ready` (version + 1) | `Resized` (`Changed` if a reload was due too) |
+| `Ready` | `set_texture_extent`, the new upload fails | `Ready` (old version kept) | none; one Error diagnostic; the want is dropped |
 | `Failed` | source changed, new version succeeds | `Ready` (version + 1) | `Ready` |
 | `Failed` | source changed, new version fails again | `Failed` | `Failed` (with new status) |
 
@@ -127,7 +129,9 @@ add in-memory cooked bytes under a path.
 ### Events
 
 `Event { EventKind kind; AssetKind asset; u64 handle; u32 version; Status status; }` with
-`EventKind { MetaReady, Ready, Changed, Failed }`.
+`EventKind { MetaReady, Ready, Changed, Failed, Resized }`. `Resized` is the swap of
+`set_texture_extent` (`streaming.md`): the same artifact at other resident levels, with a new
+version. A host that does not tell it from `Changed` rebinds on both.
 
 - Produced only inside `pump()`. `events(ctx)` returns a span valid until the next `pump()`,
   which clears it. The events of every pump inside one `wait()` accumulate, so `events()` after

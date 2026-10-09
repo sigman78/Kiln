@@ -149,6 +149,7 @@ char const* event_name(EventKind k) {
     case EventKind::MetaReady: return "MetaReady";
     case EventKind::Ready: return "Ready";
     case EventKind::Changed: return "Changed";
+    case EventKind::Resized: return "Resized";
     case EventKind::Failed: return "Failed";
     }
     return "?";
@@ -230,7 +231,8 @@ void print_event(Context* ctx, Item* items, u32 count, Event const& e) {
         break;
     }
     case EventKind::Failed: KILN_ERROR("app", "  failed: %s", code_name(e.status.code)); break;
-    case EventKind::Changed: print_meta(ctx, *it); break; // the new version's metadata
+    case EventKind::Changed:
+    case EventKind::Resized: print_meta(ctx, *it); break; // the new version's metadata
     }
 }
 

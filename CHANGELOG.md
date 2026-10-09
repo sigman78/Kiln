@@ -15,6 +15,13 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
   of the object, and `TextureInfo::desc` keeps the file's full description. The extent applies when
   the request makes the asset live and stays for its reloads. Every face and layer of a cube or an
   array starts at the same level. `kiln_bench_load --max-extent N` loads at N.
+- **`set_texture_extent(ctx, h, maxExtent)`** changes the wanted extent of a live texture: a new object
+  loads at the new size while the current one stays in use, then `pump()` swaps it in and emits
+  **`EventKind::Resized`** with a new version (a reload that is due at the same time makes it one
+  load and `Changed`). A failed change keeps the object and drops the want, with one K5010. The last
+  call wins; a call while a load runs starts one more load after it. A texture registered in memory
+  takes no size change (K5012). Hosts that `switch` over `EventKind` get a new value: handle
+  `Resized` like `Changed` unless they care about the difference.
 
 ### Changed
 - **`State::Partial` is removed** (API break; open-questions R30 e): an object loads whole or not at

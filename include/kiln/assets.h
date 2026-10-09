@@ -37,7 +37,10 @@ enum class AssetKind : u8 { Mesh = 0, Texture };
 /// one, the reloaded one, the Failed placeholder); after MetaReady it returns the same one.
 /// A reload emits no MetaReady: a Failed asset that reloads successfully emits only Ready, with a
 /// new version. Set up again for any event whose version is new, not only after MetaReady.
-enum class EventKind : u8 { MetaReady = 0, Ready, Changed, Failed };
+/// Resized: the same artifact at other resident levels (set_texture_extent), with a new version; a
+/// host that does not tell it from Changed rebinds on both. A reload that coincides with a size
+/// change emits Changed.
+enum class EventKind : u8 { MetaReady = 0, Ready, Changed, Failed, Resized };
 
 struct Event {
     EventKind kind  = EventKind::Ready;
@@ -327,6 +330,12 @@ KILN_API GroupStatus wait(Context* ctx, Group g, WaitOptions const& opt = {});
 /// (K5012). Works without KILN_HOT_RELOAD; the store poller (ContextDesc::hotReload) calls this for you.
 KILN_API void request_reload(Context* ctx, MeshHandle h);
 KILN_API void request_reload(Context* ctx, TextureHandle h);
+/// Changes the wanted extent of a live texture (RequestOptions::maxExtent; the last call wins). A
+/// Ready texture keeps its object until the new one is uploaded, then emits Resized with a new
+/// version; a failed change keeps the object and drops the want, with one K5010. A texture that is
+/// loading takes the extent for the load after it. The same extent again does nothing. A texture
+/// registered in memory takes no size change (K5012): its bytes went to the GPU.
+KILN_API void set_texture_extent(Context* ctx, TextureHandle h, u32 maxExtent);
 /// request_reload() by name, from any thread: the next pump() reloads the asset `name` of `kind`, and
 /// every texture array with `name` as a layer. A name nothing uses is ignored. For watchers that run
 /// on their own thread, such as the cook provider's source poller.

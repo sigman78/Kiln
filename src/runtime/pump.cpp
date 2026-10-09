@@ -44,20 +44,28 @@ char const* failure_text(u32 code) {
     }
 }
 
-/// A slot reached Ready or Failed with no job and no queue: run the reload requested meanwhile.
+/// A slot reached Ready or Failed with no job and no queue: run the reload requested meanwhile, or
+/// the size change the current object does not have yet.
 void settle(Context* ctx, Slot& s) {
     if (s.manifestCheck) {
         s.manifestCheck = false;
         if (manifest_names_other(ctx, s)) s.reloadPending = true;
     }
-    if (!s.reloadPending) return;
-    s.reloadPending = false;
-    reload_slot(ctx, s);
+    if (s.reloadPending) {
+        s.reloadPending = false;
+        reload_slot(ctx, s);
+        return;
+    }
+    if (s.kind == AssetKind::Texture && s.state == State::Ready && s.maxExtent != s.cur.texExtent)
+        resize_slot(ctx, s);
 }
 
 /// A reload of a Ready slot failed: drop the new metadata and object, keep serving the
-/// current version. One K5010, no event.
+/// current version. One K5010, no event. A failed size change also drops the want, unless a
+/// newer one came while it ran.
 void fail_reload(Context* ctx, Slot& s, u32 code, Status st) {
+    bool const resize = s.resizing;
+    if (resize && s.maxExtent == s.in.maxExtent) s.maxExtent = s.cur.texExtent;
     queue_remove(ctx, s);
     orphan_upload(ctx, s);
     transition(s, Step::Fail);
@@ -67,10 +75,9 @@ void fail_reload(Context* ctx, Slot& s, u32 code, Status st) {
     s.out.cookedValid = false;
     if (s.array) free_array_job_data(ctx->alloc, *s.array);
     (void)diagf(&ctx->diag, st, kDiagReloadFailed, Severity::Error, path_of(s),
-                s.kind == AssetKind::Mesh ? "mesh" : "texture",
-                "reload failed, keeping version %u: %s (%s)%s%s", s.version, failure_text(code),
-                code_name(st.code), s.out.capture.set ? ": " : "",
-                s.out.capture.set ? s.out.capture.msg : "");
+                s.kind == AssetKind::Mesh ? "mesh" : "texture", "%s failed, keeping version %u: %s (%s)%s%s",
+                resize ? "size change" : "reload", s.version, failure_text(code), code_name(st.code),
+                s.out.capture.set ? ": " : "", s.out.capture.set ? s.out.capture.msg : "");
     ++ctx->cur.completed;
     settle(ctx, s);
 }
@@ -134,16 +141,9 @@ bool manifest_names_other(Context const* ctx, Slot const& s) {
     return false;
 }
 
-void reload_slot(Context* ctx, Slot& s) {
-    if (s.source == SourceKind::Memory) {
-        (void)diagf(&ctx->diag, make_status(Code::Unsupported), kDiagReloadMemorySource, Severity::Warning,
-                    path_of(s), "reload", "registered in memory: there is no file to reload from");
-        return;
-    }
-    if (s.phase != Phase::Done) { // queued, loading or awaiting the GPU: runs once it settles
-        s.reloadPending = true;
-        return;
-    }
+namespace {
+
+void start_reload(Context* ctx, Slot& s) {
     KILN_ASSERT(s.queue == QueueId::None);
     refresh_manifest(ctx);
     transition(s, Step::Reload);
@@ -153,6 +153,34 @@ void reload_slot(Context* ctx, Slot& s) {
     s.out.cookedValid = false;
     if (s.array) free_array_job_data(ctx->alloc, *s.array);
     queue_push(ctx, s.priority == Priority::High ? QueueId::MetaHigh : QueueId::MetaNormal, s);
+}
+
+} // namespace
+
+void reload_slot(Context* ctx, Slot& s) {
+    s.resizing = false; // a reload that joins a size change makes it a content change
+    if (s.source == SourceKind::Memory) {
+        (void)diagf(&ctx->diag, make_status(Code::Unsupported), kDiagReloadMemorySource, Severity::Warning,
+                    path_of(s), "reload", "registered in memory: there is no file to reload from");
+        return;
+    }
+    if (s.phase != Phase::Done) { // queued, loading or awaiting the GPU: runs once it settles
+        s.reloadPending = true;
+        return;
+    }
+    start_reload(ctx, s);
+}
+
+void resize_slot(Context* ctx, Slot& s) {
+    if (s.phase != Phase::Done || s.state != State::Ready) return; // settle() starts it once Ready
+    if (s.source == SourceKind::Memory) { // the bytes went with the first upload (R30 h)
+        s.maxExtent = s.cur.texExtent;
+        (void)diagf(&ctx->diag, make_status(Code::Unsupported), kDiagReloadMemorySource, Severity::Warning,
+                    path_of(s), "size change", "registered in memory: its bytes are on the GPU only");
+        return;
+    }
+    s.resizing = true;
+    start_reload(ctx, s);
 }
 
 void drain_posted_reloads(Context* ctx) {
@@ -199,6 +227,7 @@ void submit_stage(Context* ctx, Slot& s, Stage stage) {
     if (stage == Stage::Meta) {
         s.in.recheck        = s.recheck;
         s.recheck           = false;
+        s.in.maxExtent      = s.maxExtent;
         s.in.provider       = ctx->provider;
         s.out.keyValid      = false;
         s.out.providerOwned = false;
@@ -307,11 +336,12 @@ void on_meta_ready(Context* ctx, Slot& s) {
 }
 
 /// First load and reload alike: swap `out.next` into `cur` and bind the new object.
-/// A reload bumps the content version and emits Changed (from Ready) or Ready (from
-/// Failed); a first load and a Failed -> Ready reload count in the group.
+/// A reload bumps the content version and emits Changed, or Resized for a size change (from
+/// Ready), or Ready (from Failed); a first load and a Failed -> Ready reload count in the group.
 void make_ready(Context* ctx, Slot& s) {
     if (ctx->prof) profile_interval(ctx->prof, "kiln.load", path_of(s), s.loadNs, profile_now_ns());
     bool const reload   = s.reloading;
+    bool const resize   = s.resizing;
     State const from    = s.state;
     GpuObject const old = s.realObj;
     s.realObj           = s.out.target.object;
@@ -345,7 +375,8 @@ void make_ready(Context* ctx, Slot& s) {
         }
         s.groupAs = State::Ready;
     }
-    EventKind const ev = reload && from == State::Ready ? EventKind::Changed : EventKind::Ready;
+    EventKind const ev = reload && from == State::Ready ? (resize ? EventKind::Resized : EventKind::Changed)
+                                                        : EventKind::Ready;
     push_event(ctx, ev, s.kind, handle_bits(s), s.version, kOk);
     // The payload is on the GPU: source bytes are no longer needed (metadata stays).
     s.memory.release();

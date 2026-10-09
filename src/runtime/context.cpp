@@ -567,4 +567,11 @@ void request_reload(Context* ctx, TextureHandle h) {
     }
 }
 
+void set_texture_extent(Context* ctx, TextureHandle h, u32 maxExtent) {
+    rt::Slot* s = rt::resolve(ctx, h.bits(), AssetKind::Texture);
+    if (!s || s->maxExtent == maxExtent) return;
+    s->maxExtent = maxExtent;
+    rt::resize_slot(ctx, *s);
+}
+
 } // namespace kiln

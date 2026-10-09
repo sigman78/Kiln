@@ -2,8 +2,8 @@
 
 **Status:** Decided (owner, 2026-10-09): open points (a), (c) to (g) as recorded below; (b) stays
 proposed. The direction is the owner's (2026-10-05): an object is loaded whole or not at all, and
-the goal is latency at the level of the runtime library. Steps 1 (measure) and 2 (the level-limited
-first load) are done; steps 3 to 5 are not implemented.
+the goal is latency at the level of the runtime library. Steps 1 (measure), 2 (the level-limited
+first load) and 3 (the size change) are done; steps 4 and 5 are not implemented.
 **Decides:** What "streaming" means in kiln v0.8, what it drops from the earlier plan, the request
 and adapter surface for a texture that is resident at a smaller size, and how its size changes.
 **Related:** [handles-and-states.md](handles-and-states.md), [adapter.md](adapter.md),
@@ -69,8 +69,12 @@ Step 2 is implemented (2026-10-09): `RequestOptions::maxExtent` and `TextureArra
 (`include/kiln/assets.h`), the first level and the resident layout in the metadata step
 (`first_level`, `resident_desc`, `texture_meta` and `run_array_meta` in `src/runtime/loader.cpp`),
 `TextureDesc::firstLevel` at the adapter, `TextureInfo::firstLevel`. A memory-registered texture
-and a hot reload load at the slot's extent. `set_texture_extent`, `Resized` and `residentBytes`
-wait for steps 3 and 4.
+and a hot reload load at the slot's extent. Step 3 (2026-10-09): `set_texture_extent` and
+`EventKind::Resized` (`include/kiln/assets.h`); the size change is a reload that starts in
+`resize_slot` and is told apart by `Slot::resizing` (`src/runtime/pump.cpp`); the job reads the
+extent fixed at its submit (`JobInput::maxExtent`), and `settle()` starts one more load when the
+wanted extent differs from the one the current object has (`MetaSet::texExtent`). `residentBytes`
+waits for step 4.
 
 ```cpp
 struct RequestOptions {
@@ -117,8 +121,9 @@ target object, and `pump()` swaps it in.
   one more load after it, as a second reload request does today.
 - A hot reload loads at the wanted extent. A reload and a size change that are both due are one
   load, and it emits `Changed`: the pixels may differ. A swap emits one event.
-- A memory-registered texture takes a size change (unlike a reload, which it cannot do): its bytes
-  are in memory.
+- A memory-registered texture takes no size change in this version (one K5012, as a reload): kiln
+  gives its bytes up once they are on the GPU, and keeping them would double the memory of every
+  registered texture (open point (h)).
 
 The first version runs both stages of a load for a size change: the provider's `prepare`, the
 metadata step, then the upload. A size change of an unchanged artifact needs only the upload; that
@@ -261,8 +266,8 @@ What the numbers say:
    upload with the golden file's levels byte for byte. **Done 2026-10-09** (`State::Partial`
    removed with it; `kiln_bench_load --max-extent` now loads at the extent, and the figures under
    "Measured" hold).
-3. A size change as a swap: `set_texture_extent`, `Changed`, the rules for calls that overlap a
-   load or a reload. Tests with a held job system.
+3. A size change as a swap: `set_texture_extent`, `Resized`, the rules for calls that overlap a
+   load or a reload. Tests with a held job system. **Done 2026-10-09.**
 4. `residentBytes` and the `ContextStats` sums.
 5. One example: `kiln-viewer` loads coarse first, then full.
 
@@ -289,3 +294,7 @@ readiness (R25).
   aggregate upload, a whole-array reload on any layer change (117 ms for 64 layers on the
   benchmark).
 - **(g) No budget enforcement and no eviction policy in kiln.** Decided as proposed.
+- **(h) A memory-registered texture takes no size change** (found in step 3, 2026-10-09). kiln
+  releases the registered bytes once the upload is done, so there is nothing to load the other
+  levels from. The alternative keeps the bytes of every registered texture for its lifetime, or
+  keeps them only when the host asks. Proposed: no size change, one K5012, until a host needs it.
