@@ -216,7 +216,8 @@ void frame(void* user) {
     (void)pump(app.ctx);
     for (Event const& e : events(app.ctx)) {
         KILN_INFO("sokol", "event %-9s v%u", ex::event_name(e.kind), e.version);
-        if (e.handle == app.tiles.bits() && (e.kind == EventKind::Ready || e.kind == EventKind::Changed))
+        if (e.handle == app.tiles.bits() &&
+            (e.kind == EventKind::Ready || e.kind == EventKind::Changed || e.kind == EventKind::Resized))
             log_array(app.ctx, app.tiles);
     }
     // --verify: once the array is Ready, each tile again as a texture of its own, to compare with.

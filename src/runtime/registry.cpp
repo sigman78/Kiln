@@ -302,6 +302,7 @@ void transition(Slot& s, Step step) {
         KILN_VERIFY(s.zombie());
         s.phase     = Phase::Free;
         s.reloading = false;
+        s.resizing  = false;
         return;
     }
 }

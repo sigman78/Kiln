@@ -18,7 +18,7 @@ Open points: `../open-questions.md` R30. Figures: "Measure first" (2026-10-09).
 - **A texture can be resident at a smaller size.** The host gives a largest extent; kiln loads the
   mip levels from the first one that fits, as a complete, smaller texture.
 - **A size change is a swap.** kiln loads a new object at the new size and swaps it in, as a hot
-  reload does. The host sees `Changed`.
+  reload does. The host sees `Resized`.
 - **The host decides what is resident.** kiln has no view of the screen. It reports sizes and does
   the loads; the host owns the policy and the budget.
 - **Meshes load whole.** No LOD streaming and no split blobs in v0.8.
@@ -47,6 +47,8 @@ adapter contract does not change.
 
 A texture has a **wanted extent** in pixels, 0 for no limit. The **first level** `N` is the lowest
 level whose width and height are both at most the wanted extent; if no level fits, the last level.
+A level of a block-compressed texture counts only if it is whole blocks (level 0 always does):
+D3D rejects a base level of partial blocks (R30 i). `texture_first_level()` is the rule.
 kiln resolves `N` when the metadata is known. An extent, not a level index, because the host knows
 texel density before it knows the level count.
 
@@ -99,14 +101,14 @@ struct TextureInfo {
 ```
 
 `levelOffsets` and `levelRowPitches` cover the resident levels. `ContextStats` gains the sum of
-`residentBytes` over live textures, and the same for mesh payloads, so a host can hold a budget.
+`residentBytes` over `Ready` textures, and the same for mesh payloads, so a host can hold a budget.
 
 ### One wanted extent per asset
 
 A path has one handle and one object, so it has one wanted extent. `RequestOptions::maxExtent`
 applies when the request makes the asset live; a request for a live path does not change it.
 `set_texture_extent` is the one way to change it, and the last call wins. A host with several users
-of one texture combines their needs itself. This is an open point (R30 a).
+of one texture combines their needs itself (R30 a, decided).
 
 ## A size change is a swap
 
@@ -116,12 +118,16 @@ target object, and `pump()` swaps it in.
 - The texture stays `Ready` and keeps its object while the new one loads.
 - The swap increments the content version and emits `Resized` (R30 c): the same swap as a reload,
   with its own event kind, so a host can tell "same pixels, other levels" from a content change.
-  The old object goes to `destroy` after the frames that used it.
+  The old object goes to `destroy` after the frames that used it. A size change that finds another
+  artifact in the store (the file changed, no reload was asked) emits `Changed`: the pixels differ.
 - A failed change keeps the current object and emits one diagnostic, as a failed reload does.
 - A new call before the load starts replaces the wanted extent. A call while a load runs starts
   one more load after it, as a second reload request does today.
 - A hot reload loads at the wanted extent. A reload and a size change that are both due are one
-  load, and it emits `Changed`: the pixels may differ. A swap emits one event.
+  load, and it emits `Changed`: the pixels may differ. A reload asked while a size change is queued
+  but not yet submitted joins it the same way. A swap emits one event.
+- A failed change keeps the object and drops the want. kiln emits no event for it (K5010 only), so a
+  host that waits for the full size sees it stay at `TextureInfo::firstLevel` (R30 j).
 - A memory-registered texture takes no size change in this version (one K5012, as a reload): kiln
   gives its bytes up once they are on the GPU, and keeping them would double the memory of every
   registered texture (open point (h)).
@@ -178,8 +184,8 @@ out of v0.8.
 | `TextureCookSettings::residentMips` | v0.8 | Not needed: the host gives the extent; stays reserved, unscheduled |
 | `MeshCookSettings::blobChunkSize`, split blobs | v0.8 | Unscheduled, with mesh LOD streaming |
 
-When this note is accepted, the lines in `adapter.md`, `handles-and-states.md`, `hot-reload.md` and
-`viewer.md` that describe progressive mips through further `bind` calls change to match.
+The lines in `adapter.md`, `handles-and-states.md`, `hot-reload.md` and `viewer.md` that described
+progressive mips through further `bind` calls were changed with step 2.
 
 ## Not covered
 
@@ -212,15 +218,16 @@ repo (`C:\tmp\kiln-bench\level-limited-prototype.patch`, with the runs under `ll
 API of this note.
 
 **Bytes.** "Read" is the stored bytes of the levels loaded; "Zstd" the bytes that come out of the
-decoder; "upload" the texel bytes handed to the adapter; "store" adds the meshes, which do not
-change.
+decoder; "upload" the texel bytes handed to the adapter; "store" is every file less the levels a
+limit drops, meshes included. The rows are as of the block rule of R30 (i), which keeps a few more
+levels than the first run (2026-10-09, same corpus).
 
 | Extent | Textures limited | Read | Zstd out | Upload | Store read |
 |---|---|---|---|---|---|
 | full | 0 of 737 | 622 MiB | 1389 MiB | 1440 MiB | 712 MiB |
-| 1024 | 248 | 261 MiB (42%) | 486 MiB (35%) | 531 MiB (37%) | 350 MiB (49%) |
-| 256 | 519 | 25 MiB (4%) | 42 MiB (3%) | 46 MiB (3%) | 115 MiB (16%) |
-| 64 | 709 | 2.3 MiB (0.4%) | 3.1 MiB (0.2%) | 3.4 MiB (0.2%) | 92 MiB (13%) |
+| 1024 | 247 | 259 MiB (42%) | 483 MiB (35%) | 528 MiB (37%) | 349 MiB (49%) |
+| 256 | 517 | 25 MiB (4%) | 41 MiB (3%) | 45 MiB (3%) | 115 MiB (16%) |
+| 64 | 707 | 2.0 MiB (0.3%) | 2.9 MiB (0.2%) | 3.2 MiB (0.2%) | 92 MiB (13%) |
 
 **Time to `Ready` of the textures,** p50 / max in ms from the request, every asset requested at once,
 pump at 60 Hz with the default 64 MiB upload budget, the fastest of 3 runs. The meshes load whole in
@@ -300,4 +307,12 @@ readiness (R25).
 - **(h) A memory-registered texture takes no size change** (found in step 3, 2026-10-09). kiln
   releases the registered bytes once the upload is done, so there is nothing to load the other
   levels from. The alternative keeps the bytes of every registered texture for its lifetime, or
-  keeps them only when the host asks. Proposed: no size change, one K5012, until a host needs it.
+  keeps them only when the host asks. Decided (owner, 2026-10-09): no size change, one K5012.
+- **(i) A block-compressed level that is not whole blocks is never the first level** (audit,
+  2026-10-09). D3D11 rejects a BC base level that is not a multiple of the block size, and D3D12
+  does unless the device says otherwise, so a BC7 texture limited to 2 px keeps its 4x4 level. The
+  alternative is an adapter caps flag. Decided (owner, 2026-10-09): skip such levels.
+- **(j) No signal for a failed size change** (audit, 2026-10-09). A failed change emits K5010 and
+  no event, so a host that waits for the full size has only `TextureInfo::firstLevel` to look at.
+  Open: a `wantedExtent` in `TextureInfo`, or a failure event. Until then the viewer's `--coarse`
+  run waits for `--timeout` when a full load fails.

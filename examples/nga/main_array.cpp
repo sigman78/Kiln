@@ -286,7 +286,8 @@ int main(int argc, char** argv) {
             ctx, {.frame = done.value + 1, .completedFrame = gpu::timeline_completed_value(done.semaphore)});
         for (Event const& e : events(ctx)) {
             KILN_INFO("nga", "event %-9s v%u", ex::event_name(e.kind), e.version);
-            if (e.handle == tiles.bits() && (e.kind == EventKind::Ready || e.kind == EventKind::Changed))
+            if (e.handle == tiles.bits() &&
+                (e.kind == EventKind::Ready || e.kind == EventKind::Changed || e.kind == EventKind::Resized))
                 log_array(ctx, tiles);
         }
         if (verify && own[0].is_null() && is_ready(ctx, tiles))

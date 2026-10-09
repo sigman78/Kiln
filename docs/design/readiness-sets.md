@@ -211,7 +211,7 @@ rule for a group:
 - A host that draws a coarse-first texture before its full load keeps it in the group: it is
   `Ready` at its extent. A coarse LOD it draws early it leaves out, as the Need section says.
 
-R30 (c) in `streaming.md` confirms this rule (R25 (c)).
+`streaming.md` ("Groups and states", R30) confirms this rule (R25 (c)).
 
 ## Validation
 

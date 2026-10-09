@@ -61,11 +61,11 @@ void settle(Context* ctx, Slot& s) {
 }
 
 /// A reload of a Ready slot failed: drop the new metadata and object, keep serving the
-/// current version. One K5010, no event. A failed size change also drops the want, unless a
-/// newer one came while it ran.
+/// current version. One K5010, no event. A want the failed load tried is dropped, so that settle()
+/// does not try it again; a newer one stays.
 void fail_reload(Context* ctx, Slot& s, u32 code, Status st) {
     bool const resize = s.resizing;
-    if (resize && s.maxExtent == s.in.maxExtent) s.maxExtent = s.cur.texExtent;
+    if (s.maxExtent == s.in.maxExtent) s.maxExtent = s.cur.texExtent;
     queue_remove(ctx, s);
     orphan_upload(ctx, s);
     transition(s, Step::Fail);
@@ -158,22 +158,28 @@ void start_reload(Context* ctx, Slot& s) {
 } // namespace
 
 void reload_slot(Context* ctx, Slot& s) {
-    s.resizing = false; // a reload that joins a size change makes it a content change
     if (s.source == SourceKind::Memory) {
         (void)diagf(&ctx->diag, make_status(Code::Unsupported), kDiagReloadMemorySource, Severity::Warning,
                     path_of(s), "reload", "registered in memory: there is no file to reload from");
+        return;
+    }
+    if (s.phase == Phase::MetaQueued && s.resizing) { // a size change not submitted yet takes the reload
+        s.resizing = false;
+        refresh_manifest(ctx);
         return;
     }
     if (s.phase != Phase::Done) { // queued, loading or awaiting the GPU: runs once it settles
         s.reloadPending = true;
         return;
     }
+    s.resizing = false;
     start_reload(ctx, s);
 }
 
 void resize_slot(Context* ctx, Slot& s) {
-    if (s.phase != Phase::Done || s.state != State::Ready) return;        // settle() starts it once Ready
-    if (first_level(s.cur.texDesc, s.maxExtent) == s.cur.texFirstLevel) { // the same levels: nothing to load
+    // A loading slot resizes at settle(); a Failed one at its next reload.
+    if (s.phase != Phase::Done || s.state != State::Ready) return;
+    if (texture_first_level(s.cur.texDesc, s.maxExtent) == s.cur.texFirstLevel) { // the same levels
         s.cur.texExtent = s.maxExtent;
         return;
     }
@@ -339,13 +345,24 @@ void on_meta_ready(Context* ctx, Slot& s) {
     queue_push(ctx, upload_queue(s), s);
 }
 
+/// The job loaded the artifact `cur` came from (a memory or provider source counts as the same).
+bool same_artifact(Slot const& s) {
+    if (!s.array) return s.keyValid == s.out.keyValid && (!s.keyValid || s.key == s.out.key);
+    for (u32 i = 0; i < s.array->count; ++i) {
+        ArrayLayer const& l = s.array->layers[i];
+        if (l.keyValid != l.jobKeyValid || (l.keyValid && !(l.key == l.jobKey))) return false;
+    }
+    return true;
+}
+
 /// First load and reload alike: swap `out.next` into `cur` and bind the new object.
-/// A reload bumps the content version and emits Changed, or Resized for a size change (from
-/// Ready), or Ready (from Failed); a first load and a Failed -> Ready reload count in the group.
+/// A reload bumps the content version and emits Changed, or Resized for a size change of the same
+/// artifact (from Ready), or Ready (from Failed); a first load and a Failed -> Ready reload count in
+/// the group.
 void make_ready(Context* ctx, Slot& s) {
     if (ctx->prof) profile_interval(ctx->prof, "kiln.load", path_of(s), s.loadNs, profile_now_ns());
     bool const reload   = s.reloading;
-    bool const resize   = s.resizing;
+    bool const resize   = s.resizing && same_artifact(s); // a new artifact under a size change: Changed
     State const from    = s.state;
     GpuObject const old = s.realObj;
     s.realObj           = s.out.target.object;

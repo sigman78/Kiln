@@ -55,8 +55,9 @@ struct TextureDesc {
     u32 layers         = 1; ///< array layers, or 6 for a cube
     u32 levels         = 1;
     TextureShape shape = TextureShape::Tex2D;
-    u32 firstLevel =
-        0; ///< the file level that is level 0 of this object (a level-limited load); information only
+    /// The file level that is level 0 of this object (a level-limited load); the extents and `levels`
+    /// above already describe the object. Information only.
+    u32 firstLevel = 0;
 };
 
 /// What kiln is about to place for a mesh payload (.mesh header values).
@@ -139,10 +140,10 @@ struct Adapter {
     /// create() waits for the placeholders, on that thread. An adapter whose GPU work must run
     /// on the graphics context's thread does it here; the host then calls pump() on that thread.
     void (*flush)(void* user) = nullptr;
-    u32 caps                  = 0;  ///< AdapterCaps
-    u32 bindlessSlots         = 0;  ///< with `bind`: the slots kiln may hand out; 0 = not bindless
-    void* reserved[4]         = {}; ///< residency hooks (v0.8); must be null
-    void* user                = nullptr;
+    u32 caps                  = 0; ///< AdapterCaps
+    u32 bindlessSlots         = 0; ///< with `bind`: the slots kiln may hand out; 0 = not bindless
+    void* reserved[4] = {}; ///< must be null (residency hooks are unscheduled: the host owns residency)
+    void* user        = nullptr;
 };
 
 /// Byte offset and row pitch of each level inside a texture upload, as kiln writes it for these

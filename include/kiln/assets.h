@@ -37,9 +37,8 @@ enum class AssetKind : u8 { Mesh = 0, Texture };
 /// one, the reloaded one, the Failed placeholder); after MetaReady it returns the same one.
 /// A reload emits no MetaReady: a Failed asset that reloads successfully emits only Ready, with a
 /// new version. Set up again for any event whose version is new, not only after MetaReady.
-/// Resized: the same artifact at other resident levels (set_texture_extent), with a new version; a
-/// host that does not tell it from Changed rebinds on both. A reload that coincides with a size
-/// change emits Changed.
+/// Resized: the same artifact at other resident levels (set_texture_extent), with a new version.
+/// A host that does not tell it from Changed rebinds on both (docs/design/streaming.md).
 enum class EventKind : u8 { MetaReady = 0, Ready, Changed, Failed, Resized };
 
 struct Event {
@@ -331,13 +330,13 @@ KILN_API GroupStatus wait(Context* ctx, Group g, WaitOptions const& opt = {});
 /// (K5012). Works without KILN_HOT_RELOAD; the store poller (ContextDesc::hotReload) calls this for you.
 KILN_API void request_reload(Context* ctx, MeshHandle h);
 KILN_API void request_reload(Context* ctx, TextureHandle h);
-/// Changes the wanted extent of a live texture (RequestOptions::maxExtent; the last call wins). A
-/// Ready texture keeps its object until the new one is uploaded, then emits Resized with a new
-/// version; a failed change keeps the object and drops the want, with one K5010. A texture that is
-/// loading takes the extent for the load after it. An extent that keeps the same levels, the same
-/// one again included, does nothing. A texture registered in memory takes no size change (K5012):
-/// its bytes went to the GPU.
+/// Changes the wanted extent of a live texture (RequestOptions::maxExtent; the last call wins). The
+/// current object serves until the new one is uploaded, then Resized comes with a new version; a
+/// failed change keeps the object and drops the want (K5010). Rules: docs/design/streaming.md.
 KILN_API void set_texture_extent(Context* ctx, TextureHandle h, u32 maxExtent);
+/// The first level a load at `maxExtent` keeps (TextureInfo::firstLevel): the lowest level whose
+/// width and height fit, or the last one; a block-compressed level must be whole blocks. 0 = level 0.
+KILN_API u32 texture_first_level(ktx2::TextureDesc const& desc, u32 maxExtent);
 /// request_reload() by name, from any thread: the next pump() reloads the asset `name` of `kind`, and
 /// every texture array with `name` as a layer. A name nothing uses is ignored. For watchers that run
 /// on their own thread, such as the cook provider's source poller.
@@ -430,11 +429,11 @@ enum RuntimeDiagCode : u32 {
     kDiagRegistryFull  = 5005, ///< maxAssets / maxGroups reached
     kDiagEventsDropped = 5006, ///< event ring overflowed (Warning)
     kDiagWaitMisuse    = 5007, ///< wait() off the pump thread, or without kSelfSubmitting or flush (panics)
-    kDiagDuplicateRegister     = 5008, ///< register_* for an already known path
-    kDiagPlaceholderFailed     = 5009, ///< placeholder upload rejected at create()
-    kDiagReloadFailed          = 5010, ///< a reload failed; the previous version stays (Error)
+    kDiagDuplicateRegister = 5008, ///< register_* for an already known path
+    kDiagPlaceholderFailed = 5009, ///< placeholder upload rejected at create()
+    kDiagReloadFailed      = 5010, ///< a reload or a size change failed; the previous version stays (Error)
     kDiagHotReloadUnavailable  = 5011, ///< not compiled in, or the IO backend has no stat (Warning)
-    kDiagReloadMemorySource    = 5012, ///< reload requested for a memory-registered asset (Warning)
+    kDiagReloadMemorySource    = 5012, ///< reload or size change of a memory-registered asset (Warning)
     kDiagBadAssetName          = 5013, ///< a request, registration or root breaks the name rules
     kDiagTextureShapeMismatch  = 5017, ///< the cooked texture's shape is not the requested one
     kDiagStoreProfileUnsampled = 5018, ///< the manifest's profile has formats the adapter cannot sample

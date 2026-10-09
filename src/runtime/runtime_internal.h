@@ -204,8 +204,10 @@ struct Slot {
     TextureShape texShape = TextureShape::Tex2D; ///< requested; fixed while the slot lives
     u32 maxExtent         = 0; ///< the wanted extent (set_texture_extent); the job reads in.maxExtent
     /// The running load is a reload: state stays Ready / Failed. Written by transition() only.
-    bool reloading     = false;
-    bool resizing      = false; ///< the running reload is a size change only: it emits Resized
+    bool reloading = false;
+    /// The running reload is a size change: it emits Resized unless the artifact changed too. Set by
+    /// resize_slot(), cleared by reload_slot() and transition().
+    bool resizing      = false;
     bool reloadPending = false; ///< reload requested while not settled; runs at settle
     u32 refcount       = 0;
     u32 version        = 0;
@@ -493,9 +495,6 @@ PumpStats pump_impl(Context* ctx, PumpOptions const& opt, bool keepEvents);
 void reload_slot(Context* ctx, Slot& s);
 /// A size change: a reload of a Ready texture that emits Resized (set_texture_extent).
 void resize_slot(Context* ctx, Slot& s);
-/// The lowest level whose width and height both fit `extent`; the last level when none does. 0 = the
-/// first level (docs/design/streaming.md).
-u32 first_level(ktx2::TextureDesc const& d, u32 extent);
 /// True if the manifest in use has an entry for the settled file-source `s` that names another
 /// artifact than the one it loaded or tried (or it had none).
 [[nodiscard]] bool manifest_names_other(Context const* ctx, Slot const& s);

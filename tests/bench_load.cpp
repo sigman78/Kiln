@@ -451,29 +451,26 @@ bool pick_all(Asset const&, u64) { return true; }
 // The level-limited plan (docs/design/streaming.md): what a load at a largest extent would read
 // ---------------------------------------------------------------------------
 
-/// The lowest level whose width and height both fit `extent`; the last level when none does. 0 = no
-/// limit.
-u32 first_level(ktx2::TextureDesc const& d, u32 extent) {
-    if (extent == 0 || d.levels == 0) return 0;
-    for (u32 i = 0; i < d.levels; ++i)
-        if (max(d.width >> i, 1u) <= extent && max(d.height >> i, 1u) <= extent) return i;
-    return d.levels - 1;
-}
-
 struct Plan {
     u64 stored  = 0; ///< bytes read from the texture files
     u64 zstd    = 0; ///< bytes that come out of Zstd
     u64 texels  = 0; ///< bytes uploaded
+    u64 store   = 0; ///< bytes read from the store: every file, less the levels a limit drops
     u32 limited = 0; ///< textures that lose levels
 };
 
 Plan plan_at(Span<Asset const> assets, u32 extent) {
     Plan p;
     for (Asset const& a : assets) {
+        p.store += a.bytes;
         if (a.kind != AssetKind::Texture || !a.probed) continue;
-        u32 const first = first_level(a.desc, extent);
+        u32 const first = texture_first_level(a.desc, extent);
         p.limited += first > 0;
-        for (u32 i = first; i < min(a.desc.levels, kMaxLevels); ++i) {
+        for (u32 i = 0; i < min(a.desc.levels, kMaxLevels); ++i) {
+            if (i < first) {
+                p.store -= a.levelStored[i];
+                continue;
+            }
             p.stored += a.levelStored[i];
             p.texels += a.levelTexels[i];
             if (a.zstd) p.zstd += a.levelTexels[i];
@@ -482,33 +479,34 @@ Plan plan_at(Span<Asset const> assets, u32 extent) {
     return p;
 }
 
+void print_plan_row(Span<Asset const> assets, u32 e, Plan const& full) {
+    Plan const p     = plan_at(assets, e);
+    auto const share = [](u64 part, u64 whole) { return whole ? 100.0 * double(part) / double(whole) : 0.0; };
+    char label[16];
+    if (e == 0)
+        std::snprintf(label, sizeof label, "full");
+    else
+        std::snprintf(label, sizeof label, "%u", e);
+    std::printf("%-8s %8u   %9.1f %5.1f   %9.1f %5.1f   %9.1f %5.1f   %9.1f %5.1f\n", label, p.limited,
+                mib(p.stored), share(p.stored, full.stored), mib(p.zstd), share(p.zstd, full.zstd),
+                mib(p.texels), share(p.texels, full.texels), mib(p.store), share(p.store, full.store));
+}
+
 /// The plan at the fixed extents of streaming.md and at `extent`, as shares of the full load.
-void print_plan(Span<Asset const> assets, u32 extent, u64 meshBytes) {
+void print_plan(Span<Asset const> assets, u32 extent) {
     Plan const full = plan_at(assets, 0);
     if (full.texels == 0) return;
     std::printf(
         "\nlevel-limited plan: what a texture load at a largest extent would read, decode and upload\n");
     std::printf("%-8s %8s   %9s %5s   %9s %5s   %9s %5s   %9s %5s\n", "extent", "limited", "read MiB", "%",
                 "zstd MiB", "%", "up MiB", "%", "store MiB", "%");
-    u32 const extents[] = {0, 1024, 256, 64, extent};
-    for (u32 k = 0; k < countof(extents); ++k) {
-        u32 const e = extents[k];
-        if (k == 4 && (e == 0 || e == 1024 || e == 256 || e == 64)) continue;
-        Plan const p     = plan_at(assets, e);
-        auto const share = [](u64 part, u64 whole) {
-            return whole ? 100.0 * double(part) / double(whole) : 0.0;
-        };
-        u64 const storeBytes = meshBytes + p.stored;
-        char label[16];
-        if (e == 0)
-            std::snprintf(label, sizeof label, "full");
-        else
-            std::snprintf(label, sizeof label, "%u", e);
-        std::printf("%-8s %8u   %9.1f %5.1f   %9.1f %5.1f   %9.1f %5.1f   %9.1f %5.1f\n", label, p.limited,
-                    mib(p.stored), share(p.stored, full.stored), mib(p.zstd), share(p.zstd, full.zstd),
-                    mib(p.texels), share(p.texels, full.texels), mib(storeBytes),
-                    share(storeBytes, meshBytes + full.stored));
+    u32 const fixed[] = {0, 1024, 256, 64};
+    bool listed       = false;
+    for (u32 const e : fixed) {
+        print_plan_row(assets, e, full);
+        listed |= e == extent;
     }
+    if (!listed) print_plan_row(assets, extent, full);
 }
 
 void print_stages(Run const& r) {
@@ -716,12 +714,7 @@ int main(int argc, char** argv) {
     print_class("all", best, assets.span(), &pick_all, 0);
     print_stages(best);
     print_slowest(best, assets.span());
-    if (o.maxExtent) {
-        u64 meshBytes = 0;
-        for (Asset const& a : assets)
-            if (a.kind == AssetKind::Mesh) meshBytes += a.bytes;
-        print_plan(assets.span(), o.maxExtent, meshBytes);
-    }
+    if (o.maxExtent) print_plan(assets.span(), o.maxExtent);
 
     if (o.arrayLayers) {
         Vec<StrView> layers(default_allocator(), Tag::Test);

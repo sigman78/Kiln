@@ -273,7 +273,8 @@ int main(int argc, char** argv) {
             KILN_INFO("vk-array", "event %-9s v%u", ex::event_name(e.kind), e.version);
             if (e.handle != tiles.bits()) continue;
             if (e.kind != EventKind::MetaReady) ++sets.stamp; // gpu_object() changed
-            if (e.kind == EventKind::Ready || e.kind == EventKind::Changed) log_array(ctx, tiles);
+            if (e.kind == EventKind::Ready || e.kind == EventKind::Changed || e.kind == EventKind::Resized)
+                log_array(ctx, tiles);
         }
         if (!opt.bindless) update_set(ctx, *va, device.device, tiles, sets, slot);
         if (opt.verify && own[0].is_null() && is_ready(ctx, tiles))

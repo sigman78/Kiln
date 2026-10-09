@@ -264,12 +264,13 @@ Status mesh_meta(Context* ctx, Slot& s, Source const& src) {
     return kOk;
 }
 
-/// A KTX2 input's description and, per level, [srcOffset | srcLength | texelLength]. texelLength is
-/// larger than srcLength when the levels are Zstd frames.
+/// A KTX2 input's description and, per resident level (file level first + i), [srcOffset |
+/// srcLength | texelLength]. texelLength is larger than srcLength when the levels are Zstd frames.
 struct KtxLevels {
-    ktx2::TextureDesc desc;
-    u64* cols  = nullptr; ///< 3 * levels values, from ctx->alloc
-    u32 levels = 0;
+    ktx2::TextureDesc desc; ///< the file's
+    u64* cols  = nullptr;   ///< 3 * levels values, from ctx->alloc
+    u32 first  = 0;         ///< the first level the load keeps (texture_first_level)
+    u32 levels = 0;         ///< resident levels
     bool zstd  = false;
     void release(Allocator const* a) {
         if (cols) free_array(a, cols, usize(levels) * 3, Tag::Payload);
@@ -277,10 +278,11 @@ struct KtxLevels {
     }
 };
 
-/// Reads and checks a KTX2 input's metadata. `layer` is kInvalid for a texture of its own, else the
-/// array layer being read (which must be 2D).
+/// Reads and checks a KTX2 input's metadata, and keeps the level table from the first level that
+/// fits `maxExtent`. `layer` is kInvalid for a texture of its own, else the array layer being read
+/// (which must be 2D).
 Status read_ktx2_levels(Context* ctx, Slot& s, StrView name, Source const& src, TextureShape expect,
-                        u32 layer, KtxLevels* out) {
+                        u32 layer, u32 maxExtent, KtxLevels* out) {
     DiagSink const sink{&capture_fn, &s.out.capture};
     alignas(16) u8 hb[sizeof(ktx2::Header)];
     u64 const hn = min<u64>(sizeof hb, src.size);
@@ -321,19 +323,23 @@ Status read_ktx2_levels(Context* ctx, Slot& s, StrView name, Source const& src, 
         }
         return make_status(Code::ValidationFailed);
     }
-    u32 const levels     = d.levels;
+    u32 const first      = texture_first_level(d, maxExtent);
+    u32 const levels     = d.levels - first;
     u64* cols            = alloc_array<u64>(ctx->alloc, usize(levels) * 3, Tag::Payload);
     out->desc            = d;
     out->cols            = cols;
+    out->first           = first;
     out->levels          = levels;
     out->zstd            = v.supercompressed();
     FormatInfo const& fi = v.info();
-    for (u32 i = 0; i < levels && st.ok(); ++i) {
+    for (u32 i = 0; i < d.levels && st.ok(); ++i) { // every level is checked; the resident ones are kept
         ktx2::LevelIndex const& li = v.levels()[i];
-        cols[i]                    = li.byteOffset;
-        cols[levels + i]           = li.byteLength;
-        cols[2 * levels + i]       = li.uncompressedByteLength;
-        u64 const rowBytes         = format_row_bytes(d.format, v.level_width(i));
+        if (i >= first) {
+            cols[i - first]              = li.byteOffset;
+            cols[levels + i - first]     = li.byteLength;
+            cols[2 * levels + i - first] = li.uncompressedByteLength;
+        }
+        u64 const rowBytes = format_row_bytes(d.format, v.level_width(i));
         u64 const rows = (u64(v.level_height(i)) + fi.blockHeight - 1) / fi.blockHeight * v.level_depth(i) *
                          d.layers * d.faces;
         if (li.uncompressedByteLength != rowBytes * rows)
@@ -353,13 +359,6 @@ Status read_ktx2_levels(Context* ctx, Slot& s, StrView name, Source const& src, 
 
 } // namespace
 
-u32 first_level(ktx2::TextureDesc const& d, u32 extent) {
-    if (extent == 0 || d.levels == 0) return 0;
-    for (u32 i = 0; i < d.levels; ++i)
-        if (max(d.width >> i, 1u) <= extent && max(d.height >> i, 1u) <= extent) return i;
-    return d.levels - 1;
-}
-
 namespace {
 
 /// `d` at levels `first` to the last, as the GPU object holds them.
@@ -371,22 +370,25 @@ ktx2::TextureDesc resident_desc(ktx2::TextureDesc d, u32 first) {
     return d;
 }
 
+/// Row bytes of resident level `i` (file level texFirstLevel + i).
+u64 resident_row_bytes(MetaSet const& m, u32 i) {
+    return format_row_bytes(m.texDesc.format, max(m.texDesc.width >> (m.texFirstLevel + i), 1u));
+}
+
 Status texture_meta(Context* ctx, Slot& s, Source const& src) {
     KtxLevels k;
-    KILN_TRY(read_ktx2_levels(ctx, s, path_of(s), src, s.texShape, kInvalid, &k));
-    u32 const first  = first_level(k.desc, s.in.maxExtent);
-    u32 const levels = k.levels - first;
+    KILN_TRY(read_ktx2_levels(ctx, s, path_of(s), src, s.texShape, kInvalid, s.in.maxExtent, &k));
+    u32 const levels = k.levels;
     u64* layout      = alloc_array<u64>(ctx->alloc, usize(levels) * kLayoutColumns, Tag::Payload);
-    for (u32 c = 0; c < 3; ++c)
-        std::memcpy(layout + (2 + c) * levels, k.cols + c * k.levels + first, sizeof(u64) * levels);
+    std::memcpy(layout + 2 * levels, k.cols, sizeof(u64) * levels * 3);
     MetaSet& m      = s.out.next;
     m.layout        = layout;
     m.layoutLevels  = levels;
-    m.texFirstLevel = first;
+    m.texFirstLevel = k.first;
     m.texExtent     = s.in.maxExtent;
     m.texZstd       = k.zstd;
     m.texDesc       = k.desc;
-    m.uploadSize    = texture_layout(resident_desc(k.desc, first), ctx->cc.optimalRowPitchAlign,
+    m.uploadSize    = texture_layout(resident_desc(k.desc, k.first), ctx->cc.optimalRowPitchAlign,
                                      ctx->cc.optimalOffsetAlign, layout, layout + levels);
     k.release(ctx->alloc);
     return kOk;
@@ -421,9 +423,8 @@ Status check_layer(Slot& s, u32 layer, StrView name, ktx2::TextureDesc const& fi
 /// and the upload layout of the whole array. Each layer keeps its level table for the upload stage.
 CompletionKind run_array_meta(Context* ctx, Slot& s) {
     ArrayDecl& d = *s.array;
-    KtxLevels first;
-    u32 firstLevel = 0; // of layer 0; every layer has the same levels (check_layer)
-    Status st      = kOk;
+    KtxLevels layer0;
+    Status st = kOk;
     for (u32 i = 0; i < d.count && st.ok(); ++i) {
         Input const in = layer_input(s, d.layers[i]);
         st             = prepare_input(ctx, s, in);
@@ -435,48 +436,46 @@ CompletionKind run_array_meta(Context* ctx, Slot& s) {
         Source src;
         KtxLevels k;
         st = open_source(ctx, s, in, src);
-        if (st.ok()) st = read_ktx2_levels(ctx, s, in.name, src, TextureShape::Tex2D, i, &k);
+        if (st.ok()) st = read_ktx2_levels(ctx, s, in.name, src, TextureShape::Tex2D, i, s.in.maxExtent, &k);
         src.close();
-        if (st.ok() && i > 0) st = check_layer(s, i, in.name, first.desc, k.desc);
+        if (st.ok() && i > 0) st = check_layer(s, i, in.name, layer0.desc, k.desc);
         if (st.failed()) {
             k.release(ctx->alloc);
             if (s.out.diag != kDiagArrayLayerMismatch) note_layer(s.out.capture, i, in.name);
             break;
         }
-        if (i == 0) firstLevel = first_level(k.desc, s.in.maxExtent);
-        l.srcLevels = k.levels - firstLevel;
-        l.src       = alloc_array<u64>(ctx->alloc, usize(l.srcLevels) * 2, Tag::Payload);
-        std::memcpy(l.src, k.cols + firstLevel, sizeof(u64) * l.srcLevels);
-        std::memcpy(l.src + l.srcLevels, k.cols + k.levels + firstLevel, sizeof(u64) * l.srcLevels);
+        l.srcLevels = k.levels; // equal layers (check_layer) keep the same levels
+        l.src       = alloc_array<u64>(ctx->alloc, usize(k.levels) * 2, Tag::Payload);
+        std::memcpy(l.src, k.cols, sizeof(u64) * k.levels * 2);
         l.zstd = k.zstd;
         if (i == 0)
-            first = k; // its texel lengths go into the layout
+            layer0 = k; // its texel lengths go into the layout
         else
             k.release(ctx->alloc);
     }
     if (st.ok()) {
-        u32 const levels  = first.levels - firstLevel;
+        u32 const levels  = layer0.levels;
         MetaSet& m        = s.out.next;
-        m.texDesc         = first.desc;
+        m.texDesc         = layer0.desc;
         m.texDesc.layers  = d.count;
         m.texDesc.faces   = 1;
         m.texDesc.isArray = true;
         m.layout          = alloc_array<u64>(ctx->alloc, usize(levels) * kLayoutColumns, Tag::Payload);
         m.layoutLevels    = levels;
-        m.texFirstLevel   = firstLevel;
+        m.texFirstLevel   = layer0.first;
         m.texExtent       = s.in.maxExtent;
         std::memset(m.layout + 2 * levels, 0, sizeof(u64) * levels * 2); // per layer: ArrayLayer::src
-        std::memcpy(m.layout + 4 * levels, first.cols + 2 * first.levels + firstLevel, sizeof(u64) * levels);
-        m.uploadSize = texture_layout(resident_desc(m.texDesc, firstLevel), ctx->cc.optimalRowPitchAlign,
+        std::memcpy(m.layout + 4 * levels, layer0.cols + 2 * levels, sizeof(u64) * levels);
+        m.uploadSize = texture_layout(resident_desc(m.texDesc, layer0.first), ctx->cc.optimalRowPitchAlign,
                                       ctx->cc.optimalOffsetAlign, m.layout, m.layout + levels);
         if (m.uploadSize == 0) {
             note(s.out.capture, "%u layers of %s %ux%u do not fit one upload", d.count,
-                 format_name(first.desc.format), first.desc.width, first.desc.height);
+                 format_name(layer0.desc.format), layer0.desc.width, layer0.desc.height);
             s.out.diag = kDiagArrayDeclaration;
             st         = make_status(Code::InvalidArgument);
         }
     }
-    first.release(ctx->alloc);
+    layer0.release(ctx->alloc);
     if (st.failed()) {
         s.out.status = st;
         if (s.out.diag == 0) s.out.diag = kDiagAssetLoadFailed;
@@ -610,11 +609,10 @@ struct LevelCopy {
 LevelCopy level_copy(Slot& s, u32 j, u32 i, u8* dst) {
     MetaSet const& m = s.out.next;
     u32 const levels = m.layoutLevels;
-    LevelCopy c{.level = i,
-                .tLen  = m.layout[4 * levels + i],
-                .rowBytes =
-                    format_row_bytes(m.texDesc.format, max(m.texDesc.width >> (m.texFirstLevel + i), 1u)),
-                .pitch = m.layout[levels + i]};
+    LevelCopy c{.level    = i,
+                .tLen     = m.layout[4 * levels + i],
+                .rowBytes = resident_row_bytes(m, i),
+                .pitch    = m.layout[levels + i]};
     if (s.array) {
         ArrayLayer const& l = s.array->layers[j];
         c.sOff              = l.src[i];
@@ -686,10 +684,9 @@ void zero_level_gaps(MetaSet const& m, u32 layers, u8* dst) {
     u32 const levels = m.layoutLevels;
     u64 cursor       = 0;
     for (u32 i = 0; i < levels; ++i) {
-        u64 const dOff = m.layout[i];
-        u64 const rowBytes =
-            format_row_bytes(m.texDesc.format, max(m.texDesc.width >> (m.texFirstLevel + i), 1u));
-        u64 const rows = rowBytes ? m.layout[4 * levels + i] / rowBytes : 0;
+        u64 const dOff     = m.layout[i];
+        u64 const rowBytes = resident_row_bytes(m, i);
+        u64 const rows     = rowBytes ? m.layout[4 * levels + i] / rowBytes : 0;
         if (dOff > cursor) std::memset(dst + cursor, 0, usize(dOff - cursor));
         cursor = dOff + m.layout[levels + i] * rows * layers;
     }
@@ -993,6 +990,22 @@ u64 texture_level_layout(TextureDesc const& t, CopyConstraints const& c, u64* of
         if (!checked_mul(pitch, rows, bytes) || !checked_add(cur, bytes, cur)) return 0;
     }
     return cur;
+}
+
+// A block-compressed level that is not whole blocks is level 0 only: D3D rejects such a base level
+// (open-questions R30 i).
+u32 texture_first_level(ktx2::TextureDesc const& d, u32 maxExtent) {
+    if (maxExtent == 0 || d.levels == 0) return 0;
+    FormatInfo const* fi = format_info(d.format);
+    u32 const bw = fi ? fi->blockWidth : 1, bh = fi ? fi->blockHeight : 1;
+    u32 last = 0; // the last level that may be level 0 of an object
+    for (u32 i = 0; i < d.levels; ++i) {
+        u32 const w = max(d.width >> i, 1u), h = max(d.height >> i, 1u);
+        if (i > 0 && (w % bw || h % bh)) continue;
+        if (w <= maxExtent && h <= maxExtent) return i;
+        last = i;
+    }
+    return last;
 }
 
 } // namespace kiln

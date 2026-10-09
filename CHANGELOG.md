@@ -17,11 +17,12 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
   array starts at the same level. `kiln_bench_load --max-extent N` loads at N.
 - **`set_texture_extent(ctx, h, maxExtent)`** changes the wanted extent of a live texture: a new object
   loads at the new size while the current one stays in use, then `pump()` swaps it in and emits
-  **`EventKind::Resized`** with a new version (a reload that is due at the same time makes it one
-  load and `Changed`). A failed change keeps the object and drops the want, with one K5010. The last
-  call wins; a call while a load runs starts one more load after it; a change that keeps the same
-  levels does nothing. A texture registered in memory takes no size change (K5012). Hosts that `switch` over `EventKind` get a new value: handle
-  `Resized` like `Changed` unless they care about the difference.
+  `EventKind::Resized` with a new version (a reload that is due at the same time, or a changed
+  artifact in the store, makes it one load and `Changed`). A failed change keeps the object and
+  drops the want, with one K5010 and no event. The last call wins; a call while a load runs starts
+  one more load after it; a change that keeps the same levels does nothing. A texture registered in
+  memory takes no size change (K5012). `texture_first_level()` tells which level a load at an
+  extent keeps; a block-compressed level that is not whole blocks is never the first.
 - **`kiln-viewer --coarse <px>`** loads each mesh texture at that extent first and asks for the whole
   texture once it is Ready: the coarse-first pattern of `docs/design/streaming.md`.
 - **Resident bytes for a host's budget:** `TextureInfo::residentBytes` is the upload that made a
@@ -29,10 +30,19 @@ Pre-1.0: API breaks are allowed but every break is recorded here with migration 
   Ready objects. kiln enforces no budget: the host lowers an extent or releases the asset.
 
 ### Changed
+- **`EventKind` gains `Resized`** (API break for an exhaustive `switch`): the swap of a size change.
+  Migration: handle `Resized` like `Changed` (rebind the handle's object), unless the host cares
+  that the pixels are the same. A host that rebinds only on `Ready || Changed` keeps a retired
+  object once it calls `set_texture_extent`.
 - **`State::Partial` is removed** (API break; open-questions R30 e): an object loads whole or not at
   all, so the value was never produced. Migration: delete the `case State::Partial:` of a `switch`.
   The reserved `range` comment of `RequestOptions` is `maxExtent` now, and the `TextureDesc::firstLevel`
   of the adapter, reserved before, is in use.
+- **`TextureInfo` describes the file, not the object, for a level-limited texture:** `desc` keeps
+  the full extents and level count, while `levelOffsets.size` and `levelRowPitches.size` are
+  `desc.levels - firstLevel`. Migration: index the spans by resident level, and shift `desc` by
+  `firstLevel` for the object's extents. Adapters may now see a nonzero `TextureDesc::firstLevel`;
+  its `width`, `height`, `depth` and `levels` already describe the object.
 - **A load job that ends starts the next one without a pump.** `pump()` used to start at most
   `maxIoJobs` jobs, so the workers were idle between pumps: 891 assets (712 MiB) at 60 Hz loaded in
   4.4 s, now 0.9 s; with 2 workers 15.3 s, now 1.5 s. `pump()` now prepares every queued job and the

@@ -251,11 +251,11 @@ void handle_event(Scene& s, Event const& e) {
                       g.slot == kInvalid ? -1 : int(g.slot));
             t.last = now;
             if (e.kind == EventKind::Failed) KILN_WARN("viewer", "  failed: %s", code_name(e.status.code));
-            if (e.kind == EventKind::Ready && s.coarseExtent) { // coarse first: now the whole texture
-                set_texture_extent(s.ctx, t.handle, 0);
-                t.fullPending = texture_info(s.ctx, t.handle).firstLevel > 0;
-            }
-            if (e.kind == EventKind::Resized) t.fullPending = false;
+            if (e.kind == EventKind::Ready && s.coarseExtent) set_texture_extent(s.ctx, t.handle, 0);
+            // Pending until the object holds level 0. A full load that fails emits no event, so the
+            // texture stays pending (and an offscreen run waits for --timeout): open-questions R30 j.
+            if (e.kind != EventKind::MetaReady && e.kind != EventKind::Failed)
+                t.fullPending = s.coarseExtent && texture_info(s.ctx, t.handle).firstLevel > 0;
             return;
         }
     }

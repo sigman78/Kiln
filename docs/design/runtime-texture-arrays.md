@@ -137,7 +137,8 @@ Two implementation choices should be evaluated in a spike:
 | Allocate texture, then upload explicit mip/layer ranges into it | Bounded staging; natural future partial uploads | New object ownership, upload tickets and synchronization rules |
 | One aggregate upload with all layer data arranged by mip | Closest to today's adapter contract; supports creation-time initial data | Potentially whole-array staging; needs scatter destinations for independent source reads |
 
-Prefer range uploads for native backends, with an explicitly budgeted aggregate path where
+Range uploads are unscheduled (`streaming.md`, R30 f); the aggregate path is the one in use.
+Should they come, prefer them for native backends, with an explicitly budgeted aggregate path where
 needed. Exact callback signatures and capability bits remain open. Do not silently turn a
 GPU-copy-only request into CPU readback, or claim range support from `kArrayTextures` alone.
 
@@ -183,7 +184,7 @@ This policy temporarily needs both old and new arrays, plus staging. In-place la
 would save memory but introduces writes to resources sampled by frames in flight; defer it until
 there is an explicit synchronization and visibility contract. Layer count and order cannot be
 edited through reload; a new declaration is required. Reloading only the changed layers (copy-on-write
-by default, in place as an opt-in) is open for v0.8 with range uploads: open-questions R12.
+by default, in place as an opt-in) needs range uploads, which are unscheduled (`streaming.md`, R30 f).
 
 ## Alternatives and GPU constraints
 
