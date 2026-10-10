@@ -1,9 +1,10 @@
 # Group readiness
 
 **Status:** Proposed (2026-09-29), revised 2026-10-04: the readiness set is dropped and `Group` is
-extended instead (owner, 2026-10-04). Not implemented. The owner requested a signal for a set of
-textures, or a mesh and its textures, becoming usable or failing, and selected **live readiness**
-over one-time completion.
+extended instead (owner, 2026-10-04); revised 2026-10-09 after a review against the code
+(open-questions R25 (d) to (k)), awaits the owner. Not implemented. The owner requested a signal
+for a set of textures, or a mesh and its textures, becoming usable or failing, and selected **live
+readiness** over one-time completion.
 **Decides:** Several groups per asset, a sealed group's aggregate state and its events, and the
 boundary between readiness and rendering policy.
 **Related:** [handles-and-states.md](handles-and-states.md) (load groups, R5g),
@@ -56,8 +57,8 @@ struct GroupStatus {
 
 void seal(Context*, Group);      // new: the host has requested every member
 
-enum class EventKind : u8 { MetaReady, Ready, Changed, Failed,
-                            GroupPending, GroupReady, GroupFailed }; // three new
+enum class EventKind : u8 { MetaReady, Ready, Changed, Failed, Resized,
+                            GroupPending, GroupReady, GroupFailed }; // three new, appended
 ```
 
 `group()`, `release(ctx, Group)`, `progress()`, `wait()` and `RequestOptions::group` keep their
@@ -94,8 +95,9 @@ signatures. A group that is never sealed behaves exactly as today and emits no e
   "Storage"). A group that lacks a member must never report `Ready`. If a request itself returns a
   null handle, the host treats that as setup failure and does not seal.
 
-`progress()` computes the state from the counters, so the query is always current: a group whose
-members are all loaded reads `Ready` immediately after `seal()`.
+`progress()` computes the state from the counters and two flags of the record (`sealed`,
+`joinFailed`), so the query is always current: a group whose members are all loaded reads `Ready`
+immediately after `seal()`. `seal()` on a stale or null group, and a second `seal()`, do nothing.
 
 ### Events
 
@@ -103,6 +105,9 @@ Group events use the existing stream, `events(ctx)`. There is no second stream.
 
 - `Event::kind` is `GroupPending`, `GroupReady` or `GroupFailed`. `Event::handle` is
   `Group::bits()`. `Event::asset` and `Event::version` carry no meaning; a host reads `kind` first.
+  A host that rebuilds an asset handle from the bits before it reads `kind` gets a stale handle,
+  which reads `Unloaded` and serves the placeholder: safe, but wrong output until the host knows
+  the new kinds.
 - Only sealed groups emit. A group emits when its state differs from the state it last reported.
   Sealing reports the first state on the next `pump()`, also when that state is `Ready`.
 - Group events come at the end of `pump()`, after every asset event of that pump. Several changes
@@ -128,10 +133,17 @@ One membership table replaces the four group fields of `Slot` (`groupIndex`, `gr
 - A pool of links, sized at `create()` by a new `ContextDesc::maxGroupMembers`. Each link is in two
   intrusive lists: its group's members and its asset's groups. `groupBytes` and `groupAs` move
   into the link.
+- The default of `maxGroupMembers` is `2 * maxAssets`, not `maxAssets`: a shared texture holds one
+  link per group it is in, so one group per renderable object needs more links than assets. The
+  field's comment says so, and `ContextStats` reports the links in use, so a host can size it.
 - A slot transition walks the asset's links and updates each group's counters. A group whose
-  counters change goes on a dirty list; `pump()` evaluates only that list. Nothing scans every
-  group, and nothing allocates in steady state.
-- `wait()`'s priority raise (`boost_group`) walks the group's member list. Today it scans every slot.
+  counters change goes on a dirty list; `pump()` evaluates only that list and skips a group
+  released in the same pump. Nothing scans every group, and nothing allocates in steady state.
+- A swap of a `Ready` member (a reload, `Resized`) recomputes the link's bytes from the new upload,
+  so `bytesDone` and `bytesTotal` follow the resident size. Today `make_ready` leaves the group
+  alone on a reload, which is right for the counts and stale for the bytes.
+- `wait()`'s priority raise (`boost_group`) walks the group's member list. Today it scans every
+  slot; `handles-and-states.md` describes the scan and changes with it.
 - `ContextDesc::maxGroups` defaults to 64, which suits loading screens. A host with one group per
   renderable object raises it.
 
@@ -140,22 +152,31 @@ One membership table replaces the four group fields of `Slot` (`groupIndex`, `gr
 Kiln still loads only what the host requests. A mesh load does not load its textures, and the
 renderer decides which PBR inputs it requires.
 
-A helper carries most of the work, so it is part of this proposal:
+A helper carries most of the work. It starts in `examples/adapter_support/`, modelled on
+`kiln-viewer`'s `request_textures` (five examples carry this loop with their own dedup tables), and
+enters `kiln_runtime` when two hosts want the same shape:
 
 ```cpp
 struct MeshTexturesDesc {
     Group group       = {};
     Priority priority = Priority::Normal;
     u32 slots         = ~0u; // one bit per mesh::TextureSlot: the slots the renderer requires
+    u32 maxExtent     = 0;   // RequestOptions::maxExtent, for the coarse-first pattern
 };
 /// Requests the texture of each binding of the mesh whose slot is in `slots`, with the kind
-/// texture_kind_for_slot() gives, into `group`. Each name is requested once. Writes the handles to
-/// `out` and returns their count; the host releases them. Needs has_meta(mesh).
-Result<u32> request_mesh_textures(Context*, MeshHandle, MeshTexturesDesc const&, Span<TextureHandle> out);
+/// texture_kind_for_slot() gives, into `group`. Each name is requested once per call, and the
+/// caller owns one reference per handle written to `out`. Returns the count written. When `out`
+/// is too small, requests nothing and returns InvalidArgument with the needed count in `*needed`.
+/// Bindings with kTextureExternal (a URI kiln did not cook) and slots without a binding are
+/// skipped; `*skipped` counts them. Needs has_meta(mesh).
+Status request_mesh_textures(Context*, MeshHandle, MeshTexturesDesc const&, Span<TextureHandle> out,
+                             u32* written, u32* needed = nullptr, u32* skipped = nullptr);
 ```
 
 It is a loop over `mesh_view()->textures()` with `texture_asset_name()` and `request_texture()`.
-The host calls it; kiln does not follow the references on its own (`asset-model-next.md`).
+The host calls it; kiln does not follow the references on its own (`asset-model-next.md`). A host
+that calls it from every mesh `Ready` event must keep and release every handle it returns: the
+helper does not know the host's tables, so it takes a reference each time.
 
 The host sequence:
 
@@ -183,7 +204,9 @@ do this:
 - A reload of a `Ready` member leaves the group `Ready`: the old payload stays usable. A failed
   reload leaves it `Ready` too.
 - A `Failed` member that reloads successfully moves from `failed` to `ready`, so the group can go
-  from `Failed` to `Ready`.
+  from `Failed` to `Ready`. With a cook provider this is the common case: a cook failure makes the
+  member `Failed` and a sealed group `Failed` at once, and a source fix under `watchSources`
+  recovers both.
 
 **A mesh version with other dependencies gets a new group.** The host keeps the current group and
 keeps drawing with it, builds a second group for the new version (the mesh, then
@@ -202,14 +225,17 @@ version pinning. This note does not provide it; R25 (b) holds the question.
 ## v0.8: level-limited textures and eviction
 
 `streaming.md` (R30, decided 2026-10-09) settles the first: there is no `State::Partial`, a
-level-limited texture is `Ready`, and a size change keeps it `Ready`. Eviction is not designed. The
-rule for a group:
+level-limited texture is `Ready`, and a size change keeps it `Ready`. There is no eviction: the
+host owns residency (R30 g), frees memory by releasing its reference or by `set_texture_extent`
+to a small size, and both keep the rules below. The rule for a group:
 
 - A member counts as ready only in `State::Ready`.
-- A member that loses its payload (eviction) leaves `ready`, so a sealed group can go from `Ready`
-  back to `Pending`. The `GroupPending` event exists for this case and for a join after `seal()`.
+- A member whose last reference is released leaves the group, as any release does; nothing moves
+  a member out of `ready` while it is requested. So the one cause of `Ready` back to `Pending` is
+  a join after `seal()`, and `GroupPending` exists for it.
 - A host that draws a coarse-first texture before its full load keeps it in the group: it is
-  `Ready` at its extent. A coarse LOD it draws early it leaves out, as the Need section says.
+  `Ready` at its extent, and a size change does not move the group. A coarse LOD it draws early it
+  leaves out, as the Need section says.
 
 `streaming.md` ("Groups and states", R30) confirms this rule (R25 (c)).
 
@@ -233,17 +259,27 @@ rule for a group:
 To record in `CHANGELOG.md` at that time:
 
 - A request that names a second group for a live asset now joins it (was: ignored, R5g).
-- `EventKind` gains three values; a host's `switch` over it needs the new cases. For group events
-  `Event::asset` carries no meaning.
-- `GroupStatus` gains `state`; `ContextDesc` gains `maxGroupMembers`.
+- `EventKind` gains three values after `Resized`, so existing values stay; a host's `switch` over it
+  needs the new cases. For group events `Event::asset` and `Event::version` carry no meaning and
+  `Event::handle` holds `Group::bits()`; every event printer in the examples rebuilds an asset
+  handle first and needs the new cases.
+- `GroupStatus` gains `state` at its end (aggregate initialisation keeps working); `ContextDesc`
+  gains `maxGroupMembers`; `ContextStats` gains the links in use.
+- `boost_group` walks the member list instead of every slot; same behaviour.
 
 ## Open points for the owner
 
-- Confirm that a membership holds no reference. The alternative (the group owns a reference to each
-  member) removes the "release the group first" rule, but changes `release(ctx, Group)` for every
-  existing host.
-- Confirm that a join after `seal()` is allowed. The alternative is to treat it as misuse.
-- `request_mesh_textures` in `kiln_runtime` (proposed, beside `texture_asset_name`) or in
-  `examples/adapter_support/`.
-- The default of `maxGroupMembers` (proposed: `maxAssets`), and whether `maxGroups` rises.
+Proposed answers (2026-10-09, R25 (k)); the owner confirms or changes them:
+
+- A membership holds no reference (proposed: yes). The alternative (the group owns a reference to
+  each member) removes the "release the group first" rule, but changes `release(ctx, Group)` for
+  every existing host.
+- A join after `seal()` is allowed (proposed: yes; the mesh-recovery flow needs it). The
+  alternative is to treat it as misuse.
+- `request_mesh_textures` starts in `examples/adapter_support/` (proposed) and moves to
+  `kiln_runtime` beside `texture_asset_name` when two hosts want the same shape.
+- `maxGroupMembers` defaults to `2 * maxAssets` (proposed); `maxGroups` stays 64 until a host with
+  one group per object asks.
+- Ordering a mesh reload after its re-keyed embedded textures needs version pinning and is outside
+  this note (R25 (b), no owner yet).
 - A once-only subscription (stop observing after the first terminal state) is optional future work.
